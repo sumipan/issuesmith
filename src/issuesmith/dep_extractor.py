@@ -190,8 +190,16 @@ def check_dependencies(
     client: GitHubClient | None = None,
 ) -> DepCheckResult:
     """Verify that all dependency issues are merged."""
-    gh = client or GitHubClient()
     deps_found = sorted(set(issue_numbers))
+    if not deps_found:
+        # Empty list is vacuously PASS; avoid requiring auth / a client.
+        return DepCheckResult(
+            decision="PASS",
+            deps_found=[],
+            blocking_deps=[],
+            dep_statuses=[],
+        )
+    gh = client or GitHubClient()
     dep_statuses = [_get_dep_status(gh, number) for number in deps_found]
     blocking = [status for status in dep_statuses if not _is_satisfied(status)]
 
