@@ -115,7 +115,11 @@ def _run_gate(ctx: StepContext, client: GitHubClient) -> dict[str, Any]:
         if not target_repo.is_absolute():
             target_repo = repo_root / target_repo
         nexus_gate_root = _materialize_gate_root(repo_root, base_branch, issue_number, "nexus-")
-        target_gate_root = _materialize_gate_root(target_repo, base_branch, issue_number, "target-")
+        try:
+            target_gate_root = _materialize_gate_root(target_repo, base_branch, issue_number, "target-")
+        except GateMaterializationError:
+            _cleanup_gate_root(repo_root, nexus_gate_root)
+            raise
         try:
             return _evaluate_dual_root(body, labels, nexus_gate_root, target_gate_root)
         finally:
