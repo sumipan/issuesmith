@@ -167,21 +167,23 @@ def _build_pr_metadata(
     issue_repo: str,
     target_count: int = 1,
 ) -> tuple[str, str]:
-    ref = f"{issue_repo}#{issue_number}" if repo != issue_repo else f"#{issue_number}"
-    if target_count > 1:
-        if repo != issue_repo:
-            return (
-                f"実装: {issue_repo}#{issue_number}",
-                f"P1/P2 result より自動生成。\n\nRefs {ref}",
-            )
-        return (
-            f"実装: Issue #{issue_number}",
-            f"P1/P2 result より自動生成。\n\nRefs {ref}",
-        )
+    # cross-repo（repo != issue_repo）の PR は、target_count に関わらず絶対に Closes を
+    # 使わない。理由: cross-repo issue は必ず M2 finalize（issue_repo 側での
+    # merge-done 遷移 + close）を経る設計であり、target repo 側 PR のマージだけで
+    # issue を閉じてしまうと finalize が一生走らないまま孤立する
+    # （2026-09-06 実測: da499bf で ref を qualified 化した副作用として、それまで
+    # 未修飾で機能していなかった cross-repo Closes が実際に発火するようになり、
+    # #2873 が M1 完走前に premature close された）。
     if repo != issue_repo:
+        ref = f"{issue_repo}#{issue_number}"
         return (
             f"実装: {issue_repo}#{issue_number}",
-            f"P1/P2 result より自動生成。\n\nCloses {ref}",
+            f"P1/P2 result より自動生成。\n\nRefs {ref}",
+        )
+    if target_count > 1:
+        return (
+            f"実装: Issue #{issue_number}",
+            f"P1/P2 result より自動生成。\n\nRefs #{issue_number}",
         )
     return (
         f"実装: Issue #{issue_number}",
