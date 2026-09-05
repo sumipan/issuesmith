@@ -283,8 +283,12 @@ def _format_in_flight_status(snap: QueueSnapshot) -> str:
 
 
 def _closes_issue_marker(issue_number: int) -> re.Pattern[str]:
-    # Digit boundary: avoid Closes #12 matching #123
-    return re.compile(rf"(?i)\bcloses\s+#{issue_number}(?!\d)")
+    # Digit boundary: avoid Closes #12 matching #123.
+    # publish.py はもう "Closes" を発行しない（GitHub auto-close の副作用を避けるため。
+    # #2852 / #2873 で premature close が実測された）。ここは "Closes" と "Refs" の
+    # 両方にマッチさせ、旧世代（Closes）の PR が残っていても・新世代（Refs）の PR でも
+    # 「この issue に紐づく PR を発見する」役目を引き続き果たす。
+    return re.compile(rf"(?i)\b(?:closes|refs)\s+#{issue_number}(?!\d)")
 
 
 def _find_open_prs_closing_issue(client: GitHubClient, issue_number: int) -> list[dict[str, Any]]:

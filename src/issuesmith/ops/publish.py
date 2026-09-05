@@ -167,27 +167,21 @@ def _build_pr_metadata(
     issue_repo: str,
     target_count: int = 1,
 ) -> tuple[str, str]:
-    # cross-repo（repo != issue_repo）の PR は、target_count に関わらず絶対に Closes を
-    # 使わない。理由: cross-repo issue は必ず M2 finalize（issue_repo 側での
-    # merge-done 遷移 + close）を経る設計であり、target repo 側 PR のマージだけで
-    # issue を閉じてしまうと finalize が一生走らないまま孤立する
-    # （2026-09-06 実測: da499bf で ref を qualified 化した副作用として、それまで
-    # 未修飾で機能していなかった cross-repo Closes が実際に発火するようになり、
-    # #2873 が M1 完走前に premature close された）。
+    # GitHub の "Closes #N" auto-close は一切使わない（target_count・same-repo/cross-repo
+    # を問わない）。issue を閉じるのは常に M2 finalize（issue_repo 側での merge-done
+    # 遷移 + issue_close()）の役目であり、GitHub の自動 close はそれより早く発火しうる
+    # 副作用の強い機構だった。実測: #2852（diary companion 側）・#2873（da499bf で
+    # cross-repo の qualified Closes が実際に発火するようになった回帰）と、同じ
+    # クラスの premature close 事故が 2 回起きている。"Refs #N" は PR 本文の検索
+    # マーカーとして queue.py 側で引き続き使う（_closes_issue_marker 参照）。
     if repo != issue_repo:
-        ref = f"{issue_repo}#{issue_number}"
         return (
             f"実装: {issue_repo}#{issue_number}",
-            f"P1/P2 result より自動生成。\n\nRefs {ref}",
-        )
-    if target_count > 1:
-        return (
-            f"実装: Issue #{issue_number}",
-            f"P1/P2 result より自動生成。\n\nRefs #{issue_number}",
+            f"P1/P2 result より自動生成。\n\nRefs {issue_repo}#{issue_number}",
         )
     return (
         f"実装: Issue #{issue_number}",
-        f"P1/P2 result より自動生成。\n\nCloses #{issue_number}",
+        f"P1/P2 result より自動生成。\n\nRefs #{issue_number}",
     )
 
 

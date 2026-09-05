@@ -1423,6 +1423,31 @@ class TestCp2MergePrDetection:
         assert ok is True, why
         assert client.pr_get_calls == [2789]
 
+    def test_phase_preconditions_merge_finds_refs_in_body(self):
+        """publish.py はもう Closes を発行しない（2026-09-06）。Refs #N でも見つかること。"""
+        from issuesmith import queue as qmod
+
+        client = _ProdShapeClient(
+            open_prs=[
+                {
+                    "number": 2789,
+                    "title": "実装: Issue #2773",
+                    "body": "P1/P2 result より自動生成。\n\nRefs #2773",
+                    "state": "OPEN",
+                    "headRefName": "feat/issue-2773",
+                }
+            ]
+        )
+        issue = {
+            "number": 2773,
+            "state": "OPEN",
+            "title": "t",
+            "body": _VALID_BODY,
+            "labels": [],
+        }
+        ok, why = qmod._phase_preconditions("merge", issue, client, 2773)
+        assert ok is True, why
+
     def test_phase_preconditions_merge_search_alone_insufficient(self):
         """pr_list(search='Closes #N') は body を見ないので、pr_get が必須."""
         from issuesmith import queue as qmod
