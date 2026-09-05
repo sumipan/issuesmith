@@ -167,20 +167,21 @@ def _build_pr_metadata(
     issue_repo: str,
     target_count: int = 1,
 ) -> tuple[str, str]:
+    ref = f"{issue_repo}#{issue_number}" if repo != issue_repo else f"#{issue_number}"
     if target_count > 1:
         if repo != issue_repo:
             return (
                 f"実装: {issue_repo}#{issue_number}",
-                f"P1/P2 result より自動生成。\n\nRefs #{issue_number}",
+                f"P1/P2 result より自動生成。\n\nRefs {ref}",
             )
         return (
             f"実装: Issue #{issue_number}",
-            f"P1/P2 result より自動生成。\n\nRefs #{issue_number}",
+            f"P1/P2 result より自動生成。\n\nRefs {ref}",
         )
     if repo != issue_repo:
         return (
             f"実装: {issue_repo}#{issue_number}",
-            f"P1/P2 result より自動生成。\n\nCloses #{issue_number}",
+            f"P1/P2 result より自動生成。\n\nCloses {ref}",
         )
     return (
         f"実装: Issue #{issue_number}",
