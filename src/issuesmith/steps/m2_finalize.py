@@ -20,6 +20,7 @@ from issuesmith.m2_gate import check_gate, synthesize_contract_failures
 from issuesmith.ops.label_hygiene import run as run_label_hygiene
 from issuesmith.steps.base import StepContext, StepResult
 
+
 class GateMaterializationError(RuntimeError):
     """origin/base の一時 worktree を作れなかった。"""
 
@@ -409,7 +410,8 @@ def run(ctx: StepContext) -> StepResult:
             client.issue_comment(
                 issue_number,
                 "## M2 コンパクション失敗\n\n"
-                f"コンパクション LLM ステップが終了コード {rc} で失敗しました（プロバイダ拒否・タイムアウト等の可能性）。\n"
+                f"コンパクション LLM ステップが終了コード {rc} で失敗しました"
+                "（プロバイダ拒否・タイムアウト等の可能性）。\n"
                 "PR マージは完了済みです。source ドキュメントへのコンパクションを手動で行ってください。\n"
                 f"対象: `{ctx.source}`",
             )
