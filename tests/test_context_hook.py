@@ -1,4 +1,5 @@
 """tests/test_context_hook.py — context_hook.py のユニットテスト"""
+import json
 import logging
 
 import pytest
@@ -323,3 +324,37 @@ def test_validate_valid_nexus():
         {"target_repo": "sumipan/nexus", "allow_paths": ["tools/**"]}
     )
     assert violations == []
+
+
+# --- Issue #2866: targets_json ---
+
+
+def test_targets_json_present_and_parseable():
+    body = _body(target_repo="sumipan/ghdag", allow_paths="src/**")
+    ctx = build_context(123, body=body)
+    assert "targets_json" in ctx
+    targets = json.loads(ctx["targets_json"])
+    assert isinstance(targets, list)
+    assert len(targets) == 1
+    assert targets[0]["repo"] == "sumipan/ghdag"
+    assert targets[0]["primary"] is True
+
+
+def test_targets_json_cross_repo_with_diary():
+    body = _body_cross_repo_with_diary(diary_allow_paths=["workflows/issuesmith/**"])
+    ctx = build_context(2866, body=body)
+    targets = json.loads(ctx["targets_json"])
+    assert len(targets) == 2
+    assert targets[0]["primary"] is True
+    assert targets[0]["repo"] == "sumipan/ghdag"
+    assert targets[1]["primary"] is False
+    assert targets[1]["repo"] == "sumipan/nexus"
+
+
+def test_targets_json_backward_compat_flat_keys():
+    body = _body_cross_repo_with_diary(diary_allow_paths=["workflows/issuesmith/**"])
+    ctx = build_context(2866, body=body)
+    assert ctx["target_repo"] == "sumipan/ghdag"
+    assert ctx["is_cross_repo"] == "true"
+    assert ctx["has_diary_changes"] == "true"
+    assert ctx["diary_allow_paths"] == "- workflows/issuesmith/**"

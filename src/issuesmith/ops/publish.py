@@ -161,11 +161,27 @@ def _ahead_commit_count(worktree: Path, base_branch: str) -> int:
     return int(out or "0")
 
 
-def _build_pr_metadata(issue_number: int, repo: str, issue_repo: str) -> tuple[str, str]:
+def _build_pr_metadata(
+    issue_number: int,
+    repo: str,
+    issue_repo: str,
+    target_count: int = 1,
+) -> tuple[str, str]:
+    ref = f"{issue_repo}#{issue_number}" if repo != issue_repo else f"#{issue_number}"
+    if target_count > 1:
+        if repo != issue_repo:
+            return (
+                f"実装: {issue_repo}#{issue_number}",
+                f"P1/P2 result より自動生成。\n\nRefs {ref}",
+            )
+        return (
+            f"実装: Issue #{issue_number}",
+            f"P1/P2 result より自動生成。\n\nRefs {ref}",
+        )
     if repo != issue_repo:
         return (
             f"実装: {issue_repo}#{issue_number}",
-            f"P1/P2 result より自動生成。\n\nRelated: {issue_repo}#{issue_number}",
+            f"P1/P2 result より自動生成。\n\nCloses {ref}",
         )
     return (
         f"実装: Issue #{issue_number}",
@@ -218,6 +234,7 @@ def publish(
     repo: str,
     issue_repo: str,
     allow_paths: list[str] | None = None,
+    target_count: int = 1,
 ) -> PublishResult:
     _commit_if_needed(worktree, issue_number, allow_paths)
 
@@ -235,7 +252,7 @@ def publish(
     if existing:
         return PublishResult(status="OK", pr_url=existing[0].get("url", ""), exit_code=0)
 
-    title, body = _build_pr_metadata(issue_number, repo, issue_repo)
+    title, body = _build_pr_metadata(issue_number, repo, issue_repo, target_count=target_count)
     try:
         pr_url = client.pr_create(base=base_branch, head=branch, title=title, body=body)
     except Exception as exc:  # noqa: BLE001
@@ -257,6 +274,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help='context_hook format: "- path1\\n- path2". Omit or "（制限なし）" for no filter.',
     )
+    parser.add_argument(
+        "--target-count",
+        type=int,
+        default=1,
+        help="Issue のターゲット数。2 以上のとき PR 本文は Refs を使用する",
+    )
     return parser.parse_args(argv)
 
 
@@ -270,6 +293,7 @@ def main(argv: list[str]) -> int:
         repo=args.repo,
         issue_repo=args.issue_repo,
         allow_paths=_parse_allow_paths(args.allow_paths),
+        target_count=args.target_count,
     )
 
     if result.stderr:
