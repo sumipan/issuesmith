@@ -241,12 +241,17 @@ def plan(
     *,
     client: GitHubClient | None = None,
 ) -> Plan:
-    client = client or _github_client()
     handler = handler_for_failed_step(failed_step, labels)
     phase = infer_redispatch_phase(failed_step, labels)
     required, _ = redispatch_label_plan(phase)
     consumed = _idempotency_consumed(handler, issue)
     intact, intact_reason = _prerequisites_intact(issue, handler)
+
+    def _merge_blocked() -> str | None:
+        if phase != "merge":
+            return None
+        gh = client or _github_client()
+        return _merge_redispatch_blocked(issue, gh)
 
     if not consumed:
         if intact:
@@ -258,7 +263,7 @@ def plan(
                 required_labels=frozenset(),
                 blocked_by=None,
             )
-        blocked = _merge_redispatch_blocked(issue, client) if phase == "merge" else None
+        blocked = _merge_blocked()
         command = _redispatch_command(issue, phase)
         return Plan(
             action="redispatch",
@@ -269,7 +274,7 @@ def plan(
         )
 
     if _generation_keys_available():
-        blocked = _merge_redispatch_blocked(issue, client) if phase == "merge" else None
+        blocked = _merge_blocked()
         command = _redispatch_command(issue, phase)
         return Plan(
             action="redispatch",
