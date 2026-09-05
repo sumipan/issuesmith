@@ -364,8 +364,6 @@ def infer_redispatch_phase(failed_step: str, labels: set[str]) -> str:
         return "draft"
     if RUNNING_LABEL["merge"] in labels or READY_LABEL["merge"] in labels:
         return "merge"
-    if failed_step in _IMPL_STEPS:
-        return "develop"
     return "develop"
 
 

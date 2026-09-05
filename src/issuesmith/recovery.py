@@ -27,7 +27,6 @@ from issuesmith.queue_store import QueueStore
 
 WORKFLOW_NAME = "issuesmith"
 
-_IMPL_STEPS = frozenset({"p0", "p1", "p2", "p2r", "p3", "cp2", "m1", "m1r", "m2"})
 _STEP_FROM_DISPATCH_RE = re.compile(r"issuesmith dispatch ([\w-]+)")
 _ORDER_PATH_RE = re.compile(r"(?:bash -o pipefail )?(\S+jobs/\S+\.md)")
 _WORKTREE_RE = re.compile(r'worktree_path=([^\s"]+)')
