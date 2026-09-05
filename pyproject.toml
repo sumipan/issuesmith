@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "issuesmith"
+version = "0.1.0"
+description = "GitHub Issue label-driven workflow framework on ghdag"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "pyyaml",
+    "ruamel.yaml",
+    "packaging",
+    "python-dotenv",
+]
+classifiers = [
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+
+[project.optional-dependencies]
+ghdag = ["ghdag @ git+https://github.com/sumipan/ghdag.git@v0.35.0"]
+dev = [
+  "pytest>=7.0.0",
+  "ruff>=0.4.0",
+  "ghdag @ git+https://github.com/sumipan/ghdag.git@v0.35.0",
+]
+
+[project.scripts]
+issuesmith = "issuesmith.cli:main"
+
+[project.urls]
+Repository = "https://github.com/sumipan/issuesmith"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["E501"]
+"src/issuesmith/gate_rules/**" = ["E501"]
+"src/issuesmith/queue.py" = ["E501"]
