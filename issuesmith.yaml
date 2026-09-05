@@ -1,0 +1,5 @@
+repo: sumipan/issuesmith
+label_namespace: issuesmith
+timezone: Asia/Tokyo
+concurrency:
+  default: 1

@@ -23,8 +23,10 @@ from issuesmith.queue_store import (
     DEFAULT_NIGHT_STATE_PATH,
     DEFAULT_SEED_PATH,
     DEFAULT_TRIAGE_LOG_PATH,
+    QueueSnapshot,
     QueueStore,
     QueueValidationError,
+    in_flight_by_engine,
 )
 from issuesmith.queue_triage import (
     DONE_LABEL,
@@ -43,6 +45,12 @@ from issuesmith.queue_triage import (
 _cfg = get_config()
 TZ = ZoneInfo(_cfg.timezone)
 REPO = _cfg.repo
+
+PHASE_ROLE: dict[str, str] = {
+    "draft": "design",
+    "develop": "implementation",
+    "merge": "implementation",
+}
 
 REPO_ROOT = _cfg.root
 JOBS_DIR = _cfg.paths.exec_jsonl.parent
@@ -108,7 +116,22 @@ def _latest_done_mtime() -> float | None:
     return max(mtimes)
 
 
+def _issuesmith_latest_done_mtime() -> float | None:
+    uuids = _iter_issuesmith_exec_uuids()
+    if not uuids:
+        return None
+    mtimes: list[float] = []
+    for uuid in uuids:
+        done_path = DONE_DIR / uuid
+        if done_path.exists():
+            mtimes.append(done_path.stat().st_mtime)
+    if not mtimes:
+        return None
+    return max(mtimes)
+
+
 def _pipeline_idle_enough(idle_minutes: int, now: datetime) -> bool:
+    """Legacy idle helper (no in-flight awareness). Prefer _pipeline_idle_enough_v2."""
     uuids = _iter_issuesmith_exec_uuids()
     for uuid in uuids:
         if not (DONE_DIR / uuid).exists():
@@ -116,6 +139,39 @@ def _pipeline_idle_enough(idle_minutes: int, now: datetime) -> bool:
     latest = _latest_done_mtime()
     if latest is None:
         return False
+    elapsed = now.timestamp() - latest
+    return elapsed >= idle_minutes * 60
+
+
+def _pipeline_idle_enough_v2(
+    snap: QueueSnapshot, idle_minutes: int, now: datetime
+) -> bool:
+    if snap.in_flight:
+        return False
+    uuids = _iter_issuesmith_exec_uuids()
+    for uuid in uuids:
+        if not (DONE_DIR / uuid).exists():
+            return False
+    latest = _issuesmith_latest_done_mtime()
+    if latest is None:
+        return True
+    elapsed = now.timestamp() - latest
+    return elapsed >= idle_minutes * 60
+
+
+def _dispatch_pipeline_ready(
+    snap: QueueSnapshot, idle_minutes: int, now: datetime
+) -> bool:
+    """Admission idle gate: exec steps must not be mid-flight; time spacing when queue empty."""
+    uuids = _iter_issuesmith_exec_uuids()
+    for uuid in uuids:
+        if not (DONE_DIR / uuid).exists():
+            return False
+    if snap.in_flight:
+        return True
+    latest = _issuesmith_latest_done_mtime()
+    if latest is None:
+        return True
     elapsed = now.timestamp() - latest
     return elapsed >= idle_minutes * 60
 
@@ -140,6 +196,43 @@ def _required_engines(engine_state_path: Path | None = None) -> dict[str, str]:
         engine = value.get("engine") if isinstance(value, dict) else None
         result[role] = str(engine) if engine else default
     return result
+
+
+def _resolve_engine(phase: str, engine_state_path: Path | None = None) -> str:
+    role = PHASE_ROLE[phase]
+    return _required_engines(engine_state_path)[role]
+
+
+def _serial_concurrency() -> bool:
+    concurrency = get_config().concurrency
+    if concurrency.per_engine:
+        return False
+    return concurrency.default <= 1
+
+
+def _issue_is_terminal(client: GitHubClient, issue_number: int) -> bool:
+    try:
+        issue = client.issue_get(issue_number, fields=["state", "labels"])
+    except Exception:
+        return False
+    labels = label_names(issue)
+    state = str(issue.get("state", "")).upper()
+    return state == "CLOSED" and (
+        "issuesmith:merge-done" in labels or bool(labels & TERMINAL_WITHOUT_MERGE)
+    )
+
+
+def _halt_resolved(snap: QueueSnapshot, client: GitHubClient) -> bool:
+    reason = snap.halt_reason or ""
+    if "is still OPEN" in reason:
+        return len(snap.in_flight) == 0
+    if "without terminal label" in reason:
+        match = re.search(r"#(\d+)", reason)
+        if not match:
+            return False
+        issue_number = int(match.group(1))
+        return _issue_is_terminal(client, issue_number)
+    return False
 
 
 def _required_engines_paused(
@@ -176,29 +269,17 @@ def _source_in_window(source: str, actor_kind: str, now: datetime, start: str, e
     return True
 
 
-def _any_in_flight_elsewhere(client: GitHubClient, issue_number: int) -> bool:
-    """True if another open Issue holds -ready or -running (already dispatched / in progress)."""
-    for label in (
-        READY_LABEL["draft"],
-        RUNNING_LABEL["draft"],
-        READY_LABEL["develop"],
-        RUNNING_LABEL["develop"],
-        READY_LABEL["merge"],
-        RUNNING_LABEL["merge"],
-    ):
-        try:
-            issues = client.list_issues(label, state="open")
-        except Exception:
-            continue
-        if not isinstance(issues, list):
-            continue
-        for issue in issues:
-            if not isinstance(issue, dict):
-                continue
-            num = issue.get("number")
-            if isinstance(num, int) and num != issue_number:
-                return True
-    return False
+def _format_in_flight_status(snap: QueueSnapshot) -> str:
+    concurrency = get_config().concurrency
+    counts = in_flight_by_engine(snap.in_flight)
+    engines = sorted(set(counts) | set(concurrency.per_engine))
+    if not engines:
+        engines = sorted(_required_engines().values())
+    parts: list[str] = []
+    for engine in engines:
+        limit = concurrency.limit(engine)
+        parts.append(f"{engine}: {counts.get(engine, 0)}/{limit}")
+    return "{" + ", ".join(parts) + "}"
 
 
 def _closes_issue_marker(issue_number: int) -> re.Pattern[str]:
@@ -532,11 +613,8 @@ def dispatch_one(
     if not skip_seed:
         ensure_seeds_enqueued(store, seed_path=seed_path, now=now)
 
-    snap = store.snapshot()
-    if snap.halt:
-        return DispatchResult(False, reason=f"halted: {snap.halt_reason}")
-
     # Fetch issues for active requests.
+    snap = store.snapshot()
     issues: dict[int, dict[str, Any]] = {}
     for rid in list(snap.active_order):
         req = store.effective_request(snap, rid)
@@ -655,44 +733,74 @@ def dispatch_one(
     if not snap.active_order:
         return DispatchResult(False, reason="empty queue")
 
-    # Previous issue gate.
-    if snap.last_issue is not None:
-        try:
-            last = client.issue_get(snap.last_issue, fields=["state", "labels"])
-        except Exception as exc:
-            return DispatchResult(False, reason=f"last_issue fetch failed: {exc}")
-        last_labels = label_names(last)
-        last_state = str(last.get("state", "")).upper()
-        terminal_ok = last_state == "CLOSED" and (
-            "issuesmith:merge-done" in last_labels or bool(last_labels & TERMINAL_WITHOUT_MERGE)
-        )
-        if not terminal_ok:
-            if last_state == "OPEN" and _pipeline_idle_enough(idle_minutes, now):
-                store.set_halt(
-                    True,
-                    f"last_issue #{snap.last_issue} is still OPEN while pipeline idle for >= {idle_minutes} minutes",
-                )
-            elif last_state == "CLOSED":
-                store.set_halt(
-                    True,
-                    f"last_issue #{snap.last_issue} is CLOSED without terminal label (labels: {sorted(last_labels)})",
-                )
-            return DispatchResult(False, reason="previous issue not terminal")
-
-    if not _pipeline_idle_enough(idle_minutes, now):
-        return DispatchResult(False, reason="pipeline not idle")
-    paused = _required_engines_paused()
-    if paused:
-        return DispatchResult(False, reason=f"required engine paused: {', '.join(paused)}")
-
-    # Pick first active that passes gates (exclusive: snapshot → in-flight → label → last_issue).
     with store.dispatch_lock():
         snap = store.snapshot()
+
+        for entry in list(snap.in_flight):
+            issue_num = entry.get("issue")
+            if isinstance(issue_num, int) and _issue_is_terminal(client, issue_num):
+                store.remove_in_flight(issue_num)
+        snap = store.snapshot()
+
+        if snap.halt:
+            if _halt_resolved(snap, client):
+                store.clear_halt()
+                snap = store.snapshot()
+            else:
+                return DispatchResult(False, reason=f"halted: {snap.halt_reason}")
+
+        if snap.last_issue is not None:
+            try:
+                last = client.issue_get(snap.last_issue, fields=["state", "labels"])
+            except Exception as exc:
+                return DispatchResult(False, reason=f"last_issue fetch failed: {exc}")
+            last_labels = label_names(last)
+            last_state = str(last.get("state", "")).upper()
+            terminal_ok = last_state == "CLOSED" and (
+                "issuesmith:merge-done" in last_labels
+                or bool(last_labels & TERMINAL_WITHOUT_MERGE)
+            )
+            if not terminal_ok:
+                if (
+                    last_state == "OPEN"
+                    and _pipeline_idle_enough_v2(snap, idle_minutes, now)
+                ):
+                    store.set_halt(
+                        True,
+                        f"last_issue #{snap.last_issue} is still OPEN while pipeline idle for >= {idle_minutes} minutes",
+                    )
+                    snap = store.snapshot()
+                    return DispatchResult(
+                        False,
+                        reason=f"halted: {snap.halt_reason}",
+                    )
+                if last_state == "CLOSED":
+                    store.set_halt(
+                        True,
+                        f"last_issue #{snap.last_issue} is CLOSED without terminal label (labels: {sorted(last_labels)})",
+                    )
+                    snap = store.snapshot()
+                    return DispatchResult(False, reason="previous issue not terminal")
+                if _serial_concurrency():
+                    return DispatchResult(False, reason="previous issue not terminal")
+
+        if not _dispatch_pipeline_ready(snap, idle_minutes, now):
+            return DispatchResult(False, reason="pipeline not idle")
+        paused = _required_engines_paused()
+        if paused:
+            return DispatchResult(False, reason=f"required engine paused: {', '.join(paused)}")
+
+        concurrency = get_config().concurrency
+        counts = in_flight_by_engine(snap.in_flight)
+
         for rid in snap.active_order:
             req = store.effective_request(snap, rid)
             if req is None:
                 continue
             if not _source_in_window(req.source, req.actor_kind, now, start, end):
+                continue
+            engine = _resolve_engine(req.phase)
+            if counts.get(engine, 0) >= concurrency.limit(engine):
                 continue
             try:
                 issue = client.issue_get(
@@ -700,7 +808,6 @@ def dispatch_one(
                 )
             except Exception:
                 continue
-            # Re-check deterministic (race).
             decision = deterministic_decision(
                 req, issue, open_issues=open_issues, force=store.is_force(snap, rid)
             )
@@ -717,12 +824,9 @@ def dispatch_one(
                     comment=decision.comment,
                 )
                 continue
-            ok, why = _phase_preconditions(req.phase, issue, client, req.issue)
+            ok, _why = _phase_preconditions(req.phase, issue, client, req.issue)
             if not ok:
-                # Keep request; do not terminal unless already_processed style.
                 continue
-            if _any_in_flight_elsewhere(client, req.issue):
-                return DispatchResult(False, reason="another issue is running")
 
             label = READY_LABEL[req.phase]
             labels = label_names(issue)
@@ -735,6 +839,7 @@ def dispatch_one(
                 "dispatched",
                 f"issuesmith queue dispatched `{label}` for request `{rid}`.",
             )
+            store.add_in_flight(req.issue, engine)
             store.complete(rid, "dispatched", extra_meta={"label": label})
             store.set_last_issue(req.issue)
             return DispatchResult(
@@ -805,6 +910,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
         f"halt={snap.halt} "
         f"last_issue={snap.last_issue}"
     )
+    print(f"  in_flight: {_format_in_flight_status(snap)}")
     if snap.halt and snap.halt_reason:
         print(f"  halt_reason: {snap.halt_reason}")
     if snap.last_issue is not None:
