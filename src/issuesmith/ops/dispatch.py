@@ -21,6 +21,7 @@ Exit code: 展開した dispatch 本体（bash -o pipefail）の終了コード�
 from __future__ import annotations
 
 import hashlib
+import importlib
 import os
 import string
 import subprocess
@@ -28,11 +29,22 @@ import sys
 import tempfile
 from pathlib import Path
 
+from ghdag.github_client import GitHubClient
+
 from issuesmith.config import get_config
+from issuesmith.steps.base import StepContext
 
 _cfg = get_config()
 REPO_ROOT = _cfg.root
 TEMPLATE_DIR = _cfg.paths.template_dir
+
+_STEP_MODULES: dict[str, str] = {
+    "m2-role-dispatch": "m2_finalize",
+}
+
+
+def step_id_to_module(step_id: str) -> str:
+    return _STEP_MODULES.get(step_id, step_id.replace("-", "_"))
 
 
 def parse_context(args: list[str]) -> dict[str, str]:
@@ -62,18 +74,43 @@ def render(step_id: str, context: dict[str, str], template_dir: Path | None = No
     return tmpl.substitute(context), digest
 
 
-def main(argv: list[str]) -> int:
-    if not argv:
-        print(__doc__, file=sys.stderr)
-        return 2
-    step_id, raw_context = argv[0], argv[1:]
-    try:
-        context = parse_context(raw_context)
-        body, digest = render(step_id, context)
-    except (ValueError, KeyError, FileNotFoundError) as exc:
-        print(f"[issuesmith-dispatch] ERROR: {exc}", file=sys.stderr)
-        return 2
+def _context_to_step(context: dict[str, str]) -> StepContext:
+    return StepContext(
+        issue_number=context.get("issue_number", ""),
+        base_branch=context.get("base_branch", ""),
+        handler_name=context.get("handler_name", ""),
+        is_cross_repo=context.get("is_cross_repo", "false"),
+        target_clone_path=context.get("target_clone_path", ""),
+        source=context.get("source", ""),
+        workflow_name=context.get("workflow_name", ""),
+        m1_result_filename=context.get("m1_result_filename", ""),
+        m1r_result_filename=context.get("m1r_result_filename", ""),
+    )
 
+
+def _try_python_step(step_id: str, context: dict[str, str]) -> int | None:
+    module_name = step_id_to_module(step_id)
+    try:
+        mod = importlib.import_module(f"issuesmith.steps.{module_name}")
+    except ImportError:
+        return None
+    if not hasattr(mod, "run"):
+        return None
+
+    print(
+        f"[issuesmith-dispatch] python-step step={step_id} module={module_name}",
+        file=sys.stderr,
+    )
+    result = mod.run(_context_to_step(context))
+    if result.recovery:
+        GitHubClient().issue_comment(int(context["issue_number"]), result.recovery)
+    if result.pipeline_status:
+        print(f"PIPELINE_STATUS: {result.pipeline_status}")
+    return result.exit_code
+
+
+def _run_bash_step(step_id: str, context: dict[str, str]) -> int:
+    body, digest = render(step_id, context)
     print(f"[issuesmith-dispatch] live-render step={step_id} template_sha={digest}", file=sys.stderr)
     fd, path = tempfile.mkstemp(prefix=f"issuesmith-{step_id}-", suffix=".sh")
     try:
@@ -86,6 +123,28 @@ def main(argv: list[str]) -> int:
             os.unlink(path)
         except OSError:
             pass
+
+
+def main(argv: list[str]) -> int:
+    if not argv:
+        print(__doc__, file=sys.stderr)
+        return 2
+    step_id, raw_context = argv[0], argv[1:]
+    try:
+        context = parse_context(raw_context)
+    except ValueError as exc:
+        print(f"[issuesmith-dispatch] ERROR: {exc}", file=sys.stderr)
+        return 2
+
+    rc = _try_python_step(step_id, context)
+    if rc is not None:
+        return rc
+
+    try:
+        return _run_bash_step(step_id, context)
+    except (KeyError, FileNotFoundError) as exc:
+        print(f"[issuesmith-dispatch] ERROR: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
