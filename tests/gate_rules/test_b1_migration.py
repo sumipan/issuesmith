@@ -56,6 +56,12 @@ test -f tools/foo.py && echo "OK"
 ```yaml
 paths_must_exist:
   - tests/tools/secretary/test_observer_migration.py
+post_merge:
+  - kind: stable_install
+    repo: sumipan/issuesmith
+    path: /var/tmp/issuesmith
+removed_trees:
+  - tools/issuesmith
 ```
 
 - [ ] 移行テストが通ること
@@ -83,6 +89,12 @@ test -f tools/foo.py && echo "OK"
 ```yaml
 paths_must_exist:
   - tests/test_migration.py
+post_merge:
+  - kind: stable_install
+    repo: sumipan/issuesmith
+    path: /var/tmp/issuesmith
+removed_trees:
+  - tools/issuesmith
 ```
 """
 
@@ -104,6 +116,12 @@ test -f tools/foo.py && echo "OK"
 ```yaml
 paths_must_exist:
   - tools/foo.py
+post_merge:
+  - kind: stable_install
+    repo: sumipan/issuesmith
+    path: /var/tmp/issuesmith
+removed_trees:
+  - tools/issuesmith
 ```
 """
 
@@ -129,11 +147,13 @@ def test_migration_label_without_section_returns_procedure_violation():
     assert v.fix_hint == MIGRATION_PROCEDURE_SKELETON
 
 
-def test_missing_everything_returns_all_three_violations():
+def test_missing_everything_returns_all_five_violations():
     assert _rule_ids(BODY_WITHOUT_MIGRATION_PROCEDURE, MIGRATION_LABELS) == {
         "b1_migration.migration_procedure_missing",
         "b1_migration.state_survey_missing",
         "b1_migration.verification_test_missing",
+        "b1_migration.post_merge_missing",
+        "b1_migration.removed_trees_missing",
     }
 
 
@@ -172,3 +192,72 @@ def test_tools_scoped_tests_path_satisfies_contract():
 
 def test_registered_in_gate_registry():
     assert "b1_migration" in GATE_REGISTRY
+
+
+BODY_MISSING_POST_MERGE = """\
+## 影響範囲調査
+
+### 実行時状態の調査
+
+- **永続 state ファイル**: （該当なし）
+
+## マイグレーション手順
+
+```bash
+test -f tools/foo.py && echo "OK"
+```
+
+## 受け入れ条件
+
+```yaml
+paths_must_exist:
+  - tests/test_migration.py
+removed_trees:
+  - tools/issuesmith
+```
+"""
+
+BODY_MISSING_REMOVED_TREES = """\
+## 影響範囲調査
+
+### 実行時状態の調査
+
+- **永続 state ファイル**: （該当なし）
+
+## マイグレーション手順
+
+```bash
+test -f tools/foo.py && echo "OK"
+```
+
+## 受け入れ条件
+
+```yaml
+paths_must_exist:
+  - tests/test_migration.py
+post_merge:
+  - kind: stable_install
+    repo: sumipan/issuesmith
+    path: /var/tmp/issuesmith
+```
+"""
+
+
+def test_missing_post_merge_returns_violation():
+    violations = _check(BODY_MISSING_POST_MERGE, MIGRATION_LABELS)
+    by_id = {v.rule_id: v for v in violations}
+    assert "b1_migration.post_merge_missing" in by_id
+    v = by_id["b1_migration.post_merge_missing"]
+    assert v.severity == "fail"
+    assert v.auto_fixable is True
+    assert "post_merge" in v.fix_hint
+
+
+def test_missing_removed_trees_returns_violation():
+    violations = _check(BODY_MISSING_REMOVED_TREES, MIGRATION_LABELS)
+    by_id = {v.rule_id: v for v in violations}
+    assert "b1_migration.removed_trees_missing" in by_id
+    v = by_id["b1_migration.removed_trees_missing"]
+    assert v.severity == "fail"
+    assert v.auto_fixable is True
+    assert "removed_trees" in v.fix_hint

@@ -31,6 +31,23 @@ _STATE_SURVEY_SKELETON = """\
 - **途中停止時の復旧**: （書き込み途中でプロセスが停止した場合に不整合から自己復旧できるか。atomic write の有無）
 """
 
+_POST_MERGE_SKELETON = """\
+post_merge:
+  - kind: stable_install
+    repo: sumipan/<repo>
+    path: /var/tmp/<repo>
+  - kind: tag
+    repo: sumipan/<repo>
+    tag: v0.1.0
+  - kind: restart
+    processes: [release_watcher, mltgnt_daemon]
+"""
+
+_REMOVED_TREES_SKELETON = """\
+removed_trees:
+  - tools/<package>
+"""
+
 
 def has_migration_procedure_section(body: str) -> bool:
     return re.search(
@@ -70,6 +87,25 @@ def ac_contract_has_test_path(body: str) -> bool:
     return any(
         isinstance(p, str) and re.match(r"(tools/[^/]+/)?tests?/", p) for p in paths
     )
+
+
+def _ac_contract_yaml(body: str) -> dict | None:
+    section = get_ac_section(body)
+    if section is None:
+        return None
+    yaml_text = extract_yaml_block(section)
+    if yaml_text is None:
+        return None
+    try:
+        data = yaml.safe_load(yaml_text)
+    except yaml.YAMLError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def ac_contract_has_key(body: str, key: str) -> bool:
+    data = _ac_contract_yaml(body)
+    return isinstance(data, dict) and key in data
 
 
 class B1MigrationRules:
@@ -120,6 +156,32 @@ class B1MigrationRules:
                     "```yaml\npaths_must_exist:\n"
                     "  - tests/<領域>/test_<対象>_migration.py\n```"
                 ),
+            ))
+
+        if not ac_contract_has_key(body, "post_merge"):
+            violations.append(Violation(
+                rule_id="b1_migration.post_merge_missing",
+                severity="fail",
+                message=(
+                    "## 受け入れ条件 の ```yaml ブロックに post_merge が含まれていません"
+                    "（マージ後の stable install・tag 発行・プロセス再起動を列挙すること）"
+                ),
+                location=None,
+                auto_fixable=True,
+                fix_hint=_POST_MERGE_SKELETON,
+            ))
+
+        if not ac_contract_has_key(body, "removed_trees"):
+            violations.append(Violation(
+                rule_id="b1_migration.removed_trees_missing",
+                severity="fail",
+                message=(
+                    "## 受け入れ条件 の ```yaml ブロックに removed_trees が含まれていません"
+                    "（git 追跡下から削除すべきディレクトリプレフィックスを列挙すること）"
+                ),
+                location=None,
+                auto_fixable=True,
+                fix_hint=_REMOVED_TREES_SKELETON,
             ))
 
         return violations

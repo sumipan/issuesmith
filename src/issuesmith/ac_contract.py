@@ -109,8 +109,33 @@ def extract_contract_from_body(body: str) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def run_checks(contract: dict, repo_root: Path) -> list[dict]:
+def run_checks(contract: dict, repo_root: Path, *, base_ref: str = "HEAD") -> list[dict]:
     records: list[dict] = []
+
+    post_merge = contract.get("post_merge")
+    if post_merge is not None:
+        if not isinstance(post_merge, list):
+            records.append(
+                {
+                    "check": "post_merge_schema",
+                    "path": "post_merge",
+                    "result": "FAIL",
+                    "detail": "post_merge must be a list",
+                    "git_log": "",
+                }
+            )
+        else:
+            for i, item in enumerate(post_merge):
+                if not isinstance(item, dict) or not isinstance(item.get("kind"), str):
+                    records.append(
+                        {
+                            "check": "post_merge_schema",
+                            "path": f"post_merge[{i}]",
+                            "result": "FAIL",
+                            "detail": "each post_merge item must be a dict with kind: str",
+                            "git_log": "",
+                        }
+                    )
 
     for path in contract.get("paths_must_exist", []):
         target = repo_root / path
@@ -204,6 +229,29 @@ def run_checks(contract: dict, repo_root: Path) -> list[dict]:
                         "git_log": _git_log(repo_root, value),
                     }
                 )
+
+    for tree in contract.get("removed_trees", []):
+        result = subprocess.run(
+            ["git", "ls-tree", "-r", "--name-only", base_ref, tree],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        tracked = [line for line in (result.stdout or "").strip().splitlines() if line]
+        records.append(
+            {
+                "check": "removed_trees",
+                "path": tree,
+                "result": "PASS" if not tracked else "FAIL",
+                "detail": (
+                    ""
+                    if not tracked
+                    else f"{len(tracked)} files remain (e.g. {tracked[0]})"
+                ),
+                "git_log": "",
+            }
+        )
 
     return records
 
