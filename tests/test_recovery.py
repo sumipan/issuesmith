@@ -41,7 +41,7 @@ def _write_exec(tmp_path: Path, records: list[dict[str, Any]]) -> Path:
 def _frozen_order(tmp_path: Path, issue: int, step: str = "cp2-conditional") -> Path:
     jobs = tmp_path / "jobs"
     jobs.mkdir(parents=True, exist_ok=True)
-    order = jobs / f"20260905120000-shell-order-test.md"
+    order = jobs / "20260905120000-shell-order-test.md"
     order.write_text(
         f'exec python3 -m issuesmith dispatch {step} "issue_number={issue}" '
         f'"worktree_path=.claude/worktrees/issue-{issue}-abcd1234"\n',
