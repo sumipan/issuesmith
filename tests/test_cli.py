@@ -69,7 +69,7 @@ def test_pyproject_uses_src_layout() -> None:
     find = data["tool"]["setuptools"]["packages"]["find"]
     assert find["where"] == ["src"]
     assert data["project"]["name"] == "issuesmith"
-    assert data["project"]["version"] == "0.1.0"
+    assert data["project"]["version"] == "0.2.0"
 
 
 def test_gate_alias_matches_gate_preflight(tmp_path: Path) -> None:
