@@ -182,6 +182,7 @@ def test_merge_redispatch_blocked_without_open_pr(repo_layout: Path, monkeypatch
         issue=issue,
         failed_step="m2",
         labels={"issuesmith:merge-running"},
+        client=FakeClient(),
     )
 
     assert plan.action == "redispatch"
