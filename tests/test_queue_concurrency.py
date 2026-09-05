@@ -117,7 +117,6 @@ def _patch_paths(tmp_path: Path, monkeypatch, issuesmith_config):
     engine_state = tmp_path / ".pipeline-state" / "issuesmith-engine.yml"
     _write_engine_state(tmp_path)
 
-    paths = cfg.paths
     new_paths = cfgmod.PathsConfig(
         queue=tmp_path / "queue.jsonl",
         queue_state=tmp_path / "state.json",
