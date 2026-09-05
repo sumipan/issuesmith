@@ -12,7 +12,6 @@ from unittest.mock import MagicMock
 
 from issuesmith.m2_gate import check_gate, get_unchecked_count, has_acceptance_criteria_section
 
-
 BODY_NO_SECTION = """\
 ## 背景
 

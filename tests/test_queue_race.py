@@ -7,8 +7,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
 from issuesmith.queue_store import QueueStore
 
 _NOW = datetime.now(timezone.utc).isoformat()

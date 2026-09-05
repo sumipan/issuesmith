@@ -7,9 +7,7 @@ from zoneinfo import ZoneInfo
 
 from ghdag.core.exceptions import GitHubApiError
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
 from issuesmith.queue_store import QueueStore
-
 
 _NOW = datetime.now().astimezone().isoformat()
 _VALID_BODY = (

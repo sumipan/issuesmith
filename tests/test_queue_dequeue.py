@@ -7,7 +7,6 @@ from unittest.mock import MagicMock
 
 from ghdag.core.exceptions import GitHubApiError
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
 from issuesmith.queue_store import QueueStore
 
 _NOW = datetime.now(timezone.utc).isoformat()
