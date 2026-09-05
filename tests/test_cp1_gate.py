@@ -312,6 +312,12 @@ test -f tools/foo.py
 ```yaml
 paths_must_exist:
   - tests/test_foo_migration.py
+post_merge:
+  - kind: stable_install
+    repo: sumipan/issuesmith
+    path: /var/tmp/issuesmith
+removed_trees:
+  - tools/issuesmith
 ```
 
 - [ ] 移行テストが通ること

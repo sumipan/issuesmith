@@ -113,6 +113,24 @@ def _proceed_or_contract_retry(
             "has_migration_label": has_migration_label,
             "contract_failures": failures,
         }
+
+    if has_migration_label:
+        from issuesmith.ac_contract import extract_contract_from_body
+        from issuesmith.ops.preflight import check_post_merge
+
+        contract = extract_contract_from_body(body)
+        post_merge = contract.get("post_merge") if isinstance(contract, dict) else None
+        if isinstance(post_merge, list) and post_merge:
+            post_merge_results = check_post_merge(post_merge)
+            if any(not ok for ok, _ in post_merge_results):
+                return {
+                    "action": "migrate",
+                    "unchecked_count": 0,
+                    "has_section": has_section,
+                    "has_migration_label": has_migration_label,
+                    "contract_failures": [],
+                }
+
     return {
         "action": "proceed",
         "unchecked_count": 0,

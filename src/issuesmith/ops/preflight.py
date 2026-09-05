@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -138,6 +139,106 @@ def _check_agent_skill_manifests() -> tuple[bool, str]:
     if bad:
         return False, "agent skills manifest 不正（Codex design role が起動失敗する）: " + "; ".join(bad)
     return True, f"agent skills: {skills_dir} の全 SKILL.md manifest OK"
+
+
+def _repo_to_pkg_name(repo: str) -> str:
+    return repo.rsplit("/", 1)[-1]
+
+
+def _check_post_merge_stable_install(item: dict) -> tuple[bool, str]:
+    repo = item.get("repo", "")
+    path = item.get("path", "")
+    pkg = _repo_to_pkg_name(str(repo))
+    try:
+        result = subprocess.run(
+            ["pip", "show", pkg],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        return False, f"pip show {pkg} failed: {exc}"
+    if result.returncode != 0:
+        recovery = f'pip install -e "{path}/[dev]" --no-deps'
+        return False, f"stable_install: {pkg} not installed — {recovery}"
+    editable = ""
+    for line in (result.stdout or "").splitlines():
+        if line.startswith("Editable project location:"):
+            editable = line.split(":", 1)[1].strip()
+            break
+    if editable == str(path):
+        return True, f"stable_install: {pkg} editable at {path}"
+    recovery = f'pip install -e "{path}/[dev]" --no-deps'
+    return (
+        False,
+        f"stable_install: editable location {editable!r} != {path!r} — {recovery}",
+    )
+
+
+def _check_post_merge_tag(item: dict) -> tuple[bool, str]:
+    repo = str(item.get("repo", ""))
+    tag = str(item.get("tag", ""))
+    url = f"https://github.com/{repo}.git"
+    try:
+        result = subprocess.run(
+            ["git", "ls-remote", "--tags", url, tag],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        return False, f"git ls-remote failed: {exc}"
+    lines = [line for line in (result.stdout or "").strip().splitlines() if line]
+    if lines:
+        return True, f"tag: {tag} exists on {repo}"
+    path = item.get("path", f"/var/tmp/{_repo_to_pkg_name(repo)}")
+    recovery = f"cd {path} && git tag {tag} && git push origin {tag}"
+    return False, f"tag {tag} not found on {repo} — {recovery}"
+
+
+def _check_post_merge_restart(item: dict) -> tuple[bool, str]:
+    processes = item.get("processes", [])
+    if not isinstance(processes, list) or not processes:
+        return False, "restart: processes must be a non-empty list"
+    try:
+        result = subprocess.run(
+            ["overmind", "status"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        recovery = f"overmind restart {' '.join(str(p) for p in processes)}"
+        return False, f"overmind status failed: {exc} — {recovery}"
+    output = result.stdout or ""
+    missing = [p for p in processes if p not in output or "running" not in output]
+    if missing and result.returncode != 0:
+        recovery = f"overmind restart {' '.join(str(p) for p in processes)}"
+        return False, f"restart: processes not running: {', '.join(missing)} — {recovery}"
+    for proc in processes:
+        proc_str = str(proc)
+        if proc_str not in output:
+            recovery = f"overmind restart {' '.join(str(p) for p in processes)}"
+            return False, f"restart: {proc_str} not found in overmind status — {recovery}"
+    return True, f"restart: {', '.join(str(p) for p in processes)} running"
+
+
+def check_post_merge(items: list[dict]) -> list[tuple[bool, str]]:
+    """post_merge 契約項目の実行時検証。各項目の (ok, message) を返す。"""
+    handlers = {
+        "stable_install": _check_post_merge_stable_install,
+        "tag": _check_post_merge_tag,
+        "restart": _check_post_merge_restart,
+    }
+    results: list[tuple[bool, str]] = []
+    for item in items:
+        kind = item.get("kind")
+        handler = handlers.get(kind)
+        if handler is None:
+            results.append((False, f"unknown post_merge kind: {kind}"))
+            continue
+        results.append(handler(item))
+    return results
 
 
 def main() -> int:
