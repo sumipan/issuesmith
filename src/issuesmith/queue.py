@@ -343,6 +343,74 @@ def _list_open_issues(client: GitHubClient) -> list[dict[str, Any]]:
     return out
 
 
+_BRUSHUP_STEPS = frozenset({"b1", "cp1_gate", "cp1"})
+_IMPL_STEPS = frozenset({"p0", "p1", "p2", "p2r", "p3", "cp2", "m1", "m1r", "m2"})
+
+
+def handler_for_failed_step(failed_step: str, labels: set[str]) -> str:
+    if failed_step in _BRUSHUP_STEPS:
+        return "brushup"
+    if failed_step in {"m1", "m1r", "m2"} and (
+        RUNNING_LABEL["merge"] in labels or READY_LABEL["merge"] in labels
+    ):
+        return "merge"
+    return "impl"
+
+
+def infer_redispatch_phase(failed_step: str, labels: set[str]) -> str:
+    if failed_step in _BRUSHUP_STEPS or DONE_LABEL["draft"] not in labels and (
+        READY_LABEL["draft"] in labels or RUNNING_LABEL["draft"] in labels
+    ):
+        return "draft"
+    if RUNNING_LABEL["merge"] in labels or READY_LABEL["merge"] in labels:
+        return "merge"
+    if failed_step in _IMPL_STEPS:
+        return "develop"
+    return "develop"
+
+
+def redispatch_label_plan(phase: str) -> tuple[frozenset[str], frozenset[str]]:
+    """Return (labels that must be present, labels to remove) for redispatch."""
+    if phase == "draft":
+        return frozenset(), frozenset(
+            {READY_LABEL["draft"], RUNNING_LABEL["draft"], DONE_LABEL["draft"]}
+        )
+    if phase == "develop":
+        return frozenset({DONE_LABEL["draft"]}), frozenset(
+            {
+                READY_LABEL["develop"],
+                RUNNING_LABEL["develop"],
+                DONE_LABEL["develop"],
+            }
+        )
+    if phase == "merge":
+        return frozenset(), frozenset(
+            {READY_LABEL["merge"], RUNNING_LABEL["merge"], DONE_LABEL["merge"]}
+        )
+    raise ValueError(f"unknown phase {phase}")
+
+
+def apply_redispatch_labels(
+    client: GitHubClient,
+    issue_number: int,
+    phase: str,
+    current_labels: set[str],
+) -> bool:
+    required, to_remove = redispatch_label_plan(phase)
+    labels_add = sorted(lab for lab in required if lab not in current_labels)
+    labels_remove = sorted(lab for lab in to_remove if lab in current_labels)
+    if not labels_add and not labels_remove:
+        return False
+    client.issue_update(issue_number, labels_add=labels_add, labels_remove=labels_remove)
+    return True
+
+
+def phase_preconditions(
+    phase: str, issue: dict[str, Any], client: GitHubClient, issue_number: int
+) -> tuple[bool, str]:
+    return _phase_preconditions(phase, issue, client, issue_number)
+
+
 def _phase_preconditions(phase: str, issue: dict[str, Any], client: GitHubClient, issue_number: int) -> tuple[bool, str]:
     state = str(issue.get("state", "")).upper()
     if state != "OPEN":
