@@ -1,10 +1,14 @@
 """tests/test_context_hook.py — context_hook.py のユニットテスト"""
+from __future__ import annotations
+
 import json
 import logging
+import textwrap
+from unittest.mock import patch
 
 import pytest
 
-from issuesmith.context_hook import build_context, validate_issue_metadata
+from issuesmith.context_hook import build_context, main, validate_issue_metadata
 
 
 def _body(target_repo: str = "", base_branch: str = "main", allow_paths: str = "") -> str:
@@ -358,3 +362,446 @@ def test_targets_json_backward_compat_flat_keys():
     assert ctx["is_cross_repo"] == "true"
     assert ctx["has_diary_changes"] == "true"
     assert ctx["diary_allow_paths"] == "- workflows/issuesmith/**"
+
+
+# ===========================================================================
+# nexus tests/tools/issuesmith/test_issuesmith_context_hook.py から移設
+# ===========================================================================
+
+
+def test_build_context_defaults():
+    """YAML ブロックがない body の場合、デフォルト値が返る。"""
+    import os
+
+    ctx = build_context(42, body="# Title\n\nNo yaml here")
+
+    assert ctx["pipeline_id"].startswith("issue-42-")
+    assert len(ctx["pipeline_id"]) == len("issue-42-") + 8
+    assert os.path.isabs(ctx["worktree_path"])
+    assert ctx["worktree_path"].endswith(f"/.claude/worktrees/{ctx['pipeline_id']}")
+    assert ctx["branch"] == f"feat/{ctx['pipeline_id']}"
+    assert ctx["base_branch"] == "main"
+    assert ctx["allow_paths"] == "（制限なし）"
+
+
+def test_worktree_path_is_absolute():
+    """worktree_path が絶対パスであること（CWD 非依存）。"""
+    import os
+
+    ctx = build_context(42, body="# Title")
+    assert os.path.isabs(ctx["worktree_path"])
+    assert ctx["worktree_path"].endswith(f"/.claude/worktrees/{ctx['pipeline_id']}")
+
+
+def test_worktree_path_no_tools_issuesmith():
+    """worktree_path に tools/issuesmith が含まれないこと。"""
+    ctx = build_context(42, body="# Title")
+    assert "tools/issuesmith" not in ctx["worktree_path"]
+
+
+def test_diary_worktree_path_is_absolute():
+    """diary_worktree_path が絶対パスであること（dual mode 時）。"""
+    import os
+
+    body = textwrap.dedent("""\
+        ```yaml
+        target_repo: sumipan/ghdag
+        diary_allow_paths:
+          - notes/**
+        ```
+    """)
+    ctx = build_context(42, body=body)
+    assert ctx["has_diary_changes"] == "true"
+    assert os.path.isabs(ctx["diary_worktree_path"])
+    assert ctx["diary_worktree_path"].endswith(f"/.claude/worktrees/{ctx['pipeline_id']}-diary")
+
+
+def test_build_context_with_metadata():
+    """body に YAML メタデータがある場合、値が反映される。"""
+    body = textwrap.dedent("""\
+        ```yaml
+        base_branch: develop
+        allow_paths:
+          - src/**
+          - tests/**
+        ```
+
+        ## §1 目的
+        テスト用設計書
+    """)
+
+    ctx = build_context(88, body=body)
+
+    assert ctx["base_branch"] == "develop"
+    assert "- src/**" in ctx["allow_paths"]
+    assert "- tests/**" in ctx["allow_paths"]
+    assert ctx["pipeline_id"].startswith("issue-88-")
+
+
+def test_build_context_allow_paths_string():
+    """allow_paths が文字列の場合でもリストとして扱われる。"""
+    body = textwrap.dedent("""\
+        ```yaml
+        allow_paths: src/main.py
+        ```
+    """)
+
+    ctx = build_context(10, body=body)
+    assert ctx["allow_paths"] == "- src/main.py"
+
+
+def test_build_context_empty_allow_paths():
+    """allow_paths が空リストの場合、制限なしになる。"""
+    body = textwrap.dedent("""\
+        ```yaml
+        allow_paths: []
+        base_branch: main
+        ```
+    """)
+
+    ctx = build_context(20, body=body)
+    assert ctx["allow_paths"] == "（制限なし）"
+
+
+def test_build_context_invalid_yaml():
+    """YAML がパースできない場合、デフォルト値にフォールバックする。"""
+    body = textwrap.dedent("""\
+        ```yaml
+        : invalid: yaml: [
+        ```
+    """)
+
+    ctx = build_context(99, body=body)
+    assert ctx["base_branch"] == "main"
+    assert ctx["allow_paths"] == "（制限なし）"
+
+
+def test_build_context_no_yaml_block():
+    """YAML ブロックがない body の場合、デフォルト値にフォールバックする。"""
+    ctx = build_context(55, body="## §1 目的\nテスト")
+    assert ctx["base_branch"] == "main"
+    assert ctx["allow_paths"] == "（制限なし）"
+
+
+def test_build_context_unique_pipeline_ids():
+    """コメントに pipeline-branch が無いとき、同じ issue_number でも毎回異なる pipeline_id が生成される。"""
+    with patch("issuesmith.context_hook._fetch_issue_comments_from_api", return_value=[]):
+        ctx1 = build_context(42, body="# Title")
+        ctx2 = build_context(42, body="# Title")
+    assert ctx1["pipeline_id"] != ctx2["pipeline_id"]
+
+
+def test_main_no_args(capsys):
+    """引数なしの場合、usage を stderr に出力して exit 1。"""
+    import sys
+
+    with pytest.raises(SystemExit, match="1"):
+        original = sys.argv
+        sys.argv = ["context_hook"]
+        try:
+            main()
+        finally:
+            sys.argv = original
+
+
+def test_main_invalid_arg(capsys):
+    """整数でない引数の場合、エラーメッセージを stderr に出力して exit 1。"""
+    import sys
+
+    with pytest.raises(SystemExit, match="1"):
+        original = sys.argv
+        sys.argv = ["context_hook", "not-a-number"]
+        try:
+            main()
+        finally:
+            sys.argv = original
+
+
+def test_build_context_all_values_are_strings():
+    """全ての出力値が文字列であること（ghdag プロトコル準拠）。"""
+    body = textwrap.dedent("""\
+        ```yaml
+        base_branch: main
+        allow_paths:
+          - src/**
+        ```
+    """)
+
+    ctx = build_context(1, body=body)
+    for key, value in ctx.items():
+        assert isinstance(value, str), f"{key} is {type(value)}, expected str"
+
+
+def test_build_context_output_keys():
+    """期待するキーがすべて含まれていること（stash_file_rel/diary_branch は廃止）。"""
+    ctx = build_context(42, body="# Title")
+    expected_keys = {
+        "pipeline_id",
+        "worktree_path",
+        "branch",
+        "base_branch",
+        "allow_paths",
+        "source",
+        "issue_repo",
+        "target_repo",
+        "repo_name",
+        "target_clone_path",
+        "target_worktree_path",
+        "is_cross_repo",
+        "has_diary_changes",
+        "diary_worktree_path",
+        "diary_allow_paths",
+        "targets_json",
+    }
+    assert set(ctx.keys()) == expected_keys
+
+
+def test_stash_file_rel_not_in_output():
+    """stash_file_rel キーが出力辞書に存在しない（廃止済み）。"""
+    ctx = build_context(42, body="# Title")
+    assert "stash_file_rel" not in ctx
+
+
+def test_diary_keys_not_in_output():
+    """diary_branch は廃止済みで出力辞書に存在しない。
+    target_repo あり + diary_allow_paths 未設定時は has_diary_changes == 'false' かつ diary_worktree_path は空文字。
+    """
+    body = textwrap.dedent("""\
+        ```yaml
+        target_repo: sumipan/ghdag
+        ```
+    """)
+    ctx = build_context(42, body=body)
+    assert "diary_branch" not in ctx
+    assert ctx.get("has_diary_changes") == "false"
+    assert ctx.get("diary_worktree_path") == ""
+
+
+def test_no_local_file_created(tmp_path, monkeypatch):
+    """build_context() は jobs/issue-N-design.md を作成しない。"""
+    monkeypatch.setattr("issuesmith.context_hook._REPO_ROOT", str(tmp_path))
+    jobs_path = tmp_path / "jobs"
+    jobs_path.mkdir()
+
+    with patch("issuesmith.context_hook._fetch_issue_body_from_gh", return_value="# Title"):
+        build_context(42)
+
+    assert not (jobs_path / "issue-42-design.md").exists()
+
+
+def test_cross_repo_defaults_when_no_target_repo():
+    """target_repo 未指定時: is_cross_repo=false, パスは空文字列。"""
+    ctx = build_context(42, body="# Title")
+    assert ctx["target_repo"] == ""
+    assert ctx["repo_name"] == ""
+    assert ctx["target_clone_path"] == ""
+    assert ctx["target_worktree_path"] == ""
+    assert ctx["is_cross_repo"] == "false"
+
+
+def test_cross_repo_with_target_repo():
+    """target_repo 指定時: パス変数が正しく生成される。"""
+    body = textwrap.dedent("""\
+        ```yaml
+        target_repo: sumipan/ghdag
+        base_branch: main
+        ```
+    """)
+
+    ctx = build_context(42, body=body)
+    assert ctx["target_repo"] == "sumipan/ghdag"
+    assert ctx["repo_name"] == "ghdag"
+    assert ctx["target_clone_path"] == ".claude/external/ghdag"
+    assert ctx["target_worktree_path"].startswith(".claude/external/ghdag/worktrees/issue-42-")
+    assert ctx["is_cross_repo"] == "true"
+    assert ctx["worktree_path"] == ctx["target_worktree_path"]
+
+
+def test_cross_repo_coexists_with_existing_fields():
+    """target_repo + base_branch 同時指定: 既存フィールドがすべて正しい。"""
+    body = textwrap.dedent("""\
+        ```yaml
+        target_repo: sumipan/ghdag
+        base_branch: develop
+        allow_paths:
+          - src/**
+          - tests/**
+        ```
+    """)
+
+    ctx = build_context(99, body=body)
+    assert ctx["base_branch"] == "develop"
+    assert "- src/**" in ctx["allow_paths"]
+    assert "- tests/**" in ctx["allow_paths"]
+    assert ctx["pipeline_id"].startswith("issue-99-")
+    assert ctx["target_repo"] == "sumipan/ghdag"
+    assert ctx["target_clone_path"] == ".claude/external/ghdag"
+    assert ctx["is_cross_repo"] == "true"
+
+
+def test_cross_repo_all_values_are_strings():
+    """target_repo 指定時も全 value が str 型。"""
+    body = textwrap.dedent("""\
+        ```yaml
+        target_repo: sumipan/ghdag
+        ```
+    """)
+
+    ctx = build_context(42, body=body)
+    for key, value in ctx.items():
+        assert isinstance(value, str), f"{key} is {type(value)}, expected str"
+
+
+def test_cross_repo_empty_target_repo():
+    """target_repo が空文字列: is_cross_repo=false。"""
+    body = textwrap.dedent("""\
+        ```yaml
+        target_repo: ""
+        ```
+    """)
+
+    ctx = build_context(42, body=body)
+    assert ctx["is_cross_repo"] == "false"
+    assert ctx["target_clone_path"] == ""
+    assert ctx["target_worktree_path"] == ""
+
+
+def test_cross_repo_invalid_yaml():
+    """YAML パースエラー: is_cross_repo=false、既存デフォルト値にフォールバック。"""
+    body = textwrap.dedent("""\
+        ```yaml
+        : invalid: yaml: [
+        ```
+    """)
+
+    ctx = build_context(42, body=body)
+    assert ctx["is_cross_repo"] == "false"
+    assert ctx["base_branch"] == "main"
+
+
+def test_yaml_metadata_extraction_t1():
+    """T1: base_branch/allow_paths/target_repo を正しく抽出する。"""
+    body = textwrap.dedent("""\
+        ```yaml
+        base_branch: develop
+        allow_paths:
+          - src/**
+        target_repo: sumipan/ghdag
+        ```
+        # Title
+    """)
+    ctx = build_context(42, body=body)
+    assert ctx["base_branch"] == "develop"
+    assert ctx["allow_paths"] == "- src/**"
+    assert ctx["target_repo"] == "sumipan/ghdag"
+    assert ctx["is_cross_repo"] == "true"
+
+
+def test_yaml_none_issue_t2():
+    """T2: YAML なし Issue では metadata={}, base_branch=main, allow_paths=制限なし, is_cross_repo=false。"""
+    body = "# Design\n\n本文のみ"
+    ctx = build_context(42, body=body)
+    assert ctx["base_branch"] == "main"
+    assert ctx["allow_paths"] == "（制限なし）"
+    assert ctx["is_cross_repo"] == "false"
+
+
+def test_gh_fetch_failure_exits_immediately():
+    """T6: _fetch_issue_body_from_gh() が None を返す → SystemExit で非ゼロ終了。ローカルファイルフォールバックなし。"""
+    with patch("issuesmith.context_hook._fetch_issue_body_from_gh", return_value=None):
+        with pytest.raises(SystemExit) as exc_info:
+            build_context(42)
+        assert exc_info.value.code != 0
+
+
+def test_main_exits_on_api_failure():
+    """main() で API が失敗した場合、非ゼロで終了する。"""
+    import sys
+
+    with patch("issuesmith.context_hook._fetch_issue_body_from_gh", return_value=None):
+        original = sys.argv
+        sys.argv = ["context_hook", "42"]
+        try:
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+            assert exc_info.value.code != 0
+        finally:
+            sys.argv = original
+
+
+def _comments(*bodies: str) -> list[dict]:
+    return [{"body": b, "author": {"login": "bot"}, "createdAt": ""} for b in bodies]
+
+
+def test_pipeline_id_restored_from_comment():
+    comments = _comments("<!-- pipeline-branch: feat/issue-42-deadbeef -->")
+    with patch("issuesmith.context_hook._fetch_issue_comments_from_api", return_value=comments):
+        ctx = build_context(42, body="# Title")
+    assert ctx["pipeline_id"] == "issue-42-deadbeef"
+    assert ctx["branch"] == "feat/issue-42-deadbeef"
+
+
+def test_pipeline_id_last_comment_wins():
+    comments = _comments(
+        "<!-- pipeline-branch: feat/issue-42-aaaaaaaa -->",
+        "other",
+        "<!-- pipeline-branch: feat/issue-42-bbbbbbbb -->",
+    )
+    with patch("issuesmith.context_hook._fetch_issue_comments_from_api", return_value=comments):
+        ctx = build_context(42, body="# Title")
+    assert ctx["pipeline_id"] == "issue-42-bbbbbbbb"
+
+
+def test_pipeline_id_new_when_no_comments():
+    with patch("issuesmith.context_hook._fetch_issue_comments_from_api", return_value=[]):
+        ctx = build_context(42, body="# Title")
+    assert ctx["pipeline_id"].startswith("issue-42-")
+    assert len(ctx["pipeline_id"]) == len("issue-42-") + 8
+
+
+def test_issue_repo_defaults_to_nexus():
+    with patch("issuesmith.context_hook._fetch_issue_comments_from_api", return_value=[]):
+        ctx = build_context(42, body="# Title")
+    assert ctx["issue_repo"] == "sumipan/nexus"
+
+
+def test_issue_repo_from_yaml():
+    body = textwrap.dedent("""\
+        ```yaml
+        issue_repo: sumipan/foo
+        ```
+    """)
+    with patch("issuesmith.context_hook._fetch_issue_comments_from_api", return_value=[]):
+        ctx = build_context(42, body=body)
+    assert ctx["issue_repo"] == "sumipan/foo"
+
+
+def test_self_target_repo_is_not_cross_repo():
+    """target_repo が issue_repo 自身なら external 経路に乗せない（#2567）"""
+    body = """```yaml
+target_repo: sumipan/nexus
+base_branch: main
+```
+
+# Title
+"""
+    ctx = build_context(60, body=body)
+    assert ctx["is_cross_repo"] == "false"
+    assert ctx["target_repo"] == ""
+    assert ctx["target_clone_path"] == ""
+    assert ctx["target_worktree_path"] == ""
+    assert ctx["worktree_path"].endswith(f"/.claude/worktrees/{ctx['pipeline_id']}")
+
+
+def test_external_target_repo_still_cross_repo():
+    body = """```yaml
+target_repo: sumipan/ghdag
+base_branch: main
+```
+
+# Title
+"""
+    ctx = build_context(61, body=body)
+    assert ctx["is_cross_repo"] == "true"
+    assert ctx["target_repo"] == "sumipan/ghdag"
+    assert ctx["target_clone_path"] == ".claude/external/ghdag"
