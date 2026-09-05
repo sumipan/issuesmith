@@ -82,6 +82,7 @@ class QueueSnapshot:
     halt: bool
     halt_reason: str | None
     requests: dict[str, QueueRequest]
+    in_flight: list[dict[str, Any]] = field(default_factory=list)
     request_meta: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @property
@@ -182,7 +183,16 @@ def default_state() -> dict[str, Any]:
         "halt_reason": None,
         "request_meta": {},
         "seeded_keys": [],
+        "in_flight": [],
     }
+
+
+def in_flight_by_engine(in_flight: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for entry in in_flight:
+        eng = str(entry.get("engine", ""))
+        counts[eng] = counts.get(eng, 0) + 1
+    return counts
 
 
 def higher_priority(a: str, b: str) -> str:
@@ -254,6 +264,7 @@ class QueueStore:
         state.setdefault("halt_reason", None)
         state.setdefault("request_meta", {})
         state.setdefault("seeded_keys", [])
+        state.setdefault("in_flight", [])
         return state
 
     def _save_state_unlocked(self, state: dict[str, Any]) -> None:
@@ -321,6 +332,7 @@ class QueueStore:
             halt=bool(state.get("halt", False)),
             halt_reason=state.get("halt_reason"),
             requests=requests,
+            in_flight=list(state.get("in_flight") or []),
             request_meta=dict(state.get("request_meta") or {}),
         )
 
@@ -505,6 +517,34 @@ class QueueStore:
         with self.lock():
             state = self._load_state_unlocked()
             state["last_issue"] = issue
+            self._save_state_unlocked(state)
+
+    def add_in_flight(self, issue: int, engine: str) -> None:
+        with self.lock():
+            state = self._load_state_unlocked()
+            in_flight = [
+                entry
+                for entry in (state.get("in_flight") or [])
+                if entry.get("issue") != issue
+            ]
+            in_flight.append(
+                {
+                    "issue": issue,
+                    "engine": engine,
+                    "dispatched_at": datetime.now().astimezone().isoformat(),
+                }
+            )
+            state["in_flight"] = in_flight
+            self._save_state_unlocked(state)
+
+    def remove_in_flight(self, issue: int) -> None:
+        with self.lock():
+            state = self._load_state_unlocked()
+            state["in_flight"] = [
+                entry
+                for entry in (state.get("in_flight") or [])
+                if entry.get("issue") != issue
+            ]
             self._save_state_unlocked(state)
 
     def mark_triaged(self, revision: int) -> None:

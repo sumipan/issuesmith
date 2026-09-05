@@ -108,6 +108,15 @@ class RoleConfig:
 
 
 @dataclass(frozen=True)
+class ConcurrencyConfig:
+    default: int
+    per_engine: Mapping[str, int]
+
+    def limit(self, engine: str) -> int:
+        return self.per_engine.get(engine, self.default)
+
+
+@dataclass(frozen=True)
 class IssuesmithConfig:
     repo: str
     label_namespace: str
@@ -116,6 +125,7 @@ class IssuesmithConfig:
     root: Path
     paths: PathsConfig
     engines: Mapping[str, RoleConfig]
+    concurrency: ConcurrencyConfig
 
 
 _cached: IssuesmithConfig | None = None
@@ -235,6 +245,15 @@ def _build_engines(raw: Mapping[str, Any] | None) -> dict[str, RoleConfig]:
     return {role: _build_role(conf) for role, conf in base.items()}
 
 
+def _build_concurrency(raw: Mapping[str, Any] | None) -> ConcurrencyConfig:
+    if not raw:
+        return ConcurrencyConfig(default=1, per_engine={})
+    default = int(raw.get("default") or 1)
+    per_raw = raw.get("per_engine") or {}
+    per_engine = {str(k): int(v) for k, v in dict(per_raw).items()}
+    return ConcurrencyConfig(default=default, per_engine=per_engine)
+
+
 def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     repo = str(data.get("repo") or "sumipan/nexus")
     label_namespace = str(data.get("label_namespace") or "issuesmith")
@@ -246,6 +265,7 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         supported = frozenset(str(x) for x in supported_raw)
     paths_raw = data.get("paths") if isinstance(data.get("paths"), dict) else None
     engines_raw = data.get("engines") if isinstance(data.get("engines"), dict) else None
+    concurrency_raw = data.get("concurrency") if isinstance(data.get("concurrency"), dict) else None
     return IssuesmithConfig(
         repo=repo,
         label_namespace=label_namespace,
@@ -254,4 +274,5 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         root=root.resolve(),
         paths=_build_paths(paths_raw, root.resolve()),
         engines=_build_engines(engines_raw),
+        concurrency=_build_concurrency(concurrency_raw),
     )
