@@ -273,6 +273,7 @@ def main() -> None:
 
     if args.repo_roots:
         from ghdag.github_client import DEFAULT_REPO
+
         from issuesmith.context_hook import parse_issue_metadata
 
         repo_roots = _parse_repo_roots(args.repo_roots)

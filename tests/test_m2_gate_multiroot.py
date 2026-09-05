@@ -1,13 +1,12 @@
 """tests/test_m2_gate_multiroot.py — M2 multi-root 契約合成テスト（#2866）"""
 
-import json
 from pathlib import Path
 
+from issuesmith.ac_contract import run_checks
 from issuesmith.m2_gate import (
     check_gate_multi_root,
     synthesize_contract_failures,
 )
-from issuesmith.ac_contract import run_checks
 
 BODY_ALL_CHECKED = """\
 ## 受け入れ条件
