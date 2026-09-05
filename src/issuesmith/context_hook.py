@@ -30,6 +30,7 @@ from dataclasses import dataclass
 import yaml
 
 from issuesmith.config import get_config
+from issuesmith.targets import targets_from_issue
 
 _PIPELINE_BRANCH_RE = re.compile(
     r"<!--\s*pipeline-branch:\s*feat/issue-(\d+)-([a-f0-9]+)\s*-->",
@@ -304,6 +305,20 @@ def build_context(
                     file=sys.stderr,
                 )
 
+    targets = targets_from_issue(metadata, issue_repo=issue_repo, body=body)
+    targets_json = json.dumps(
+        [
+            {
+                "repo": t.repo,
+                "base": t.base,
+                "allow_paths": list(t.allow_paths),
+                "primary": t.primary,
+            }
+            for t in targets
+        ],
+        ensure_ascii=False,
+    )
+
     return {
         "pipeline_id": pipeline_id,
         "worktree_path": worktree_path,
@@ -320,6 +335,7 @@ def build_context(
         "has_diary_changes": has_diary_changes,
         "diary_worktree_path": diary_worktree_path,
         "diary_allow_paths": diary_allow_paths,
+        "targets_json": targets_json,
     }
 
 
