@@ -24,7 +24,7 @@ import tempfile
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -89,6 +89,8 @@ TIMEOUT_ENV_VAR = "ISSUESMITH_TIMEOUT_SEC"
 
 # ghdag classify_common_failure が RATE_LIMIT を持つまでの nexus 側ワークアラウンド（#2798）。
 _RATE_LIMIT_PATTERNS = ("resource_exhausted", "rate limit", "ratelimit", "429")
+
+_RETRY_WAIT_MAX_SECONDS: int = 1800
 
 
 def _is_rate_limited(text: str) -> bool:
@@ -490,7 +492,40 @@ def _execute(
                 fallback_candidates = []
                 break
         else:
-            raise RuntimeError(f"All engines paused for role {role}")
+            all_engines = [selection.engine] + [e for e, _ in fallback_candidates]
+            resume_ats: list[datetime] = []
+            for eng in all_engines:
+                eng_state = snapshot.engines.get(eng)
+                if eng_state and eng_state.status == "paused":
+                    if eng_state.resume_at is None:
+                        resume_ats = []
+                        break
+                    resume_ats.append(eng_state.resume_at)
+            min_resume = min(resume_ats) if resume_ats else None
+            if min_resume is None:
+                raise RuntimeError(f"All engines paused for role {role}")
+            now = datetime.now(timezone.utc)
+            if min_resume > now + timedelta(seconds=_RETRY_WAIT_MAX_SECONDS):
+                raise RuntimeError(f"All engines paused for role {role}")
+            wait_sec = (min_resume - now).total_seconds()
+            if wait_sec > 0:
+                time.sleep(wait_sec)
+            snapshot = quota_gate.snapshot()
+            initial_state = snapshot.engines.get(selection.engine)
+            if initial_state and initial_state.status == "paused" and fallback_candidates:
+                for alt_engine, alt_model in fallback_candidates:
+                    alt_state = snapshot.engines.get(alt_engine)
+                    if not alt_state or alt_state.status != "paused":
+                        print(
+                            f"[issuesmith-engine] {selection.engine} is paused, "
+                            f"switching to {alt_engine}",
+                            file=sys.stderr,
+                        )
+                        selection = RoleSelection(engine=alt_engine, model=alt_model)
+                        fallback_candidates = []
+                        break
+                else:
+                    raise RuntimeError(f"All engines paused for role {role}")
 
     print(
         f"[issuesmith-engine] start role={role} engine={selection.engine} "
