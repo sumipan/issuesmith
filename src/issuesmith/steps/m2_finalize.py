@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -56,17 +57,33 @@ def _git(cmd: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
 def _materialize_gate_root(repo_cwd: Path, base_branch: str, issue_number: int, prefix: str) -> Path:
     gate_root = Path(tempfile.mkdtemp(prefix=f"m2-gate-{issue_number}-{prefix}"))
     fetch = _git(["git", "fetch", "-q", "origin", base_branch], cwd=repo_cwd)
-    add = _git(
-        ["git", "worktree", "add", "--detach", "-q", str(gate_root), f"origin/{base_branch}"],
-        cwd=repo_cwd,
-    )
-    if fetch.returncode != 0 or add.returncode != 0:
+    if fetch.returncode != 0:
         shutil.rmtree(gate_root, ignore_errors=True)
-        repo = str(repo_cwd)
         raise GateMaterializationError(
-            f"could not materialize origin/{base_branch} for contract check (repo={repo})"
+            f"fetch failed (repo={repo_cwd}): "
+            f"fetch_rc={fetch.returncode} fetch_stderr={fetch.stderr!r}"
         )
-    return gate_root
+
+    max_retry = 3
+    backoff = [5, 10, 15]
+    add = None
+    for attempt in range(max_retry):
+        subprocess.run(["git", "worktree", "prune"], cwd=str(repo_cwd), capture_output=True)
+        add = _git(
+            ["git", "worktree", "add", "--detach", "-q", str(gate_root), f"origin/{base_branch}"],
+            cwd=repo_cwd,
+        )
+        if add.returncode == 0:
+            return gate_root
+        shutil.rmtree(gate_root, ignore_errors=True)
+        if attempt < max_retry - 1:
+            time.sleep(backoff[attempt])
+
+    raise GateMaterializationError(
+        f"could not materialize origin/{base_branch} (repo={repo_cwd}) "
+        f"after {max_retry} attempts: "
+        f"add_rc={add.returncode} add_stderr={add.stderr!r}"
+    )
 
 
 def _cleanup_gate_root(repo_cwd: Path, gate_root: Path) -> None:
