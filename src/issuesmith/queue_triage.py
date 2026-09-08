@@ -37,19 +37,25 @@ LLMDecision = Literal["keep", "reject"]
 
 READY_LABEL = {
     "draft": "issuesmith:draft-ready",
+    "sub": "issuesmith:sub-ready",
     "develop": "issuesmith:develop-ready",
     "merge": "issuesmith:merge-ready",
 }
 RUNNING_LABEL = {
     "draft": "issuesmith:draft-running",
+    "sub": "issuesmith:sub-running",
     "develop": "issuesmith:develop-running",
     "merge": "issuesmith:merge-running",
 }
 DONE_LABEL = {
     "draft": "issuesmith:draft-done",
+    "sub": "issuesmith:sub-done",
     "develop": "issuesmith:develop-done",
     "merge": "issuesmith:merge-done",
 }
+
+_MILESTONE_LABEL = "scope:milestone"
+_SUB_LABEL_PREFIX = "issuesmith:sub-"
 
 # Closed without merge-done but still a valid pipeline terminal (#2825).
 TERMINAL_WITHOUT_MERGE = {
@@ -225,6 +231,15 @@ def deterministic_decision(
             reason=f"{done} already present",
             comment=True,
         )
+
+    if phase == "sub" and _MILESTONE_LABEL not in labels:
+        return Decision(
+            kind="rejected",
+            reason="sub phase requires scope:milestone label",
+            comment=True,
+            add_rejected_label=True,
+        )
+
     # force=True: done ラベルが付いていても再ディスパッチを許可する。
     # CP2 FAIL 等でフェーズが *-done に差し戻された Issue を、案内された
     # `enqueue --force` で再投入する経路（2026-09-04 に発覚した回帰）。
@@ -599,6 +614,8 @@ def load_seed_entries(path: Path | None = None) -> list[dict[str, Any]]:
         phase = "draft"
         if label.endswith("develop-ready"):
             phase = "develop"
+        elif label.endswith("sub-ready"):
+            phase = "sub"
         elif label.endswith("merge-ready"):
             phase = "merge"
         entries.append(

@@ -19,6 +19,8 @@ from ghdag.github_client import GitHubClient
 from ghdag.quota import QuotaGate
 
 from issuesmith.config import get_config
+from issuesmith.dep_extractor import check_dependencies, extract_dependencies
+from issuesmith.milestone import advance_milestone_chains, milestone_last_issue_terminal_ok
 from issuesmith.queue_store import (
     DEFAULT_NIGHT_STATE_PATH,
     DEFAULT_SEED_PATH,
@@ -48,6 +50,7 @@ REPO = _cfg.repo
 
 PHASE_ROLE: dict[str, str] = {
     "draft": "design",
+    "sub": "implementation",
     "develop": "implementation",
     "merge": "implementation",
 }
@@ -510,6 +513,18 @@ def _phase_preconditions(phase: str, issue: dict[str, Any], client: GitHubClient
         for lab in (READY_LABEL["develop"], RUNNING_LABEL["develop"], DONE_LABEL["develop"]):
             if lab in labels:
                 return False, f"{lab} present"
+        deps = extract_dependencies(str(issue.get("body") or ""))
+        if deps:
+            result = check_dependencies(deps, client=client)
+            if result.decision == "BLOCK":
+                return False, "dependencies not satisfied"
+        return True, "ok"
+    if phase == "sub":
+        if DONE_LABEL["draft"] not in labels:
+            return False, "draft-done required"
+        for lab in (READY_LABEL["sub"], RUNNING_LABEL["sub"], DONE_LABEL["sub"]):
+            if lab in labels:
+                return False, f"{lab} present"
         return True, "ok"
     if phase == "merge":
         for lab in (READY_LABEL["merge"], RUNNING_LABEL["merge"], DONE_LABEL["merge"]):
@@ -616,6 +631,8 @@ def dispatch_one(
 
     if not skip_seed:
         ensure_seeds_enqueued(store, seed_path=seed_path, now=now)
+
+    advance_milestone_chains(store, client, get_config())
 
     # Fetch issues for active requests.
     snap = store.snapshot()
@@ -764,6 +781,8 @@ def dispatch_one(
                 "issuesmith:merge-done" in last_labels
                 or bool(last_labels & TERMINAL_WITHOUT_MERGE)
             )
+            if not terminal_ok and milestone_last_issue_terminal_ok(last_labels):
+                terminal_ok = True
             if not terminal_ok:
                 if (
                     last_state == "OPEN"
@@ -927,6 +946,8 @@ def _cmd_status(args: argparse.Namespace) -> int:
                 "issuesmith:merge-done" in last_labels
                 or bool(last_labels & TERMINAL_WITHOUT_MERGE)
             )
+            if not terminal_ok and milestone_last_issue_terminal_ok(last_labels):
+                terminal_ok = True
             if last_state == "CLOSED" and not terminal_ok:
                 print(
                     f"  warning: last_issue #{snap.last_issue} is CLOSED without terminal label "
@@ -1201,7 +1222,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_enq = sub.add_parser("enqueue")
     p_enq.add_argument("--issue", type=int, required=True)
-    p_enq.add_argument("--phase", required=True, choices=["draft", "develop", "merge"])
+    p_enq.add_argument("--phase", required=True, choices=["draft", "sub", "develop", "merge"])
     p_enq.add_argument("--source", required=True)
     p_enq.add_argument("--actor-kind", required=True, choices=["human", "automation"])
     p_enq.add_argument("--priority", required=True, choices=["high", "normal", "low"])

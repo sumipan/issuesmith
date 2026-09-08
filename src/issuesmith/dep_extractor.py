@@ -144,7 +144,7 @@ def _find_rescue_pr(client: GitHubClient, issue_number: int) -> int | None:
     return None
 
 
-def _get_dep_status(client: GitHubClient, issue_number: int) -> DepStatus:
+def get_dep_status(client: GitHubClient, issue_number: int) -> DepStatus:
     """Return merge-check status for a single dependency issue."""
     data = client.issue_get(issue_number, fields=["state", "labels", "title"])
     state = data.get("state", "UNKNOWN")
@@ -167,7 +167,7 @@ def _get_dep_status(client: GitHubClient, issue_number: int) -> DepStatus:
     )
 
 
-def _is_satisfied(status: DepStatus) -> bool:
+def is_satisfied(status: DepStatus) -> bool:
     # exempt は「CLOSED でも merge-done 不要」の緩和。OPEN のままでは未解消。
     if status.state == "CLOSED" and status.is_exempt:
         return True
@@ -180,8 +180,8 @@ def _is_satisfied(status: DepStatus) -> bool:
 
 def _check_single_dependency(client: GitHubClient, issue_number: int) -> DepStatus | None:
     """Return DepStatus when blocked, None when dependency is satisfied."""
-    status = _get_dep_status(client, issue_number)
-    return None if _is_satisfied(status) else status
+    status = get_dep_status(client, issue_number)
+    return None if is_satisfied(status) else status
 
 
 def check_dependencies(
@@ -200,8 +200,8 @@ def check_dependencies(
             dep_statuses=[],
         )
     gh = client or GitHubClient()
-    dep_statuses = [_get_dep_status(gh, number) for number in deps_found]
-    blocking = [status for status in dep_statuses if not _is_satisfied(status)]
+    dep_statuses = [get_dep_status(gh, number) for number in deps_found]
+    blocking = [status for status in dep_statuses if not is_satisfied(status)]
 
     decision = "BLOCK" if blocking else "PASS"
     return DepCheckResult(

@@ -63,6 +63,17 @@ class TestV1StateMigration:
         snap = store.snapshot()
         assert len(snap.active_order) == 1
 
+    def test_milestone_chains_missing_defaults_empty(self, tmp_path):
+        state_path = tmp_path / "state.json"
+        state_path.write_text(json.dumps({"schema_version": 1, "revision": 0}), encoding="utf-8")
+        store = QueueStore(
+            queue_path=tmp_path / "queue.jsonl",
+            state_path=state_path,
+            lock_path=tmp_path / "lock",
+        )
+        snap = store.snapshot()
+        assert snap.milestone_chains == {}
+
 
 class TestSeedIdempotent:
     def test_seed_is_idempotent_across_restarts(self, tmp_path):
@@ -124,3 +135,4 @@ class TestDefaultState:
         assert state["active_order"] == []
         assert state["halt"] is False
         assert state["last_issue"] is None
+        assert state["milestone_chains"] == {}

@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Added
+
+- `sub` queue phase with `issuesmith:sub-ready` / `sub-running` / `sub-done` labels
+- Milestone chain automation (`milestone_chain` config, `advance_milestone_chains`, `milestone status` / `milestone resume` CLI)
+- Public `get_dep_status` / `is_satisfied` APIs in `dep_extractor`
+
 ## 0.1.0 — 2026-09-05
 
 ### Added
