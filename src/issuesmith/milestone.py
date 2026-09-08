@@ -194,7 +194,6 @@ def validate_children(
     parent_body = str(parent.get("body") or "")
     parent_repo = _target_repo_from_body(parent_body)
     parent_milestone = _milestone_number(parent)
-    parent_paths = set(_extract_change_paths(parent_body))
     results: list[ChildValidation] = []
 
     for child in children:
