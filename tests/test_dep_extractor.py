@@ -5,8 +5,11 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 from issuesmith.dep_extractor import (
+    DepStatus,
     check_dependencies,
     extract_dependencies,
+    get_dep_status,
+    is_satisfied,
 )
 
 # --- extract_dependencies ---
@@ -231,3 +234,15 @@ def test_is_exempt_milestone_without_sub_done_is_not_exempt():
     from issuesmith.dep_extractor import _is_exempt
     labels = [{"name": "scope:milestone"}, {"name": "issuesmith:draft-done"}]
     assert _is_exempt("some milestone", labels) is False
+
+
+def test_get_dep_status_and_is_satisfied_public_api():
+    client = MagicMock()
+    client.issue_get.return_value = {
+        "state": "CLOSED",
+        "title": "done",
+        "labels": [{"name": "issuesmith:merge-done"}],
+    }
+    status = get_dep_status(client, 100)
+    assert isinstance(status, DepStatus)
+    assert is_satisfied(status) is True

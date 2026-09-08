@@ -117,6 +117,13 @@ class ConcurrencyConfig:
 
 
 @dataclass(frozen=True)
+class MilestoneChainConfig:
+    enabled: bool = False
+    child_priority: str = "normal"
+    auto_develop: bool = True
+
+
+@dataclass(frozen=True)
 class IssuesmithConfig:
     repo: str
     label_namespace: str
@@ -126,6 +133,7 @@ class IssuesmithConfig:
     paths: PathsConfig
     engines: Mapping[str, RoleConfig]
     concurrency: ConcurrencyConfig
+    milestone_chain: MilestoneChainConfig = field(default_factory=MilestoneChainConfig)
 
 
 _cached: IssuesmithConfig | None = None
@@ -254,6 +262,16 @@ def _build_concurrency(raw: Mapping[str, Any] | None) -> ConcurrencyConfig:
     return ConcurrencyConfig(default=default, per_engine=per_engine)
 
 
+def _build_milestone_chain(raw: Mapping[str, Any] | None) -> MilestoneChainConfig:
+    if not raw:
+        return MilestoneChainConfig()
+    return MilestoneChainConfig(
+        enabled=bool(raw.get("enabled", False)),
+        child_priority=str(raw.get("child_priority") or "normal"),
+        auto_develop=bool(raw.get("auto_develop", True)),
+    )
+
+
 def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     repo = str(data.get("repo") or "sumipan/nexus")
     label_namespace = str(data.get("label_namespace") or "issuesmith")
@@ -266,6 +284,7 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     paths_raw = data.get("paths") if isinstance(data.get("paths"), dict) else None
     engines_raw = data.get("engines") if isinstance(data.get("engines"), dict) else None
     concurrency_raw = data.get("concurrency") if isinstance(data.get("concurrency"), dict) else None
+    milestone_raw = data.get("milestone_chain") if isinstance(data.get("milestone_chain"), dict) else None
     return IssuesmithConfig(
         repo=repo,
         label_namespace=label_namespace,
@@ -275,4 +294,5 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         paths=_build_paths(paths_raw, root.resolve()),
         engines=_build_engines(engines_raw),
         concurrency=_build_concurrency(concurrency_raw),
+        milestone_chain=_build_milestone_chain(milestone_raw),
     )

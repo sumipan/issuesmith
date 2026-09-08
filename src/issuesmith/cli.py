@@ -21,6 +21,7 @@ commands:
   queue  deps  tier  comments  gh
   engine  dispatch  publish  labels  doctor  smoke  gen-live  version-bump
   recover  redispatch
+  milestone  status / resume for milestone chain
   apply  ingest-review  (moved to tools/stash/; exit 2)
 """
 
@@ -213,6 +214,12 @@ def _cmd_redispatch(argv: list[str]) -> int:
     return int(recovery_main(["redispatch", *argv]))
 
 
+def _cmd_milestone(argv: list[str]) -> int:
+    from issuesmith.milestone import main as milestone_main
+
+    return int(milestone_main(argv))
+
+
 def _cmd_stash_moved(_argv: list[str]) -> int:
     print(_STASH_MOVED_MSG, file=sys.stderr)
     return 2
@@ -243,6 +250,7 @@ _HANDLERS = {
     "version-bump": _cmd_version_bump,
     "recover": _cmd_recover,
     "redispatch": _cmd_redispatch,
+    "milestone": _cmd_milestone,
     "apply": _cmd_stash_moved,
     "ingest-review": _cmd_stash_moved,
 }

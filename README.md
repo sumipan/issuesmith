@@ -82,7 +82,8 @@ Entry points: `issuesmith` / `python3 -m issuesmith`.
 | `gate` / `gate-preflight` | Run a named gate (e.g. `gate cp1 --body-file ...`) |
 | `cp1-gate` / `m2-gate` | Direct CP1 / M2 gate entry points |
 | `verify` / `b1-verify` | B1 verification (`verify b1 ...`) |
-| `queue` | Night / draft queue tick and status |
+| `queue` | Night / draft queue tick and status (`draft`, `sub`, `develop`, `merge` phases) |
+| `milestone` | Milestone chain status / resume (`milestone status <parent>`, `milestone resume <parent>`) |
 | `deps` | Extract Issue dependencies |
 | `tier` | Choose B1 / CP2 model tier (`tier b1` / `tier cp2`) |
 | `comments` | Pipeline comment helpers |
@@ -120,6 +121,7 @@ src/issuesmith/
   queue.py            Queue dispatch loop
   queue_store.py      Persistent queue state
   queue_triage.py     LLM triage / title normalization
+  milestone.py        Milestone chain automation (sub phase + child develop)
   ac_contract.py      Acceptance-criteria contract DSL
   b1_tier.py / b1_verify.py
   cp1_gate.py / cp2_tier.py / m2_gate.py

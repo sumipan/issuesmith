@@ -14,11 +14,11 @@ from typing import Any, Iterator, Literal
 
 from issuesmith.config import get_config
 
-Phase = Literal["draft", "develop", "merge"]
+Phase = Literal["draft", "sub", "develop", "merge"]
 ActorKind = Literal["human", "automation"]
 Priority = Literal["high", "normal", "low"]
 
-PHASES: tuple[str, ...] = ("draft", "develop", "merge")
+PHASES: tuple[str, ...] = ("draft", "sub", "develop", "merge")
 ACTOR_KINDS: tuple[str, ...] = ("human", "automation")
 PRIORITIES: tuple[str, ...] = ("high", "normal", "low")
 PRIORITY_RANK = {"high": 0, "normal": 1, "low": 2}
@@ -84,6 +84,7 @@ class QueueSnapshot:
     requests: dict[str, QueueRequest]
     in_flight: list[dict[str, Any]] = field(default_factory=list)
     request_meta: dict[str, dict[str, Any]] = field(default_factory=dict)
+    milestone_chains: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @property
     def active_requests(self) -> list[QueueRequest]:
@@ -184,6 +185,7 @@ def default_state() -> dict[str, Any]:
         "request_meta": {},
         "seeded_keys": [],
         "in_flight": [],
+        "milestone_chains": {},
     }
 
 
@@ -265,6 +267,7 @@ class QueueStore:
         state.setdefault("request_meta", {})
         state.setdefault("seeded_keys", [])
         state.setdefault("in_flight", [])
+        state.setdefault("milestone_chains", {})
         return state
 
     def _save_state_unlocked(self, state: dict[str, Any]) -> None:
@@ -334,6 +337,7 @@ class QueueStore:
             requests=requests,
             in_flight=list(state.get("in_flight") or []),
             request_meta=dict(state.get("request_meta") or {}),
+            milestone_chains=dict(state.get("milestone_chains") or {}),
         )
 
     def enqueue(
@@ -562,3 +566,37 @@ class QueueStore:
             meta[request_id] = entry
             state["request_meta"] = meta
             self._save_state_unlocked(state)
+
+    def get_milestone_chain(self, parent: int) -> dict[str, Any]:
+        with self.lock():
+            state = self._load_state_unlocked()
+            chains = state.get("milestone_chains") or {}
+            entry = chains.get(str(parent)) or chains.get(parent)
+            return dict(entry) if isinstance(entry, dict) else {}
+
+    def update_milestone_chain(self, parent: int, patch: dict[str, Any]) -> None:
+        with self.lock():
+            state = self._load_state_unlocked()
+            chains = dict(state.get("milestone_chains") or {})
+            key = str(parent)
+            entry = dict(chains.get(key) or {})
+            entry.update(patch)
+            chains[key] = entry
+            state["milestone_chains"] = chains
+            self._save_state_unlocked(state)
+
+    def resume_milestone_chain(self, parent: int) -> bool:
+        with self.lock():
+            state = self._load_state_unlocked()
+            chains = dict(state.get("milestone_chains") or {})
+            key = str(parent)
+            entry = chains.get(key)
+            if not isinstance(entry, dict) or entry.get("stage") != "halted":
+                return False
+            entry = dict(entry)
+            entry.pop("halted_reason", None)
+            entry["stage"] = "active"
+            chains[key] = entry
+            state["milestone_chains"] = chains
+            self._save_state_unlocked(state)
+            return True
