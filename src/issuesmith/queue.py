@@ -90,9 +90,19 @@ def _in_window(now: datetime, start_str: str, end_str: str) -> bool:
 
 
 def _iter_issuesmith_exec_uuids() -> list[str]:
+    return [uuid for uuid, _issue in _iter_issuesmith_exec_records()]
+
+
+def _iter_issuesmith_exec_records() -> list[tuple[str, int | None]]:
+    """Return (uuid, issue_number) for every issuesmith-prefixed exec.jsonl row.
+
+    ``idempotency_key`` は ``issuesmith:<phase>:<issue_number>`` 形式（例:
+    ``issuesmith:impl:2969``）。末尾が数字でなければ issue_number は None
+    （現状 issuesmith プレフィックスの key は常に末尾が issue 番号）。
+    """
     if not EXEC_PATH.exists():
         return []
-    uuids: list[str] = []
+    records: list[tuple[str, int | None]] = []
     for raw in EXEC_PATH.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         if not line:
@@ -106,8 +116,10 @@ def _iter_issuesmith_exec_uuids() -> list[str]:
         idempotency_key = str(row.get("idempotency_key", ""))
         uuid = row.get("uuid")
         if idempotency_key.startswith("issuesmith:") and isinstance(uuid, str) and uuid:
-            uuids.append(uuid)
-    return uuids
+            issue_part = idempotency_key.rsplit(":", 1)[-1]
+            issue_number = int(issue_part) if issue_part.isdigit() else None
+            records.append((uuid, issue_number))
+    return records
 
 
 def _latest_done_mtime() -> float | None:
@@ -165,9 +177,22 @@ def _pipeline_idle_enough_v2(
 def _dispatch_pipeline_ready(
     snap: QueueSnapshot, idle_minutes: int, now: datetime
 ) -> bool:
-    """Admission idle gate: exec steps must not be mid-flight; time spacing when queue empty."""
-    uuids = _iter_issuesmith_exec_uuids()
-    for uuid in uuids:
+    """Admission idle gate.
+
+    「mid-flight のステップが無いこと」を要求するが、その issue が
+    ``snap.in_flight`` で追跡済みなら未完了で当然なので許容する
+    （#2867 の per-engine concurrency 導入後、他 issue の並行実行時に
+    実行中の issue 自身の後続ステップ未完了が誤って「pipeline not idle」
+    と判定され、別 engine の新規ディスパッチまで巻き添えでブロックされて
+    いた）。in_flight に無い issue の未完了ステップは、in_flight リークや
+    クラッシュ後の孤児タスクを示すため、引き続きブロック対象とする。
+    """
+    in_flight_issues = {
+        entry.get("issue") for entry in snap.in_flight if isinstance(entry, dict)
+    }
+    for uuid, issue_number in _iter_issuesmith_exec_records():
+        if issue_number in in_flight_issues:
+            continue
         if not (DONE_DIR / uuid).exists():
             return False
     if snap.in_flight:

@@ -1798,6 +1798,52 @@ class TestCp2DevelopDispatch:
         assert result.dispatched is False
         assert "halted" in result.reason or "previous" in result.reason or "merge-done" in result.reason
 
+    def test_pipeline_ready_tolerates_in_flight_issues_own_pending_steps(
+        self, tmp_path, monkeypatch
+    ):
+        """#2978 の per-engine concurrency 有効化後に発覚: 実行中 issue 自身の
+        後続ステップ（cp2/m1/m1r/m2 等）が未完了なのは当然だが、これを
+        「pipeline not idle」の根拠にしてしまうと、別 engine への新規
+        ディスパッチまで巻き添えでブロックされる（実測: #2969 の
+        cp2/m1/m1r/m2 が未完了のまま in_flight だった間、
+        _dispatch_pipeline_ready は常に False を返していた）。
+        in_flight 追跡済みの issue の未完了ステップは許容し、
+        in_flight に無い issue の未完了ステップ（孤児タスク）だけを
+        引き続きブロック対象とする。
+        """
+        from issuesmith import queue as qmod
+
+        exec_path = tmp_path / "exec.jsonl"
+        done_dir = tmp_path / "done"
+        done_dir.mkdir()
+        monkeypatch.setattr(qmod, "EXEC_PATH", exec_path)
+        monkeypatch.setattr(qmod, "DONE_DIR", done_dir)
+
+        # issue 2969 (in_flight) の cp2/m1/m2 はまだ done マーカーが無い。
+        lines = [
+            {"uuid": "u-cp2", "idempotency_key": "issuesmith:impl:2969"},
+            {"uuid": "u-m1", "idempotency_key": "issuesmith:impl:2969"},
+            {"uuid": "u-m2", "idempotency_key": "issuesmith:impl:2969"},
+        ]
+        exec_path.write_text(
+            "\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8"
+        )
+
+        store = _store(tmp_path)
+        store.add_in_flight(2969, "codex")
+        snap = store.snapshot()
+        now = datetime(2026, 9, 9, 12, 0, tzinfo=timezone.utc)
+
+        assert qmod._dispatch_pipeline_ready(snap, 5, now) is True
+
+        # 別 issue (9999) の未完了ステップは in_flight に無いので孤児扱い→引き続きブロック。
+        with exec_path.open("a", encoding="utf-8") as fh:
+            fh.write(
+                json.dumps({"uuid": "u-orphan", "idempotency_key": "issuesmith:impl:9999"})
+                + "\n"
+            )
+        assert qmod._dispatch_pipeline_ready(snap, 5, now) is False
+
     def test_dispatch_label_boundary_rerun_is_idempotent(self, tmp_path, monkeypatch):
         """ready 付与直後に停止→再実行してもラベル二重付与せず terminal になる."""
         from datetime import datetime
