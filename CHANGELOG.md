@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Queue allow_paths conflict gate, `concurrency.strict_order`, draft-done in_flight release, and role-aware in_flight accounting (#2980)
 - `sub` queue phase with `issuesmith:sub-ready` / `sub-running` / `sub-done` labels
 - Milestone chain automation (`milestone_chain` config, `advance_milestone_chains`, `milestone status` / `milestone resume` CLI)
 - Public `get_dep_status` / `is_satisfied` APIs in `dep_extractor`

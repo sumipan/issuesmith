@@ -230,6 +230,31 @@ def test_claude_limit_two_allows_two_dispatches(
 
     from issuesmith import queue as qmod
 
+    body_a = (
+        "```yaml\n"
+        "target_repo: sumipan/nexus\n"
+        "base_branch: main\n"
+        "allow_paths:\n"
+        '  - "tools/a/**"\n'
+        "```\n"
+    )
+    body_b = (
+        "```yaml\n"
+        "target_repo: sumipan/nexus\n"
+        "base_branch: main\n"
+        "allow_paths:\n"
+        '  - "tools/b/**"\n'
+        "```\n"
+    )
+    body_c = (
+        "```yaml\n"
+        "target_repo: sumipan/nexus\n"
+        "base_branch: main\n"
+        "allow_paths:\n"
+        '  - "tools/c/**"\n'
+        "```\n"
+    )
+
     store = _store(tmp_path)
     for issue in (100, 101, 102):
         store.enqueue(
@@ -243,9 +268,9 @@ def test_claude_limit_two_allows_two_dispatches(
         )
     client = _DispatchClient(
         {
-            100: {"state": "OPEN", "labels": []},
-            101: {"state": "OPEN", "labels": []},
-            102: {"state": "OPEN", "labels": []},
+            100: {"state": "OPEN", "labels": [], "body": body_a},
+            101: {"state": "OPEN", "labels": [], "body": body_b},
+            102: {"state": "OPEN", "labels": [], "body": body_c},
         }
     )
     now = datetime(2026, 9, 5, 12, 0, tzinfo=_JST)
@@ -273,6 +298,23 @@ def test_different_engines_do_not_share_limits(
 
     from issuesmith import queue as qmod
 
+    draft_body = (
+        "```yaml\n"
+        "target_repo: sumipan/nexus\n"
+        "base_branch: main\n"
+        "allow_paths:\n"
+        '  - "tools/draft/**"\n'
+        "```\n"
+    )
+    develop_body = (
+        "```yaml\n"
+        "target_repo: sumipan/nexus\n"
+        "base_branch: main\n"
+        "allow_paths:\n"
+        '  - "tools/develop/**"\n'
+        "```\n"
+    )
+
     store = _store(tmp_path)
     store.enqueue(
         issue=100,
@@ -294,10 +336,11 @@ def test_different_engines_do_not_share_limits(
     )
     client = _DispatchClient(
         {
-            100: {"state": "OPEN", "labels": []},
+            100: {"state": "OPEN", "labels": [], "body": draft_body},
             101: {
                 "state": "OPEN",
                 "labels": [{"name": "issuesmith:draft-done"}],
+                "body": develop_body,
             },
         }
     )
@@ -312,6 +355,53 @@ def test_different_engines_do_not_share_limits(
     snap = store.snapshot()
     engines = {entry["engine"] for entry in snap.in_flight}
     assert engines == {"claude", "codex"}
+
+
+def test_in_flight_role_remap_codex_to_claude():
+    """#2969: design engine switched codex→claude; counts follow current role map."""
+    entries = [
+        {
+            "issue": 2969,
+            "engine": "codex",
+            "role": "design",
+            "dispatched_at": "2026-09-09T12:00:00+09:00",
+        }
+    ]
+    assert in_flight_by_engine(entries) == {"codex": 1}
+    assert in_flight_by_engine(
+        entries, role_engine_map={"design": "claude", "implementation": "cursor"}
+    ) == {"claude": 1}
+
+
+def test_in_flight_legacy_entry_counts_stored_engine():
+    # Real shape from nexus logs/issuesmith-queue-state.json (2026-09-09)
+    legacy = {
+        "issue": 2980,
+        "engine": "claude",
+        "dispatched_at": "2026-09-09T18:39:28.292503+09:00",
+    }
+    assert in_flight_by_engine([legacy]) == {"claude": 1}
+    assert in_flight_by_engine(
+        [legacy], role_engine_map={"design": "codex", "implementation": "cursor"}
+    ) == {"claude": 1}
+
+
+def test_add_in_flight_stores_role_and_paths(tmp_path):
+    store = _store(tmp_path)
+    store.add_in_flight(
+        10,
+        "codex",
+        role="design",
+        allow_paths=("tests/**",),
+        target_repo="sumipan/issuesmith",
+    )
+    entry = store.snapshot().in_flight[0]
+    assert entry["role"] == "design"
+    assert entry["allow_paths"] == ["tests/**"]
+    assert entry["target_repo"] == "sumipan/issuesmith"
+    assert in_flight_by_engine(
+        [entry], role_engine_map={"design": "claude", "implementation": "cursor"}
+    ) == {"claude": 1}
 
 
 def test_one_tick_dispatches_at_most_one(tmp_path, monkeypatch, issuesmith_config):

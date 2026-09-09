@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import os
 import re
@@ -40,9 +41,11 @@ from issuesmith.queue_triage import (
     has_marker_comment,
     label_names,
     load_seed_entries,
+    parse_frontmatter_fields,
     seed_window,
     triage,
 )
+from issuesmith.targets import _normalize_allow_paths
 
 _cfg = get_config()
 TZ = ZoneInfo(_cfg.timezone)
@@ -250,6 +253,96 @@ def _issue_is_terminal(client: GitHubClient, issue_number: int) -> bool:
     )
 
 
+def _issue_target_meta(issue: dict[str, Any]) -> tuple[str, tuple[str, ...]]:
+    """Return (target_repo, allow_paths) from issue body YAML."""
+    meta = parse_frontmatter_fields(str(issue.get("body") or ""))
+    repo = str(meta.get("target_repo") or "").strip()
+    paths = _normalize_allow_paths(meta.get("allow_paths", ()))
+    return repo, paths
+
+
+def _allow_paths_conflict(
+    candidate_repo: str,
+    candidate_paths: tuple[str, ...],
+    in_flight: list[dict[str, Any]],
+) -> int | None:
+    """Return conflicting in_flight issue number, or None if no conflict.
+
+    Legacy entries without ``target_repo`` / ``allow_paths`` are treated as
+    conflicts (fail closed) until they leave in_flight naturally.
+    """
+    for entry in in_flight:
+        entry_repo = entry.get("target_repo")
+        if not isinstance(entry_repo, str) or not entry_repo.strip():
+            issue = entry.get("issue")
+            return int(issue) if isinstance(issue, int) else None
+        if entry_repo != candidate_repo:
+            continue
+        raw_paths = entry.get("allow_paths")
+        if not raw_paths:
+            issue = entry.get("issue")
+            return int(issue) if isinstance(issue, int) else None
+        entry_paths = _normalize_allow_paths(raw_paths)
+        for p1 in candidate_paths:
+            for p2 in entry_paths:
+                if fnmatch.fnmatch(p1, p2) or fnmatch.fnmatch(p2, p1):
+                    issue = entry.get("issue")
+                    return int(issue) if isinstance(issue, int) else None
+    return None
+
+
+def _conflict_overlap_path(
+    candidate_paths: tuple[str, ...],
+    entry: dict[str, Any],
+) -> str:
+    raw_paths = entry.get("allow_paths")
+    if not raw_paths:
+        return "(legacy in_flight)"
+    entry_paths = _normalize_allow_paths(raw_paths)
+    for p1 in candidate_paths:
+        for p2 in entry_paths:
+            if fnmatch.fnmatch(p1, p2) or fnmatch.fnmatch(p2, p1):
+                return p2 if fnmatch.fnmatch(p1, p2) else p1
+    return entry_paths[0] if entry_paths else "?"
+
+
+def _in_flight_should_release(client: GitHubClient, entry: dict[str, Any]) -> bool:
+    """True when an in_flight entry should be dropped.
+
+    Terminal issues always release. Design-slot entries also release after
+    ``draft-done`` once develop has not yet started (absorbs former milestone C0).
+    """
+    issue_num = entry.get("issue")
+    if not isinstance(issue_num, int):
+        return False
+    try:
+        issue = client.issue_get(issue_num, fields=["state", "labels"])
+    except Exception:
+        return False
+    labels = label_names(issue)
+    state = str(issue.get("state", "")).upper()
+    if state == "CLOSED" and (
+        "issuesmith:merge-done" in labels or bool(labels & TERMINAL_WITHOUT_MERGE)
+    ):
+        return True
+    if DONE_LABEL["draft"] not in labels:
+        return False
+    busy = {
+        READY_LABEL["develop"],
+        RUNNING_LABEL["develop"],
+        READY_LABEL["sub"],
+        RUNNING_LABEL["sub"],
+        READY_LABEL["merge"],
+        RUNNING_LABEL["merge"],
+    }
+    if labels & busy:
+        return False
+    role = entry.get("role")
+    if role is not None and role != "design":
+        return False
+    return True
+
+
 def _halt_resolved(snap: QueueSnapshot, client: GitHubClient) -> bool:
     reason = snap.halt_reason or ""
     if "is still OPEN" in reason:
@@ -299,10 +392,11 @@ def _source_in_window(source: str, actor_kind: str, now: datetime, start: str, e
 
 def _format_in_flight_status(snap: QueueSnapshot) -> str:
     concurrency = get_config().concurrency
-    counts = in_flight_by_engine(snap.in_flight)
+    role_map = _required_engines()
+    counts = in_flight_by_engine(snap.in_flight, role_engine_map=role_map)
     engines = sorted(set(counts) | set(concurrency.per_engine))
     if not engines:
-        engines = sorted(_required_engines().values())
+        engines = sorted(role_map.values())
     parts: list[str] = []
     for engine in engines:
         limit = concurrency.limit(engine)
@@ -527,34 +621,41 @@ def _phase_preconditions(phase: str, issue: dict[str, Any], client: GitHubClient
     if state != "OPEN":
         return False, "issue not OPEN"
     labels = label_names(issue)
-    if phase == "draft":
-        for lab in (READY_LABEL["draft"], RUNNING_LABEL["draft"], DONE_LABEL["draft"]):
-            if lab in labels:
-                return False, f"{lab} present"
-        return True, "ok"
-    if phase == "develop":
-        if DONE_LABEL["draft"] not in labels:
-            return False, "draft-done required"
-        for lab in (READY_LABEL["develop"], RUNNING_LABEL["develop"], DONE_LABEL["develop"]):
-            if lab in labels:
-                return False, f"{lab} present"
+
+    def _deps_ok() -> tuple[bool, str]:
         deps = extract_dependencies(str(issue.get("body") or ""))
         if deps:
             result = check_dependencies(deps, client=client)
             if result.decision == "BLOCK":
                 return False, "dependencies not satisfied"
         return True, "ok"
+
+    if phase == "draft":
+        for lab in (READY_LABEL["draft"], RUNNING_LABEL["draft"], DONE_LABEL["draft"]):
+            if lab in labels:
+                return False, f"{lab} present"
+        return _deps_ok()
+    if phase == "develop":
+        if DONE_LABEL["draft"] not in labels:
+            return False, "draft-done required"
+        for lab in (READY_LABEL["develop"], RUNNING_LABEL["develop"], DONE_LABEL["develop"]):
+            if lab in labels:
+                return False, f"{lab} present"
+        return _deps_ok()
     if phase == "sub":
         if DONE_LABEL["draft"] not in labels:
             return False, "draft-done required"
         for lab in (READY_LABEL["sub"], RUNNING_LABEL["sub"], DONE_LABEL["sub"]):
             if lab in labels:
                 return False, f"{lab} present"
-        return True, "ok"
+        return _deps_ok()
     if phase == "merge":
         for lab in (READY_LABEL["merge"], RUNNING_LABEL["merge"], DONE_LABEL["merge"]):
             if lab in labels:
                 return False, f"{lab} present"
+        ok, why = _deps_ok()
+        if not ok:
+            return ok, why
         # Allow label-less recovery after reset.
         matched = _find_open_prs_closing_issue(client, issue_number)
         if matched:
@@ -776,6 +877,17 @@ def dispatch_one(
             )
 
     snap = store.snapshot()
+    # Release finished in_flight even when the queue is empty (absorbs milestone C0).
+    if snap.in_flight:
+        with store.dispatch_lock():
+            snap = store.snapshot()
+            for entry in list(snap.in_flight):
+                if _in_flight_should_release(client, entry):
+                    issue_num = entry.get("issue")
+                    if isinstance(issue_num, int):
+                        store.remove_in_flight(issue_num)
+            snap = store.snapshot()
+
     if not snap.active_order:
         return DispatchResult(False, reason="empty queue")
 
@@ -783,9 +895,10 @@ def dispatch_one(
         snap = store.snapshot()
 
         for entry in list(snap.in_flight):
-            issue_num = entry.get("issue")
-            if isinstance(issue_num, int) and _issue_is_terminal(client, issue_num):
-                store.remove_in_flight(issue_num)
+            if _in_flight_should_release(client, entry):
+                issue_num = entry.get("issue")
+                if isinstance(issue_num, int):
+                    store.remove_in_flight(issue_num)
         snap = store.snapshot()
 
         if snap.halt:
@@ -839,7 +952,8 @@ def dispatch_one(
             return DispatchResult(False, reason=f"required engine paused: {', '.join(paused)}")
 
         concurrency = get_config().concurrency
-        counts = in_flight_by_engine(snap.in_flight)
+        role_map = _required_engines()
+        counts = in_flight_by_engine(snap.in_flight, role_engine_map=role_map)
 
         for rid in snap.active_order:
             req = store.effective_request(snap, rid)
@@ -849,6 +963,8 @@ def dispatch_one(
                 continue
             engine = _resolve_engine(req.phase)
             if counts.get(engine, 0) >= concurrency.limit(engine):
+                if concurrency.strict_order:
+                    break
                 continue
             try:
                 issue = client.issue_get(
@@ -876,6 +992,16 @@ def dispatch_one(
             if not ok:
                 continue
 
+            candidate_repo, candidate_paths = _issue_target_meta(issue)
+            conflict = _allow_paths_conflict(
+                candidate_repo, candidate_paths, snap.in_flight
+            )
+            if conflict is not None:
+                if concurrency.strict_order:
+                    break
+                continue
+
+            role = PHASE_ROLE[req.phase]
             label = READY_LABEL[req.phase]
             labels = label_names(issue)
             if label not in labels:
@@ -887,7 +1013,13 @@ def dispatch_one(
                 "dispatched",
                 f"issuesmith queue dispatched `{label}` for request `{rid}`.",
             )
-            store.add_in_flight(req.issue, engine)
+            store.add_in_flight(
+                req.issue,
+                engine,
+                role=role,
+                allow_paths=candidate_paths,
+                target_repo=candidate_repo or None,
+            )
             store.complete(rid, "dispatched", extra_meta={"label": label})
             store.set_last_issue(req.issue)
             return DispatchResult(
@@ -959,11 +1091,22 @@ def _cmd_status(args: argparse.Namespace) -> int:
         f"last_issue={snap.last_issue}"
     )
     print(f"  in_flight: {_format_in_flight_status(snap)}")
+    for entry in snap.in_flight:
+        issue_num = entry.get("issue")
+        engine = entry.get("engine", "")
+        role = entry.get("role")
+        role_part = f" role={role}" if role else ""
+        print(f"  - in_flight issue=#{issue_num} engine={engine}{role_part}")
     if snap.halt and snap.halt_reason:
         print(f"  halt_reason: {snap.halt_reason}")
-    if snap.last_issue is not None:
+    client: GitHubClient | None = None
+    if snap.last_issue is not None or snap.active_order:
         try:
             client = GitHubClient(repo=REPO)
+        except Exception:
+            client = None
+    if snap.last_issue is not None and client is not None:
+        try:
             last = client.issue_get(snap.last_issue, fields=["state", "labels"])
             last_labels = label_names(last)
             last_state = str(last.get("state", "")).upper()
@@ -982,8 +1125,39 @@ def _cmd_status(args: argparse.Namespace) -> int:
             print(f"  warning: last_issue #{snap.last_issue} fetch failed: {exc}", file=sys.stderr)
     for rid in snap.active_order:
         req = store.effective_request(snap, rid)
-        if req:
-            print(f"  - {rid[:8]}… issue=#{req.issue} phase={req.phase} priority={req.priority} source={req.source}")
+        if not req:
+            continue
+        role = PHASE_ROLE.get(req.phase, "")
+        try:
+            engine = _resolve_engine(req.phase)
+        except Exception:
+            engine = "?"
+        print(
+            f"  - {rid[:8]}… issue=#{req.issue} phase={req.phase} "
+            f"engine={engine} role={role} priority={req.priority} source={req.source}"
+        )
+        if client is None:
+            continue
+        try:
+            issue = client.issue_get(
+                req.issue, fields=["state", "labels", "body", "number"]
+            )
+        except Exception:
+            continue
+        candidate_repo, candidate_paths = _issue_target_meta(issue)
+        conflict = _allow_paths_conflict(
+            candidate_repo, candidate_paths, snap.in_flight
+        )
+        if conflict is None:
+            continue
+        conflict_entry = next(
+            (e for e in snap.in_flight if e.get("issue") == conflict),
+            {},
+        )
+        overlap = _conflict_overlap_path(candidate_paths, conflict_entry)
+        print(
+            f"    waiting: #{req.issue} (conflict with #{conflict} on {overlap})"
+        )
     return 0
 
 
