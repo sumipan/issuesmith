@@ -14,8 +14,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   for the child's `target_repo` (#2961)
 - `issuesmith milestone status` shows each child's `target_repo`
 
-## Unreleased
-
 ## 0.8.2 - 2026-09-09
 
 ### Fixed
