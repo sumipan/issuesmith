@@ -178,18 +178,63 @@ def resolve(role: str, tier: str | None = None) -> RoleSelection:
     engine = selected["engine"]
     model = selected["model"]
     if tier == "light":
-        light_model = selected.get("light_model") or DEFAULT_LIGHT_MODELS.get(
-            (role, engine)
-        )
-        if light_model:
-            model = light_model
-        else:
+        light_model, source = _effective_light_model(selected, role, engine)
+        if not light_model:
             print(
                 f"[issuesmith-engine] no light model for role={role} "
                 f"engine={engine}; falling back to {model}",
                 file=sys.stderr,
             )
+        elif not _light_model_allowed(engine, light_model):
+            # light tier は最適化であって必須ではない。allowlist 外のモデルで
+            # 起動して EngineModelError でパイプラインを止めるより、heavy に
+            # 戻して続行する（2026-09-09、#2968 / #2986 の再発防止）。
+            print(
+                f"[issuesmith-engine] light model {light_model!r} ({source}) is not in "
+                f"configs/llm-models.yml allowlist for engine={engine}; "
+                f"falling back to {model}",
+                file=sys.stderr,
+            )
+        else:
+            model = light_model
     return RoleSelection(engine=engine, model=model)
+
+
+def _effective_light_model(
+    selected: dict[str, Any], role: str, engine: str
+) -> tuple[str | None, str]:
+    """(light モデル, 出所) を返す。出所は "state" か "config default"。"""
+    from_state = selected.get("light_model")
+    if from_state:
+        return str(from_state), "state"
+    from_default = DEFAULT_LIGHT_MODELS.get((role, engine))
+    if from_default:
+        return from_default, "config default"
+    return None, ""
+
+
+def _light_model_allowed(engine: str, model: str) -> bool:
+    """allowlist が読めない場合は検証をスキップして許可扱い。"""
+    allowed = _allowed_models(engine)
+    return allowed is None or model in allowed
+
+
+def light_model_errors(state: dict[str, dict[str, Any]] | None = None) -> list[str]:
+    """各ロールの実効 light モデル（state 優先・無ければ config 既定）を allowlist と照合する。"""
+    state = state if state is not None else load_state()
+    errors: list[str] = []
+    for role in ROLE_ENGINES:
+        selected = state[role]
+        engine = str(selected["engine"])
+        light_model, source = _effective_light_model(selected, role, engine)
+        if not light_model:
+            continue
+        if not _light_model_allowed(engine, light_model):
+            errors.append(
+                f"{role}: light_model ({source}) not in configs/llm-models.yml "
+                f"allowlist for {engine}: {light_model}"
+            )
+    return errors
 
 
 def _atomic_yaml_write(path: Path, data: Any) -> None:
@@ -296,14 +341,8 @@ def check_state() -> list[str]:
         command = command_for_engine[selection.engine]
         if shutil.which(command) is None:
             errors.append(f"{role}: command not found: {command}")
-        light_model = state[role].get("light_model")
-        if light_model:
-            allowed = _allowed_models(selection.engine)
-            if allowed is not None and light_model not in allowed:
-                errors.append(
-                    f"{role}: light_model not in configs/llm-models.yml "
-                    f"allowlist for {selection.engine}: {light_model}"
-                )
+
+    errors.extend(light_model_errors(state))
 
     implementation = resolve("implementation")
     if implementation.engine == "cursor" and shutil.which("agent") is not None:

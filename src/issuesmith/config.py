@@ -65,7 +65,9 @@ _DEFAULT_ENGINES: dict[str, dict[str, Any]] = {
         },
         "light_model": {
             "claude": "claude-sonnet-4-6",
-            "codex": "gpt-5.4-mini",
+            # gpt-5.4-mini は ChatGPT アカウント認証の codex で 400 になり
+            # nexus の allowlist から外れた（2026-09-09、B1 light tier が 2 度停止）。
+            "codex": "gpt-5.5",
         },
         "timeout_sec": 1800,
     },
