@@ -537,3 +537,25 @@ class TestChainRules:
             if rid in snap.requests and snap.requests[rid].phase == "sub"
         ]
         assert len(sub_requests) == 1
+
+
+def test_dependency_table_index_column_with_resolved_ref_is_not_plan_ref():
+    """`| # | 依存先 | 状態 |` の連番列を plan ref と誤判定しない（2026-09-10、#3000 実測）。"""
+    from issuesmith.milestone import _dependency_refs_unresolved
+
+    body = (
+        "親イシュー: #2934\n依存: #2999\n\n"
+        "## 依存（先行）\n\n"
+        "| # | 依存先 | 状態 |\n"
+        "|---|--------|------|\n"
+        "| 1 | #2999 (委譲ジョブの進捗をスレッドに逐次表示する) | OPEN |\n\n\n"
+        "## スコープ\n本文\n"
+    )
+    assert _dependency_refs_unresolved(body) == []
+
+
+def test_dependency_table_bare_plan_ref_is_still_unresolved():
+    from issuesmith.milestone import _dependency_refs_unresolved
+
+    body = "## 依存（先行）\n\n| # | 依存先 |\n|---|---|\n| 1 | サブ1 |\n"
+    assert _dependency_refs_unresolved(body) == ["unresolved plan ref #1 in dependency table"]
