@@ -148,6 +148,17 @@ Orchestration (polling, DAG, label transitions) remains in **ghdag** `WorkflowDi
 
 Resolution order for the config file: explicit path → `ISSUESMITH_CONFIG` → walk up from cwd → package repo-root fallback → builtin defaults.
 
+## Milestone chain (multi-repo)
+
+`validate_children()` checks child Issues before C2 enqueues `develop`:
+
+| Check | Rule |
+|---|---|
+| V1 `target_repo` | If the parent `### サブイシュー分割計画` table has a `対象リポジトリ` column, each child's YAML `target_repo` must match the plan row whose `タイトル` equals the child title. Values must be in `supported_repos`. Without that column (legacy 4-column plan), children are compared to the parent YAML `target_repo` as before. |
+| V2 `allow_paths` | Only change-table rows whose `リポジトリ` equals the child's `target_repo` are required to be covered by the child's `allow_paths`. Rows for other repositories are ignored. |
+
+`issuesmith milestone status <parent>` lists each child's `target_repo` (blank when unset).
+
 ## Error Reference
 
 | Type | Module | When |
