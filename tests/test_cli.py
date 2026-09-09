@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import zipfile
@@ -69,7 +70,10 @@ def test_pyproject_uses_src_layout() -> None:
     find = data["tool"]["setuptools"]["packages"]["find"]
     assert find["where"] == ["src"]
     assert data["project"]["name"] == "issuesmith"
-    assert data["project"]["version"] == "0.9.0"
+    # version はリリースごとに変わるため固定値で縛らない。固定すると version bump を含む
+    # Issue のたびに tests/test_cli.py を allow_paths に入れないと CP2 が落ちる
+    # （2026-09-09、#2980 / #2959 で 2 度再発）。形式だけを検証する。
+    assert re.fullmatch(r"\d+\.\d+\.\d+", data["project"]["version"]), data["project"]["version"]
 
 
 def test_gate_alias_matches_gate_preflight(tmp_path: Path) -> None:

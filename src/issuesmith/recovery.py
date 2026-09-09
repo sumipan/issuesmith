@@ -278,7 +278,7 @@ def plan(
         command = _redispatch_command(issue, phase)
         return Plan(
             action="redispatch",
-            reason="idempotency key consumed; generation bump required",
+            reason="idempotency key consumed; queue will bump ghdag generation at dispatch",
             command=command,
             required_labels=required,
             blocked_by=blocked,
