@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## Unreleased
+
 ## 0.8.2 - 2026-09-09
 
 ### Fixed
@@ -13,6 +15,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - queue が `*-ready` を付けるとき、ハンドラーの冪等キーが消費済みなら `ghdag trigger --redispatch` で世代を上げて起動する
   （従来は `redispatch` / `enqueue --force` 後に watcher が「already dispatched」で skip し続けた）
 - `PIPELINE_STATUS` の独立行判定がバッククォート / 太字の装飾を許容する（codex が装飾付きで出力し CP2 PASS が FAIL 扱いになった）
+
+## 0.8.1 - 2026-09-09
+
+### Fixed
+
+- `engine resolve --tier light` は light モデルが `configs/llm-models.yml` の allowlist に無い場合、
+  `EngineModelError` でパイプラインを止めず heavy モデルへフォールバックする（#2968 / #2986 の再発防止）
+- `engine check` が state 未設定時の config 既定 light モデルも allowlist と照合する
+- codex の light 既定モデルを `gpt-5.4-mini` → `gpt-5.5`（ChatGPT アカウント認証で 400 になる）
 
 ### Added
 

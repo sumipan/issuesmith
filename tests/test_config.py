@@ -86,7 +86,7 @@ def test_builtin_defaults_match_legacy_constants(tmp_path, monkeypatch):
     }
     assert cfg.engines["design"].light_model == {
         "claude": "claude-sonnet-4-6",
-        "codex": "gpt-5.4-mini",
+        "codex": "gpt-5.5",
     }
     assert cfg.engines["design"].timeout_sec == 1800
     assert cfg.engines["implementation"].allowed == frozenset({"claude", "cursor"})
