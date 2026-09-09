@@ -111,6 +111,7 @@ class RoleConfig:
 class ConcurrencyConfig:
     default: int
     per_engine: Mapping[str, int]
+    strict_order: bool = False
 
     def limit(self, engine: str) -> int:
         return self.per_engine.get(engine, self.default)
@@ -259,7 +260,10 @@ def _build_concurrency(raw: Mapping[str, Any] | None) -> ConcurrencyConfig:
     default = int(raw.get("default") or 1)
     per_raw = raw.get("per_engine") or {}
     per_engine = {str(k): int(v) for k, v in dict(per_raw).items()}
-    return ConcurrencyConfig(default=default, per_engine=per_engine)
+    strict_order = bool(raw.get("strict_order", False))
+    return ConcurrencyConfig(
+        default=default, per_engine=per_engine, strict_order=strict_order
+    )
 
 
 def _build_milestone_chain(raw: Mapping[str, Any] | None) -> MilestoneChainConfig:

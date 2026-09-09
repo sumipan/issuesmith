@@ -1798,6 +1798,90 @@ class TestCp2DevelopDispatch:
         assert result.dispatched is False
         assert "halted" in result.reason or "previous" in result.reason or "merge-done" in result.reason
 
+    def test_last_issue_guard_skipped_when_per_engine(self, tmp_path, monkeypatch):
+        """per_engine 設定時は last_issue 未終端でも直列ガードを掛けない (#2980).
+
+        順序は allow_paths 競合ゲート側で守る。last_issue はレーン横断の
+        「最後に出した issue」を指すだけになり、直列待ちには使わない。
+        """
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from issuesmith import queue as qmod
+        from issuesmith.config import ConcurrencyConfig
+
+        store = _store(tmp_path)
+        store.set_last_issue(40)
+        store.enqueue(
+            issue=50, phase="draft", source="skill", actor_kind="human",
+            priority="normal", requested_by=["alice"], requested_at=_NOW,
+        )
+        body_a = (
+            "```yaml\n"
+            "target_repo: sumipan/nexus\n"
+            "base_branch: main\n"
+            "allow_paths:\n"
+            '  - "tools/a/**"\n'
+            "```\n"
+        )
+        body_b = (
+            "```yaml\n"
+            "target_repo: sumipan/nexus\n"
+            "base_branch: main\n"
+            "allow_paths:\n"
+            '  - "tools/b/**"\n'
+            "```\n"
+        )
+        client = _ProdShapeClient(
+            issues={
+                40: {
+                    "state": "OPEN",
+                    "title": "prev",
+                    "body": body_a,
+                    "labels": [{"name": "issuesmith:develop-running"}],
+                },
+                50: {
+                    "state": "OPEN",
+                    "title": "t",
+                    "body": body_b,
+                    "labels": [],
+                },
+            },
+            open_issue_rows=[],
+        )
+        monkeypatch.setattr(qmod, "_serial_concurrency", lambda: False)
+        monkeypatch.setattr(qmod, "_pipeline_idle_enough_v2", lambda *a, **k: False)
+        monkeypatch.setattr(qmod, "_dispatch_pipeline_ready", lambda *a, **k: True)
+        monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+        monkeypatch.setattr(qmod, "advance_milestone_chains", lambda *a, **k: None)
+        from issuesmith.config import MilestoneChainConfig
+
+        monkeypatch.setattr(
+            qmod,
+            "get_config",
+            lambda: type(
+                "C",
+                (),
+                {
+                    "concurrency": ConcurrencyConfig(
+                        default=1, per_engine={"claude": 2, "cursor": 2}
+                    ),
+                    "milestone_chain": MilestoneChainConfig(enabled=False),
+                },
+            )(),
+        )
+        store.mark_triaged(store.snapshot().revision)
+        now = datetime(2026, 9, 3, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+        result = qmod.dispatch_one(
+            now=now,
+            client=client,
+            store=store,
+            skip_seed=True,
+            call_llm=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")),
+        )
+        assert result.dispatched is True
+        assert result.issue == 50
+
     def test_pipeline_ready_tolerates_in_flight_issues_own_pending_steps(
         self, tmp_path, monkeypatch
     ):

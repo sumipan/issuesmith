@@ -170,9 +170,12 @@ class TestChainRules:
         advance_milestone_chains(store, client, _chain_config(enabled=False))
         assert store.snapshot().in_flight
 
-    def test_c0_releases_in_flight_on_draft_done(self, tmp_path):
+    def test_c0_releases_in_flight_on_draft_done(self, tmp_path, monkeypatch):
+        """C0 absorbed into queue.dispatch_one draft-done release (#2980)."""
+        from issuesmith import queue as qmod
+
         store = _store(tmp_path)
-        store.add_in_flight(100, "claude")
+        store.add_in_flight(100, "claude", role="design")
         client = FakeClient(
             issues={
                 100: {
@@ -187,7 +190,14 @@ class TestChainRules:
                 }
             }
         )
-        advance_milestone_chains(store, client, _chain_config())
+        monkeypatch.setattr(qmod, "advance_milestone_chains", lambda *a, **k: None)
+        result = qmod.dispatch_one(
+            now=datetime(2026, 9, 9, 12, 0, tzinfo=timezone.utc),
+            client=client,
+            store=store,
+            skip_seed=True,
+        )
+        assert result.dispatched is False
         assert store.snapshot().in_flight == []
 
     def test_c1_enqueues_sub_after_intentional_hold(self, tmp_path):

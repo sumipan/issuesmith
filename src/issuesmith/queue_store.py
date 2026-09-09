@@ -189,10 +189,23 @@ def default_state() -> dict[str, Any]:
     }
 
 
-def in_flight_by_engine(in_flight: list[dict[str, Any]]) -> dict[str, int]:
+def in_flight_by_engine(
+    in_flight: list[dict[str, Any]],
+    role_engine_map: dict[str, str] | None = None,
+) -> dict[str, int]:
+    """Count in_flight entries per engine.
+
+    When ``role_engine_map`` is provided and an entry has ``role``, count against
+    the current engine for that role (so engine switches after dispatch are
+    reflected). Otherwise use the stored ``engine`` field (legacy / no map).
+    """
     counts: dict[str, int] = {}
     for entry in in_flight:
-        eng = str(entry.get("engine", ""))
+        role = entry.get("role")
+        if role_engine_map is not None and isinstance(role, str) and role in role_engine_map:
+            eng = str(role_engine_map[role])
+        else:
+            eng = str(entry.get("engine", ""))
         counts[eng] = counts.get(eng, 0) + 1
     return counts
 
@@ -523,7 +536,15 @@ class QueueStore:
             state["last_issue"] = issue
             self._save_state_unlocked(state)
 
-    def add_in_flight(self, issue: int, engine: str) -> None:
+    def add_in_flight(
+        self,
+        issue: int,
+        engine: str,
+        *,
+        role: str | None = None,
+        allow_paths: tuple[str, ...] = (),
+        target_repo: str | None = None,
+    ) -> None:
         with self.lock():
             state = self._load_state_unlocked()
             in_flight = [
@@ -531,13 +552,18 @@ class QueueStore:
                 for entry in (state.get("in_flight") or [])
                 if entry.get("issue") != issue
             ]
-            in_flight.append(
-                {
-                    "issue": issue,
-                    "engine": engine,
-                    "dispatched_at": datetime.now().astimezone().isoformat(),
-                }
-            )
+            entry: dict[str, Any] = {
+                "issue": issue,
+                "engine": engine,
+                "dispatched_at": datetime.now().astimezone().isoformat(),
+            }
+            if role is not None:
+                entry["role"] = role
+            if allow_paths:
+                entry["allow_paths"] = list(allow_paths)
+            if target_repo is not None:
+                entry["target_repo"] = target_repo
+            in_flight.append(entry)
             state["in_flight"] = in_flight
             self._save_state_unlocked(state)
 

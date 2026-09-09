@@ -372,21 +372,7 @@ def advance_milestone_chains(
         return
 
     snap = store.snapshot()
-
-    # C0: release in_flight for milestone parents that reached draft-done.
-    for entry in list(snap.in_flight):
-        issue_num = entry.get("issue")
-        if not isinstance(issue_num, int):
-            continue
-        try:
-            issue = client.issue_get(issue_num, fields=["state", "labels"])
-        except Exception:
-            continue
-        labels = label_names(issue)
-        if _MILESTONE_LABEL in labels and DONE_LABEL["draft"] in labels:
-            store.remove_in_flight(issue_num)
-
-    snap = store.snapshot()
+    # C0 (draft-done in_flight release) moved to queue.dispatch_one generic path (#2980).
     parents = _candidate_parents(store, snap, client)
 
     for parent_num in sorted(parents):
