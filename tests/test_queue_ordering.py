@@ -632,3 +632,54 @@ def test_status_shows_conflict_waiting(tmp_path, monkeypatch, issuesmith_config,
     assert "#2966" in out
     assert "tools/secretary/**" in out
     assert r.request_id[:8] in out
+
+
+def test_sub_done_milestone_parent_releases_in_flight(tmp_path, monkeypatch, issuesmith_config):
+    """sub-done の milestone 親は in_flight を解放し、allow_paths が重なる子の develop を通す（2026-09-10 #2934）。"""
+    _patch_paths(tmp_path, monkeypatch, issuesmith_config)
+    from issuesmith import queue as qmod
+
+    store = _store(tmp_path)
+    store.add_in_flight(
+        2934, "cursor", role="implementation",
+        allow_paths=("tools/mltgnt_bridge/progress.py",), target_repo="sumipan/nexus",
+    )
+    store.enqueue(
+        issue=2999, phase="develop", source="milestone-chain", actor_kind="automation",
+        priority="normal", requested_by=["chain"], requested_at=_NOW,
+    )
+    child_body = (
+        "```yaml\ntarget_repo: sumipan/nexus\nbase_branch: main\nallow_paths:\n"
+        '  - "tools/mltgnt_bridge/progress.py"\n```\n'
+    )
+    client = _DispatchClient(
+        {
+            2934: {
+                "state": "OPEN",
+                "labels": [{"name": "scope:milestone"}, {"name": "issuesmith:sub-done"}],
+                "body": _BODY_SKILLS,
+            },
+            2999: {
+                "state": "OPEN",
+                "labels": [{"name": "issuesmith:draft-done"}],
+                "body": child_body,
+            },
+        }
+    )
+    now = datetime(2026, 9, 10, 1, 0, tzinfo=_JST)
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+    result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
+    assert result.dispatched is True and result.issue == 2999
+    assert 2934 not in {e["issue"] for e in store.snapshot().in_flight}
+
+
+def test_sub_running_milestone_parent_stays_in_flight(tmp_path, monkeypatch, issuesmith_config):
+    _patch_paths(tmp_path, monkeypatch, issuesmith_config)
+    from issuesmith import queue as qmod
+
+    store = _store(tmp_path)
+    store.add_in_flight(2934, "cursor", role="implementation", allow_paths=("x/**",), target_repo="sumipan/nexus")
+    client = _DispatchClient(
+        {2934: {"state": "OPEN", "labels": [{"name": "issuesmith:sub-running"}], "body": _BODY_SKILLS}}
+    )
+    assert qmod._in_flight_should_release(client, store.snapshot().in_flight[0]) is False

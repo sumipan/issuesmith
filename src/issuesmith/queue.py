@@ -338,6 +338,14 @@ def _in_flight_should_release(client: GitHubClient, entry: dict[str, Any]) -> bo
         "issuesmith:merge-done" in labels or bool(labels & TERMINAL_WITHOUT_MERGE)
     ):
         return True
+    if DONE_LABEL["sub"] in labels and not (
+        labels & {READY_LABEL["sub"], RUNNING_LABEL["sub"]}
+    ):
+        # milestone 親は sub-done で自分の DAG を終え、実装は子 Issue が担う。親は
+        # 子が全部マージされるまで CLOSE されないので、ここで解放しないと親と
+        # allow_paths が重なる子の develop が競合ゲートで永久に待つ
+        # （2026-09-10、#2934 → #2999 / #3000 で実測）。
+        return True
     if DONE_LABEL["draft"] not in labels:
         return False
     busy = {
