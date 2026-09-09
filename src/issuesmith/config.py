@@ -124,6 +124,7 @@ class MilestoneChainConfig:
     enabled: bool = False
     child_priority: str = "normal"
     auto_develop: bool = True
+    auto_close_parent: bool = True
 
 
 @dataclass(frozen=True)
@@ -275,6 +276,7 @@ def _build_milestone_chain(raw: Mapping[str, Any] | None) -> MilestoneChainConfi
         enabled=bool(raw.get("enabled", False)),
         child_priority=str(raw.get("child_priority") or "normal"),
         auto_develop=bool(raw.get("auto_develop", True)),
+        auto_close_parent=bool(raw.get("auto_close_parent", True)),
     )
 
 

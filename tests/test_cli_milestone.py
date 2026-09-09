@@ -46,8 +46,8 @@ allow_paths:
 
 
 class FakeStore:
-    def __init__(self):
-        self.chains = {"100": {"stage": "children_validated"}}
+    def __init__(self, chains=None):
+        self.chains = chains or {"100": {"stage": "children_validated"}}
 
     def get_milestone_chain(self, parent):
         return dict(self.chains.get(str(parent), {}))
@@ -70,6 +70,25 @@ def test_milestone_status_prints_table(capsys):
     assert "milestone chain #100" in out
     assert "101" in out
     assert "child one" in out
+
+
+def test_milestone_status_shows_parent_state_and_closed_parent(capsys):
+    client = FakeClient()
+    client.issues[100]["state"] = "CLOSED"
+    store = FakeStore(
+        chains={
+            "100": {
+                "stage": "children_validated",
+                "notified_all_done": True,
+                "closed_parent": True,
+            }
+        }
+    )
+    code = milestone_status(100, client=client, store=store)
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "state: CLOSED" in out
+    assert "closed_parent: true" in out
 
 
 def test_milestone_resume_success(capsys):
