@@ -57,3 +57,19 @@ def test_phase_handler_map_matches_workflow_triggers():
         "merge": "merge",
         "sub": "subissue",
     }
+
+
+def test_issue_from_idempotency_key_handles_generation_suffix():
+    """世代付きキー（ghdag redispatch）でも issue 番号を取り出す（2026-09-09、#2959 の再投入で実測）。"""
+    assert qmod._issue_from_idempotency_key("issuesmith:impl:2959") == 2959
+    assert qmod._issue_from_idempotency_key("issuesmith:impl:2959:1") == 2959
+    assert qmod._issue_from_idempotency_key("issuesmith:brushup:2980:12") == 2980
+    assert qmod._issue_from_idempotency_key("issuesmith:impl:abc") is None
+    assert qmod._issue_from_idempotency_key("other:impl:1") is None
+
+
+def test_exec_records_attribute_generation_runs_to_issue(tmp_path, monkeypatch):
+    exec_path = tmp_path / "exec.jsonl"
+    monkeypatch.setattr(qmod, "EXEC_PATH", exec_path)
+    _write_exec(exec_path, ["issuesmith:impl:2959:1", "issuesmith:brushup:2976"])
+    assert qmod._iter_issuesmith_exec_records() == [("u-0", 2959), ("u-1", 2976)]
