@@ -70,15 +70,24 @@ def has_sub_labels(labels: set[str]) -> bool:
 
 
 def _issue_is_terminal(client: GitHubClient, issue_number: int) -> bool:
+    return _classify_child_terminal(client, issue_number) != "open"
+
+
+def _classify_child_terminal(client: GitHubClient, issue_number: int) -> str:
+    """Classify a child Issue for C4: open | merged | closed_without_merge."""
     try:
         issue = client.issue_get(issue_number, fields=["state", "labels"])
     except Exception:
-        return False
+        return "open"
     labels = label_names(issue)
     state = str(issue.get("state", "")).upper()
-    return state == "CLOSED" and (
-        "issuesmith:merge-done" in labels or bool(labels & TERMINAL_WITHOUT_MERGE)
-    )
+    if state != "CLOSED":
+        return "open"
+    if "issuesmith:merge-done" in labels:
+        return "merged"
+    if labels & TERMINAL_WITHOUT_MERGE:
+        return "closed_without_merge"
+    return "open"
 
 
 def _has_cp1_intentional_hold(comments: list[dict[str, Any]]) -> bool:
@@ -543,19 +552,55 @@ def advance_milestone_chains(
                 )
             snap = store.snapshot()
 
-        # C4: all children terminal → notify once.
+        # C4: all children terminal → auto-close parent (or notify / halt).
         if not children:
             continue
-        if all(_issue_is_terminal(client, int(child["number"])) for child in children if child.get("number")):
-            chain = store.get_milestone_chain(parent_num)
-            if not chain.get("notified_all_done"):
-                _ensure_parent_comment(
-                    client,
-                    parent_num,
-                    "全サブイシュー完了。親の close は人間が行う",
-                    "<!-- issuesmith:milestone-chain:all-done -->",
-                )
-                store.update_milestone_chain(parent_num, {"notified_all_done": True})
+        statuses: list[tuple[int, str]] = []
+        for child in children:
+            child_num = child.get("number")
+            if not isinstance(child_num, int):
+                continue
+            statuses.append((child_num, _classify_child_terminal(client, child_num)))
+        if not statuses or any(status == "open" for _, status in statuses):
+            continue
+
+        chain = store.get_milestone_chain(parent_num)
+        without_merge = [num for num, status in statuses if status == "closed_without_merge"]
+        if without_merge:
+            first = without_merge[0]
+            _ensure_parent_comment(
+                client,
+                parent_num,
+                f"確認待ち: #{first} が merge-done 以外で終了",
+                "<!-- issuesmith:milestone-chain:closed-without-merge -->",
+            )
+            _halt_chain(store, parent_num, f"child closed without merge-done: #{first}")
+            continue
+
+        # All children are merge-done.
+        if chain.get("closed_parent"):
+            continue
+        child_refs = ", ".join(f"#{num}" for num, _ in statuses)
+        if chain_cfg.auto_close_parent:
+            _ensure_parent_comment(
+                client,
+                parent_num,
+                f"全サブイシュー完了 ({child_refs})",
+                "<!-- issuesmith:milestone-chain:all-done -->",
+            )
+            client.issue_close(parent_num)
+            store.update_milestone_chain(
+                parent_num,
+                {"notified_all_done": True, "closed_parent": True},
+            )
+        elif not chain.get("notified_all_done"):
+            _ensure_parent_comment(
+                client,
+                parent_num,
+                "全サブイシュー完了。親の close は人間が行う",
+                "<!-- issuesmith:milestone-chain:all-done -->",
+            )
+            store.update_milestone_chain(parent_num, {"notified_all_done": True})
 
 
 def _child_phase_label(labels: set[str]) -> str:
@@ -584,11 +629,15 @@ def milestone_status(parent: int, *, client: GitHubClient | None = None, store: 
         return 1
 
     chain = store.get_milestone_chain(parent)
+    parent_state = str(parent_issue.get("state") or "-")
     print(f"milestone chain #{parent}: stage={chain.get('stage', '-')}")
+    print(f"  state: {parent_state}")
     if chain.get("halted_reason"):
         print(f"  halted_reason: {chain['halted_reason']}")
     if chain.get("notified_all_done"):
         print("  notified_all_done: true")
+    if chain.get("closed_parent"):
+        print("  closed_parent: true")
 
     milestone_number = _milestone_number(parent_issue)
     if milestone_number is None:

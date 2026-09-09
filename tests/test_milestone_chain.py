@@ -55,9 +55,43 @@ def _store(tmp_path):
 
 
 def _chain_config(**kwargs):
-    defaults = {"enabled": True, "child_priority": "normal", "auto_develop": True}
+    defaults = {
+        "enabled": True,
+        "child_priority": "normal",
+        "auto_develop": True,
+        "auto_close_parent": True,
+    }
     defaults.update(kwargs)
     return MilestoneChainConfig(**defaults)
+
+
+def _parent_issue(**overrides):
+    base = {
+        "number": 100,
+        "state": "OPEN",
+        "labels": [
+            {"name": "scope:milestone"},
+            {"name": DONE_LABEL["draft"]},
+            {"name": DONE_LABEL["sub"]},
+        ],
+        "body": _PARENT_BODY,
+        "milestone": {"number": 1},
+    }
+    base.update(overrides)
+    return base
+
+
+def _child_issue(number: int, *, state: str, labels: list[str], **overrides):
+    base = {
+        "number": number,
+        "state": state,
+        "title": f"child {number}",
+        "body": _CHILD_BODY,
+        "milestone": {"number": 1},
+        "labels": [{"name": name} for name in labels],
+    }
+    base.update(overrides)
+    return base
 
 
 class FakeClient:
@@ -66,6 +100,8 @@ class FakeClient:
         self.children = children or {}
         self.comments = comments or {}
         self.posted_comments: list[tuple[int, str]] = []
+        self.closed: list[int] = []
+        self.label_ops: list[tuple[str, int, object]] = []
 
     def issue_get(self, number, fields=None):
         if number not in self.issues:
@@ -77,6 +113,19 @@ class FakeClient:
 
     def issue_comment(self, number, body):
         self.posted_comments.append((number, body))
+        self.comments.setdefault(number, []).append({"body": body})
+
+    def issue_close(self, number):
+        self.closed.append(number)
+        if number in self.issues:
+            self.issues[number] = dict(self.issues[number])
+            self.issues[number]["state"] = "CLOSED"
+
+    def add_labels(self, number, labels):
+        self.label_ops.append(("add", number, labels))
+
+    def remove_labels(self, number, labels):
+        self.label_ops.append(("remove", number, labels))
 
     def api_request(self, path, paginate=False):
         if path.startswith("issues?state=all&milestone="):
@@ -349,38 +398,107 @@ class TestChainRules:
         snap = store.snapshot()
         assert snap.active_order == []
 
-    def test_c4_notifies_once_when_children_terminal(self, tmp_path):
+    def test_c4_auto_closes_parent_when_all_children_merge_done(self, tmp_path):
         store = _store(tmp_path)
         store.update_milestone_chain(100, {"stage": "children_validated"})
-        child = {
-            "number": 101,
-            "state": "CLOSED",
-            "title": "child",
-            "body": _CHILD_BODY,
-            "milestone": {"number": 1},
-            "labels": [{"name": "issuesmith:merge-done"}],
-        }
+        child_101 = _child_issue(101, state="CLOSED", labels=["issuesmith:merge-done"])
+        child_102 = _child_issue(102, state="CLOSED", labels=["issuesmith:merge-done"])
+        parent = _parent_issue()
         client = FakeClient(
-            issues={
-                100: {
-                    "number": 100,
-                    "state": "OPEN",
-                    "labels": [
-                        {"name": "scope:milestone"},
-                        {"name": DONE_LABEL["draft"]},
-                        {"name": DONE_LABEL["sub"]},
-                    ],
-                    "body": _PARENT_BODY,
-                    "milestone": {"number": 1},
-                },
-                101: child,
-            },
-            children={1: [child]},
+            issues={100: parent, 101: child_101, 102: child_102},
+            children={1: [child_101, child_102]},
+        )
+        advance_milestone_chains(store, client, _chain_config())
+        assert len(client.posted_comments) == 1
+        assert client.closed == [100]
+        chain = store.get_milestone_chain(100)
+        assert chain.get("notified_all_done") is True
+        assert chain.get("closed_parent") is True
+        assert client.label_ops == []
+        # Parent labels unchanged (no add/remove on close).
+        assert [label["name"] for label in client.issues[100]["labels"]] == [
+            "scope:milestone",
+            DONE_LABEL["draft"],
+            DONE_LABEL["sub"],
+        ]
+
+    def test_c4_auto_close_is_idempotent_on_retick(self, tmp_path):
+        store = _store(tmp_path)
+        store.update_milestone_chain(100, {"stage": "children_validated"})
+        child_101 = _child_issue(101, state="CLOSED", labels=["issuesmith:merge-done"])
+        child_102 = _child_issue(102, state="CLOSED", labels=["issuesmith:merge-done"])
+        client = FakeClient(
+            issues={100: _parent_issue(), 101: child_101, 102: child_102},
+            children={1: [child_101, child_102]},
         )
         advance_milestone_chains(store, client, _chain_config())
         advance_milestone_chains(store, client, _chain_config())
         assert len(client.posted_comments) == 1
-        assert store.get_milestone_chain(100).get("notified_all_done") is True
+        assert client.closed == [100]
+
+    def test_c4_halts_when_child_closed_without_merge_done(self, tmp_path):
+        store = _store(tmp_path)
+        store.update_milestone_chain(100, {"stage": "children_validated"})
+        child_101 = _child_issue(101, state="CLOSED", labels=["issuesmith:rejected"])
+        child_102 = _child_issue(102, state="CLOSED", labels=["issuesmith:merge-done"])
+        client = FakeClient(
+            issues={100: _parent_issue(), 101: child_101, 102: child_102},
+            children={1: [child_101, child_102]},
+        )
+        advance_milestone_chains(store, client, _chain_config())
+        assert client.closed == []
+        assert len(client.posted_comments) == 1
+        assert "確認待ち: #101 が merge-done 以外で終了" in client.posted_comments[0][1]
+        chain = store.get_milestone_chain(100)
+        assert chain.get("stage") == "halted"
+        assert "child closed without merge-done: #101" in chain.get("halted_reason", "")
+
+    def test_c4_resume_reevaluates_after_halt(self, tmp_path):
+        store = _store(tmp_path)
+        store.update_milestone_chain(100, {"stage": "children_validated"})
+        # draft-done を残し、resume 後の C2 検証を通したうえで C4 を再評価させる。
+        child_101 = _child_issue(
+            101,
+            state="CLOSED",
+            labels=["issuesmith:draft-done", "issuesmith:rejected"],
+        )
+        child_102 = _child_issue(
+            102,
+            state="CLOSED",
+            labels=["issuesmith:draft-done", "issuesmith:merge-done"],
+        )
+        client = FakeClient(
+            issues={100: _parent_issue(), 101: child_101, 102: child_102},
+            children={1: [child_101, child_102]},
+        )
+        advance_milestone_chains(store, client, _chain_config())
+        assert store.get_milestone_chain(100).get("stage") == "halted"
+        assert store.resume_milestone_chain(100) is True
+        advance_milestone_chains(store, client, _chain_config())
+        # Still without merge-done → halt again; no close; comment stays once.
+        assert store.get_milestone_chain(100).get("stage") == "halted"
+        assert "child closed without merge-done: #101" in store.get_milestone_chain(100).get(
+            "halted_reason", ""
+        )
+        assert client.closed == []
+        assert len(client.posted_comments) == 1
+
+    def test_c4_auto_close_parent_false_keeps_notify_only(self, tmp_path):
+        store = _store(tmp_path)
+        store.update_milestone_chain(100, {"stage": "children_validated"})
+        child = _child_issue(101, state="CLOSED", labels=["issuesmith:merge-done"])
+        client = FakeClient(
+            issues={100: _parent_issue(), 101: child},
+            children={1: [child]},
+        )
+        advance_milestone_chains(store, client, _chain_config(auto_close_parent=False))
+        advance_milestone_chains(store, client, _chain_config(auto_close_parent=False))
+        assert len(client.posted_comments) == 1
+        assert "親の close は人間が行う" in client.posted_comments[0][1]
+        assert client.closed == []
+        chain = store.get_milestone_chain(100)
+        assert chain.get("notified_all_done") is True
+        assert chain.get("closed_parent") is not True
 
     def test_resume_clears_halted(self, tmp_path):
         store = _store(tmp_path)

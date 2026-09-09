@@ -146,6 +146,14 @@ Orchestration (polling, DAG, label transitions) remains in **ghdag** `WorkflowDi
 | `ISSUESMITH_TIMEOUT_SEC` | env | Override engine timeout seconds |
 | `issuesmith.yaml` | file | Repo / paths / engines / supported_repos (see Quick Start) |
 
+Optional `milestone_chain` keys in `issuesmith.yaml`:
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Enable milestone chain automation |
+| `auto_develop` | `true` | After child validation, enqueue `develop` for each child |
+| `auto_close_parent` | `true` | When every child is `CLOSED` with `issuesmith:merge-done`, comment once and close the parent. Set `false` to keep notify-only behavior. Children closed via `TERMINAL_WITHOUT_MERGE` (e.g. rejected) halt the chain for human review instead of closing the parent |
+
 Resolution order for the config file: explicit path → `ISSUESMITH_CONFIG` → walk up from cwd → package repo-root fallback → builtin defaults.
 
 ## Milestone chain (multi-repo)
