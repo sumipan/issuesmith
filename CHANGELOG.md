@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Fixed
+
+- `_iter_issuesmith_exec_records` が世代付き冪等キー（`issuesmith:impl:2959:1`、redispatch 時に ghdag が付与）の末尾要素を issue 番号と誤解釈し、再投入中の DAG を in_flight 外の「孤児」とみなして `pipeline not idle` で全 dispatch を止めていた。`issuesmith:<handler>:<issue>[:<generation>]` を正しく解釈する（2026-09-09、nexus #2959 の再投入で実測）
+
 ### Added
 
 - Milestone chain multi-repo validation: V1 expects child `target_repo` from the parent

@@ -97,6 +97,20 @@ def _iter_issuesmith_exec_uuids() -> list[str]:
     return [uuid for uuid, _issue in _iter_issuesmith_exec_records()]
 
 
+def _issue_from_idempotency_key(key: str) -> int | None:
+    """``issuesmith:<handler>:<issue>[:<generation>]`` から issue 番号を取り出す。
+
+    2026-09-09 まで末尾要素を issue とみなしていたため、世代付きキー
+    （``issuesmith:impl:2959:1``、redispatch で ghdag が付与）が issue=1 と誤解釈され、
+    in_flight に無い「孤児」として ``_dispatch_pipeline_ready`` を塞いでいた。
+    """
+    parts = key.split(":")
+    if len(parts) < 3 or parts[0] != WORKFLOW_NAME:
+        return None
+    issue_part = parts[2]
+    return int(issue_part) if issue_part.isdigit() else None
+
+
 def _iter_issuesmith_exec_records() -> list[tuple[str, int | None]]:
     """Return (uuid, issue_number) for every issuesmith-prefixed exec.jsonl row.
 
@@ -120,9 +134,7 @@ def _iter_issuesmith_exec_records() -> list[tuple[str, int | None]]:
         idempotency_key = str(row.get("idempotency_key", ""))
         uuid = row.get("uuid")
         if idempotency_key.startswith("issuesmith:") and isinstance(uuid, str) and uuid:
-            issue_part = idempotency_key.rsplit(":", 1)[-1]
-            issue_number = int(issue_part) if issue_part.isdigit() else None
-            records.append((uuid, issue_number))
+            records.append((uuid, _issue_from_idempotency_key(idempotency_key)))
     return records
 
 
