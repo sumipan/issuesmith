@@ -76,10 +76,10 @@ def test_builtin_codex_light_default_is_in_current_allowlist(codex_allowlist):
 def test_light_model_errors_reports_config_default_source(monkeypatch, codex_allowlist):
     monkeypatch.setitem(engine.DEFAULT_LIGHT_MODELS, ("design", "codex"), "gpt-5.4-mini")
     errors = engine.light_model_errors(_state())
-    assert errors == [
-        "design: light_model (config default) not in configs/llm-models.yml "
-        "allowlist for codex: gpt-5.4-mini"
-    ]
+    assert len(errors) == 1
+    assert "config default" in errors[0]
+    assert "gpt-5.4-mini" in errors[0]
+    assert "engines.design.light_model.codex" in errors[0]
 
 
 def test_light_model_errors_reports_state_source(codex_allowlist):

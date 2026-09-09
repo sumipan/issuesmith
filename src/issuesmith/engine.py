@@ -168,7 +168,7 @@ def resolve(role: str, tier: str | None = None) -> RoleSelection:
     """ロールの engine/model を解決する。
 
     tier="light" のときのみモデルを降格する: state の light_model →
-    DEFAULT_LIGHT_MODELS → 未定義なら state モデルのまま（fail-safe）。
+    DEFAULT_LIGHT_MODELS → 未定義 / 許可リスト外なら state モデルのまま（fail-safe）。
     tier=None / "heavy" は state の設定モデルをそのまま使う。
     """
     if tier is not None and tier not in TIERS:
@@ -179,24 +179,13 @@ def resolve(role: str, tier: str | None = None) -> RoleSelection:
     model = selected["model"]
     if tier == "light":
         light_model, source = _effective_light_model(selected, role, engine)
-        if not light_model:
-            print(
-                f"[issuesmith-engine] no light model for role={role} "
-                f"engine={engine}; falling back to {model}",
-                file=sys.stderr,
-            )
-        elif not _light_model_allowed(engine, light_model):
-            # light tier は最適化であって必須ではない。allowlist 外のモデルで
-            # 起動して EngineModelError でパイプラインを止めるより、heavy に
-            # 戻して続行する（2026-09-09、#2968 / #2986 の再発防止）。
-            print(
-                f"[issuesmith-engine] light model {light_model!r} ({source}) is not in "
-                f"configs/llm-models.yml allowlist for engine={engine}; "
-                f"falling back to {model}",
-                file=sys.stderr,
-            )
-        else:
-            model = light_model
+        model = _apply_light_or_fallback(
+            role=role,
+            engine=engine,
+            heavy_model=model,
+            light_model=light_model,
+            source=source,
+        )
     return RoleSelection(engine=engine, model=model)
 
 
@@ -219,20 +208,81 @@ def _light_model_allowed(engine: str, model: str) -> bool:
     return allowed is None or model in allowed
 
 
+def _apply_light_or_fallback(
+    *,
+    role: str,
+    engine: str,
+    heavy_model: str,
+    light_model: str | None,
+    source: str,
+) -> str:
+    """light が使えるならそれを、否则 heavy にフォールバック（LLM 呼び出し前）。"""
+    if not light_model:
+        print(
+            f"[issuesmith-engine] no light model for role={role} "
+            f"engine={engine}; falling back to {heavy_model}",
+            file=sys.stderr,
+        )
+        return heavy_model
+    if not _light_model_allowed(engine, light_model):
+        # light tier は最適化であって必須ではない。allowlist 外のモデルで
+        # 起動して EngineModelError でパイプラインを止めるより、heavy に
+        # 戻して続行する（2026-09-09、#2968 / #2986 / #2981 の再発防止）。
+        print(
+            f"[issuesmith-engine] light model {light_model!r} ({source}) is not in "
+            f"configs/llm-models.yml allowlist for engine={engine}; "
+            f"falling back to {heavy_model}",
+            file=sys.stderr,
+        )
+        return heavy_model
+    return light_model
+
+
+def light_allowlist_status(role: str) -> tuple[bool, str | None]:
+    """実効 light モデルの許可リスト判定。(allowlist_valid, reason) を返す。"""
+    state = load_state()
+    selected = state[role]
+    engine = str(selected["engine"])
+    light_model, source = _effective_light_model(selected, role, engine)
+    if not light_model:
+        return True, None
+    if _light_model_allowed(engine, light_model):
+        return True, None
+    reason = (
+        f"light model {light_model!r} ({source}) is not in "
+        f"configs/llm-models.yml allowlist for engine={engine}"
+    )
+    return False, reason
+
+
 def light_model_errors(state: dict[str, dict[str, Any]] | None = None) -> list[str]:
-    """各ロールの実効 light モデル（state 優先・無ければ config 既定）を allowlist と照合する。"""
+    """DEFAULT_LIGHT_MODELS 全項目と state の light_model 上書きを allowlist と照合する。"""
     state = state if state is not None else load_state()
     errors: list[str] = []
+
+    # config 既定（issuesmith.yaml engines.<role>.light_model.<engine>）を全件検査。
+    # 現在 state の engine と無関係に、切替時の地雷を engine check で先に潰す。
+    for (role, eng), model in sorted(DEFAULT_LIGHT_MODELS.items()):
+        if _light_model_allowed(eng, model):
+            continue
+        yaml_key = f"engines.{role}.light_model.{eng}"
+        errors.append(
+            f"{role}: light_model (config default) not in configs/llm-models.yml "
+            f"allowlist for {eng}: {model}; "
+            f"fix issuesmith.yaml `{yaml_key}` to an allowlisted model"
+        )
+
+    # state 上書き（既存動作を維持）
     for role in ROLE_ENGINES:
         selected = state[role]
-        engine = str(selected["engine"])
-        light_model, source = _effective_light_model(selected, role, engine)
-        if not light_model:
+        eng = str(selected["engine"])
+        from_state = selected.get("light_model")
+        if not from_state:
             continue
-        if not _light_model_allowed(engine, light_model):
+        if not _light_model_allowed(eng, str(from_state)):
             errors.append(
-                f"{role}: light_model ({source}) not in configs/llm-models.yml "
-                f"allowlist for {engine}: {light_model}"
+                f"{role}: light_model (state) not in configs/llm-models.yml "
+                f"allowlist for {eng}: {from_state}"
             )
     return errors
 
@@ -503,9 +553,18 @@ def _execute(
             allowed = ", ".join(sorted(ROLE_ENGINES[role]))
             raise ValueError(f"{role} engine must be one of: {allowed}")
         if engine != selection.engine:
-            model = DEFAULT_MODELS[(role, engine)]
+            heavy = DEFAULT_MODELS[(role, engine)]
             if tier == "light":
-                model = DEFAULT_LIGHT_MODELS.get((role, engine), model)
+                light = DEFAULT_LIGHT_MODELS.get((role, engine))
+                model = _apply_light_or_fallback(
+                    role=role,
+                    engine=engine,
+                    heavy_model=heavy,
+                    light_model=light,
+                    source="config default",
+                )
+            else:
+                model = heavy
             selection = RoleSelection(engine=engine, model=model)
 
     working_directory = _working_directory(cwd)
@@ -1043,6 +1102,11 @@ def main(argv: list[str] | None = None) -> int:
                 print(getattr(selection, args.field))
             else:
                 print(f"{selection.engine}\t{selection.model}")
+                if args.tier == "light":
+                    valid, reason = light_allowlist_status(args.role)
+                    print(f"allowlist_valid: {str(valid).lower()}")
+                    if not valid and reason:
+                        print(f"reason: {reason}")
             return 0
         if args.action == "check":
             errors = check_state()
