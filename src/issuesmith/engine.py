@@ -216,7 +216,7 @@ def _apply_light_or_fallback(
     light_model: str | None,
     source: str,
 ) -> str:
-    """light が使えるならそれを、否则 heavy にフォールバック（LLM 呼び出し前）。"""
+    """light が使えるならそれを、無効なら heavy にフォールバック（LLM 呼び出し前）。"""
     if not light_model:
         print(
             f"[issuesmith-engine] no light model for role={role} "
