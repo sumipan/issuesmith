@@ -330,10 +330,6 @@ def _in_flight_should_release(client: GitHubClient, entry: dict[str, Any]) -> bo
     busy = {
         READY_LABEL["develop"],
         RUNNING_LABEL["develop"],
-        READY_LABEL["sub"],
-        RUNNING_LABEL["sub"],
-        READY_LABEL["merge"],
-        RUNNING_LABEL["merge"],
     }
     if labels & busy:
         return False

@@ -448,6 +448,26 @@ def test_draft_done_does_not_release_when_develop_ready(
     assert 100 in issues
 
 
+@pytest.mark.parametrize("next_label", ["issuesmith:sub-ready", "issuesmith:merge-ready"])
+def test_draft_done_releases_stale_design_entry_for_non_develop_phase(next_label):
+    """Only develop-ready/running keeps a draft-done design entry in_flight."""
+    from issuesmith import queue as qmod
+
+    client = _DispatchClient(
+        {
+            100: {
+                "state": "OPEN",
+                "labels": [
+                    {"name": "issuesmith:draft-done"},
+                    {"name": next_label},
+                ],
+            }
+        }
+    )
+    entry = {"issue": 100, "engine": "claude", "role": "design"}
+    assert qmod._in_flight_should_release(client, entry) is True
+
+
 def test_strict_order_breaks_on_capacity_wait(tmp_path, monkeypatch, issuesmith_config):
     payload = yaml.safe_load(issuesmith_config.read_text(encoding="utf-8"))
     payload["concurrency"] = {
