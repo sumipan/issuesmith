@@ -595,3 +595,81 @@ def test_halt_auto_clears_when_in_flight_resolved(
     result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
     assert result.dispatched is True
     assert store.snapshot().halt is False
+
+
+def test_dispatch_bumps_ghdag_generation_when_handler_key_consumed(
+    tmp_path, monkeypatch, issuesmith_config,
+):
+    """ready ラベル付与時に冪等キーが消費済みなら ghdag redispatch を呼ぶ（2026-09-09 #2980）。"""
+    _patch_paths(tmp_path, monkeypatch, issuesmith_config)
+
+    from issuesmith import queue as qmod
+
+    body = (
+        "```yaml\n"
+        "target_repo: sumipan/nexus\n"
+        "base_branch: main\n"
+        "allow_paths:\n"
+        '  - "tools/a/**"\n'
+        "```\n"
+    )
+    store = _store(tmp_path)
+    store.enqueue(
+        issue=100,
+        phase="draft",
+        source="recovery",
+        actor_kind="human",
+        priority="high",
+        requested_by=["alice"],
+        requested_at=_NOW,
+    )
+    client = _DispatchClient({100: {"state": "OPEN", "labels": [], "body": body}})
+    now = datetime(2026, 9, 5, 12, 0, tzinfo=_JST)
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+    consumed_queries: list[tuple[str, int]] = []
+    triggered: list[tuple[int, str]] = []
+    monkeypatch.setattr(
+        qmod, "_handler_key_consumed",
+        lambda handler, issue: consumed_queries.append((handler, issue)) or True,
+    )
+    monkeypatch.setattr(
+        qmod, "_trigger_ghdag_redispatch",
+        lambda issue, handler, reason: triggered.append((issue, handler)) or 0,
+    )
+
+    result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
+
+    assert result.dispatched is True
+    assert consumed_queries == [("brushup", 100)]
+    assert triggered == [(100, "brushup")]
+
+
+def test_dispatch_skips_ghdag_redispatch_when_key_unused(
+    tmp_path, monkeypatch, issuesmith_config,
+):
+    _patch_paths(tmp_path, monkeypatch, issuesmith_config)
+
+    from issuesmith import queue as qmod
+
+    body = (
+        "```yaml\n"
+        "target_repo: sumipan/nexus\n"
+        "base_branch: main\n"
+        "allow_paths:\n"
+        '  - "tools/a/**"\n'
+        "```\n"
+    )
+    store = _store(tmp_path)
+    store.enqueue(
+        issue=100, phase="draft", source="skill", actor_kind="human",
+        priority="normal", requested_by=["alice"], requested_at=_NOW,
+    )
+    client = _DispatchClient({100: {"state": "OPEN", "labels": [], "body": body}})
+    now = datetime(2026, 9, 5, 12, 0, tzinfo=_JST)
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+    monkeypatch.setattr(qmod, "_handler_key_consumed", lambda handler, issue: False)
+    monkeypatch.setattr(
+        qmod, "_trigger_ghdag_redispatch",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not be called")),
+    )
+    assert qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True).dispatched

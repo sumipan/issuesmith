@@ -7,6 +7,7 @@ import fnmatch
 import json
 import os
 import re
+import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime, time
@@ -550,6 +551,60 @@ _BRUSHUP_STEPS = frozenset({"b1", "cp1_gate", "cp1"})
 _IMPL_STEPS = frozenset({"p0", "p1", "p2", "p2r", "p3", "cp2", "m1", "m1r", "m2"})
 
 
+WORKFLOW_NAME = "issuesmith"
+_PHASE_HANDLER: dict[str, str] = {
+    "draft": "brushup",
+    "develop": "impl",
+    "merge": "merge",
+    "sub": "subissue",
+}
+_MAX_GENERATION_SCAN = 16
+
+
+def _handler_key_consumed(handler: str, issue: int) -> bool:
+    """このハンドラーの冪等キー（世代付きを含む）が exec.jsonl で消費済みか。
+
+    消費済みなら ready ラベルを付け直しても ghdag watcher は
+    「dispatch skipped (already dispatched)」で起動しない（2026-09-09、#2980 の
+    CP2 FAIL 復旧で実測）。その場合は世代を上げて起動し直す必要がある。
+    """
+    if not EXEC_PATH.exists():
+        return False
+    from ghdag.io import exec_jsonl
+
+    base = f"{WORKFLOW_NAME}:{handler}:{issue}"
+    keys = [base] + [f"{base}:{gen}" for gen in range(1, _MAX_GENERATION_SCAN)]
+    return any(not exec_jsonl.check_idempotency(EXEC_PATH, key) for key in keys)
+
+
+def _trigger_ghdag_redispatch(issue: int, handler: str, reason: str) -> int:
+    """ghdag の世代を上げてハンドラーを起動する（`ghdag trigger --redispatch` と同じ）。"""
+    cmd = [
+        sys.executable,
+        "-m",
+        "ghdag",
+        "trigger",
+        str(issue),
+        "--handler",
+        handler,
+        "--workflow",
+        WORKFLOW_NAME,
+        "--exec-md",
+        str(EXEC_PATH),
+        "--redispatch",
+        "--reason",
+        reason,
+    ]
+    proc = subprocess.run(cmd, check=False, capture_output=True, text=True)
+    if proc.returncode != 0:
+        print(
+            f"[issuesmith-queue] ghdag redispatch failed for #{issue} handler={handler} "
+            f"rc={proc.returncode}: {(proc.stderr or proc.stdout).strip()[-500:]}",
+            file=sys.stderr,
+        )
+    return int(proc.returncode)
+
+
 def handler_for_failed_step(failed_step: str, labels: set[str]) -> str:
     if failed_step in _BRUSHUP_STEPS:
         return "brushup"
@@ -1002,12 +1057,25 @@ def dispatch_one(
             labels = label_names(issue)
             if label not in labels:
                 client.issue_update(req.issue, labels_add=[label], labels_remove=[])
+            handler = _PHASE_HANDLER.get(req.phase)
+            redispatch_note = ""
+            if handler and _handler_key_consumed(handler, req.issue):
+                # ラベルだけでは watcher が冪等キーで skip する。世代を上げて起動する。
+                rc = _trigger_ghdag_redispatch(
+                    req.issue, handler, reason=f"queue request {rid} ({req.source})"
+                )
+                redispatch_note = (
+                    " ghdag generation bumped (redispatch)."
+                    if rc == 0
+                    else f" WARNING: ghdag redispatch failed (rc={rc}); "
+                    f"run `ghdag trigger {req.issue} --handler {handler} --redispatch` manually."
+                )
             _ensure_comment(
                 client,
                 req.issue,
                 rid,
                 "dispatched",
-                f"issuesmith queue dispatched `{label}` for request `{rid}`.",
+                f"issuesmith queue dispatched `{label}` for request `{rid}`.{redispatch_note}",
             )
             store.add_in_flight(
                 req.issue,
