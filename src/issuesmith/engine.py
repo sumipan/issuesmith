@@ -708,7 +708,10 @@ def exec_file(
 # PIPELINE_STATUS 契約の単一実装（#2547）。マーカーは「行頭から始まる独立行」のみ
 # 有効で、判定はこのモジュールに一元化する。テンプレート側 shell での重複 grep
 # 判定は追加しないこと（内外の規則差が #2547 の部分成功事故を生んだ）。
-_STATUS_LINE_RE = re.compile(r"^PIPELINE_STATUS: (\S+)\s*$", re.MULTILINE)
+# 独立行であれば、LLM が付けがちなバッククォート / 太字 / アンダースコアの装飾は許容する
+# （2026-09-09、codex が `PIPELINE_STATUS: CP2_PASS` をバッククォートで囲んで出力し、
+# 実体は PASS なのに CP2 FAIL ハンドラが発火した）。箇条書きや文中の埋め込みは従来どおり不可。
+_STATUS_LINE_RE = re.compile(r"^[`*_]*PIPELINE_STATUS: (\S+?)[`*_]*\s*$", re.MULTILINE)
 
 
 def _extract_status_values(stdout: str) -> list[str]:
