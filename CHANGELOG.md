@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.8.1 - 2026-09-09
+
+### Fixed
+
+- `engine resolve --tier light` は light モデルが `configs/llm-models.yml` の allowlist に無い場合、
+  `EngineModelError` でパイプラインを止めず heavy モデルへフォールバックする（#2968 / #2986 の再発防止）
+- `engine check` が state 未設定時の config 既定 light モデルも allowlist と照合する
+- codex の light 既定モデルを `gpt-5.4-mini` → `gpt-5.5`（ChatGPT アカウント認証で 400 になる）
+
 ### Added
 
 - Queue allow_paths conflict gate, `concurrency.strict_order`, draft-done in_flight release, and role-aware in_flight accounting (#2980)
