@@ -45,6 +45,8 @@ _TABLE_ROW_RE = re.compile(r"^\|")
 _TABLE_SEPARATOR_RE = re.compile(r"^\|[\s\-:|]+\|$")
 _CHANGE_TABLE_HEADER = re.compile(r"\*\*変更対象ファイル\*\*")
 _PLAN_REF_RE = re.compile(r"^\|\s*(\d+)\s*\|")
+# 解決済み Issue 参照（3 桁以上）。plan ref（サブ N の連番）と区別する。
+_RESOLVED_ISSUE_REF_RE = re.compile(r"#(\d{3,})\b")
 
 
 @dataclass
@@ -240,6 +242,12 @@ def _dependency_refs_unresolved(body: str) -> list[str]:
         if not _TABLE_ROW_RE.match(line.strip()):
             continue
         if _TABLE_SEPARATOR_RE.match(line.strip()):
+            continue
+        if _RESOLVED_ISSUE_REF_RE.search(line):
+            # 先頭セルが連番（`| # | 依存先 | 状態 |` 形式の行番号）でも、同じ行に
+            # 解決済みの `#NNNN` があれば依存は解決している。2026-09-10、SUB1 が
+            # 生成した #3000 の `| 1 | #2999 (...) | OPEN |` を plan ref #1 と誤判定し
+            # milestone chain が validation failed で停止した。
             continue
         for match in _PLAN_REF_RE.finditer(line):
             failures.append(f"unresolved plan ref #{match.group(1)} in dependency table")
