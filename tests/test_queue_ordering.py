@@ -606,7 +606,7 @@ def test_status_shows_conflict_waiting(tmp_path, monkeypatch, issuesmith_config,
     )
     qmod._cmd_status(args)
     out = capsys.readouterr().out
-    assert f"issue=#2976" in out
+    assert "issue=#2976" in out
     assert "role=design" in out
     assert "waiting:" in out
     assert "#2966" in out
