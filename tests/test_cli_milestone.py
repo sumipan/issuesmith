@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from issuesmith.milestone import milestone_resume, milestone_status
 
 
@@ -70,6 +72,25 @@ def test_milestone_status_prints_table(capsys):
     assert "milestone chain #100" in out
     assert "101" in out
     assert "child one" in out
+    assert "target_repo" in out
+    assert "sumipan/nexus" in out
+
+
+def test_milestone_status_shows_unset_target_repo(capsys):
+    client = FakeClient()
+    client.issues[101]["body"] = """```yaml
+base_branch: main
+allow_paths:
+  - src/**
+```"""
+    code = milestone_status(100, client=client, store=FakeStore())
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "target_repo" in out
+    child_line = next(line for line in out.splitlines() if re.search(r"\b101\b", line))
+    # unset target_repo: title is present, but no owner/repo slug in the row
+    assert "child one" in child_line
+    assert "sumipan/" not in child_line
 
 
 def test_milestone_resume_success(capsys):
