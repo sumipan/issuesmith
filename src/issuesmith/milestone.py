@@ -119,7 +119,8 @@ def _parse_table_rows(section: str) -> list[list[str]]:
     return rows
 
 
-def _extract_change_paths(body: str) -> list[str]:
+def _extract_change_paths(body: str, *, repo: str | None = None) -> list[str]:
+    """Extract change-table paths. When ``repo`` is set, keep only matching リポジトリ rows."""
     paths: list[str] = []
     for match in _CHANGE_TABLE_HEADER.finditer(body):
         start = match.end()
@@ -134,13 +135,64 @@ def _extract_change_paths(body: str) -> list[str]:
             )
         except StopIteration:
             path_idx = 1 if len(rows[0]) > 1 else 0
+        try:
+            repo_idx = next(i for i, cell in enumerate(header) if "リポジトリ" in cell)
+        except StopIteration:
+            repo_idx = None
         for row in rows[1:]:
             if len(row) <= path_idx:
                 continue
+            if repo is not None and repo_idx is not None:
+                if len(row) <= repo_idx:
+                    continue
+                row_repo = row[repo_idx].strip().strip("`")
+                if row_repo != repo:
+                    continue
             path = row[path_idx].strip().strip("`")
             if path and "/" in path:
                 paths.append(path)
     return paths
+
+
+def _plan_section(body: str) -> str | None:
+    match = re.search(
+        r"^###\s+サブイシュー分割計画\s*\n(.*?)(?=^##|\Z)",
+        body,
+        re.MULTILINE | re.DOTALL,
+    )
+    return match.group(1) if match else None
+
+
+def _expected_child_target_repo(parent_body: str, child: dict[str, Any]) -> str | None:
+    """Resolve V1 expected target_repo from the parent split plan, else parent YAML."""
+    parent_repo = _target_repo_from_body(parent_body)
+    section = _plan_section(parent_body)
+    if section is None:
+        return parent_repo
+    rows = _parse_table_rows(section)
+    if len(rows) <= 1:
+        return parent_repo
+    header = rows[0]
+    try:
+        title_idx = next(i for i, cell in enumerate(header) if "タイトル" in cell)
+    except StopIteration:
+        return parent_repo
+    try:
+        repo_idx = next(i for i, cell in enumerate(header) if "対象リポジトリ" in cell)
+    except StopIteration:
+        return parent_repo
+
+    child_title = str(child.get("title") or "").strip()
+    for row in rows[1:]:
+        if len(row) <= title_idx:
+            continue
+        if row[title_idx].strip() != child_title:
+            continue
+        if len(row) <= repo_idx:
+            return parent_repo
+        value = row[repo_idx].strip().strip("`")
+        return value or parent_repo
+    return parent_repo
 
 
 def _allow_paths_from_body(body: str) -> list[str]:
@@ -201,8 +253,8 @@ def validate_children(
     client: GitHubClient,
 ) -> ValidateChildrenResult:
     parent_body = str(parent.get("body") or "")
-    parent_repo = _target_repo_from_body(parent_body)
     parent_milestone = _milestone_number(parent)
+    supported = get_config().supported_repos
     results: list[ChildValidation] = []
 
     for child in children:
@@ -214,11 +266,22 @@ def validate_children(
         failures: list[str] = []
 
         child_repo = _target_repo_from_body(body)
-        if parent_repo and child_repo != parent_repo:
-            failures.append(f"V1 target_repo mismatch: {child_repo!r} != {parent_repo!r}")
+        expected_repo = _expected_child_target_repo(parent_body, child)
+        if expected_repo and child_repo != expected_repo:
+            failures.append(
+                f"V1 target_repo mismatch: expected {expected_repo!r}, got {child_repo!r}"
+            )
+        if child_repo and child_repo not in supported:
+            failures.append(
+                f"V1 target_repo unsupported: {child_repo!r} not in supported_repos"
+            )
+        if expected_repo and expected_repo not in supported:
+            failures.append(
+                f"V1 expected target_repo unsupported: {expected_repo!r} not in supported_repos"
+            )
 
         allow_paths = _allow_paths_from_body(body)
-        child_paths = _extract_change_paths(body)
+        child_paths = _extract_change_paths(body, repo=child_repo)
         missing = _paths_covered(allow_paths, child_paths)
         if missing:
             failures.append(f"V2 allow_paths missing: {', '.join(missing)}")
@@ -586,14 +649,15 @@ def milestone_status(parent: int, *, client: GitHubClient | None = None, store: 
         for child in _list_milestone_children(client, milestone_number)
         if child.get("number") != parent
     ]
-    print(f"{'#':>6}  {'title':<40}  {'phase':<12}  {'deps':<8}  pr")
-    print("-" * 80)
+    print(f"{'#':>6}  {'title':<40}  {'target_repo':<28}  {'phase':<12}  {'deps':<8}  pr")
+    print("-" * 100)
     for child in sorted(children, key=lambda item: int(item.get("number") or 0)):
         child_num = int(child.get("number") or 0)
         title = str(child.get("title") or "")[:40]
         labels = label_names(child)
         phase = _child_phase_label(labels)
         body = str(child.get("body") or "")
+        target_repo = _target_repo_from_body(body) or ""
         deps = extract_dependencies(body)
         if deps:
             result = check_dependencies(deps, client=client)
@@ -601,7 +665,9 @@ def milestone_status(parent: int, *, client: GitHubClient | None = None, store: 
         else:
             dep_state = "-"
         pr = "-"
-        print(f"{child_num:>6}  {title:<40}  {phase:<12}  {dep_state:<8}  {pr}")
+        print(
+            f"{child_num:>6}  {title:<40}  {target_repo:<28}  {phase:<12}  {dep_state:<8}  {pr}"
+        )
     return 0
 
 

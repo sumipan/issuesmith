@@ -195,7 +195,10 @@ class TestValidateChildren:
         client = FakeClient(issues={101: child})
         result = validate_children(parent, [child], client=client)
         assert result.passed is False
-        assert "V1" in result.results[0].failures[0]
+        failure = result.results[0].failures[0]
+        assert "V1" in failure
+        assert "sumipan/nexus" in failure
+        assert "sumipan/other" in failure
 
 
 class TestChainRules:

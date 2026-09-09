@@ -6,9 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+<<<<<<< HEAD
 ### Changed
 
 - Milestone chain: when all children are `CLOSED` with `issuesmith:merge-done`, auto-close the parent (config `milestone_chain.auto_close_parent`, default `true`). Children closed without merge-done halt the chain for human review (#2959)
+=======
+### Added
+
+- Milestone chain multi-repo validation: V1 expects child `target_repo` from the parent
+  split-plan `対象リポジトリ` column (falls back to parent `target_repo` when the column
+  is absent); unsupported repos fail V1; V2 `allow_paths` checks only change-table rows
+  for the child's `target_repo` (#2961)
+- `issuesmith milestone status` shows each child's `target_repo`
+>>>>>>> origin/main
 
 ## 0.8.2 - 2026-09-09
 
