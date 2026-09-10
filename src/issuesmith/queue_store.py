@@ -14,11 +14,10 @@ from typing import Any, Iterator, Literal
 
 from issuesmith.config import get_config
 
-Phase = Literal["draft", "sub", "develop", "merge"]
+Phase = str
 ActorKind = Literal["human", "automation"]
 Priority = Literal["high", "normal", "low"]
 
-PHASES: tuple[str, ...] = ("draft", "sub", "develop", "merge")
 ACTOR_KINDS: tuple[str, ...] = ("human", "automation")
 PRIORITIES: tuple[str, ...] = ("high", "normal", "low")
 PRIORITY_RANK = {"high": 0, "normal": 1, "low": 2}
@@ -33,6 +32,12 @@ DEFAULT_LOCK_PATH = _cfg.paths.queue_lock
 DEFAULT_TRIAGE_LOG_PATH = _cfg.paths.triage_log
 DEFAULT_SEED_PATH = _cfg.paths.seed
 DEFAULT_NIGHT_STATE_PATH = _cfg.paths.night_state
+
+
+def __getattr__(name: str) -> Any:
+    if name == "PHASES":
+        return tuple(p.name for p in get_config().phases)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 class QueueValidationError(ValueError):
@@ -117,7 +122,7 @@ def validate_request_fields(
         raise QueueValidationError(f"unknown fields: {sorted(extra)}")
     if not isinstance(issue, int) or isinstance(issue, bool) or issue <= 0:
         raise QueueValidationError(f"issue must be positive int, got {issue!r}")
-    if phase not in PHASES:
+    if phase not in tuple(p.name for p in get_config().phases):
         raise QueueValidationError(f"unknown phase: {phase!r}")
     if actor_kind not in ACTOR_KINDS:
         raise QueueValidationError(f"unknown actor_kind: {actor_kind!r}")

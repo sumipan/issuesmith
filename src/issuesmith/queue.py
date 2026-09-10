@@ -52,18 +52,28 @@ _cfg = get_config()
 TZ = ZoneInfo(_cfg.timezone)
 REPO = _cfg.repo
 
-PHASE_ROLE: dict[str, str] = {
-    "draft": "design",
-    "sub": "implementation",
-    "develop": "implementation",
-    "merge": "implementation",
-}
-
 REPO_ROOT = _cfg.root
 JOBS_DIR = _cfg.paths.exec_jsonl.parent
 DONE_DIR = _cfg.paths.done_dir
 EXEC_PATH = _cfg.paths.exec_jsonl
 QUOTA_STATE_PATH = _cfg.paths.quota_state
+
+
+def _configured_phases():
+    """Return config phases, falling back to defaults for partial test doubles."""
+    from issuesmith.config import _DEFAULT_PHASES
+
+    return getattr(get_config(), "phases", _DEFAULT_PHASES)
+
+
+def _phase_role_map() -> dict[str, str]:
+    return {p.name: p.role for p in _configured_phases()}
+
+
+def __getattr__(name: str) -> Any:
+    if name == "PHASE_ROLE":
+        return _phase_role_map()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 @dataclass
@@ -243,7 +253,7 @@ def _required_engines(engine_state_path: Path | None = None) -> dict[str, str]:
 
 
 def _resolve_engine(phase: str, engine_state_path: Path | None = None) -> str:
-    role = PHASE_ROLE[phase]
+    role = _phase_role_map()[phase]
     return _required_engines(engine_state_path)[role]
 
 
@@ -1072,7 +1082,7 @@ def dispatch_one(
                     break
                 continue
 
-            role = PHASE_ROLE[req.phase]
+            role = _phase_role_map()[req.phase]
             label = READY_LABEL[req.phase]
             labels = label_names(issue)
             if label not in labels:
@@ -1211,7 +1221,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
         req = store.effective_request(snap, rid)
         if not req:
             continue
-        role = PHASE_ROLE.get(req.phase, "")
+        role = _phase_role_map().get(req.phase, "")
         try:
             engine = _resolve_engine(req.phase)
         except Exception:
@@ -1505,7 +1515,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_enq = sub.add_parser("enqueue")
     p_enq.add_argument("--issue", type=int, required=True)
-    p_enq.add_argument("--phase", required=True, choices=["draft", "sub", "develop", "merge"])
+    p_enq.add_argument(
+        "--phase",
+        required=True,
+        choices=[p.name for p in _configured_phases()],
+    )
     p_enq.add_argument("--source", required=True)
     p_enq.add_argument("--actor-kind", required=True, choices=["human", "automation"])
     p_enq.add_argument("--priority", required=True, choices=["high", "normal", "low"])
