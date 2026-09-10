@@ -225,6 +225,74 @@ def _milestone_number(issue: dict[str, Any]) -> int | None:
     return None
 
 
+def link_sub_issue(client: ForgePort, parent_number: int, child_number: int) -> bool:
+    """Link ``child_number`` as a GitHub sub-issue of ``parent_number``.
+
+    Resolves the child's Issue ``id`` (not ``number``) via ``issue_get``, then
+    calls ``client.add_sub_issue``. Returns True on success (including 422
+    duplicate treated as idempotent). Never raises: API failures are logged to
+    stderr and return False so the legacy milestone path can still proceed.
+    """
+    try:
+        child = client.issue_get(child_number, fields=["id", "number"])
+        child_id = child.get("id")
+        if not isinstance(child_id, int):
+            print(
+                f"warning: link_sub_issue #{parent_number}<-#{child_number}: "
+                f"child has no integer id ({child_id!r})",
+                file=sys.stderr,
+            )
+            return False
+        add = getattr(client, "add_sub_issue", None)
+        if add is None:
+            print(
+                f"warning: link_sub_issue #{parent_number}<-#{child_number}: "
+                "client has no add_sub_issue",
+                file=sys.stderr,
+            )
+            return False
+        add(parent_number, child_id)
+        return True
+    except Exception as exc:
+        # Defense in depth: ghdag add_sub_issue already treats 422 as success,
+        # but swallow raised 422 the same way for alternate clients / older builds.
+        if getattr(exc, "status_code", None) == 422:
+            return True
+        print(
+            f"warning: link_sub_issue #{parent_number}<-#{child_number} failed: {exc}",
+            file=sys.stderr,
+        )
+        return False
+
+
+def ensure_sub1_binding(client: ForgePort, parent_number: int, child_number: int) -> bool:
+    """SUB1 gate: continue when milestone is set and/or sub-issue link succeeds.
+
+    Attempts ``link_sub_issue``. Returns True when the parent has a milestone
+    object and/or the link succeeded. When both are unavailable (the #3059
+    failure mode with a failed link), posts an error comment and returns False
+    so SUB1 can stop. Wiring into ``sub-ready.md`` is done in a later sub-issue.
+    """
+    linked = link_sub_issue(client, parent_number, child_number)
+    try:
+        parent = client.issue_get(parent_number, fields=["milestone", "number"])
+    except Exception:
+        parent = {}
+    if _milestone_number(parent) is not None:
+        return True
+    if linked:
+        return True
+    _ensure_parent_comment(
+        client,
+        parent_number,
+        "## SUB1 エラー: milestone 未設定かつサブイシューリンク失敗\n\n"
+        f"親 Issue に milestone が設定されておらず、子 #{child_number} の"
+        "サブイシューリンクにも失敗しました。",
+        "<!-- issuesmith:sub1:no-milestone-no-sub-link -->",
+    )
+    return False
+
+
 def _paths_covered(allow_paths: list[str], paths: list[str]) -> list[str]:
     missing: list[str] = []
     for path in paths:
