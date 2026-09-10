@@ -1,0 +1,79 @@
+diff --git a/tests/test_ghdag_version.py b/tests/test_ghdag_version.py
+index a962678..ec9ef1f 100644
+--- a/tests/test_ghdag_version.py
++++ b/tests/test_ghdag_version.py
+@@ -63,11 +63,11 @@ def test_pyproject_pins_ghdag_v0_43_0():
+     ) == 0
+ 
+ 
+-def test_issue_2991_project_version_is_0_25_1():
+-    """Issue #2991: ghdag v0.43.0 追従に伴い version を 0.25.1 へバンプ。"""
++def test_issue_3023_project_version_is_0_26_0():
++    """Issue #3023: DagHooks cancel/progress 公開に伴い version を 0.26.0 へバンプ。"""
+     pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+     project = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]
+-    assert project["version"] == "0.25.1"
++    assert project["version"] == "0.26.0"
+ 
+ 
+ def test_issue_2991_mltgnt_does_not_import_renamed_adapters():
+diff --git a/tests/test_ghdag_version.py b/tests/test_ghdag_version.py
+index 020bf3f..02f5d75 100644
+--- a/tests/test_ghdag_version.py
++++ b/tests/test_ghdag_version.py
+@@ -51,24 +51,50 @@ def test_ghdag_dag_hooks_has_check_promote_target():
+     )
+ 
+ 
+-def test_pyproject_pins_ghdag_v0_39_1():
+-    """Issue #2920: ghdag 依存が v0.39.1 に固定されていること。"""
++def test_pyproject_pins_ghdag_v0_43_0():
++    """Issue #2991: ghdag 依存が v0.43.0 に固定されていること。"""
+     pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+     project = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]
+-    dependency = "ghdag @ git+https://github.com/sumipan/ghdag.git@v0.39.1"
++    dependency = "ghdag @ git+https://github.com/sumipan/ghdag.git@v0.43.0"
+     assert project["dependencies"].count(dependency) == 1
+     assert project["dependencies"].count(
+-        "ghdag @ git+https://github.com/sumipan/ghdag.git@v0.39.0"
++        "ghdag @ git+https://github.com/sumipan/ghdag.git@v0.39.1"
+     ) == 0
+ 
+ 
+ def test_issue_2920_project_version_is_0_25_0():
+-    """Issue #2920: ghdag v0.39.1 追従に伴い version を 0.25.0 へバンプ。"""
++    """project version は issuesmith version-bump が決定論的に更新する（実装 LLM は触らない）。"""
+     pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+     project = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]
+     assert project["version"] == "0.25.0"
+ 
+ 
++def test_issue_2991_mltgnt_does_not_import_renamed_adapters():
++    """Issue #2991: ghdag v0.43.0 のアダプタリネームは mltgnt に影響しない。
++
++    mltgnt は cursor/codex アダプタを直接 import せず、公開 API のみを使う。
++    """
++    src_root = Path(__file__).resolve().parents[1] / "src"
++    forbidden = (
++        "ghdag.llm.adapters.cursor",
++        "ghdag.llm.adapters.codex",
++        "CursorAdapter",
++        "CodexAdapter",
++    )
++    offenders: list[str] = []
++    for path in src_root.rglob("*.py"):
++        text = path.read_text(encoding="utf-8")
++        for token in forbidden:
++            if token in text:
++                # cursor_stream / codex_jsonl は新名・許容。旧モジュール名の部分一致を除外。
++                if token == "ghdag.llm.adapters.cursor" and "cursor_stream" in text:
++                    continue
++                if token == "ghdag.llm.adapters.codex" and "codex_jsonl" in text:
++                    continue
++                offenders.append(f"{path.relative_to(src_root)}:{token}")
++    assert offenders == [], f"renamed adapter imports found: {offenders}"
++
++
+ def test_issue_2702_required_imports_are_available():
+     """Issue #2702: v0.33.0 追従で必要な import が維持されていること。"""
+     from ghdag.dag._util import check_pipeline_status, default_check_rejected

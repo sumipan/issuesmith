@@ -34,6 +34,17 @@ _META_AC_PATTERN = re.compile(
 )
 _OPTIONAL_AC_PATTERN = re.compile(r"^（オプション）")
 _VERSION_ASSIGN_LINE = re.compile(r"^\s*version\s*=")
+_VERSION_EXACT_ASSERT = re.compile(r'version["\]\s]*\s*==\s*["\'][0-9]+\.[0-9]+')
+_GIT_PIN_EXACT = re.compile(r"git\+https://[^\"']*@v[0-9]+\.[0-9]")
+_COUNT_EQ_ONE = re.compile(r"count\s*\(.*\)\s*==\s*1")
+_TEST_VERSION_ASSERT_HINT = (
+    "版・pin は下限（`>=`）で検査するか、テストを書かない。bump は publish が決定論的に行う"
+)
+
+
+def _is_tests_path(path: str) -> bool:
+    normalized = path.strip().lstrip("b/").lstrip("a/")
+    return normalized.startswith("tests/") or "/tests/" in normalized
 
 
 def check_version_line_in_diff(diff: str) -> list[Violation]:
@@ -73,6 +84,73 @@ def check_version_line_in_diff(diff: str) -> list[Violation]:
                     ),
                 )
             ]
+    return []
+
+
+def check_test_version_exact_assert(diff: str) -> list[Violation]:
+    """tests/ 配下の版・pin 完全一致 assert を unified diff の + 行から検出する (#3065).
+
+    パターン a: ``version == "X.Y.Z"`` / ``project["version"] == "..."``
+    パターン b: ``git+https://...@vX.Y.Z`` を ``==`` / ``count(...) == 1`` で検査
+    """
+    in_tests = False
+    file_has_count_eq_one = False
+    plus_git_pin = False
+
+    def _violation() -> list[Violation]:
+        return [
+            Violation(
+                rule_id="cp1.test_version_exact_assert",
+                severity="fail",
+                message=(
+                    "tests/ に版または git pin の完全一致 assert が含まれています。"
+                    "publish の決定論 bump で連鎖的に壊れます"
+                ),
+                location="tests/",
+                auto_fixable=False,
+                fix_hint=_TEST_VERSION_ASSERT_HINT,
+            )
+        ]
+
+    for line in diff.splitlines():
+        if line.startswith("diff --git "):
+            in_tests = bool(re.search(r"[ab]/tests/", line))
+            file_has_count_eq_one = False
+            plus_git_pin = False
+            continue
+        if line.startswith("+++ b/"):
+            in_tests = _is_tests_path(line[6:])
+            continue
+        if not in_tests:
+            continue
+        if line.startswith("+++") or line.startswith("---") or line.startswith("@@"):
+            continue
+        if not line or line[0] not in " +-":
+            continue
+
+        content = line[1:]
+        if _COUNT_EQ_ONE.search(content):
+            file_has_count_eq_one = True
+
+        if line[0] != "+":
+            if plus_git_pin and file_has_count_eq_one:
+                return _violation()
+            continue
+
+        if _VERSION_EXACT_ASSERT.search(content):
+            return _violation()
+
+        has_git_pin = bool(_GIT_PIN_EXACT.search(content))
+        if has_git_pin:
+            plus_git_pin = True
+            if "==" in content or _COUNT_EQ_ONE.search(content):
+                return _violation()
+
+        if plus_git_pin and file_has_count_eq_one:
+            return _violation()
+
+    if plus_git_pin and file_has_count_eq_one:
+        return _violation()
     return []
 
 
