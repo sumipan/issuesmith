@@ -13,7 +13,7 @@ issuesmith を「ghdag 上の汎用ワークフロー基盤」へ寄せるため
 
 nexus ポリシーの典型例: (a) `sumipan/*` リポジトリ名のハードコード、(b) `jobs/` `logs/` `.claude/worktrees` 等の配置パス、(c) `draft` / `sub` / `develop` / `merge` のフェーズ名リテラル、(d) 日本語セクション名（`受け入れ条件`・`設計`・`変更対象ファイル` 等）の直接参照。
 
-調査時点: issuesmith パッケージ（本リポジトリ）の `src/issuesmith/`（`find … -name '*.py' | sort` で 39 ファイル）。
+調査時点: issuesmith パッケージ（本リポジトリ）の `src/issuesmith/`（`find … -name '*.py' | sort` で 41 ファイル）。
 
 ---
 
@@ -27,12 +27,13 @@ nexus ポリシーの典型例: (a) `sumipan/*` リポジトリ名のハード�
 | `__main__.py` | 基盤 | — | CLI エントリ |
 | `ac_contract.py` | 混在 | L95: `受け入れ条件` セクション抽出 regex | 契約実行（paths_must_exist 等）は基盤。見出し文字列の設定化が必要 |
 | `b1_tier.py` | nexus ポリシー | L14: `## 背景・目的` / `## 設計` | ファイル全体が見出しリテラル依存。設定化容易 |
-| `b1_verify.py` | 基盤 | — | gate レジストリのオーケストレーションのみ |
-| `body_editor.py` | 基盤 | — | ghdag shim。`get_section_by_keyword` は keyword 引数（呼び出し側が日本語を渡す） |
-| `cli.py` | 基盤 | — | サブコマンド配線 |
+| `b1_verify.py` | 基盤 | — | gate レジストリのオーケストレーションのみ（`milestone_consistency` 含む） |
+| `body_editor.py` | 基盤 | — | ghdag shim。`normalize_sub_headers` / `relocate_sub_plan` は決定論正規化（#3077） |
+| `cli.py` | 基盤 | — | サブコマンド配線（`convert-to-milestone` 含む） |
 | `config.py` | 混在 | L27–37: `_DEFAULT_SUPPORTED_REPOS`（sumipan 9 リポ）; L41–57: `_DEFAULT_REL_PATHS`（`jobs/`・`logs/`・`.claude/worktrees` 等）; L284: 既定 `repo=sumipan/nexus` | YAML ロード骨格は基盤。既定値が nexus 焼き込み |
 | `context_hook.py` | 混在 | L294: `## やらないこと` 参照; L16 docstring / worktree パス組み立ては config 経由 | diary / cross-repo 文脈は nexus 寄り。パス自体は config 化済み |
-| `cp1_gate.py` | 基盤 | — | `gate_rules.cp1` / `b1_migration` への薄ラッパ |
+| `convert_to_milestone.py` | 混在 | develop/sub ラベル名・`scope:milestone`・`NNNN-YYYYMMDD` milestone タイトル | 復旧 CLI。DAG cancel / ラベル / milestone / in_flight / redispatch（#3077） |
+| `cp1_gate.py` | 基盤 | — | `gate_rules.cp1` / `b1_migration` / `milestone_consistency` への薄ラッパ |
 | `cp2_tier.py` | 基盤 | — | diff 行数・AC 未チェック数の閾値判定（見出し非依存） |
 | `dep_extractor.py` | 混在 | L80–81: `依存（先行）` セクション名 | 依存グラフ抽出ロジックは基盤 |
 | `engine.py` | 基盤 | — | LLM role switcher。L47 コメントの `jobs/metrics.jsonl` は説明のみ（実パスは config） |
@@ -43,12 +44,13 @@ nexus ポリシーの典型例: (a) `sumipan/*` リポジトリ名のハード�
 | `queue_store.py` | 混在 | L17: `Phase = Literal["draft","sub","develop","merge"]`; L21: `PHASES` | JSONL / lock / enqueue 骨格は基盤 |
 | `queue_triage.py` | 混在 | L39–54: phase→ready/running/done ラベル表 | トリアージ骨格は基盤。ラベル名空間は config 化候補 |
 | `queue.py` | 混在 | L55–59: `PHASE_ROLE`; L1508: `--phase choices`; 各所の phase 分岐 | ディスパッチ骨格は基盤。フェーズ名が全域に浸透 |
-| `recovery.py` | 混在 | L31: `jobs/` を含む order パス regex; L411: phase→step `{draft:b1, develop:cp2, merge:m2}`; L460: `--phase choices` | 復旧計画骨格は基盤 |
+| `recovery.py` | 混在 | L31: `jobs/` を含む order パス regex; phase→step と `--phase choices`（`sub` 含む） | 復旧計画骨格は基盤。`redispatch --phase sub` / `remove_in_flight`（#3077） |
 | `targets.py` | 混在 | L35/46/51/54: エラー・doc が「受け入れ条件」を言及（抽出は `ac_contract` 経由） | multi-target モデル自体は基盤 |
 | `gate_rules/__init__.py` | 基盤 | — | ルールモジュールの import 副作用登録 |
 | `gate_rules/b1_ac_format.py` | nexus ポリシー | L13: `## 受け入れ条件`; L28: `## 設計` + 変更対象ファイルテーブル | AC YAML 形式ゲート全体がポリシー |
 | `gate_rules/b1_migration.py` | nexus ポリシー | L54: `## マイグレーション手順`; L148+: `受け入れ条件` YAML 契約文言 | migration 専用。見出し・契約キーが固定 |
 | `gate_rules/b1_milestone_subdesign.py` | nexus ポリシー | L9: `_REQUIRED_SUBSECTIONS`（スコープ/設計方針/変更対象ファイル/受け入れ条件）; L45+: `## 設計` | マイルストーン分割設計の日本語スキーマ |
+| `gate_rules/milestone_consistency.py` | nexus ポリシー | `scope:milestone` / `サブイシュー分割計画` / `#### Sub N:` | 分割計画とラベル矛盾・正規化違反の検知（#3077） |
 | `gate_rules/cp1.py` | 混在 | L19–20: fix hint に `sumipan/nexus`; L163+: `**受け入れ条件**`; L238: 「変更対象ファイル」 | GateRule 骨格は基盤。検証内容はポリシー |
 | `gate_rules/m2.py` | nexus ポリシー | L10/L16: `## 受け入れ条件` 存在・未チェック数 | M2 checkbox ゲート本体 |
 | `ops/__init__.py` | 基盤 | — | パッケージマーカー |
@@ -75,6 +77,7 @@ src/issuesmith/body_editor.py
 src/issuesmith/cli.py
 src/issuesmith/config.py
 src/issuesmith/context_hook.py
+src/issuesmith/convert_to_milestone.py
 src/issuesmith/cp1_gate.py
 src/issuesmith/cp2_tier.py
 src/issuesmith/dep_extractor.py
@@ -85,6 +88,7 @@ src/issuesmith/gate_rules/b1_migration.py
 src/issuesmith/gate_rules/b1_milestone_subdesign.py
 src/issuesmith/gate_rules/cp1.py
 src/issuesmith/gate_rules/m2.py
+src/issuesmith/gate_rules/milestone_consistency.py
 src/issuesmith/github_api.py
 src/issuesmith/m2_gate.py
 src/issuesmith/milestone.py
@@ -107,7 +111,7 @@ src/issuesmith/steps/m2_finalize.py
 src/issuesmith/targets.py
 ```
 
-（39 ファイル。上表と 1:1。）
+（41 ファイル。上表と 1:1。）
 
 ---
 
