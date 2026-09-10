@@ -5,10 +5,14 @@ import re
 import yaml
 from ghdag.workflow.gates import GATE_REGISTRY, Violation
 
+from issuesmith.config import get_config
 from issuesmith.gate_rules.b1_ac_format import extract_yaml_block, get_ac_section
 
-_MIGRATION_PROCEDURE_SKELETON = """\
-## マイグレーション手順
+
+def _migration_procedure_skeleton() -> str:
+    heading = get_config().sections["migration"]
+    return f"""\
+## {heading}
 
 （MG1 が実行するコマンドをここに記述する）
 
@@ -22,14 +26,18 @@ test -f <対象ファイル> && echo "OK: file exists"
 ```
 """
 
-_STATE_SURVEY_SKELETON = """\
-### 実行時状態の調査
+
+def _state_survey_skeleton() -> str:
+    heading = get_config().sections["migration_state_survey"]
+    return f"""\
+### {heading}
 
 - **永続 state ファイル**: （移行対象コードが読み書きする logs/ ・.pipeline-state/ 等のファイルを列挙。無ければ（該当なし））
 - **untracked 実データ**: （git 管理外に存在する旧版の実データ。無ければ（該当なし））
 - **データ間の不変条件**: （state・snapshot・hash 等が満たすべき整合条件。無ければ（該当なし））
 - **途中停止時の復旧**: （書き込み途中でプロセスが停止した場合に不整合から自己復旧できるか。atomic write の有無）
 """
+
 
 _POST_MERGE_SKELETON = """\
 post_merge:
@@ -50,17 +58,19 @@ removed_trees:
 
 
 def has_migration_procedure_section(body: str) -> bool:
+    heading = get_config().sections["migration"]
     return re.search(
-        r"^##\s+マイグレーション手順\s*(?:\n|$)",
+        rf"^##\s+{re.escape(heading)}\s*(?:\n|$)",
         body,
         re.MULTILINE,
     ) is not None
 
 
 def get_state_survey_section(body: str) -> str | None:
-    """### 実行時状態の調査 サブセクションの中身を返す（無ければ None）。"""
+    """実行時状態調査サブセクションの中身を返す（無ければ None）。"""
+    heading = get_config().sections["migration_state_survey"]
     match = re.search(
-        r"^###\s+実行時状態の調査\s*\n(.*?)(?=^#{1,3}\s|\Z)",
+        rf"^###\s+{re.escape(heading)}\s*\n(.*?)(?=^#{{1,3}}\s|\Z)",
         body,
         re.MULTILINE | re.DOTALL,
     )
@@ -68,7 +78,7 @@ def get_state_survey_section(body: str) -> str | None:
 
 
 def ac_contract_has_test_path(body: str) -> bool:
-    """受け入れ条件 YAML の paths_must_exist に tests/ 配下のパスが含まれるか。"""
+    """AC YAML の paths_must_exist に tests/ 配下のパスが含まれるか。"""
     section = get_ac_section(body)
     if section is None:
         return False
@@ -114,30 +124,34 @@ class B1MigrationRules:
             return []
 
         violations: list[Violation] = []
+        sections = get_config().sections
+        migration = sections["migration"]
+        survey = sections["migration_state_survey"]
+        ac = sections["acceptance_criteria"]
 
         if not has_migration_procedure_section(body):
             violations.append(Violation(
                 rule_id="b1_migration.migration_procedure_missing",
                 severity="fail",
-                message="## マイグレーション手順 セクションが存在しません",
+                message=f"## {migration} セクションが存在しません",
                 location=None,
                 auto_fixable=True,
-                fix_hint=_MIGRATION_PROCEDURE_SKELETON,
+                fix_hint=_migration_procedure_skeleton(),
             ))
 
-        survey = get_state_survey_section(body)
-        if survey is None or not survey.strip():
+        survey_body = get_state_survey_section(body)
+        if survey_body is None or not survey_body.strip():
             violations.append(Violation(
                 rule_id="b1_migration.state_survey_missing",
                 severity="fail",
                 message=(
-                    "### 実行時状態の調査 サブセクションが存在しません"
+                    f"### {survey} サブセクションが存在しません"
                     "（永続 state・untracked 実データ・不変条件・途中停止時の復旧を"
                     "調査し、該当なしの場合もその旨を明記すること）"
                 ),
                 location=None,
                 auto_fixable=True,
-                fix_hint=_STATE_SURVEY_SKELETON,
+                fix_hint=_state_survey_skeleton(),
             ))
 
         if not ac_contract_has_test_path(body):
@@ -145,7 +159,7 @@ class B1MigrationRules:
                 rule_id="b1_migration.verification_test_missing",
                 severity="fail",
                 message=(
-                    "## 受け入れ条件 の ```yaml ブロックの paths_must_exist に"
+                    f"## {ac} の ```yaml ブロックの paths_must_exist に"
                     " tests/ 配下の移行検証テストが含まれていません"
                     "（旧フォーマット fixture を使うテストをコミットし、"
                     "そのパスを paths_must_exist に列挙すること）"
@@ -163,7 +177,7 @@ class B1MigrationRules:
                 rule_id="b1_migration.post_merge_missing",
                 severity="fail",
                 message=(
-                    "## 受け入れ条件 の ```yaml ブロックに post_merge が含まれていません"
+                    f"## {ac} の ```yaml ブロックに post_merge が含まれていません"
                     "（マージ後の stable install・tag 発行・プロセス再起動を列挙すること）"
                 ),
                 location=None,
@@ -176,7 +190,7 @@ class B1MigrationRules:
                 rule_id="b1_migration.removed_trees_missing",
                 severity="fail",
                 message=(
-                    "## 受け入れ条件 の ```yaml ブロックに removed_trees が含まれていません"
+                    f"## {ac} の ```yaml ブロックに removed_trees が含まれていません"
                     "（git 追跡下から削除すべきディレクトリプレフィックスを列挙すること）"
                 ),
                 location=None,

@@ -4,9 +4,9 @@ import re
 
 from ghdag.workflow.gates import GATE_REGISTRY, Violation
 
+from issuesmith.config import get_config
 from issuesmith.context_hook import parse_issue_metadata
 
-_REQUIRED_SUBSECTIONS = ("スコープ", "設計方針", "変更対象ファイル", "受け入れ条件")
 _VAGUE_AC_WORDS = ("正しく動作", "適切に", "問題なく", "きちんと", "ちゃんと", "必要に応じて")
 _SUB_HEADER_RE = re.compile(r"^####\s+サブ(\d+):", re.MULTILINE)
 _TABLE_ROW_RE = re.compile(r"^\|")
@@ -42,7 +42,7 @@ def parse_table_rows(section: str) -> list[list[str]]:
 
 
 def extract_sub_blocks(body: str) -> list[tuple[int, str]]:
-    design = get_section(body, "設計")
+    design = get_section(body, get_config().sections["design"])
     if not design:
         return []
     headers = list(_SUB_HEADER_RE.finditer(design))
@@ -56,11 +56,13 @@ def extract_sub_blocks(body: str) -> list[tuple[int, str]]:
 
 
 def _count_sub_plan_rows(body: str) -> int | None:
-    milestone = get_section(body, "マイルストーン")
+    sections = get_config().sections
+    milestone = get_section(body, sections["milestone"])
     if not milestone:
         return None
+    plan = sections["sub_plan"]
     plan_match = re.search(
-        r"###\s+サブイシュー分割計画\s*\n(.*?)(?=^###|\Z)",
+        rf"###\s+{re.escape(plan)}\s*\n(.*?)(?=^###|\Z)",
         milestone,
         re.MULTILINE | re.DOTALL,
     )
@@ -83,8 +85,9 @@ def _normalize_path(path: str) -> str:
 
 def _extract_paths_from_table_section(section: str) -> list[tuple[str, str, str]]:
     """Parse change-target table rows from a section (with or without bold header)."""
+    changed = get_config().sections["changed_files"]
     table_match = re.search(
-        r"\*\*変更対象ファイル\*\*:?\s*\n(.*?)(?=\*\*|\Z)",
+        rf"\*\*{re.escape(changed)}\*\*:?\s*\n(.*?)(?=\*\*|\Z)",
         section,
         re.DOTALL,
     )
@@ -125,7 +128,7 @@ def _extract_paths_from_change_table(section: str) -> list[tuple[str, str, str]]
 
 
 def _extract_parent_change_paths(body: str) -> set[str]:
-    section = get_section(body, "変更対象ファイル")
+    section = get_section(body, get_config().sections["changed_files"])
     if not section:
         return set()
     paths = {path for _, path, _ in _extract_paths_from_table_section(section)}
@@ -150,8 +153,9 @@ def _allowed_repos(body: str) -> set[str]:
 
 
 def _extract_ac_items(section: str) -> list[str]:
+    ac = get_config().sections["acceptance_criteria"]
     ac_match = re.search(
-        r"\*\*受け入れ条件\*\*:?\s*\n(.*?)(?=\*\*|\Z)",
+        rf"\*\*{re.escape(ac)}\*\*:?\s*\n(.*?)(?=\*\*|\Z)",
         section,
         re.DOTALL,
     )
@@ -188,24 +192,30 @@ class B1MilestoneSubdesignRules:
         return violations
 
     def _check_sub_count(self, body: str) -> list[Violation]:
+        sections = get_config().sections
         plan_count = _count_sub_plan_rows(body)
         if plan_count is None:
             return [Violation(
                 rule_id="b1_milestone_subdesign.sub_plan_missing",
                 severity="fail",
-                message="## マイルストーン 内に ### サブイシュー分割計画 テーブルが存在しません",
+                message=(
+                    f"## {sections['milestone']} 内に "
+                    f"### {sections['sub_plan']} テーブルが存在しません"
+                ),
                 location=None,
                 auto_fixable=False,
                 fix_hint=None,
             )]
-        sub_headers = _SUB_HEADER_RE.findall(get_section(body, "設計") or "")
+        sub_headers = _SUB_HEADER_RE.findall(
+            get_section(body, sections["design"]) or ""
+        )
         header_count = len(sub_headers)
         if plan_count != header_count:
             return [Violation(
                 rule_id="b1_milestone_subdesign.sub_count_mismatch",
                 severity="fail",
                 message=(
-                    f"サブイシュー分割計画テーブルの行数 ({plan_count}) と"
+                    f"{sections['sub_plan']}テーブルの行数 ({plan_count}) と"
                     f" #### サブN ヘッダ数 ({header_count}) が一致しません"
                 ),
                 location=None,
@@ -216,7 +226,7 @@ class B1MilestoneSubdesignRules:
 
     def _check_required_subsections(self, sub_num: int, block: str) -> list[Violation]:
         violations: list[Violation] = []
-        for name in _REQUIRED_SUBSECTIONS:
+        for name in get_config().sub_design_subsections:
             if not re.search(rf"\*\*{re.escape(name)}\*\*", block):
                 violations.append(Violation(
                     rule_id="b1_milestone_subdesign.subsection_missing",
@@ -229,8 +239,9 @@ class B1MilestoneSubdesignRules:
         return violations
 
     def _check_table_schema(self, sub_num: int, block: str) -> list[Violation]:
+        changed = get_config().sections["changed_files"]
         table_match = re.search(
-            r"\*\*変更対象ファイル\*\*:?\s*\n(.*?)(?=\*\*|\Z)",
+            rf"\*\*{re.escape(changed)}\*\*:?\s*\n(.*?)(?=\*\*|\Z)",
             block,
             re.DOTALL,
         )
@@ -241,7 +252,7 @@ class B1MilestoneSubdesignRules:
             return [Violation(
                 rule_id="b1_milestone_subdesign.table_schema",
                 severity="fail",
-                message=f"サブ{sub_num} の変更対象ファイルテーブルが空です",
+                message=f"サブ{sub_num} の{changed}テーブルが空です",
                 location=f"#### サブ{sub_num}",
                 auto_fixable=False,
                 fix_hint=None,
@@ -252,7 +263,7 @@ class B1MilestoneSubdesignRules:
                 rule_id="b1_milestone_subdesign.table_schema",
                 severity="fail",
                 message=(
-                    f"サブ{sub_num} の変更対象ファイルテーブルが 4 列スキーマ"
+                    f"サブ{sub_num} の{changed}テーブルが 4 列スキーマ"
                     f"（リポジトリ / ファイルパス / 変更種別 / 変更内容）ではありません"
                     f"（{len(header)} 列）"
                 ),
@@ -267,7 +278,7 @@ class B1MilestoneSubdesignRules:
                     rule_id="b1_milestone_subdesign.table_schema",
                     severity="fail",
                     message=(
-                        f"サブ{sub_num} の変更対象ファイルテーブル列名が不正です"
+                        f"サブ{sub_num} の{changed}テーブル列名が不正です"
                         f"（期待: {' / '.join(expected)}）"
                     ),
                     location=f"#### サブ{sub_num}",
@@ -298,12 +309,13 @@ class B1MilestoneSubdesignRules:
 
     def _check_sub_ac(self, sub_num: int, block: str) -> list[Violation]:
         violations: list[Violation] = []
+        ac = get_config().sections["acceptance_criteria"]
         items = _extract_ac_items(block)
         if len(items) < 3:
             violations.append(Violation(
                 rule_id="b1_milestone_subdesign.ac_count",
                 severity="fail",
-                message=f"サブ{sub_num} の受け入れ条件が {len(items)} 件（3 件以上必要）",
+                message=f"サブ{sub_num} の{ac}が {len(items)} 件（3 件以上必要）",
                 location=f"#### サブ{sub_num}",
                 auto_fixable=False,
                 fix_hint=None,
@@ -314,7 +326,7 @@ class B1MilestoneSubdesignRules:
                     violations.append(Violation(
                         rule_id="b1_milestone_subdesign.ac_vague_word",
                         severity="fail",
-                        message=f"サブ{sub_num} の受け入れ条件に曖昧語 `{word}` が含まれます",
+                        message=f"サブ{sub_num} の{ac}に曖昧語 `{word}` が含まれます",
                         location=f"#### サブ{sub_num}",
                         auto_fixable=False,
                         fix_hint=None,
@@ -327,6 +339,9 @@ class B1MilestoneSubdesignRules:
         body: str,
         sub_blocks: list[tuple[int, str]],
     ) -> list[Violation]:
+        sections = get_config().sections
+        changed = sections["changed_files"]
+        design = sections["design"]
         parent_paths = _extract_parent_change_paths(body)
         sub_paths: list[str] = []
         for _, block in sub_blocks:
@@ -341,10 +356,10 @@ class B1MilestoneSubdesignRules:
                 rule_id="b1_milestone_subdesign.file_union_missing_in_subs",
                 severity="fail",
                 message=(
-                    "親の変更対象ファイルにあってサブにないパス: "
+                    f"親の{changed}にあってサブにないパス: "
                     + ", ".join(sorted(missing_in_subs))
                 ),
-                location="## 変更対象ファイル",
+                location=f"## {changed}",
                 auto_fixable=False,
                 fix_hint=None,
             ))
@@ -353,10 +368,10 @@ class B1MilestoneSubdesignRules:
                 rule_id="b1_milestone_subdesign.file_union_missing_in_parent",
                 severity="fail",
                 message=(
-                    "サブの変更対象ファイルにあって親にないパス: "
+                    f"サブの{changed}にあって親にないパス: "
                     + ", ".join(sorted(missing_in_parent))
                 ),
-                location="## 変更対象ファイル",
+                location=f"## {changed}",
                 auto_fixable=False,
                 fix_hint=None,
             ))
@@ -365,8 +380,8 @@ class B1MilestoneSubdesignRules:
             violations.append(Violation(
                 rule_id="b1_milestone_subdesign.file_union_duplicate",
                 severity="fail",
-                message="サブ間で重複する変更対象ファイル: " + ", ".join(sorted(duplicates)),
-                location="## 設計",
+                message=f"サブ間で重複する{changed}: " + ", ".join(sorted(duplicates)),
+                location=f"## {design}",
                 auto_fixable=False,
                 fix_hint=None,
             ))
@@ -377,7 +392,10 @@ class B1MilestoneSubdesignRules:
         body: str,
         sub_blocks: list[tuple[int, str]],
     ) -> list[Violation]:
-        impact = get_section(body, "影響範囲調査")
+        sections = get_config().sections
+        impact_name = sections["impact_survey"]
+        changed = sections["changed_files"]
+        impact = get_section(body, impact_name)
         if not impact:
             return []
         allowed_paths = _extract_parent_change_paths(body)
@@ -392,10 +410,10 @@ class B1MilestoneSubdesignRules:
                     rule_id="b1_milestone_subdesign.impact_scope_pollution",
                     severity="fail",
                     message=(
-                        f"影響範囲調査のファイル参照 `{ref}` が"
-                        " 親またはサブの変更対象ファイルに含まれません"
+                        f"{impact_name}のファイル参照 `{ref}` が"
+                        f" 親またはサブの{changed}に含まれません"
                     ),
-                    location="## 影響範囲調査",
+                    location=f"## {impact_name}",
                     auto_fixable=False,
                     fix_hint=None,
                 ))

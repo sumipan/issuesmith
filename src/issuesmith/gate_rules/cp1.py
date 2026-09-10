@@ -6,6 +6,7 @@ import yaml
 from ghdag.workflow.gates import GATE_REGISTRY, Violation
 from ghdag.workflow.gates.common import strip_code_regions
 
+from issuesmith.config import get_config
 from issuesmith.context_hook import parse_issue_metadata, validate_issue_metadata
 from issuesmith.gate_rules.b1_ac_format import extract_yaml_block, get_ac_section
 from issuesmith.gate_rules.b1_milestone_subdesign import (
@@ -159,8 +160,9 @@ def _yaml_contract_fix(code: str) -> tuple[bool, str]:
 
 
 def _extract_sub_ac_section(block: str) -> str | None:
+    ac = get_config().sections["acceptance_criteria"]
     match = re.search(
-        r"\*\*受け入れ条件\*\*:?\s*\n(.*?)(?=\*\*|\Z)",
+        rf"\*\*{re.escape(ac)}\*\*:?\s*\n(.*?)(?=\*\*|\Z)",
         block,
         re.DOTALL,
     )
@@ -235,7 +237,8 @@ class Cp1Rules:
                 auto_fixable=True,
                 fix_hint=(
                     "Issue body の先頭に以下の形式の yaml ブロックを新設する"
-                    "（allow_paths は「変更対象ファイル」テーブルから導出、"
+                    f"（allow_paths は「{get_config().sections['changed_files']}」"
+                    "テーブルから導出、"
                     "外部リポジトリ対象なら target_repo を明記）:\n"
                     "```yaml\n"
                     "base_branch: main\n"
@@ -290,13 +293,14 @@ class Cp1Rules:
 
     def _check_milestone_sub_ac_yaml(self, body: str) -> list[Violation]:
         violations: list[Violation] = []
+        ac = get_config().sections["acceptance_criteria"]
         for sub_num, block in extract_sub_blocks(body):
             ac_section = _extract_sub_ac_section(block)
             if ac_section is None:
                 violations.append(Violation(
                     rule_id="cp1.milestone.sub_ac_yaml_missing",
                     severity="fail",
-                    message=f"サブ{sub_num} の受け入れ条件セクションが存在しません",
+                    message=f"サブ{sub_num} の{ac}セクションが存在しません",
                     location=f"#### サブ{sub_num}",
                     auto_fixable=False,
                     fix_hint=None,
@@ -306,10 +310,10 @@ class Cp1Rules:
                 violations.append(Violation(
                     rule_id="cp1.milestone.sub_ac_yaml_missing",
                     severity="fail",
-                    message=f"サブ{sub_num} の受け入れ条件に ```yaml ブロックがありません",
+                    message=f"サブ{sub_num} の{ac}に ```yaml ブロックがありません",
                     location=f"#### サブ{sub_num}",
                     auto_fixable=True,
-                    fix_hint="受け入れ条件先頭に paths_must_exist YAML ブロックを追加してください",
+                    fix_hint=f"{ac}先頭に paths_must_exist YAML ブロックを追加してください",
                 ))
         return violations
 
@@ -327,6 +331,7 @@ class Cp1Rules:
                 sub_items.extend(_extract_ac_checkbox_items(sub_ac))
 
         violations: list[Violation] = []
+        ac_heading = get_config().sections["acceptance_criteria"]
         for item in parent_items:
             if _META_AC_PATTERN.search(item):
                 continue
@@ -344,7 +349,7 @@ class Cp1Rules:
                     rule_id="cp1.milestone.parent_ac_orphan",
                     severity="fail",
                     message=f"親 AC がいずれのサブ AC でもカバーされていません: {item[:80]}",
-                    location="## 受け入れ条件",
+                    location=f"## {ac_heading}",
                     auto_fixable=False,
                     fix_hint=None,
                 ))
@@ -377,6 +382,7 @@ class Cp1Rules:
                     mapped_paths.add(path)
 
         violations: list[Violation] = []
+        ac_heading = get_config().sections["acceptance_criteria"]
         for path in paths_must_exist:
             if not isinstance(path, str):
                 continue
@@ -389,7 +395,7 @@ class Cp1Rules:
                         f"paths_must_exist の `{normalized}` が"
                         " いずれのサブの「新規」または「修正」行にも記載されていません"
                     ),
-                    location="## 受け入れ条件",
+                    location=f"## {ac_heading}",
                     auto_fixable=False,
                     fix_hint=None,
                 ))

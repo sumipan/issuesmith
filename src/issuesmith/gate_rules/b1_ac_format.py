@@ -5,12 +5,15 @@ import re
 import yaml
 from ghdag.workflow.gates import GATE_REGISTRY, Violation
 
+from issuesmith.config import get_config
+
 _ALLOWED_KEYS = frozenset({"paths_must_exist", "paths_must_not_exist", "references_must_resolve"})
 
 
 def get_ac_section(body: str) -> str | None:
+    heading = get_config().sections["acceptance_criteria"]
     match = re.search(
-        r"^##\s+受け入れ条件\s*\n(.*?)(?=^##|\Z)",
+        rf"^##\s+{re.escape(heading)}\s*\n(.*?)(?=^##|\Z)",
         body,
         re.MULTILINE | re.DOTALL,
     )
@@ -23,9 +26,10 @@ def extract_yaml_block(section: str) -> str | None:
 
 
 def _extract_new_file_paths_from_design(body: str) -> list[str]:
-    """## 設計 内の変更対象ファイルテーブルから「新規」行のパスを抽出する。"""
+    """design セクション内の変更対象テーブルから「新規」行のパスを抽出する。"""
+    design = get_config().sections["design"]
     match = re.search(
-        r"^##\s+設計\s*\n(.*?)(?=^##[^#]|\Z)",
+        rf"^##\s+{re.escape(design)}\s*\n(.*?)(?=^##[^#]|\Z)",
         body,
         re.MULTILINE | re.DOTALL,
     )
@@ -47,12 +51,13 @@ class B1AcFormatRules:
         if "scope:milestone" not in labels and "scope:migration" not in labels:
             return []
 
+        ac_heading = get_config().sections["acceptance_criteria"]
         section = get_ac_section(body)
         if section is None:
             return [Violation(
                 rule_id="b1_ac_format.section_missing",
                 severity="fail",
-                message="## 受け入れ条件 セクションが存在しません",
+                message=f"## {ac_heading} セクションが存在しません",
                 location=None,
                 auto_fixable=False,
                 fix_hint=None,
@@ -67,11 +72,12 @@ class B1AcFormatRules:
                 hint_lines.append("```")
                 fix_hint = "\n".join(hint_lines)
             else:
-                fix_hint = "変更対象ファイルテーブルから paths_must_exist を自動派生"
+                changed = get_config().sections["changed_files"]
+                fix_hint = f"{changed}テーブルから paths_must_exist を自動派生"
             return [Violation(
                 rule_id="b1_ac_format.yaml_block_missing",
                 severity="fail",
-                message="## 受け入れ条件 セクション内に ```yaml ブロックが存在しません",
+                message=f"## {ac_heading} セクション内に ```yaml ブロックが存在しません",
                 location=None,
                 auto_fixable=True,
                 fix_hint=fix_hint,

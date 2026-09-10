@@ -10,6 +10,8 @@ from dataclasses import asdict, dataclass
 from ghdag.github_client import GitHubClient
 from ghdag.markdown.body_editor import count_heading, get_section
 
+from issuesmith.config import get_config
+
 _MERGE_DONE_LABEL = "issuesmith:merge-done"
 _REJECTED_LABEL = "issuesmith:rejected"
 _SUB_DONE_LABEL = "issuesmith:sub-done"
@@ -77,8 +79,9 @@ def extract_dependencies(body: str) -> list[int]:
     """Extract dependency issue numbers from an Issue body deterministically."""
     deps: set[int] = set()
 
-    if count_heading(body, "依存（先行）") > 0:
-        section = get_section(body, "依存（先行）") or ""
+    deps_heading = get_config().sections["dependencies"]
+    if count_heading(body, deps_heading) > 0:
+        section = get_section(body, deps_heading) or ""
         for line in section.splitlines():
             if _is_excluded_line(line):
                 continue

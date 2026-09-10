@@ -141,6 +141,26 @@ _DEFAULT_PHASES: tuple[PhaseConfig, ...] = (
     PhaseConfig(name="merge", role="implementation", entry_step="m2"),
 )
 
+_DEFAULT_SECTIONS: dict[str, str] = {
+    "acceptance_criteria": "受け入れ条件",
+    "migration": "マイグレーション手順",
+    "migration_state_survey": "実行時状態の調査",
+    "sub_plan": "サブイシュー分割計画",
+    "design": "設計",
+    "background": "背景・目的",
+    "dependencies": "依存（先行）",
+    "impact_survey": "影響範囲調査",
+    "milestone": "マイルストーン",
+    "changed_files": "変更対象ファイル",
+}
+
+_DEFAULT_SUB_DESIGN_SUBSECTIONS: tuple[str, ...] = (
+    "スコープ",
+    "設計方針",
+    "変更対象ファイル",
+    "受け入れ条件",
+)
+
 
 @dataclass(frozen=True)
 class IssuesmithConfig:
@@ -154,6 +174,8 @@ class IssuesmithConfig:
     concurrency: ConcurrencyConfig
     milestone_chain: MilestoneChainConfig = field(default_factory=MilestoneChainConfig)
     phases: tuple[PhaseConfig, ...] = _DEFAULT_PHASES
+    sections: Mapping[str, str] = field(default_factory=lambda: dict(_DEFAULT_SECTIONS))
+    sub_design_subsections: tuple[str, ...] = _DEFAULT_SUB_DESIGN_SUBSECTIONS
 
 
 _cached: IssuesmithConfig | None = None
@@ -324,6 +346,24 @@ def _build_phases(raw: Any) -> tuple[PhaseConfig, ...]:
     return tuple(phases)
 
 
+def _build_sections(raw: Mapping[str, Any] | None) -> dict[str, str]:
+    sections = dict(_DEFAULT_SECTIONS)
+    if raw:
+        for key, value in raw.items():
+            if value is None:
+                continue
+            sections[str(key)] = str(value)
+    return sections
+
+
+def _build_sub_design_subsections(raw: Any) -> tuple[str, ...]:
+    if raw is None:
+        return _DEFAULT_SUB_DESIGN_SUBSECTIONS
+    if not isinstance(raw, list):
+        raise ValueError("sub_design_subsections must be a list of strings")
+    return tuple(str(x) for x in raw)
+
+
 def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     repo = str(data.get("repo") or "sumipan/nexus")
     label_namespace = str(data.get("label_namespace") or "issuesmith")
@@ -337,6 +377,7 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     engines_raw = data.get("engines") if isinstance(data.get("engines"), dict) else None
     concurrency_raw = data.get("concurrency") if isinstance(data.get("concurrency"), dict) else None
     milestone_raw = data.get("milestone_chain") if isinstance(data.get("milestone_chain"), dict) else None
+    sections_raw = data.get("sections") if isinstance(data.get("sections"), dict) else None
     return IssuesmithConfig(
         repo=repo,
         label_namespace=label_namespace,
@@ -348,4 +389,8 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         concurrency=_build_concurrency(concurrency_raw),
         milestone_chain=_build_milestone_chain(milestone_raw),
         phases=_build_phases(data.get("phases")),
+        sections=_build_sections(sections_raw),
+        sub_design_subsections=_build_sub_design_subsections(
+            data.get("sub_design_subsections")
+        ),
     )

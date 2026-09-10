@@ -43,10 +43,14 @@ _CJK_PLACEHOLDER_RE = re.compile(
 )
 _TABLE_ROW_RE = re.compile(r"^\|")
 _TABLE_SEPARATOR_RE = re.compile(r"^\|[\s\-:|]+\|$")
-_CHANGE_TABLE_HEADER = re.compile(r"\*\*変更対象ファイル\*\*")
 _PLAN_REF_RE = re.compile(r"^\|\s*(\d+)\s*\|")
 # 解決済み Issue 参照（3 桁以上）。plan ref（サブ N の連番）と区別する。
 _RESOLVED_ISSUE_REF_RE = re.compile(r"#(\d{3,})\b")
+
+
+def _change_table_header_re() -> re.Pattern[str]:
+    changed = get_config().sections["changed_files"]
+    return re.compile(rf"\*\*{re.escape(changed)}\*\*")
 
 
 @dataclass
@@ -124,7 +128,7 @@ def _parse_table_rows(section: str) -> list[list[str]]:
 def _extract_change_paths(body: str, *, repo: str | None = None) -> list[str]:
     """Extract change-table paths. When ``repo`` is set, keep only matching リポジトリ rows."""
     paths: list[str] = []
-    for match in _CHANGE_TABLE_HEADER.finditer(body):
+    for match in _change_table_header_re().finditer(body):
         start = match.end()
         section = body[start : start + 4000]
         rows = _parse_table_rows(section)
@@ -157,8 +161,9 @@ def _extract_change_paths(body: str, *, repo: str | None = None) -> list[str]:
 
 
 def _plan_section(body: str) -> str | None:
+    plan = get_config().sections["sub_plan"]
     match = re.search(
-        r"^###\s+サブイシュー分割計画\s*\n(.*?)(?=^##|\Z)",
+        rf"^###\s+{re.escape(plan)}\s*\n(.*?)(?=^##|\Z)",
         body,
         re.MULTILINE | re.DOTALL,
     )
@@ -229,8 +234,9 @@ def _paths_covered(allow_paths: list[str], paths: list[str]) -> list[str]:
 
 
 def _dependency_refs_unresolved(body: str) -> list[str]:
+    deps_heading = get_config().sections["dependencies"]
     section_match = re.search(
-        r"^##\s+依存（先行）\s*\n(.*?)(?=^##|\Z)",
+        rf"^##\s+{re.escape(deps_heading)}\s*\n(.*?)(?=^##|\Z)",
         body,
         re.MULTILINE | re.DOTALL,
     )
