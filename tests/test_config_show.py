@@ -92,7 +92,8 @@ def test_config_show_prints_json(tmp_path, monkeypatch, capsys):
     assert data["phases"]
     assert {"name", "role", "entry_step"} <= set(data["phases"][0])
     assert "sections" in data
-    assert "supported_repos" in data
+    assert isinstance(data["supported_repos"], list)
+    assert sorted(data["supported_repos"]) == ["example/app", "example/other"]
 
 
 def test_config_show_via_module_subprocess(tmp_path, monkeypatch):
@@ -116,4 +117,5 @@ def test_config_show_via_module_subprocess(tmp_path, monkeypatch):
     assert data["repo"] == "example/cli-show"
     assert "phases" in data
     assert "sections" in data
-    assert "supported_repos" in data
+    assert isinstance(data["supported_repos"], list)
+    assert data["supported_repos"] == ["example/cli-show"]

@@ -223,10 +223,16 @@ def _cmd_milestone(argv: list[str]) -> int:
     return int(milestone_main(argv))
 
 
+def _json_default(o: object) -> object:
+    if isinstance(o, (set, frozenset)):
+        return sorted(o)
+    return str(o)
+
+
 def _cmd_config_show(_argv: list[str]) -> int:
     from issuesmith.config import get_config
 
-    print(json.dumps(asdict(get_config()), default=str, indent=2))
+    print(json.dumps(asdict(get_config()), default=_json_default, indent=2))
     return 0
 
 
