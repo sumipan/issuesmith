@@ -296,7 +296,6 @@ def test_cas_conflict_logged_when_retry_fails(tmp_path, monkeypatch):
     issues = {
         1: {"state": "OPEN", "labels": [], "title": "h", "body": _VALID_BODY},
     }
-    triage_log = tmp_path / "triage.jsonl"
     monkeypatch.setenv("ISSUESMITH_QUEUE_DIR", str(tmp_path))
     # Point DEFAULT via env: queue uses ISSUESMITH_QUEUE_DIR / issuesmith-triage.jsonl
     (tmp_path / "issuesmith-triage.jsonl").touch()
