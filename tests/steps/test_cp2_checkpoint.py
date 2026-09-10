@@ -23,8 +23,8 @@ import pytest
 
 from issuesmith.engine import _extract_status_values
 from issuesmith.ops.dispatch import _context_to_step
-from issuesmith.steps.base import StepContext
 from issuesmith.steps import cp2_checkpoint as cp2
+from issuesmith.steps.base import StepContext
 
 # --- Real API strings (trimmed to fields the step reads; values unchanged) ---
 
