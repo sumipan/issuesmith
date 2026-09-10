@@ -420,6 +420,35 @@ def _list_milestone_children(client: ForgePort, milestone_number: int) -> list[d
     return children
 
 
+def _list_chain_children(
+    client: ForgePort,
+    parent_number: int,
+    parent: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """List children via ``list_sub_issues``, with milestone API fallback.
+
+    Primary: ``client.list_sub_issues(parent_number)``.
+    Fallback: when that returns empty and the parent has a milestone number,
+    use ``_list_milestone_children`` (legacy chains without sub-issue links).
+    """
+    children: list[dict[str, Any]] = []
+    list_fn = getattr(client, "list_sub_issues", None)
+    if callable(list_fn):
+        try:
+            raw = list_fn(parent_number)
+        except Exception:
+            raw = []
+        if isinstance(raw, list):
+            children = [item for item in raw if isinstance(item, dict)]
+
+    if not children:
+        milestone_number = _milestone_number(parent)
+        if milestone_number is not None:
+            children = _list_milestone_children(client, milestone_number)
+
+    return [child for child in children if child.get("number") != parent_number]
+
+
 def _has_request(store: QueueStore, snap: QueueSnapshot, issue: int, phase: str) -> bool:
     seen: set[str] = set(snap.active_order) | set(snap.completed_request_ids)
     for rid in seen:
@@ -447,31 +476,13 @@ def _enqueue_chain(
     )
 
 
-def _candidate_parents(
-    store: QueueStore,
-    snap: QueueSnapshot,
-    client: ForgePort,
-) -> set[int]:
-    candidates: set[int] = set()
-    for key in snap.milestone_chains:
-        try:
-            candidates.add(int(key))
-        except ValueError:
-            continue
-    for entry in snap.in_flight:
-        issue = entry.get("issue")
-        if isinstance(issue, int):
-            candidates.add(issue)
-    for item in _list_open_milestones(client):
-        number = item.get("number")
-        if isinstance(number, int):
-            candidates.add(number)
-    return candidates
-
-
-def _list_open_milestones(client: ForgePort) -> list[dict[str, Any]]:
+def _list_scope_milestone_parents(client: ForgePort) -> list[dict[str, Any]]:
+    """Open issues labeled ``scope:milestone`` (candidate chain parents)."""
     try:
-        raw = client.api_request("issues?state=open&labels=scope:milestone&per_page=100", paginate=True)
+        raw = client.api_request(
+            "issues?state=open&labels=scope:milestone&per_page=100",
+            paginate=True,
+        )
     except Exception:
         try:
             raw = client.api_request("issues?state=open&labels=scope:milestone&per_page=100")
@@ -487,6 +498,37 @@ def _list_open_milestones(client: ForgePort) -> list[dict[str, Any]]:
             continue
         out.append(item)
     return out
+
+
+def _candidate_parents(
+    store: QueueStore,
+    snap: QueueSnapshot,
+    client: ForgePort,
+) -> set[int]:
+    candidates: set[int] = set()
+    for key in snap.milestone_chains:
+        try:
+            candidates.add(int(key))
+        except ValueError:
+            continue
+    for entry in snap.in_flight:
+        issue = entry.get("issue")
+        if isinstance(issue, int):
+            candidates.add(issue)
+    for item in _list_scope_milestone_parents(client):
+        number = item.get("number")
+        if isinstance(number, int):
+            candidates.add(number)
+    return candidates
+
+
+def _list_open_milestones(client: ForgePort) -> list[dict[str, Any]]:
+    """Deprecated: prefer ``_list_scope_milestone_parents``.
+
+    Kept for fallback / external callers. ``advance_milestone_chains`` does not
+    call this; it uses ``_list_scope_milestone_parents`` directly.
+    """
+    return _list_scope_milestone_parents(client)
 
 
 def _halt_chain(store: QueueStore, parent: int, reason: str) -> None:
@@ -574,15 +616,7 @@ def advance_milestone_chains(
         if chain.get("stage") == "halted":
             continue
 
-        milestone_number = _milestone_number(parent)
-        if milestone_number is None:
-            continue
-
-        children = [
-            child
-            for child in _list_milestone_children(client, milestone_number)
-            if child.get("number") != parent_num
-        ]
+        children = _list_chain_children(client, parent_num, parent)
 
         # C2: validate children and enqueue develop.
         if chain.get("stage") != "children_validated":
@@ -698,13 +732,37 @@ def _child_phase_label(labels: set[str]) -> str:
     return "-"
 
 
+def _sub_issues_summary(client: ForgePort, parent: int, parent_issue: dict[str, Any]) -> dict[str, int]:
+    """Resolve sub_issues_summary from client helper or issue payload."""
+    summary_fn = getattr(client, "sub_issues_summary", None)
+    if callable(summary_fn):
+        try:
+            raw = summary_fn(parent)
+        except Exception:
+            raw = None
+        if isinstance(raw, dict):
+            return {
+                "total": int(raw.get("total", 0) or 0),
+                "completed": int(raw.get("completed", 0) or 0),
+                "percent_completed": int(raw.get("percent_completed", 0) or 0),
+            }
+    embedded = parent_issue.get("sub_issues_summary")
+    if isinstance(embedded, dict):
+        return {
+            "total": int(embedded.get("total", 0) or 0),
+            "completed": int(embedded.get("completed", 0) or 0),
+            "percent_completed": int(embedded.get("percent_completed", 0) or 0),
+        }
+    return {"total": 0, "completed": 0, "percent_completed": 0}
+
+
 def milestone_status(parent: int, *, client: ForgePort | None = None, store: QueueStore | None = None) -> int:
     client = client or get_forge()
     store = store or QueueStore()
     try:
         parent_issue = client.issue_get(
             parent,
-            fields=["state", "labels", "body", "milestone", "number", "title"],
+            fields=["state", "labels", "body", "milestone", "number", "title", "sub_issues_summary"],
         )
     except Exception as exc:
         print(f"error: failed to fetch parent #{parent}: {exc}", file=sys.stderr)
@@ -721,16 +779,19 @@ def milestone_status(parent: int, *, client: ForgePort | None = None, store: Que
     if chain.get("closed_parent"):
         print("  closed_parent: true")
 
-    milestone_number = _milestone_number(parent_issue)
-    if milestone_number is None:
-        print("  children: (no milestone object on parent)")
+    summary = _sub_issues_summary(client, parent, parent_issue)
+    print(
+        "  sub_issues_summary: "
+        f"total={summary['total']} "
+        f"completed={summary['completed']} "
+        f"percent_completed={summary['percent_completed']}"
+    )
+
+    children = _list_chain_children(client, parent, parent_issue)
+    if not children and _milestone_number(parent_issue) is None:
+        print("  children: (none; no sub-issues and no milestone object on parent)")
         return 0
 
-    children = [
-        child
-        for child in _list_milestone_children(client, milestone_number)
-        if child.get("number") != parent
-    ]
     print(f"{'#':>6}  {'title':<40}  {'target_repo':<28}  {'phase':<12}  {'deps':<8}  pr")
     print("-" * 100)
     for child in sorted(children, key=lambda item: int(item.get("number") or 0)):

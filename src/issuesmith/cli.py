@@ -23,7 +23,7 @@ commands:
   queue  deps  tier  comments  gh
   engine  dispatch  publish  labels  doctor  smoke  gen-live  version-bump
   recover  redispatch  convert-to-milestone
-  milestone  status / resume for milestone chain
+  milestone  status / resume (sub_issues_summary progress + child table)
   config show
   apply  ingest-review  (moved to tools/stash/; exit 2)
 """

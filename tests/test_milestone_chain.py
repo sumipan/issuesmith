@@ -8,10 +8,12 @@ import pytest
 
 from issuesmith.config import MilestoneChainConfig, reset_config_cache
 from issuesmith.milestone import (
+    _list_open_milestones,
     advance_milestone_chains,
     ensure_sub1_binding,
     link_sub_issue,
     milestone_last_issue_terminal_ok,
+    milestone_status,
     validate_children,
 )
 from issuesmith.queue_store import QueueStore
@@ -111,16 +113,22 @@ class FakeClient:
         children=None,
         comments=None,
         *,
+        sub_issues=None,
+        summaries=None,
         add_sub_issue_error: Exception | None = None,
         add_sub_issue_return=None,
     ):
         self.issues = issues or {}
         self.children = children or {}
         self.comments = comments or {}
+        self.sub_issues = sub_issues or {}
+        self.summaries = summaries or {}
         self.posted_comments: list[tuple[int, str]] = []
         self.closed: list[int] = []
         self.label_ops: list[tuple[str, int, object]] = []
         self.sub_issue_links: list[tuple[int, int]] = []
+        self.list_sub_issues_calls: list[int] = []
+        self.api_request_calls: list[str] = []
         self.add_sub_issue_error = add_sub_issue_error
         self.add_sub_issue_return = add_sub_issue_return
 
@@ -154,7 +162,23 @@ class FakeClient:
         self.sub_issue_links.append((parent_number, child_id))
         return self.add_sub_issue_return
 
+    def list_sub_issues(self, parent_number):
+        self.list_sub_issues_calls.append(parent_number)
+        return list(self.sub_issues.get(parent_number, []))
+
+    def sub_issues_summary(self, parent_number):
+        if parent_number in self.summaries:
+            return dict(self.summaries[parent_number])
+        linked = self.sub_issues.get(parent_number, [])
+        total = len(linked)
+        completed = sum(
+            1 for child in linked if str(child.get("state", "")).upper() == "CLOSED"
+        )
+        percent = int(completed * 100 / total) if total else 0
+        return {"total": total, "completed": completed, "percent_completed": percent}
+
     def api_request(self, path, paginate=False):
+        self.api_request_calls.append(path)
         if path.startswith("issues?state=all&milestone="):
             milestone = int(path.split("milestone=")[1].split("&")[0])
             return list(self.children.get(milestone, []))
@@ -680,3 +704,135 @@ class TestLinkSubIssue:
         )
         assert ensure_sub1_binding(client, 100, 101) is True
         assert client.posted_comments == []
+
+
+class TestSubIssuesEnumeration:
+    """#3127: 子列挙を list_sub_issues に切り替え、milestone フォールバック付き。"""
+
+    def test_list_sub_issues_enumerates_linked_children(self, tmp_path):
+        store = _store(tmp_path)
+        child = _child_issue(101, state="OPEN", labels=["issuesmith:draft-done"])
+        parent = _parent_issue()
+        client = FakeClient(
+            issues={100: parent, 101: child},
+            sub_issues={100: [child]},
+            children={1: []},  # milestone 列挙は空でも sub_issues で進む
+        )
+        advance_milestone_chains(store, client, _chain_config())
+        assert client.list_sub_issues_calls == [100]
+        assert not any("milestone=" in path for path in client.api_request_calls)
+        snap = store.snapshot()
+        phases = {snap.requests[rid].phase for rid in snap.active_order}
+        assert "develop" in phases
+
+    def test_fallback_to_milestone_children_when_sub_issues_empty(self, tmp_path):
+        store = _store(tmp_path)
+        child = _child_issue(101, state="OPEN", labels=["issuesmith:draft-done"])
+        parent = _parent_issue()
+        client = FakeClient(
+            issues={100: parent, 101: child},
+            sub_issues={100: []},
+            children={1: [child]},
+        )
+        advance_milestone_chains(store, client, _chain_config())
+        assert client.list_sub_issues_calls == [100]
+        assert any("milestone=1" in path for path in client.api_request_calls)
+        snap = store.snapshot()
+        phases = {snap.requests[rid].phase for rid in snap.active_order}
+        assert "develop" in phases
+
+    def test_no_fallback_without_milestone_when_sub_issues_empty(self, tmp_path):
+        store = _store(tmp_path)
+        parent = _parent_issue(milestone=None)
+        client = FakeClient(
+            issues={100: parent},
+            sub_issues={100: []},
+            children={1: [_child_issue(101, state="OPEN", labels=["issuesmith:draft-done"])]},
+        )
+        advance_milestone_chains(store, client, _chain_config())
+        assert client.list_sub_issues_calls == [100]
+        assert not any("milestone=" in path for path in client.api_request_calls)
+        chain = store.get_milestone_chain(100)
+        assert chain.get("stage") == "halted"
+        assert chain.get("halted_reason") == "no children"
+
+    def test_sub_issues_works_without_milestone_object(self, tmp_path):
+        """サブイシューリンク済みなら親に milestone オブジェクトが無くても C2 が進む。"""
+        store = _store(tmp_path)
+        child = _child_issue(101, state="OPEN", labels=["issuesmith:draft-done"], milestone=None)
+        parent = _parent_issue(milestone=None)
+        client = FakeClient(
+            issues={100: parent, 101: child},
+            sub_issues={100: [child]},
+        )
+        advance_milestone_chains(store, client, _chain_config())
+        snap = store.snapshot()
+        phases = {snap.requests[rid].phase for rid in snap.active_order}
+        assert "develop" in phases
+
+    def test_candidate_parents_uses_scope_label_not_list_open_milestones(
+        self, tmp_path, monkeypatch
+    ):
+        store = _store(tmp_path)
+        child = _child_issue(101, state="OPEN", labels=["issuesmith:draft-done"])
+        parent = _parent_issue()
+        client = FakeClient(
+            issues={100: parent, 101: child},
+            sub_issues={100: [child]},
+        )
+
+        def _boom(*_a, **_k):
+            raise AssertionError("_list_open_milestones must not be called")
+
+        monkeypatch.setattr(
+            "issuesmith.milestone._list_open_milestones",
+            _boom,
+        )
+        advance_milestone_chains(store, client, _chain_config())
+        snap = store.snapshot()
+        phases = {snap.requests[rid].phase for rid in snap.active_order}
+        assert "develop" in phases
+        assert any("labels=scope:milestone" in path for path in client.api_request_calls)
+
+    def test_c4_auto_close_via_sub_issues(self, tmp_path):
+        store = _store(tmp_path)
+        store.update_milestone_chain(100, {"stage": "children_validated"})
+        child_101 = _child_issue(101, state="CLOSED", labels=["issuesmith:merge-done"])
+        child_102 = _child_issue(102, state="CLOSED", labels=["issuesmith:merge-done"])
+        client = FakeClient(
+            issues={100: _parent_issue(), 101: child_101, 102: child_102},
+            sub_issues={100: [child_101, child_102]},
+            children={1: []},
+        )
+        advance_milestone_chains(store, client, _chain_config())
+        assert client.closed == [100]
+        assert client.list_sub_issues_calls == [100]
+        assert not any("milestone=" in path for path in client.api_request_calls)
+
+    def test_milestone_status_shows_sub_issues_summary(self, tmp_path, capsys):
+        child = _child_issue(101, state="CLOSED", labels=["issuesmith:merge-done"])
+        parent = _parent_issue()
+        client = FakeClient(
+            issues={100: parent, 101: child},
+            sub_issues={100: [child]},
+            summaries={100: {"total": 1, "completed": 1, "percent_completed": 100}},
+        )
+        store = _store(tmp_path)
+        store.update_milestone_chain(100, {"stage": "children_validated"})
+        code = milestone_status(100, client=client, store=store)
+        assert code == 0
+        out = capsys.readouterr().out
+        assert "sub_issues_summary:" in out
+        assert "total=1" in out
+        assert "completed=1" in out
+        assert "percent_completed=100" in out
+        assert "101" in out
+        assert client.list_sub_issues_calls == [100]
+
+    def test_list_open_milestones_still_available_as_deprecated(self):
+        """deprecated 関数は残存し、scope:milestone ラベル検索を返す。"""
+        parent = _parent_issue()
+        client = FakeClient(issues={100: parent})
+        found = _list_open_milestones(client)
+        assert len(found) == 1
+        assert found[0]["number"] == 100
