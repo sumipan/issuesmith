@@ -7,7 +7,6 @@ from unittest.mock import MagicMock, patch
 
 from issuesmith.ops.publish import _check_commit_diff_gates, publish
 
-
 _EXACT_DIFF = """\
 diff --git a/tests/test_ghdag_version.py b/tests/test_ghdag_version.py
 index a962678..ec9ef1f 100644
