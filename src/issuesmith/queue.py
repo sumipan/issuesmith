@@ -465,17 +465,23 @@ def _halt_resolved(snap: QueueSnapshot, client: GitHubClient) -> bool:
 def _required_engines_paused(
     quota_path: Path | None = None,
     engine_state_path: Path | None = None,
+    role: str | None = None,
 ) -> list[str]:
-    """投入に必要なロール（design / implementation）の engine のうち paused なものを返す。
+    """投入に必要なロールの engine のうち paused なものを返す。
 
-    旧実装は「登録済み engine が全部 paused」で止めていたが、フォールバック先
-    （codex 等）だけが paused でも全体が止まり、逆に design engine が paused でも
-    他が空いていれば投入が続いてしまった（2026-09-04）。必要ロールの engine で判定する。
+    ``role`` 指定時はそのロールの engine のみ。未指定時は design / implementation
+    両ロールの和集合（後方互換）。フェーズ別判定は ``dispatch_one`` が
+    ``role=_phase_role_map()[phase]`` で呼ぶ（#3091）。
     """
     snapshot = QuotaGate(state_path=quota_path or QUOTA_STATE_PATH).snapshot()
     if not snapshot.engines:
         return []
-    required = set(_required_engines(engine_state_path).values())
+    role_map = _required_engines(engine_state_path)
+    if role is not None:
+        engine_name = role_map.get(role)
+        required = {engine_name} if engine_name else set()
+    else:
+        required = set(role_map.values())
     return sorted(
         name for name, engine in snapshot.engines.items()
         if name in required and engine.status == "paused"
@@ -1121,13 +1127,11 @@ def dispatch_one(
 
         if not _dispatch_pipeline_ready(snap, idle_minutes, now):
             return DispatchResult(False, reason="pipeline not idle")
-        paused = _required_engines_paused()
-        if paused:
-            return DispatchResult(False, reason=f"required engine paused: {', '.join(paused)}")
 
         concurrency = get_config().concurrency
         role_map = _required_engines()
         counts = in_flight_by_engine(snap.in_flight, role_engine_map=role_map)
+        last_paused_reason: str | None = None
 
         for rid in snap.active_order:
             req = store.effective_request(snap, rid)
@@ -1136,6 +1140,13 @@ def dispatch_one(
             if not _source_in_window(req.source, req.actor_kind, now, start, end):
                 continue
             engine = _resolve_engine(req.phase)
+            role = _phase_role_map()[req.phase]
+            paused_for_role = _required_engines_paused(role=role)
+            if paused_for_role:
+                last_paused_reason = (
+                    f"required engine paused: {', '.join(paused_for_role)} (role={role})"
+                )
+                continue
             if counts.get(engine, 0) >= concurrency.limit(engine):
                 if concurrency.strict_order:
                     break
@@ -1175,7 +1186,6 @@ def dispatch_one(
                     break
                 continue
 
-            role = _phase_role_map()[req.phase]
             label = READY_LABEL[req.phase]
             labels = label_names(issue)
             if label not in labels:
@@ -1212,6 +1222,9 @@ def dispatch_one(
             return DispatchResult(
                 True, issue=req.issue, label=label, request_id=rid, reason="dispatched"
             )
+
+        if last_paused_reason:
+            return DispatchResult(False, reason=last_paused_reason)
 
     return DispatchResult(False, reason="no dispatchable request")
 
@@ -1322,6 +1335,13 @@ def _cmd_status(args: argparse.Namespace) -> int:
             f"  - {rid[:8]}… issue=#{req.issue} phase={req.phase} "
             f"engine={engine} role={role} priority={req.priority} source={req.source}"
         )
+        if role:
+            paused_for_role = _required_engines_paused(role=role)
+            if paused_for_role:
+                print(
+                    f"    waiting: required engine paused: "
+                    f"{', '.join(paused_for_role)} (role={role})"
+                )
         if client is None:
             continue
         try:

@@ -272,7 +272,7 @@ def test_claude_limit_two_allows_two_dispatches(
         }
     )
     now = datetime(2026, 9, 5, 12, 0, tzinfo=_JST)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
 
     first = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
     second = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
@@ -343,7 +343,7 @@ def test_different_engines_do_not_share_limits(
         }
     )
     now = datetime(2026, 9, 5, 12, 0, tzinfo=_JST)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
 
     first = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
     second = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
@@ -424,7 +424,7 @@ def test_one_tick_dispatches_at_most_one(tmp_path, monkeypatch, issuesmith_confi
         )
     client = _DispatchClient({i: {"state": "OPEN", "labels": []} for i in (200, 201, 202)})
     now = datetime(2026, 9, 5, 12, 0, tzinfo=_JST)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
 
     result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
     assert result.dispatched is True
@@ -473,7 +473,7 @@ def test_parallel_dispatch_respects_limit(tmp_path, monkeypatch, issuesmith_conf
         {50: {"state": "OPEN", "labels": []}, 51: {"state": "OPEN", "labels": []}}
     )
     now = datetime(2026, 9, 5, 12, 0, tzinfo=_JST)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
     barrier = threading.Barrier(2)
     results: list = []
 
@@ -514,7 +514,7 @@ def test_store_in_flight_blocks_when_labels_not_reflected(
     )
     client = _DispatchClient({100: {"state": "OPEN", "labels": []}})
     now = datetime(2026, 9, 5, 12, 0, tzinfo=_JST)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
 
     result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
     assert result.dispatched is False
@@ -588,7 +588,7 @@ def test_halt_auto_clears_when_in_flight_resolved(
     )
     client = _DispatchClient({300: {"state": "OPEN", "labels": []}})
     now = datetime(2026, 9, 5, 12, 0, tzinfo=_JST)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
 
     result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
     assert result.dispatched is True
@@ -623,7 +623,7 @@ def test_dispatch_bumps_ghdag_generation_when_handler_key_consumed(
     )
     client = _DispatchClient({100: {"state": "OPEN", "labels": [], "body": body}})
     now = datetime(2026, 9, 5, 12, 0, tzinfo=_JST)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
     consumed_queries: list[tuple[str, int]] = []
     triggered: list[tuple[int, str]] = []
     monkeypatch.setattr(
@@ -664,7 +664,7 @@ def test_dispatch_skips_ghdag_redispatch_when_key_unused(
     )
     client = _DispatchClient({100: {"state": "OPEN", "labels": [], "body": body}})
     now = datetime(2026, 9, 5, 12, 0, tzinfo=_JST)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
     monkeypatch.setattr(qmod, "_handler_key_consumed", lambda handler, issue: False)
     monkeypatch.setattr(
         qmod, "_trigger_ghdag_redispatch",

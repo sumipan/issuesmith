@@ -1014,7 +1014,7 @@ class TestDispatch:
 
         client = Client()
         monkeypatch.setattr(qmod, "_pipeline_idle_enough", lambda idle, now: True)
-        monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+        monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
         now = datetime(2026, 9, 3, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
         result = qmod.dispatch_one(
             now=now,
@@ -1072,7 +1072,7 @@ class TestDispatch:
                 pass
 
         monkeypatch.setattr(qmod, "_dispatch_pipeline_ready", lambda snap, idle, now: True)
-        monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+        monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
         now = datetime(2026, 9, 3, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
         result = qmod.dispatch_one(
             now=now,
@@ -1151,7 +1151,7 @@ class TestDispatch:
                 return []
 
         monkeypatch.setattr(qmod, "_pipeline_idle_enough", lambda idle, now: True)
-        monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+        monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
         # Outside 01:00–07:00 JST window
         now = datetime(2026, 9, 3, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
         result = qmod.dispatch_one(
@@ -1197,7 +1197,7 @@ class TestDispatch:
                 return []
 
         monkeypatch.setattr(qmod, "_pipeline_idle_enough", lambda idle, now: True)
-        monkeypatch.setattr(qmod, "_required_engines_paused", lambda: ["claude"])
+        monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: ["claude"])
         now = datetime(2026, 9, 3, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
         result = qmod.dispatch_one(
             now=now,
@@ -1208,6 +1208,7 @@ class TestDispatch:
         )
         assert result.dispatched is False
         assert "paused" in result.reason
+        assert "role=" in result.reason
 
     def test_dispatch_develop_requires_draft_done(self, tmp_path, monkeypatch):
         from datetime import datetime
@@ -1248,7 +1249,7 @@ class TestDispatch:
 
         client = Client()
         monkeypatch.setattr(qmod, "_pipeline_idle_enough", lambda idle, now: True)
-        monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+        monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
         now = datetime(2026, 9, 3, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
         result = qmod.dispatch_one(
             now=now,
@@ -1545,7 +1546,7 @@ class TestCp2MergePrDetection:
             ],
         )
         monkeypatch.setattr(qmod, "_pipeline_idle_enough", lambda idle, now: True)
-        monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+        monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
         now = datetime(2026, 9, 3, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
         result = qmod.dispatch_one(
             now=now,
@@ -1601,7 +1602,7 @@ class TestCp2SupersedeRepoWide:
         )
         assert not hasattr(client, "list_open_issues_for_queue")
         monkeypatch.setattr(qmod, "_pipeline_idle_enough", lambda idle, now: True)
-        monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+        monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
         # Inside release-watcher window
         now = datetime(2026, 9, 3, 3, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
         result = qmod.dispatch_one(
@@ -1710,7 +1711,7 @@ class TestCp2DevelopDispatch:
             ],
         )
         monkeypatch.setattr(qmod, "_pipeline_idle_enough", lambda idle, now: True)
-        monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+        monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
         now = datetime(2026, 9, 3, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
         result = qmod.dispatch_one(
             now=now,
@@ -1745,7 +1746,7 @@ class TestCp2DevelopDispatch:
             open_issue_rows=[],
         )
         monkeypatch.setattr(qmod, "_dispatch_pipeline_ready", lambda snap, idle, now: False)
-        monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+        monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
         now = datetime(2026, 9, 3, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
         result = qmod.dispatch_one(
             now=now,
@@ -1788,7 +1789,7 @@ class TestCp2DevelopDispatch:
             open_issue_rows=[],
         )
         monkeypatch.setattr(qmod, "_pipeline_idle_enough", lambda idle, now: True)
-        monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+        monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
         now = datetime(2026, 9, 3, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
         result = qmod.dispatch_one(
             now=now,
@@ -1854,7 +1855,7 @@ class TestCp2DevelopDispatch:
         monkeypatch.setattr(qmod, "_serial_concurrency", lambda: False)
         monkeypatch.setattr(qmod, "_pipeline_idle_enough_v2", lambda *a, **k: False)
         monkeypatch.setattr(qmod, "_dispatch_pipeline_ready", lambda *a, **k: True)
-        monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+        monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
         monkeypatch.setattr(qmod, "advance_milestone_chains", lambda *a, **k: None)
         from issuesmith.config import MilestoneChainConfig
 
@@ -1972,7 +1973,7 @@ class TestCp2DevelopDispatch:
         client.issue_update = tracking_update  # type: ignore[method-assign]
 
         monkeypatch.setattr(qmod, "_pipeline_idle_enough", lambda idle, now: True)
-        monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+        monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
         now = datetime(2026, 9, 3, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
         first = qmod.dispatch_one(
             now=now,
@@ -2051,7 +2052,7 @@ def test_dispatch_allows_when_previous_issue_terminal_without_merge(
         ],
     )
     monkeypatch.setattr(qmod, "_pipeline_idle_enough", lambda idle, now: True)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
     now = datetime(2026, 9, 3, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
     result = qmod.dispatch_one(
         now=now,
@@ -2096,7 +2097,7 @@ def test_dispatch_halts_when_previous_closed_without_terminal(tmp_path, monkeypa
         open_issue_rows=[],
     )
     monkeypatch.setattr(qmod, "_pipeline_idle_enough", lambda idle, now: True)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
     now = datetime(2026, 9, 3, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
     result = qmod.dispatch_one(
         now=now,
@@ -2203,3 +2204,137 @@ def test_required_engines_defaults_when_state_missing(tmp_path):
     q = tmp_path / "quota.json"
     _write_quota(q, {"claude": "paused"})
     assert qmod._required_engines_paused(q, tmp_path / "missing.yml") == ["claude"]
+
+
+def test_required_engines_paused_role_filters_to_phase_engine(tmp_path):
+    """role= 指定時はそのロールの engine だけを見る (#3091)."""
+    from issuesmith import queue as qmod
+
+    q = tmp_path / "quota.json"
+    e = tmp_path / "engine.yml"
+    _write_quota(q, {"claude": "paused", "cursor": "available"})
+    _write_engine_state(e, "claude", "cursor")
+    assert qmod._required_engines_paused(q, e, role="design") == ["claude"]
+    assert qmod._required_engines_paused(q, e, role="implementation") == []
+
+
+_FIXTURES = Path(__file__).resolve().parent / "fixtures"
+_QUOTA_CLAUDE_PAUSED = _FIXTURES / "quota_claude_paused_no_resume.json"
+_ENGINE_DESIGN_CLAUDE = _FIXTURES / "engine_state_design_claude_impl_cursor.yml"
+
+
+class TestRoleScopedPausedDispatch:
+    """AC-4: claude paused / resume_at=null でも develop(cursor) は通る (#3091)."""
+
+    def test_develop_dispatches_while_design_engine_paused(self, tmp_path, monkeypatch):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from issuesmith import queue as qmod
+
+        store = _store(tmp_path)
+        store.enqueue(
+            issue=3081, phase="develop", source="skill", actor_kind="human",
+            priority="normal", requested_by=["alice"], requested_at=_NOW,
+        )
+        client = _ProdShapeClient(
+            issues={
+                3081: {
+                    "state": "OPEN",
+                    "title": "t",
+                    "body": _VALID_BODY,
+                    "labels": [{"name": "issuesmith:draft-done"}],
+                }
+            },
+            open_issue_rows=[
+                {
+                    "number": 3081,
+                    "title": "t",
+                    "state": "open",
+                    "body": _VALID_BODY,
+                    "labels": [{"name": "issuesmith:draft-done"}],
+                }
+            ],
+        )
+        monkeypatch.setattr(qmod, "_pipeline_idle_enough", lambda idle, now: True)
+        monkeypatch.setattr(qmod, "QUOTA_STATE_PATH", _QUOTA_CLAUDE_PAUSED)
+        monkeypatch.setattr(qmod, "ENGINE_STATE_PATH", _ENGINE_DESIGN_CLAUDE)
+        now = datetime(2026, 9, 10, 18, 19, tzinfo=ZoneInfo("Asia/Tokyo"))
+        result = qmod.dispatch_one(
+            now=now,
+            client=client,
+            store=store,
+            skip_seed=True,
+            call_llm=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")),
+        )
+        assert result.dispatched is True
+        assert result.label == "issuesmith:develop-ready"
+        assert result.issue == 3081
+
+    def test_draft_blocked_while_design_engine_paused(self, tmp_path, monkeypatch):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from issuesmith import queue as qmod
+
+        store = _store(tmp_path)
+        store.enqueue(
+            issue=3082, phase="draft", source="skill", actor_kind="human",
+            priority="normal", requested_by=["alice"], requested_at=_NOW,
+        )
+        client = _ProdShapeClient(
+            issues={
+                3082: {
+                    "state": "OPEN",
+                    "title": "t",
+                    "body": _VALID_BODY,
+                    "labels": [],
+                }
+            },
+            open_issue_rows=[],
+        )
+        monkeypatch.setattr(qmod, "_pipeline_idle_enough", lambda idle, now: True)
+        monkeypatch.setattr(qmod, "QUOTA_STATE_PATH", _QUOTA_CLAUDE_PAUSED)
+        monkeypatch.setattr(qmod, "ENGINE_STATE_PATH", _ENGINE_DESIGN_CLAUDE)
+        now = datetime(2026, 9, 10, 18, 19, tzinfo=ZoneInfo("Asia/Tokyo"))
+        result = qmod.dispatch_one(
+            now=now,
+            client=client,
+            store=store,
+            skip_seed=True,
+            call_llm=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")),
+        )
+        assert result.dispatched is False
+        assert "paused" in result.reason
+        assert "role=design" in result.reason
+        assert "claude" in result.reason
+
+    def test_status_shows_role_in_paused_wait_reason(self, tmp_path, monkeypatch, capsys):
+        from issuesmith import queue as qmod
+
+        store = _store(tmp_path)
+        store.enqueue(
+            issue=3086, phase="draft", source="skill", actor_kind="human",
+            priority="normal", requested_by=["alice"], requested_at=_NOW,
+        )
+        monkeypatch.setattr(qmod, "QUOTA_STATE_PATH", _QUOTA_CLAUDE_PAUSED)
+        monkeypatch.setattr(qmod, "ENGINE_STATE_PATH", _ENGINE_DESIGN_CLAUDE)
+        monkeypatch.setattr(
+            qmod,
+            "GitHubClient",
+            lambda **kw: (_ for _ in ()).throw(RuntimeError("offline")),
+        )
+        code = qmod.main(
+            [
+                "--queue-path",
+                str(tmp_path / "queue.jsonl"),
+                "--state-path",
+                str(tmp_path / "state.json"),
+                "--lock-path",
+                str(tmp_path / "lock"),
+                "status",
+            ]
+        )
+        assert code == 0
+        out = capsys.readouterr().out
+        assert "required engine paused: claude (role=design)" in out

@@ -73,7 +73,7 @@ def test_dispatch_blocks_when_ready_label_exists(tmp_path, monkeypatch):
             pass
 
     monkeypatch.setattr(qmod, "_dispatch_pipeline_ready", lambda snap, idle, now: True)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
     now = datetime(2026, 9, 3, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
     result = qmod.dispatch_one(
         now=now,
@@ -157,7 +157,7 @@ def test_concurrent_dispatch_single_winner(tmp_path, monkeypatch):
 
     client = Client()
     monkeypatch.setattr(qmod, "_pipeline_idle_enough", lambda idle, now: True)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
     now = datetime(2026, 9, 3, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
     barrier = threading.Barrier(2)
     results: list = []
@@ -525,7 +525,7 @@ def test_dispatch_recovers_before_orphan_gate(tmp_path, monkeypatch):
     monkeypatch.setattr(qmod, "EXEC_PATH", exec_path)
     monkeypatch.setattr(qmod, "ENGINE_STATE_PATH", engine_state)
     monkeypatch.setattr(qstore, "_cfg", patched)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
 
     store = _store(tmp_path)
     store.enqueue(

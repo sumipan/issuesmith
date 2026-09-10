@@ -155,7 +155,7 @@ class TestSubDispatch:
 
         client = Client()
         monkeypatch.setattr(qmod, "_pipeline_idle_enough", lambda idle, now: True)
-        monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+        monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
         now = datetime(2026, 9, 3, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
         result = qmod.dispatch_one(
             now=now,

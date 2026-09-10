@@ -287,7 +287,7 @@ def test_dispatch_skips_overlapping_paths(tmp_path, monkeypatch, issuesmith_conf
         {2980: {"state": "OPEN", "labels": [], "body": _BODY_QUEUE}}
     )
     now = datetime(2026, 9, 9, 12, 0, tzinfo=_JST)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
     result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
     assert result.dispatched is False
 
@@ -332,7 +332,7 @@ def test_dispatch_allows_non_overlapping_or_other_repo(
         }
     )
     now = datetime(2026, 9, 9, 12, 0, tzinfo=_JST)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
     first = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
     assert first.dispatched is True
     assert first.issue in (2976, 2980)
@@ -403,7 +403,7 @@ def test_draft_done_releases_normal_issue(tmp_path, monkeypatch, issuesmith_conf
         }
     )
     now = datetime(2026, 9, 9, 12, 0, tzinfo=_JST)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
     result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
     assert result.dispatched is True
     issues = {e["issue"] for e in store.snapshot().in_flight}
@@ -442,7 +442,7 @@ def test_draft_done_does_not_release_when_develop_ready(
         }
     )
     now = datetime(2026, 9, 9, 12, 0, tzinfo=_JST)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
     qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
     issues = {e["issue"] for e in store.snapshot().in_flight}
     assert 100 in issues
@@ -523,7 +523,7 @@ def test_strict_order_breaks_on_capacity_wait(tmp_path, monkeypatch, issuesmith_
         }
     )
     now = datetime(2026, 9, 9, 12, 0, tzinfo=_JST)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
     result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
     assert result.dispatched is False
 
@@ -581,7 +581,7 @@ def test_strict_order_false_allows_skip(tmp_path, monkeypatch, issuesmith_config
         }
     )
     now = datetime(2026, 9, 9, 12, 0, tzinfo=_JST)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
     result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
     assert result.dispatched is True
     assert result.issue == 11
@@ -667,7 +667,7 @@ def test_sub_done_milestone_parent_releases_in_flight(tmp_path, monkeypatch, iss
         }
     )
     now = datetime(2026, 9, 10, 1, 0, tzinfo=_JST)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
     result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
     assert result.dispatched is True and result.issue == 2999
     assert 2934 not in {e["issue"] for e in store.snapshot().in_flight}

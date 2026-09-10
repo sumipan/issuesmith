@@ -1,0 +1,6 @@
+design:
+  engine: claude
+  model: claude-opus-4-6
+implementation:
+  engine: cursor
+  model: auto

@@ -10,7 +10,9 @@ from ghdag.llm import ManagedResult
 from ghdag.quota import EngineQuotaState, QuotaSnapshot
 
 from issuesmith.engine import (
+    _RETRY_INTERVAL_SEC_DEFAULT,
     _RETRY_WAIT_MAX_SECONDS,
+    _WAIT_MAX_SEC_DEFAULT,
     RoleSelection,
     _execute,
 )
@@ -65,6 +67,7 @@ def execute_mocks(monkeypatch):
         lambda role, tier=None: RoleSelection(engine="claude", model="m"),
     )
     monkeypatch.setattr("issuesmith.engine._record_task_metrics", lambda **kwargs: None)
+    monkeypatch.setattr("issuesmith.engine._resolve_timeout_sec", lambda role: 600.0)
 
     call_managed = MagicMock(return_value=_success_result())
     monkeypatch.setattr("issuesmith.engine.call_managed", call_managed)
@@ -86,6 +89,8 @@ def execute_mocks(monkeypatch):
 
 def test_retry_wait_max_seconds_constant():
     assert _RETRY_WAIT_MAX_SECONDS == 1800
+    assert _WAIT_MAX_SEC_DEFAULT == 21600
+    assert _RETRY_INTERVAL_SEC_DEFAULT == 3600
 
 
 def test_all_paused_retries_when_resume_within_window(execute_mocks):
@@ -113,11 +118,14 @@ def test_all_paused_retries_when_resume_within_window(execute_mocks):
     assert 25 <= wait_sec <= 35
     execute_mocks["call_managed"].assert_called_once()
     assert execute_mocks["call_managed"].call_args.kwargs["engine"] == "claude"
+    # AC-3: timeout_sec extended by remaining resume wait
+    assert execute_mocks["call_managed"].call_args.kwargs["timeout"] >= 625
 
 
-def test_all_paused_raises_when_resume_beyond_window(execute_mocks):
+def test_all_paused_raises_when_resume_beyond_max_wait(execute_mocks, monkeypatch):
+    monkeypatch.setenv("ISSUESMITH_ENGINE_WAIT_MAX_SEC", "60")
     now = datetime.now(timezone.utc)
-    resume_far = now + timedelta(seconds=_RETRY_WAIT_MAX_SECONDS + 60)
+    resume_far = now + timedelta(seconds=120)
     snap_paused = _snapshot(
         {
             "claude": _paused(resume_far),
@@ -133,11 +141,44 @@ def test_all_paused_raises_when_resume_beyond_window(execute_mocks):
     execute_mocks["call_managed"].assert_not_called()
 
 
-def test_all_paused_raises_when_resume_at_none(execute_mocks):
+def test_all_paused_waits_fixed_interval_when_resume_at_none(execute_mocks, monkeypatch):
+    """budget brake 等で resume_at=null のとき固定インターバルで待つ (#3091 AC-2/AC-4)."""
+    monkeypatch.setenv("ISSUESMITH_ENGINE_WAIT_INTERVAL_SEC", "45")
+    monkeypatch.setenv("ISSUESMITH_ENGINE_WAIT_MAX_SEC", "3600")
+    snap_paused = _snapshot(
+        {
+            "claude": _paused(None, reason="session_5h=96.0"),
+            "codex": _paused(None, reason="session_5h=96.0"),
+        }
+    )
+    snap_available = _snapshot(
+        {
+            "claude": _available(),
+            "codex": _available(),
+        }
+    )
+    execute_mocks["quota_gate"].snapshot.side_effect = [snap_paused, snap_available]
+
+    result = _execute("design", "prompt")
+
+    assert result.returncode == 0
+    execute_mocks["sleep"].assert_called_once()
+    wait_sec = execute_mocks["sleep"].call_args[0][0]
+    assert 40 <= wait_sec <= 50
+    execute_mocks["call_managed"].assert_called_once()
+    # interval 分だけ timeout を延伸
+    assert execute_mocks["call_managed"].call_args.kwargs["timeout"] == 645
+
+
+def test_all_paused_raises_when_deadline_exceeded_with_null_resume(
+    execute_mocks, monkeypatch
+):
+    monkeypatch.setenv("ISSUESMITH_ENGINE_WAIT_INTERVAL_SEC", "3600")
+    monkeypatch.setenv("ISSUESMITH_ENGINE_WAIT_MAX_SEC", "30")
     snap_paused = _snapshot(
         {
             "claude": _paused(None),
-            "codex": _paused(datetime.now(timezone.utc) + timedelta(seconds=30)),
+            "codex": _paused(None),
         }
     )
     execute_mocks["quota_gate"].snapshot.return_value = snap_paused

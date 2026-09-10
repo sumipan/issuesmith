@@ -91,6 +91,26 @@ TIMEOUT_ENV_VAR = "ISSUESMITH_TIMEOUT_SEC"
 _RATE_LIMIT_PATTERNS = ("resource_exhausted", "rate limit", "ratelimit", "429")
 
 _RETRY_WAIT_MAX_SECONDS: int = 1800
+_WAIT_MAX_SEC_DEFAULT: int = 21600  # 6h — budget brake 5h 枠を超えて待つ既定上限 (#3091)
+_RETRY_INTERVAL_SEC_DEFAULT: int = 3600  # resume_at=null 時の固定インターバル (#3091)
+
+
+def _wait_max_sec() -> int:
+    raw = os.environ.get("ISSUESMITH_ENGINE_WAIT_MAX_SEC", str(_WAIT_MAX_SEC_DEFAULT))
+    try:
+        return int(raw)
+    except ValueError:
+        return _WAIT_MAX_SEC_DEFAULT
+
+
+def _wait_interval_sec() -> int:
+    raw = os.environ.get(
+        "ISSUESMITH_ENGINE_WAIT_INTERVAL_SEC", str(_RETRY_INTERVAL_SEC_DEFAULT)
+    )
+    try:
+        return int(raw)
+    except ValueError:
+        return _RETRY_INTERVAL_SEC_DEFAULT
 
 
 def _is_rate_limited(text: str) -> bool:
@@ -591,26 +611,51 @@ def _execute(
                 break
         else:
             all_engines = [selection.engine] + [e for e, _ in fallback_candidates]
-            resume_ats: list[datetime] = []
-            for eng in all_engines:
-                eng_state = snapshot.engines.get(eng)
-                if eng_state and eng_state.status == "paused":
-                    if eng_state.resume_at is None:
-                        resume_ats = []
-                        break
-                    resume_ats.append(eng_state.resume_at)
-            min_resume = min(resume_ats) if resume_ats else None
-            if min_resume is None:
-                raise RuntimeError(f"All engines paused for role {role}")
-            now = datetime.now(timezone.utc)
-            if min_resume > now + timedelta(seconds=_RETRY_WAIT_MAX_SECONDS):
-                raise RuntimeError(f"All engines paused for role {role}")
-            wait_sec = (min_resume - now).total_seconds()
-            if wait_sec > 0:
-                time.sleep(wait_sec)
-            snapshot = quota_gate.snapshot()
-            initial_state = snapshot.engines.get(selection.engine)
-            if initial_state and initial_state.status == "paused" and fallback_candidates:
+            # AC-3: 待機予測分を call_managed timeout に加算（ghdag task 占有対策）
+            quota_state = snapshot.engines.get(selection.engine)
+            if quota_state and quota_state.status == "paused":
+                if quota_state.resume_at is not None:
+                    extra = max(
+                        0.0,
+                        (
+                            quota_state.resume_at - datetime.now(timezone.utc)
+                        ).total_seconds(),
+                    )
+                else:
+                    extra = float(_wait_interval_sec())
+                timeout_sec += extra
+
+            deadline = datetime.now(timezone.utc) + timedelta(seconds=_wait_max_sec())
+            while True:
+                now = datetime.now(timezone.utc)
+                resume_ats: list[datetime] = []
+                for eng in all_engines:
+                    eng_state = snapshot.engines.get(eng)
+                    if eng_state and eng_state.status == "paused":
+                        if eng_state.resume_at is None:
+                            resume_ats.append(
+                                now + timedelta(seconds=_wait_interval_sec())
+                            )
+                        else:
+                            resume_ats.append(eng_state.resume_at)
+                if not resume_ats:
+                    break
+                min_resume = min(resume_ats)
+                if min_resume > deadline:
+                    raise RuntimeError(f"All engines paused for role {role}")
+                wait_sec = max(0.0, (min_resume - now).total_seconds())
+                print(
+                    f"[issuesmith-engine] waiting for {role} engine to resume "
+                    f"(wait={wait_sec:.0f}s, deadline={deadline.isoformat()})",
+                    file=sys.stderr,
+                )
+                if wait_sec > 0:
+                    time.sleep(min(wait_sec, _RETRY_WAIT_MAX_SECONDS))
+                snapshot = quota_gate.snapshot()
+                primary = snapshot.engines.get(selection.engine)
+                if not primary or primary.status != "paused":
+                    break
+                switched = False
                 for alt_engine, alt_model in fallback_candidates:
                     alt_state = snapshot.engines.get(alt_engine)
                     if not alt_state or alt_state.status != "paused":
@@ -621,10 +666,11 @@ def _execute(
                         )
                         selection = RoleSelection(engine=alt_engine, model=alt_model)
                         fallback_candidates = []
+                        switched = True
                         break
-                else:
-                    raise RuntimeError(f"All engines paused for role {role}")
-
+                if switched:
+                    break
+                # 全 engine がまだ paused — ループ継続（deadline 超過は次回先頭で判定）
     print(
         f"[issuesmith-engine] start role={role} engine={selection.engine} "
         f"model={selection.model} tier={tier or 'heavy'} "

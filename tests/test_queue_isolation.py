@@ -123,7 +123,7 @@ def test_dispatch_one_triage_log_uses_env_dir(tmp_path, monkeypatch):
             return []
 
     monkeypatch.setattr(qmod, "_pipeline_idle_enough", lambda idle, now: True)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
     now = datetime(2026, 9, 3, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
 
     qmod.dispatch_one(
