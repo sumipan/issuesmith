@@ -12,7 +12,7 @@ import json
 import sys
 from pathlib import Path
 
-from ghdag.github_client import GitHubClient
+from ghdag.forge import get_forge
 
 from issuesmith.config import get_config
 from issuesmith.gate_rules.m2 import (
@@ -289,7 +289,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    data = GitHubClient().issue_get(args.issue_number, fields=["body", "labels"])
+    data = get_forge().issue_get(args.issue_number, fields=["body", "labels"])
     body = data["body"]
     labels = [label["name"] for label in data["labels"]]
 

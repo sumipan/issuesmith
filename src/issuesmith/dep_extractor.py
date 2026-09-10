@@ -7,7 +7,7 @@ import re
 import sys
 from dataclasses import asdict, dataclass
 
-from ghdag.github_client import GitHubClient
+from ghdag.forge import ForgePort, get_forge
 from ghdag.markdown.body_editor import count_heading, get_section
 
 from issuesmith.config import get_config
@@ -126,7 +126,7 @@ def _is_exempt(title: str, labels: list[dict]) -> bool:
     return False
 
 
-def _find_rescue_pr(client: GitHubClient, issue_number: int) -> int | None:
+def _find_rescue_pr(client: ForgePort, issue_number: int) -> int | None:
     timeline = client.issue_timeline(issue_number)
     pr_numbers: list[int] = []
     for event in timeline:
@@ -141,13 +141,15 @@ def _find_rescue_pr(client: GitHubClient, issue_number: int) -> int | None:
         return None
 
     pr_number = pr_numbers[-1]
-    detail = client.api_request("GET", f"/repos/:owner/:repo/pulls/{pr_number}")
-    if detail.get("merged") or detail.get("merged_at"):
+    detail = client.pr_get(pr_number)
+    if detail.get("merged") or detail.get("merged_at") or detail.get("mergedAt"):
+        return pr_number
+    if str(detail.get("state") or "").upper() == "MERGED":
         return pr_number
     return None
 
 
-def get_dep_status(client: GitHubClient, issue_number: int) -> DepStatus:
+def get_dep_status(client: ForgePort, issue_number: int) -> DepStatus:
     """Return merge-check status for a single dependency issue."""
     data = client.issue_get(issue_number, fields=["state", "labels", "title"])
     state = data.get("state", "UNKNOWN")
@@ -181,7 +183,7 @@ def is_satisfied(status: DepStatus) -> bool:
     return False
 
 
-def _check_single_dependency(client: GitHubClient, issue_number: int) -> DepStatus | None:
+def _check_single_dependency(client: ForgePort, issue_number: int) -> DepStatus | None:
     """Return DepStatus when blocked, None when dependency is satisfied."""
     status = get_dep_status(client, issue_number)
     return None if is_satisfied(status) else status
@@ -190,7 +192,7 @@ def _check_single_dependency(client: GitHubClient, issue_number: int) -> DepStat
 def check_dependencies(
     issue_numbers: list[int],
     *,
-    client: GitHubClient | None = None,
+    client: ForgePort | None = None,
 ) -> DepCheckResult:
     """Verify that all dependency issues are merged."""
     deps_found = sorted(set(issue_numbers))
@@ -202,7 +204,7 @@ def check_dependencies(
             blocking_deps=[],
             dep_statuses=[],
         )
-    gh = client or GitHubClient()
+    gh = client or get_forge()
     dep_statuses = [get_dep_status(gh, number) for number in deps_found]
     blocking = [status for status in dep_statuses if not is_satisfied(status)]
 
@@ -224,9 +226,9 @@ def _result_to_dict(result: DepCheckResult) -> dict:
     }
 
 
-def check_issue(issue_number: int, *, client: GitHubClient | None = None) -> DepCheckResult:
+def check_issue(issue_number: int, *, client: ForgePort | None = None) -> DepCheckResult:
     """Fetch issue body, extract dependencies, and verify merge state."""
-    gh = client or GitHubClient()
+    gh = client or get_forge()
     body = gh.issue_get(issue_number, fields=["body"])["body"]
     deps = extract_dependencies(body)
     return check_dependencies(deps, client=gh)

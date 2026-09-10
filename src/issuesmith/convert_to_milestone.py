@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from ghdag.github_client import GitHubClient
+from ghdag.forge import ForgePort, get_forge
 
 from issuesmith.config import get_config
 from issuesmith.queue_store import QueueStore
@@ -34,8 +34,8 @@ def _exec_path() -> Path:
     return _cfg().paths.exec_jsonl
 
 
-def _github_client() -> GitHubClient:
-    return GitHubClient(repo=_cfg().repo)
+def _github_client() -> ForgePort:
+    return get_forge(repo=_cfg().repo)
 
 
 def _queue_store() -> QueueStore:
@@ -117,7 +117,7 @@ def _request_dag_cancel(issue: int, *, dry_run: bool) -> list[str]:
     return uuids
 
 
-def _sync_labels(client: GitHubClient, issue: int, *, dry_run: bool) -> None:
+def _sync_labels(client: ForgePort, issue: int, *, dry_run: bool) -> None:
     data = client.issue_get(issue, fields=["labels"])
     current = {
         lab.get("name")
@@ -140,7 +140,7 @@ def _sync_labels(client: GitHubClient, issue: int, *, dry_run: bool) -> None:
         client.issue_update(issue, labels_add=to_add or None, labels_remove=to_remove or None)
 
 
-def _ensure_milestone(client: GitHubClient, issue: int, *, dry_run: bool) -> str:
+def _ensure_milestone(client: ForgePort, issue: int, *, dry_run: bool) -> str:
     title = f"{issue}-{_today_yyyymmdd()}"
     data = client.issue_get(issue, fields=["milestone"])
     existing = data.get("milestone")

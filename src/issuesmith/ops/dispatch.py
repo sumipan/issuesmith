@@ -29,7 +29,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from ghdag.github_client import GitHubClient
+from ghdag.forge import get_forge
 
 from issuesmith.config import StepConfig, get_config
 from issuesmith.steps.base import StepContext
@@ -127,7 +127,7 @@ def _try_python_step(step_id: str, context: dict[str, str]) -> int | None:
     )
     result = _call_step_run(mod, _context_to_step(context), step)
     if result.recovery:
-        GitHubClient().issue_comment(int(context["issue_number"]), result.recovery)
+        get_forge().issue_comment(int(context["issue_number"]), result.recovery)
     if result.pipeline_status:
         print(f"PIPELINE_STATUS: {result.pipeline_status}")
     return result.exit_code

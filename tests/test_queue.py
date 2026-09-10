@@ -950,7 +950,7 @@ class TestCLI:
                     "labels": [{"name": "scope:milestone"}],
                 }
 
-        monkeypatch.setattr(qmod, "GitHubClient", FakeClient)
+        monkeypatch.setattr(qmod, "get_forge", FakeClient)
         code = qmod.main(
             [
                 "--queue-path",
@@ -2321,7 +2321,7 @@ class TestRoleScopedPausedDispatch:
         monkeypatch.setattr(qmod, "ENGINE_STATE_PATH", _ENGINE_DESIGN_CLAUDE)
         monkeypatch.setattr(
             qmod,
-            "GitHubClient",
+            "get_forge",
             lambda **kw: (_ for _ in ()).throw(RuntimeError("offline")),
         )
         code = qmod.main(

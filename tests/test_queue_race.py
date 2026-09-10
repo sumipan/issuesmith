@@ -206,7 +206,7 @@ def test_audit_detects_multiple_in_flight(tmp_path, capsys):
         lock_path=str(store.lock_path),
         offline=False,
     )
-    with patch.object(qmod, "GitHubClient", return_value=FakeClient()):
+    with patch.object(qmod, "get_forge", return_value=FakeClient()):
         code = qmod._cmd_audit(args)
     captured = capsys.readouterr()
     assert code == 1
@@ -228,9 +228,9 @@ def test_audit_offline_skips_github(tmp_path, capsys):
     )
 
     def boom(*a, **k):
-        raise AssertionError("GitHubClient must not be constructed in offline mode")
+        raise AssertionError("get_forge must not be called in offline mode")
 
-    with patch.object(qmod, "GitHubClient", side_effect=boom):
+    with patch.object(qmod, "get_forge", side_effect=boom):
         code = qmod._cmd_audit(args)
     assert code == 0
     assert "AUDIT OK" in capsys.readouterr().out
@@ -621,7 +621,7 @@ def test_status_warns_untracked_running(tmp_path, capsys):
         state_path=str(store.state_path),
         lock_path=str(store.lock_path),
     )
-    with patch.object(qmod, "GitHubClient", return_value=FakeClient()):
+    with patch.object(qmod, "get_forge", return_value=FakeClient()):
         code = qmod._cmd_status(args)
     captured = capsys.readouterr()
     assert code == 0
@@ -645,7 +645,7 @@ def test_doctor_reports_untracked_running(tmp_path, capsys):
         state_path=str(store.state_path),
         lock_path=str(store.lock_path),
     )
-    with patch.object(qmod, "GitHubClient", return_value=FakeClient()):
+    with patch.object(qmod, "get_forge", return_value=FakeClient()):
         code = qmod._cmd_doctor(args)
     captured = capsys.readouterr()
     assert code == 1

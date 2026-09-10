@@ -39,10 +39,10 @@ def format_report(violations) -> str:
 
 
 def main() -> int:
-    from ghdag.github_client import GitHubClient
+    from ghdag.forge import get_forge
 
     issue_number = int(sys.argv[1])
-    data = GitHubClient().issue_get(issue_number, fields=["body", "labels"])
+    data = get_forge().issue_get(issue_number, fields=["body", "labels"])
     body = data["body"] or ""
     labels = [label["name"] for label in data.get("labels", [])]
 

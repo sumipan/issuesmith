@@ -79,9 +79,9 @@ def compute_stale_labels(labels: set[str]) -> list[str]:
 
 
 def _make_client() -> Any:
-    from ghdag.github_client import GitHubClient
+    from ghdag.forge import get_forge
 
-    return GitHubClient()
+    return get_forge()
 
 
 def run(issue_number: int, dry_run: bool, client: Any | None = None) -> tuple[int, dict]:

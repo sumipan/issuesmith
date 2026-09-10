@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import sys
 
-from ghdag.github_client import GitHubClient
+from ghdag.forge import get_forge
 
 from issuesmith.gate_rules.b1_migration import B1MigrationRules
 from issuesmith.gate_rules.cp1 import Cp1Rules
@@ -48,7 +48,7 @@ def main() -> None:
     """CLI: python -m issuesmith cp1-gate <issue_number>"""
     issue_number = int(sys.argv[1])
 
-    data = GitHubClient().issue_get(issue_number, fields=["body", "labels"])
+    data = get_forge().issue_get(issue_number, fields=["body", "labels"])
     body = data["body"]
     labels = [label["name"] for label in data.get("labels", [])]
 

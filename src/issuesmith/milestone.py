@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from ghdag.github_client import GitHubClient
+from ghdag.forge import ForgePort, get_forge
 
 from issuesmith.config import IssuesmithConfig, MilestoneChainConfig, get_config
 from issuesmith.dep_extractor import check_dependencies, extract_dependencies
@@ -75,11 +75,11 @@ def has_sub_labels(labels: set[str]) -> bool:
     return bool(labels & _SUB_LABELS)
 
 
-def _issue_is_terminal(client: GitHubClient, issue_number: int) -> bool:
+def _issue_is_terminal(client: ForgePort, issue_number: int) -> bool:
     return _classify_child_terminal(client, issue_number) != "open"
 
 
-def _classify_child_terminal(client: GitHubClient, issue_number: int) -> str:
+def _classify_child_terminal(client: ForgePort, issue_number: int) -> str:
     """Classify a child Issue for C4: open | merged | closed_without_merge."""
     try:
         issue = client.issue_get(issue_number, fields=["state", "labels"])
@@ -264,7 +264,7 @@ def validate_children(
     parent: dict[str, Any],
     children: list[dict[str, Any]],
     *,
-    client: GitHubClient,
+    client: ForgePort,
 ) -> ValidateChildrenResult:
     parent_body = str(parent.get("body") or "")
     parent_milestone = _milestone_number(parent)
@@ -329,7 +329,7 @@ def validate_children(
     return ValidateChildrenResult(passed=passed, results=results)
 
 
-def _list_milestone_children(client: GitHubClient, milestone_number: int) -> list[dict[str, Any]]:
+def _list_milestone_children(client: ForgePort, milestone_number: int) -> list[dict[str, Any]]:
     try:
         raw = client.api_request(
             f"issues?state=all&milestone={milestone_number}&per_page=100",
@@ -382,7 +382,7 @@ def _enqueue_chain(
 def _candidate_parents(
     store: QueueStore,
     snap: QueueSnapshot,
-    client: GitHubClient,
+    client: ForgePort,
 ) -> set[int]:
     candidates: set[int] = set()
     for key in snap.milestone_chains:
@@ -401,7 +401,7 @@ def _candidate_parents(
     return candidates
 
 
-def _list_open_milestones(client: GitHubClient) -> list[dict[str, Any]]:
+def _list_open_milestones(client: ForgePort) -> list[dict[str, Any]]:
     try:
         raw = client.api_request("issues?state=open&labels=scope:milestone&per_page=100", paginate=True)
     except Exception:
@@ -431,7 +431,7 @@ def _halt_chain(store: QueueStore, parent: int, reason: str) -> None:
     )
 
 
-def _ensure_parent_comment(client: GitHubClient, parent: int, body: str, marker: str) -> None:
+def _ensure_parent_comment(client: ForgePort, parent: int, body: str, marker: str) -> None:
     try:
         comments = client.get_issue_comments(parent)
     except Exception:
@@ -446,7 +446,7 @@ def _ensure_parent_comment(client: GitHubClient, parent: int, body: str, marker:
 
 def advance_milestone_chains(
     store: QueueStore,
-    client: GitHubClient,
+    client: ForgePort,
     config: IssuesmithConfig | MilestoneChainConfig | None = None,
 ) -> None:
     if isinstance(config, MilestoneChainConfig):
@@ -630,8 +630,8 @@ def _child_phase_label(labels: set[str]) -> str:
     return "-"
 
 
-def milestone_status(parent: int, *, client: GitHubClient | None = None, store: QueueStore | None = None) -> int:
-    client = client or GitHubClient()
+def milestone_status(parent: int, *, client: ForgePort | None = None, store: QueueStore | None = None) -> int:
+    client = client or get_forge()
     store = store or QueueStore()
     try:
         parent_issue = client.issue_get(

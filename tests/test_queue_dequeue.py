@@ -37,7 +37,7 @@ def test_dequeue_removes_from_active_and_comments(tmp_path, monkeypatch):
 
     client = MagicMock()
     client.issue_get.return_value = {"number": 50, "state": "OPEN"}
-    monkeypatch.setattr(qmod, "GitHubClient", lambda **kwargs: client)
+    monkeypatch.setattr(qmod, "get_forge", lambda **kwargs: client)
     monkeypatch.setattr(qmod, "QueueStore", lambda **kwargs: store)
 
     code = qmod.main(
@@ -80,7 +80,7 @@ def test_dequeue_skips_comment_on_404(tmp_path, monkeypatch, capsys):
 
     client = MagicMock()
     client.issue_get.side_effect = GitHubApiError("missing", status_code=404)
-    monkeypatch.setattr(qmod, "GitHubClient", lambda **kwargs: client)
+    monkeypatch.setattr(qmod, "get_forge", lambda **kwargs: client)
     monkeypatch.setattr(qmod, "QueueStore", lambda **kwargs: store)
 
     code = qmod.main(["dequeue", "--request-id", rid, "--reason", "ghost issue"])
