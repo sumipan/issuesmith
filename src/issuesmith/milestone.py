@@ -612,7 +612,7 @@ def advance_milestone_chains(
 
 
 def _child_phase_label(labels: set[str]) -> str:
-    for phase in ("merge", "develop", "draft", "sub"):
+    for phase in (p.name for p in reversed(get_config().phases)):
         for kind, mapping in (
             ("done", DONE_LABEL),
             ("running", RUNNING_LABEL),

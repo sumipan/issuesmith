@@ -128,6 +128,21 @@ class MilestoneChainConfig:
 
 
 @dataclass(frozen=True)
+class PhaseConfig:
+    name: str
+    role: str
+    entry_step: str
+
+
+_DEFAULT_PHASES: tuple[PhaseConfig, ...] = (
+    PhaseConfig(name="draft", role="design", entry_step="b1"),
+    PhaseConfig(name="sub", role="implementation", entry_step="sub-ready"),
+    PhaseConfig(name="develop", role="implementation", entry_step="cp2"),
+    PhaseConfig(name="merge", role="implementation", entry_step="m2"),
+)
+
+
+@dataclass(frozen=True)
 class IssuesmithConfig:
     repo: str
     label_namespace: str
@@ -138,6 +153,7 @@ class IssuesmithConfig:
     engines: Mapping[str, RoleConfig]
     concurrency: ConcurrencyConfig
     milestone_chain: MilestoneChainConfig = field(default_factory=MilestoneChainConfig)
+    phases: tuple[PhaseConfig, ...] = _DEFAULT_PHASES
 
 
 _cached: IssuesmithConfig | None = None
@@ -280,6 +296,34 @@ def _build_milestone_chain(raw: Mapping[str, Any] | None) -> MilestoneChainConfi
     )
 
 
+def _build_phases(raw: Any) -> tuple[PhaseConfig, ...]:
+    if raw is None:
+        return _DEFAULT_PHASES
+    if not isinstance(raw, list):
+        raise ValueError("phases must be a list of mappings")
+    phases: list[PhaseConfig] = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, Mapping):
+            raise ValueError(f"phases[{i}] must be a mapping")
+        name = item.get("name")
+        role = item.get("role")
+        entry_step = item.get("entry_step")
+        if not name or not role or not entry_step:
+            raise ValueError(
+                f"phases[{i}] requires non-empty name, role, and entry_step"
+            )
+        phases.append(
+            PhaseConfig(
+                name=str(name),
+                role=str(role),
+                entry_step=str(entry_step),
+            )
+        )
+    if not phases:
+        raise ValueError("phases must not be empty")
+    return tuple(phases)
+
+
 def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     repo = str(data.get("repo") or "sumipan/nexus")
     label_namespace = str(data.get("label_namespace") or "issuesmith")
@@ -303,4 +347,5 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         engines=_build_engines(engines_raw),
         concurrency=_build_concurrency(concurrency_raw),
         milestone_chain=_build_milestone_chain(milestone_raw),
+        phases=_build_phases(data.get("phases")),
     )
