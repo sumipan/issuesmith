@@ -9,6 +9,8 @@ import pytest
 from issuesmith.config import MilestoneChainConfig, reset_config_cache
 from issuesmith.milestone import (
     advance_milestone_chains,
+    ensure_sub1_binding,
+    link_sub_issue,
     milestone_last_issue_terminal_ok,
     validate_children,
 )
@@ -94,14 +96,33 @@ def _child_issue(number: int, *, state: str, labels: list[str], **overrides):
     return base
 
 
+class _ApiError(Exception):
+    """Minimal stand-in for ghdag GitHubApiError (status_code attribute)."""
+
+    def __init__(self, message: str, *, status_code: int):
+        super().__init__(message)
+        self.status_code = status_code
+
+
 class FakeClient:
-    def __init__(self, issues=None, children=None, comments=None):
+    def __init__(
+        self,
+        issues=None,
+        children=None,
+        comments=None,
+        *,
+        add_sub_issue_error: Exception | None = None,
+        add_sub_issue_return=None,
+    ):
         self.issues = issues or {}
         self.children = children or {}
         self.comments = comments or {}
         self.posted_comments: list[tuple[int, str]] = []
         self.closed: list[int] = []
         self.label_ops: list[tuple[str, int, object]] = []
+        self.sub_issue_links: list[tuple[int, int]] = []
+        self.add_sub_issue_error = add_sub_issue_error
+        self.add_sub_issue_return = add_sub_issue_return
 
     def issue_get(self, number, fields=None):
         if number not in self.issues:
@@ -126,6 +147,12 @@ class FakeClient:
 
     def remove_labels(self, number, labels):
         self.label_ops.append(("remove", number, labels))
+
+    def add_sub_issue(self, parent_number, child_id):
+        if self.add_sub_issue_error is not None:
+            raise self.add_sub_issue_error
+        self.sub_issue_links.append((parent_number, child_id))
+        return self.add_sub_issue_return
 
     def api_request(self, path, paginate=False):
         if path.startswith("issues?state=all&milestone="):
@@ -559,3 +586,97 @@ def test_dependency_table_bare_plan_ref_is_still_unresolved():
 
     body = "## 依存（先行）\n\n| # | 依存先 |\n|---|---|\n| 1 | サブ1 |\n"
     assert _dependency_refs_unresolved(body) == ["unresolved plan ref #1 in dependency table"]
+
+
+class TestLinkSubIssue:
+    def test_link_sub_issue_success_sets_sub_issue_link(self):
+        child = {"number": 101, "id": 5407000506, "state": "OPEN", "labels": []}
+        parent = {"number": 100, "state": "OPEN", "labels": [], "milestone": {"number": 1}}
+        client = FakeClient(issues={100: parent, 101: child})
+        assert link_sub_issue(client, 100, 101) is True
+        assert client.sub_issue_links == [(100, 5407000506)]
+
+    def test_link_sub_issue_422_duplicate_is_idempotent(self):
+        """ghdag add_sub_issue treats 422 as success (returns None); link stays True."""
+        child = {"number": 101, "id": 5407000506, "state": "OPEN", "labels": []}
+        parent = {"number": 100, "state": "OPEN", "labels": [], "milestone": {"number": 1}}
+        client = FakeClient(
+            issues={100: parent, 101: child},
+            add_sub_issue_return=None,
+        )
+        assert link_sub_issue(client, 100, 101) is True
+        assert client.sub_issue_links == [(100, 5407000506)]
+
+    def test_link_sub_issue_422_raised_is_still_idempotent(self):
+        """Defense: if client raises 422, treat as idempotent success."""
+        child = {"number": 101, "id": 5407000506, "state": "OPEN", "labels": []}
+        parent = {"number": 100, "state": "OPEN", "labels": [], "milestone": {"number": 1}}
+        client = FakeClient(
+            issues={100: parent, 101: child},
+            add_sub_issue_error=_ApiError("duplicate sub-issue", status_code=422),
+        )
+        assert link_sub_issue(client, 100, 101) is True
+        assert client.sub_issue_links == []
+
+    def test_link_sub_issue_api_error_swallows_and_logs(self, capsys):
+        child = {"number": 101, "id": 5407000506, "state": "OPEN", "labels": []}
+        parent = {"number": 100, "state": "OPEN", "labels": [], "milestone": {"number": 1}}
+        client = FakeClient(
+            issues={100: parent, 101: child},
+            add_sub_issue_error=_ApiError("boom", status_code=500),
+        )
+        assert link_sub_issue(client, 100, 101) is False
+        assert client.sub_issue_links == []
+        err = capsys.readouterr().err
+        assert "link_sub_issue" in err
+        assert "100" in err
+        assert "101" in err
+
+    def test_ensure_sub1_binding_no_milestone_link_ok_continues(self):
+        """#3059: milestone 未設定でもサブイシューリンク成功なら SUB1 は停止しない。"""
+        child = {"number": 101, "id": 5407000506, "state": "OPEN", "labels": []}
+        parent = {
+            "number": 100,
+            "state": "OPEN",
+            "labels": [{"name": "scope:milestone"}],
+            "milestone": None,
+        }
+        client = FakeClient(issues={100: parent, 101: child})
+        assert ensure_sub1_binding(client, 100, 101) is True
+        assert client.sub_issue_links == [(100, 5407000506)]
+        assert client.posted_comments == []
+
+    def test_ensure_sub1_binding_no_milestone_link_fail_stops_with_comment(self):
+        """milestone 未設定かつリンク失敗 → エラーコメントを投稿して False。"""
+        child = {"number": 101, "id": 5407000506, "state": "OPEN", "labels": []}
+        parent = {
+            "number": 100,
+            "state": "OPEN",
+            "labels": [{"name": "scope:milestone"}],
+            "milestone": None,
+        }
+        client = FakeClient(
+            issues={100: parent, 101: child},
+            add_sub_issue_error=_ApiError("boom", status_code=500),
+        )
+        assert ensure_sub1_binding(client, 100, 101) is False
+        assert len(client.posted_comments) == 1
+        body = client.posted_comments[0][1]
+        assert "milestone 未設定" in body
+        assert "<!-- issuesmith:sub1:no-milestone-no-sub-link -->" in body
+
+    def test_ensure_sub1_binding_with_milestone_continues_even_if_link_fails(self):
+        """従来 milestone 経路が生きていればリンク失敗でも続行（握りつぶし）。"""
+        child = {"number": 101, "id": 5407000506, "state": "OPEN", "labels": []}
+        parent = {
+            "number": 100,
+            "state": "OPEN",
+            "labels": [{"name": "scope:milestone"}],
+            "milestone": {"number": 1},
+        }
+        client = FakeClient(
+            issues={100: parent, 101: child},
+            add_sub_issue_error=_ApiError("boom", status_code=500),
+        )
+        assert ensure_sub1_binding(client, 100, 101) is True
+        assert client.posted_comments == []
