@@ -1209,6 +1209,7 @@ class TestDispatch:
         assert result.dispatched is False
         assert "paused" in result.reason
         assert "role=" in result.reason
+
     def test_dispatch_develop_requires_draft_done(self, tmp_path, monkeypatch):
         from datetime import datetime
         from zoneinfo import ZoneInfo
