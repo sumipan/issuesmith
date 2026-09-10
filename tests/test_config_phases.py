@@ -48,12 +48,7 @@ def _subparser_option_choices(
 
 
 def test_default_phases_match_legacy_when_unset(tmp_path, monkeypatch):
-    monkeypatch.delenv("ISSUESMITH_CONFIG", raising=False)
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(
-        "issuesmith.config._package_fallback_yaml",
-        lambda: tmp_path / "missing-issuesmith.yaml",
-    )
+    _write_config(tmp_path, monkeypatch, {"repo": "example/app"})
     cfg = load_config()
 
     assert cfg.phases == (
@@ -70,11 +65,7 @@ def test_default_phases_match_legacy_when_unset(tmp_path, monkeypatch):
     import issuesmith.recovery as recovery
 
     reset_config_cache()
-    # builtin 既定を再ロードして消費者導出を検証
-    monkeypatch.setattr(
-        "issuesmith.config._package_fallback_yaml",
-        lambda: tmp_path / "missing-issuesmith.yaml",
-    )
+    _write_config(tmp_path, monkeypatch, {"repo": "example/app"})
     assert queue_store.PHASES == _DEFAULT_PHASE_NAMES
     assert queue.PHASE_ROLE == _DEFAULT_PHASE_ROLE
     assert _subparser_option_choices(queue.build_parser(), "enqueue", "--phase") == list(

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import importlib
+import json
 import sys
+from dataclasses import asdict
 from typing import Sequence
 
 _STASH_MOVED_MSG = (
@@ -22,6 +24,7 @@ commands:
   engine  dispatch  publish  labels  doctor  smoke  gen-live  version-bump
   recover  redispatch
   milestone  status / resume for milestone chain
+  config show
   apply  ingest-review  (moved to tools/stash/; exit 2)
 """
 
@@ -220,6 +223,20 @@ def _cmd_milestone(argv: list[str]) -> int:
     return int(milestone_main(argv))
 
 
+def _cmd_config_show(_argv: list[str]) -> int:
+    from issuesmith.config import get_config
+
+    print(json.dumps(asdict(get_config()), default=str, indent=2))
+    return 0
+
+
+def _cmd_config(argv: list[str]) -> int:
+    if not argv or argv[0] != "show":
+        print("config: expected 'show'", file=sys.stderr)
+        return 2
+    return _cmd_config_show(argv[1:])
+
+
 def _cmd_stash_moved(_argv: list[str]) -> int:
     print(_STASH_MOVED_MSG, file=sys.stderr)
     return 2
@@ -251,6 +268,7 @@ _HANDLERS = {
     "recover": _cmd_recover,
     "redispatch": _cmd_redispatch,
     "milestone": _cmd_milestone,
+    "config": _cmd_config,
     "apply": _cmd_stash_moved,
     "ingest-review": _cmd_stash_moved,
 }

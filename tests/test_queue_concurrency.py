@@ -188,12 +188,10 @@ class _DispatchClient:
 
 
 def test_concurrency_default_when_unconfigured(tmp_path, monkeypatch):
-    monkeypatch.delenv("ISSUESMITH_CONFIG", raising=False)
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(
-        "issuesmith.config._package_fallback_yaml",
-        lambda: tmp_path / "missing-issuesmith.yaml",
-    )
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(yaml.safe_dump({"repo": "sumipan/nexus"}), encoding="utf-8")
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
     cfg = load_config()
     assert cfg.concurrency == ConcurrencyConfig(default=1, per_engine={})
     assert cfg.concurrency.limit("claude") == 1
