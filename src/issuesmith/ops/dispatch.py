@@ -101,6 +101,19 @@ def _context_to_step(context: dict[str, str]) -> StepContext:
         workflow_name=context.get("workflow_name", ""),
         m1_result_filename=context.get("m1_result_filename", ""),
         m1r_result_filename=context.get("m1r_result_filename", ""),
+        worktree_path=context.get("worktree_path", ""),
+        target_worktree_path=context.get("target_worktree_path", ""),
+        branch=context.get("branch", ""),
+        target_repo=context.get("target_repo", ""),
+        allow_paths=context.get("allow_paths", ""),
+        diary_worktree_path=context.get("diary_worktree_path", ""),
+        has_diary_changes=context.get("has_diary_changes", ""),
+        pipeline_id=context.get("pipeline_id", ""),
+        diary_allow_paths=context.get("diary_allow_paths", ""),
+        issue_repo=context.get("issue_repo", ""),
+        p1_result_filename=context.get("p1_result_filename", ""),
+        p2_result_filename=context.get("p2_result_filename", ""),
+        p3_result_filename=context.get("p3_result_filename", ""),
     )
 
 
