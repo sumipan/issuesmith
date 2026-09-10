@@ -1053,7 +1053,9 @@ class TestDispatch:
                 }
 
             def list_issues(self, label, state="open"):
-                if label.endswith("-running"):
+                # Only draft-running: develop-running would trigger #3092
+                # in_flight recovery and allow_paths-conflict with #50.
+                if label == "issuesmith:draft-running":
                     return [{"number": 99, "labels": [{"name": label}]}]
                 return []
 
