@@ -156,6 +156,18 @@ Optional `milestone_chain` keys in `issuesmith.yaml`:
 | `auto_develop` | `true` | After child validation, enqueue `develop` for each child |
 | `auto_close_parent` | `true` | When every child is `CLOSED` with `issuesmith:merge-done`, comment once and close the parent. Set `false` to keep notify-only behavior. Children closed via `TERMINAL_WITHOUT_MERGE` (e.g. rejected) halt the chain for human review instead of closing the parent |
 
+Optional `triage` keys in `issuesmith.yaml` (queue tick LLM reorder):
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `true` | When `false`, skip LLM and apply deterministic priority order only |
+| `engine` | `claude` | LLM engine passed to ghdag `call_text` |
+| `model` | `claude-sonnet-4-6` | Model id for triage |
+| `timeout` | `60` | LLM timeout seconds |
+| `body_chars` | `500` | Max Issue body characters included as `body_head` (use `0` for title-only) |
+| `circuit_breaker_threshold` | `3` | Consecutive LLM timeout entries that open the circuit |
+| `circuit_breaker_reset_seconds` | `1800` | After this many seconds from the oldest timeout in the window, allow LLM again |
+
 Resolution order for the config file: explicit path → `ISSUESMITH_CONFIG` → walk up from cwd → package repo-root fallback → builtin defaults.
 
 ## Milestone chain (multi-repo)

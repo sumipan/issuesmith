@@ -588,6 +588,22 @@ class QueueStore:
             state["last_triaged_revision"] = revision
             self._save_state_unlocked(state)
 
+    def purge_orphan_ids(self) -> list[str]:
+        """Remove active_order ids that are absent from the queue JSONL.
+
+        Returns the list of removed request ids (empty when nothing to purge).
+        """
+        with self.lock():
+            state = self._load_state_unlocked()
+            requests = self._read_requests_unlocked()
+            active = list(state.get("active_order") or [])
+            orphans = [rid for rid in active if rid not in requests]
+            if not orphans:
+                return []
+            state["active_order"] = [rid for rid in active if rid in requests]
+            self._save_state_unlocked(state)
+            return orphans
+
     def update_meta(self, request_id: str, patch: dict[str, Any]) -> None:
         with self.lock():
             state = self._load_state_unlocked()

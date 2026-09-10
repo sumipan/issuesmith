@@ -10,8 +10,8 @@ import os
 import re
 import subprocess
 import sys
-from dataclasses import dataclass
-from datetime import datetime, time
+from dataclasses import dataclass, replace
+from datetime import datetime, time, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -38,9 +38,15 @@ from issuesmith.queue_triage import (
     READY_LABEL,
     RUNNING_LABEL,
     TERMINAL_WITHOUT_MERGE,
+    append_cas_conflict_log,
+    append_circuit_open_log,
+    apply_deterministic_order_constraints,
+    apply_priority_bucket_order,
     comment_marker,
     deterministic_decision,
+    deterministic_order,
     has_marker_comment,
+    is_circuit_open,
     label_names,
     load_seed_entries,
     parse_frontmatter_fields,
@@ -1013,42 +1019,108 @@ def dispatch_one(
             if os.environ.get("ISSUESMITH_QUEUE_DIR")
             else DEFAULT_TRIAGE_LOG_PATH
         )
-        result = triage(
-            snap,
-            issues=issues,
-            store=store,
-            call_llm=call_llm,
-            now=now,
-            triage_log_path=_triage_log,
-        )
-        # CAS replace_order first with full permutation of still-active ids.
-        active_set = set(snap.active_order)
-        new_order = [rid for rid in result.order if rid in active_set]
+        triage_cfg = get_config().triage
+        active_reqs = []
         for rid in snap.active_order:
-            if rid not in new_order:
-                new_order.append(rid)
-        adopted_cas = store.replace_order(triage_revision, new_order)
-        if not adopted_cas:
+            req = store.effective_request(snap, rid)
+            if req is not None:
+                active_reqs.append(req)
+        fallback_order = deterministic_order(active_reqs)
+        fallback_order = apply_deterministic_order_constraints(
+            fallback_order,
+            {r.request_id: r for r in active_reqs},
+            now=now.astimezone(timezone.utc) if now.tzinfo else now.replace(tzinfo=timezone.utc),
+        )
+        # AC-2: apply priority (deterministic) before waiting on LLM.
+        adopted_fallback = store.replace_order(triage_revision, fallback_order)
+        if not adopted_fallback:
             store.mark_triaged(triage_revision)
-        # Apply LLM rejects after ordering CAS.
-        for d in result.decisions:
-            if d.decision != "reject":
-                continue
-            cur = store.snapshot()
-            req = store.effective_request(cur, d.request_id)
-            if req is None or d.request_id not in cur.active_order:
-                continue
-            _apply_terminal(
-                store,
-                client,
-                d.request_id,
-                req.issue,
-                "rejected",
-                d.reason,
-                close_issue=False,
-                add_rejected_label=True,
-                comment=True,
+        else:
+            now_utc = (
+                now.astimezone(timezone.utc)
+                if now.tzinfo
+                else now.replace(tzinfo=timezone.utc)
             )
+            if not triage_cfg.enabled:
+                pass  # deterministic order already applied; skip LLM
+            elif is_circuit_open(
+                _triage_log,
+                triage_cfg.circuit_breaker_threshold,
+                triage_cfg.circuit_breaker_reset_seconds,
+                now=now_utc,
+            ):
+                append_circuit_open_log(
+                    path=_triage_log,
+                    order=fallback_order,
+                    revision=store.snapshot().revision,
+                    now=now_utc,
+                )
+            else:
+                snap2 = store.snapshot()
+                # replace_order marked last_triaged==revision; force LLM path.
+                llm_snap = replace(snap2, last_triaged_revision=snap2.revision - 1)
+                result = triage(
+                    llm_snap,
+                    issues=issues,
+                    store=store,
+                    call_llm=call_llm,
+                    now=now,
+                    triage_log_path=_triage_log,
+                    timeout=triage_cfg.timeout,
+                    engine=triage_cfg.engine,
+                    model=triage_cfg.model,
+                    body_chars=triage_cfg.body_chars,
+                )
+                if result.adopted:
+                    active_for_bucket = []
+                    for rid in snap2.active_order:
+                        req = store.effective_request(snap2, rid)
+                        if req is not None:
+                            active_for_bucket.append(req)
+                    bucket_order = apply_priority_bucket_order(
+                        result.order, active_for_bucket
+                    )
+                    active_set = set(snap2.active_order)
+                    new_order = [rid for rid in bucket_order if rid in active_set]
+                    for rid in snap2.active_order:
+                        if rid not in new_order:
+                            new_order.append(rid)
+                    adopted_cas = store.replace_order(snap2.revision, new_order)
+                    if not adopted_cas:
+                        latest = store.snapshot()
+                        latest_set = set(latest.active_order)
+                        retry_order = [rid for rid in bucket_order if rid in latest_set]
+                        for rid in latest.active_order:
+                            if rid not in retry_order:
+                                retry_order.append(rid)
+                        adopted_cas = store.replace_order(latest.revision, retry_order)
+                        if not adopted_cas:
+                            append_cas_conflict_log(
+                                path=_triage_log,
+                                order=bucket_order,
+                                revision=latest.revision,
+                                now=now_utc,
+                            )
+                            store.mark_triaged(latest.revision)
+                # Apply LLM rejects after ordering CAS.
+                for d in result.decisions:
+                    if d.decision != "reject":
+                        continue
+                    cur = store.snapshot()
+                    req = store.effective_request(cur, d.request_id)
+                    if req is None or d.request_id not in cur.active_order:
+                        continue
+                    _apply_terminal(
+                        store,
+                        client,
+                        d.request_id,
+                        req.issue,
+                        "rejected",
+                        d.reason,
+                        close_issue=False,
+                        add_rejected_label=True,
+                        comment=True,
+                    )
 
     snap = store.snapshot()
     # Release finished in_flight even when the queue is empty (absorbs milestone C0).
@@ -1376,12 +1448,30 @@ def _cmd_status(args: argparse.Namespace) -> int:
 
 
 def _cmd_doctor(args: argparse.Namespace) -> int:
-    """Report queue health; currently flags untracked develop-running Issues (#3092)."""
+    """Report queue health; flags orphan active_order ids and untracked running Issues."""
     store = QueueStore(
         queue_path=Path(args.queue_path) if getattr(args, "queue_path", None) else None,
         state_path=Path(args.state_path) if getattr(args, "state_path", None) else None,
         lock_path=Path(args.lock_path) if getattr(args, "lock_path", None) else None,
     )
+    # Raw state may retain request_ids missing from the JSONL (snapshot filters them).
+    state_path = store.state_path
+    orphan_ids: list[str] = []
+    if state_path.exists():
+        try:
+            raw = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            raw = {}
+        if isinstance(raw, dict):
+            with store.lock():
+                requests = store._read_requests_unlocked()
+            for rid in raw.get("active_order") or []:
+                if isinstance(rid, str) and rid not in requests:
+                    orphan_ids.append(rid)
+    if orphan_ids:
+        print(f"orphan active_order ids: {', '.join(orphan_ids)}")
+        return 1
+
     snap = store.snapshot()
     try:
         client = get_forge(repo=REPO)
@@ -1524,6 +1614,10 @@ def _cmd_audit(args: argparse.Namespace) -> int:
         state_path=Path(args.state_path) if getattr(args, "state_path", None) else None,
         lock_path=Path(args.lock_path) if getattr(args, "lock_path", None) else None,
     )
+    purged = store.purge_orphan_ids()
+    if purged:
+        print(f"purged orphan active_order ids: {', '.join(purged)}")
+
     snap = store.snapshot()
     active_ids = set(snap.active_order)
     completed = set(snap.completed_request_ids)
