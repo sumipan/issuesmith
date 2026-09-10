@@ -12,6 +12,11 @@ from typing import NamedTuple
 
 from ghdag.github_client import GitHubClient
 
+from issuesmith.gate_rules.cp1 import (
+    check_test_version_exact_assert,
+    check_version_line_in_diff,
+)
+
 RUNTIME_LOG_EXCLUDES: tuple[str, ...] = (
     "jobs/audit.jsonl",
     "jobs/exec.jsonl",
@@ -221,6 +226,16 @@ def _maybe_bump_version(
     return None
 
 
+def _check_commit_diff_gates(worktree: Path, base_branch: str) -> PublishResult | None:
+    """commit 後・bump 前に version 行 / テスト完全一致 assert を検査する (#3065)."""
+    diff = _run_git(worktree, "diff", f"origin/{base_branch}..HEAD").stdout
+    violations = check_version_line_in_diff(diff) + check_test_version_exact_assert(diff)
+    if not violations:
+        return None
+    msgs = "\n".join(f"[{v.rule_id}] {v.fix_hint or v.message}" for v in violations)
+    return PublishResult(status="P3_GATE_FAILED", stderr=msgs, exit_code=1)
+
+
 def publish(
     *,
     issue_number: int,
@@ -233,6 +248,10 @@ def publish(
     target_count: int = 1,
 ) -> PublishResult:
     _commit_if_needed(worktree, issue_number, allow_paths)
+
+    gate_fail = _check_commit_diff_gates(worktree, base_branch)
+    if gate_fail is not None:
+        return gate_fail
 
     bump_fail = _maybe_bump_version(worktree, base_branch, repo, issue_repo)
     if bump_fail is not None:

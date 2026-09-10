@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- publish が commit 後・version bump 前に `check_version_line_in_diff` と
+  `check_test_version_exact_assert` を実行し、LLM による `pyproject.toml` の
+  `version =` 変更および tests/ の版・pin 完全一致 assert を `P3_GATE_FAILED` で止める（#3065）
 - `pyproject.toml` の ghdag 依存バージョンを v0.35.0 から v0.44.0 に更新（`[ghdag]` / `[dev]` extras）
 - `README.md` のバージョン表記・インストール手順を v0.1.0 → v0.10.0 に更新、冒頭に参照版と確認日を追加
 - `src/issuesmith/github_api.py` のエラー文を旧ドット形式（`issuesmith.queue enqueue`）から統一 CLI 形式（`issuesmith queue enqueue`）に修正
@@ -16,6 +19,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `gate_rules.cp1.check_test_version_exact_assert`: tests/ の `version == "X.Y"` /
+  `git+https://…@vX.Y` 完全一致 assert を unified diff から検出する（#3065）
 - Milestone chain multi-repo validation: V1 expects child `target_repo` from the parent
   split-plan `対象リポジトリ` column (falls back to parent `target_repo` when the column
   is absent); unsupported repos fail V1; V2 `allow_paths` checks only change-table rows
