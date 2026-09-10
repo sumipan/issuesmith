@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- queue: `draft-done` 直後の design スロット解放がラベルのみに依存していたため、
+  brushup/impl の未完了 exec がある Issue が `in_flight` から消え、watcher が
+  起動した impl DAG が追跡外になり `_dispatch_pipeline_ready` が queue 全体を
+  止めていた。未完了 exec がある間は解放せず、`develop-running` なのに
+  `in_flight` 不在の Issue は tick 時に再登録する。`queue status` /
+  `queue doctor` で追跡外実行中 Issue を表示する（#3092）
 - publish が commit 後・version bump 前に `check_version_line_in_diff` と
   `check_test_version_exact_assert` を実行し、LLM による `pyproject.toml` の
   `version =` 変更および tests/ の版・pin 完全一致 assert を `P3_GATE_FAILED` で止める（#3065）

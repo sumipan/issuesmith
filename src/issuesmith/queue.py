@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
+import logging
 import os
 import re
 import subprocess
@@ -47,6 +48,8 @@ from issuesmith.queue_triage import (
     triage,
 )
 from issuesmith.targets import _normalize_allow_paths
+
+logger = logging.getLogger(__name__)
 
 _cfg = get_config()
 TZ = ZoneInfo(_cfg.timezone)
@@ -146,6 +149,21 @@ def _iter_issuesmith_exec_records() -> list[tuple[str, int | None]]:
         if idempotency_key.startswith("issuesmith:") and isinstance(uuid, str) and uuid:
             records.append((uuid, _issue_from_idempotency_key(idempotency_key)))
     return records
+
+
+def _issue_has_incomplete_exec(issue_number: int) -> bool:
+    """True when any issuesmith exec UUID for ``issue_number`` lacks a DONE marker.
+
+    Used by design-slot in_flight release so a brief ``draft-done`` window
+    (before ``develop-ready`` / watcher impl dispatch) does not drop tracking
+    while brushup or impl DAG rows are still pending (#3092).
+    """
+    for uuid, issue in _iter_issuesmith_exec_records():
+        if issue != issue_number:
+            continue
+        if not (DONE_DIR / uuid).exists():
+            return True
+    return False
 
 
 def _latest_done_mtime() -> float | None:
@@ -333,7 +351,8 @@ def _in_flight_should_release(client: GitHubClient, entry: dict[str, Any]) -> bo
     """True when an in_flight entry should be dropped.
 
     Terminal issues always release. Design-slot entries also release after
-    ``draft-done`` once develop has not yet started (absorbs former milestone C0).
+    ``draft-done`` once develop has not yet started (absorbs former milestone C0),
+    but only when the issue has no incomplete issuesmith exec records (#3092).
     """
     issue_num = entry.get("issue")
     if not isinstance(issue_num, int):
@@ -364,10 +383,70 @@ def _in_flight_should_release(client: GitHubClient, entry: dict[str, Any]) -> bo
     }
     if labels & busy:
         return False
+    if _issue_has_incomplete_exec(issue_num):
+        return False
     role = entry.get("role")
     if role is not None and role != "design":
         return False
     return True
+
+
+def _find_untracked_running(client: GitHubClient, snap: QueueSnapshot) -> list[int]:
+    """Return develop-running issue numbers absent from ``snap.in_flight``."""
+    try:
+        issues = client.list_issues(RUNNING_LABEL["develop"], state="open")
+    except Exception:
+        return []
+    if not isinstance(issues, list):
+        return []
+    tracked = {
+        entry.get("issue") for entry in snap.in_flight if isinstance(entry, dict)
+    }
+    untracked: list[int] = []
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+        num = issue.get("number")
+        if isinstance(num, int) and num not in tracked:
+            untracked.append(num)
+    return sorted(untracked)
+
+
+def _recover_untracked_in_flight(
+    client: GitHubClient, store: QueueStore, snap: QueueSnapshot
+) -> int:
+    """Re-register develop-running Issues missing from in_flight (#3092 AC-2).
+
+    Watcher dispatches impl DAGs without queue participation; if a design slot
+    was released in the draft-done gap, those Issues vanish from tracking and
+    orphan-gate the whole queue. Recover before ``_dispatch_pipeline_ready``.
+    """
+    untracked = _find_untracked_running(client, snap)
+    recovered = 0
+    for issue_num in untracked:
+        try:
+            issue = client.issue_get(
+                issue_num, fields=["state", "labels", "body", "number"]
+            )
+        except Exception as exc:
+            logger.warning(
+                "in_flight_recovered skipped issue=#%s: issue_get failed: %s",
+                issue_num,
+                exc,
+            )
+            continue
+        target_repo, allow_paths = _issue_target_meta(issue)
+        engine = _resolve_engine("develop")
+        store.add_in_flight(
+            issue_num,
+            engine,
+            role="implementation",
+            allow_paths=allow_paths,
+            target_repo=target_repo or None,
+        )
+        logger.info("in_flight_recovered issue=#%s", issue_num)
+        recovered += 1
+    return recovered
 
 
 def _halt_resolved(snap: QueueSnapshot, client: GitHubClient) -> bool:
@@ -1026,6 +1105,12 @@ def dispatch_one(
                 if _serial_concurrency():
                     return DispatchResult(False, reason="previous issue not terminal")
 
+        # AC-2: re-register develop-running Issues missing from in_flight before
+        # orphan detection in _dispatch_pipeline_ready can halt the whole queue.
+        recovered = _recover_untracked_in_flight(client, store, snap)
+        if recovered:
+            snap = store.snapshot()
+
         if not _dispatch_pipeline_ready(snap, idle_minutes, now):
             return DispatchResult(False, reason="pipeline not idle")
         paused = _required_engines_paused()
@@ -1194,11 +1279,10 @@ def _cmd_status(args: argparse.Namespace) -> int:
     if snap.halt and snap.halt_reason:
         print(f"  halt_reason: {snap.halt_reason}")
     client: GitHubClient | None = None
-    if snap.last_issue is not None or snap.active_order:
-        try:
-            client = GitHubClient(repo=REPO)
-        except Exception:
-            client = None
+    try:
+        client = GitHubClient(repo=REPO)
+    except Exception:
+        client = None
     if snap.last_issue is not None and client is not None:
         try:
             last = client.issue_get(snap.last_issue, fields=["state", "labels"])
@@ -1252,6 +1336,40 @@ def _cmd_status(args: argparse.Namespace) -> int:
         print(
             f"    waiting: #{req.issue} (conflict with #{conflict} on {overlap})"
         )
+    if client is not None:
+        try:
+            untracked = _find_untracked_running(client, snap)
+            if untracked:
+                nums = ", ".join(f"#{n}" for n in sorted(untracked))
+                print(f"  warning: untracked running issues: {nums}")
+        except Exception as exc:
+            print(f"  warning: untracked check failed: {exc}", file=sys.stderr)
+    return 0
+
+
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    """Report queue health; currently flags untracked develop-running Issues (#3092)."""
+    store = QueueStore(
+        queue_path=Path(args.queue_path) if getattr(args, "queue_path", None) else None,
+        state_path=Path(args.state_path) if getattr(args, "state_path", None) else None,
+        lock_path=Path(args.lock_path) if getattr(args, "lock_path", None) else None,
+    )
+    snap = store.snapshot()
+    try:
+        client = GitHubClient(repo=REPO)
+    except Exception as exc:
+        print(f"error: GitHubClient unavailable: {exc}", file=sys.stderr)
+        return 1
+    try:
+        untracked = _find_untracked_running(client, snap)
+    except Exception as exc:
+        print(f"error: untracked check failed: {exc}", file=sys.stderr)
+        return 1
+    if untracked:
+        nums = ", ".join(f"#{n}" for n in sorted(untracked))
+        print(f"untracked running issues: {nums}")
+        return 1
+    print("doctor ok: no untracked running issues")
     return 0
 
 
@@ -1533,6 +1651,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_status = sub.add_parser("status")
     p_status.set_defaults(func=_cmd_status)
+
+    p_doctor = sub.add_parser(
+        "doctor",
+        help="Check for untracked develop-running Issues (queue health)",
+    )
+    p_doctor.set_defaults(func=_cmd_doctor)
 
     p_reset = sub.add_parser("reset")
     p_reset.add_argument(

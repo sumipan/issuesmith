@@ -234,3 +234,419 @@ def test_audit_offline_skips_github(tmp_path, capsys):
         code = qmod._cmd_audit(args)
     assert code == 0
     assert "AUDIT OK" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# #3092: draft-done race — incomplete exec keeps in_flight; recover untracked
+# Fixture mirrors 2026-09-10 16:30 (#3039) / 19:0x (#3046): in_flight had #3020
+# only while #3039/#3046 ran develop as orphans.
+# ---------------------------------------------------------------------------
+
+_BODY_3039 = (
+    "```yaml\n"
+    "target_repo: sumipan/nexus\n"
+    "base_branch: main\n"
+    "allow_paths:\n"
+    '  - "skills/**"\n'
+    "```\n"
+)
+
+
+def _legacy_design_release(labels: set[str], role: str | None = "design") -> bool:
+    """Pre-#3092 design-slot release: draft-done and develop not started (labels only)."""
+    if "issuesmith:draft-done" not in labels:
+        return False
+    if labels & {"issuesmith:develop-ready", "issuesmith:develop-running"}:
+        return False
+    if role is not None and role != "design":
+        return False
+    return True
+
+
+def test_incomplete_exec_blocks_draft_done_release(tmp_path, monkeypatch):
+    """AC-1/AC-4: #3039-style — draft-done でも未完了 exec があれば解放しない.
+
+    (a) 従来ロジックは draft-done + develop 未ラベルで True
+    (b) 新コードは incomplete exec を見て False
+    """
+    import json
+
+    from issuesmith import queue as qmod
+
+    exec_path = tmp_path / "exec.jsonl"
+    done_dir = tmp_path / "done"
+    done_dir.mkdir()
+    # brushup still mid-flight (or impl already started) — UUID not in DONE_DIR
+    exec_path.write_text(
+        json.dumps(
+            {"uuid": "brushup-3039", "idempotency_key": "issuesmith:brushup:3039"}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(qmod, "EXEC_PATH", exec_path)
+    monkeypatch.setattr(qmod, "DONE_DIR", done_dir)
+
+    labels = {"issuesmith:draft-done"}
+    assert _legacy_design_release(labels) is True  # (a) 従来は解放する
+
+    class Client:
+        def issue_get(self, number, fields=None):
+            return {
+                "number": number,
+                "state": "OPEN",
+                "labels": [{"name": "issuesmith:draft-done"}],
+            }
+
+    entry = {"issue": 3039, "engine": "claude", "role": "design"}
+    assert qmod._issue_has_incomplete_exec(3039) is True
+    assert qmod._in_flight_should_release(Client(), entry) is False  # (b)
+
+
+def test_draft_done_still_releases_when_exec_complete(tmp_path, monkeypatch):
+    """AC-1: 未完了 exec が無ければ従来どおり design スロットを解放する."""
+    import json
+
+    from issuesmith import queue as qmod
+
+    exec_path = tmp_path / "exec.jsonl"
+    done_dir = tmp_path / "done"
+    done_dir.mkdir()
+    exec_path.write_text(
+        json.dumps(
+            {"uuid": "brushup-3039", "idempotency_key": "issuesmith:brushup:3039"}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (done_dir / "brushup-3039").write_text("0", encoding="utf-8")
+    monkeypatch.setattr(qmod, "EXEC_PATH", exec_path)
+    monkeypatch.setattr(qmod, "DONE_DIR", done_dir)
+
+    class Client:
+        def issue_get(self, number, fields=None):
+            return {
+                "number": number,
+                "state": "OPEN",
+                "labels": [{"name": "issuesmith:draft-done"}],
+            }
+
+    entry = {"issue": 3039, "engine": "claude", "role": "design"}
+    assert qmod._issue_has_incomplete_exec(3039) is False
+    assert qmod._in_flight_should_release(Client(), entry) is True
+
+
+def test_recover_untracked_develop_running_3039_fixture(tmp_path, monkeypatch):
+    """AC-2/AC-4: 16:30 state — in_flight=#3020 only; #3039 develop-running を再登録."""
+    from issuesmith import queue as qmod
+
+    store = _store(tmp_path)
+    # Real 16:30 shape: only #3020 tracked while #3039 was running impl orphaned.
+    store.add_in_flight(
+        3020,
+        "claude",
+        role="design",
+        allow_paths=("tools/**",),
+        target_repo="sumipan/nexus",
+    )
+    engine_state = tmp_path / "issuesmith-engine.yml"
+    engine_state.write_text(
+        "design:\n  engine: claude\nimplementation:\n  engine: cursor\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(qmod, "ENGINE_STATE_PATH", engine_state)
+
+    class Client:
+        def list_issues(self, label, state="open"):
+            if label == "issuesmith:develop-running":
+                return [{"number": 3039, "labels": [{"name": label}]}]
+            return []
+
+        def issue_get(self, number, fields=None):
+            assert number == 3039
+            return {
+                "number": 3039,
+                "state": "OPEN",
+                "body": _BODY_3039,
+                "labels": [
+                    {"name": "issuesmith:draft-done"},
+                    {"name": "issuesmith:develop-running"},
+                ],
+            }
+
+    snap = store.snapshot()
+    assert {e["issue"] for e in snap.in_flight} == {3020}
+    recovered = qmod._recover_untracked_in_flight(Client(), store, snap)
+    assert recovered == 1
+    issues = {e["issue"]: e for e in store.snapshot().in_flight}
+    assert 3020 in issues
+    assert 3039 in issues
+    assert issues[3039]["role"] == "implementation"
+    assert issues[3039]["engine"] == "cursor"
+    assert issues[3039]["target_repo"] == "sumipan/nexus"
+    assert "skills/**" in issues[3039]["allow_paths"]
+
+
+def test_recover_untracked_3046_case(tmp_path, monkeypatch):
+    """AC-4: 19:0x #3046 — develop-running なのに in_flight 不在なら再登録."""
+    from issuesmith import queue as qmod
+
+    store = _store(tmp_path)
+    engine_state = tmp_path / "issuesmith-engine.yml"
+    engine_state.write_text(
+        "design:\n  engine: claude\nimplementation:\n  engine: claude\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(qmod, "ENGINE_STATE_PATH", engine_state)
+
+    class Client:
+        def list_issues(self, label, state="open"):
+            if label == "issuesmith:develop-running":
+                return [{"number": 3046}]
+            return []
+
+        def issue_get(self, number, fields=None):
+            return {
+                "number": number,
+                "state": "OPEN",
+                "body": _VALID_BODY,
+                "labels": [{"name": "issuesmith:develop-running"}],
+            }
+
+    snap = store.snapshot()
+    assert snap.in_flight == []
+    assert qmod._find_untracked_running(Client(), snap) == [3046]
+    assert qmod._recover_untracked_in_flight(Client(), store, snap) == 1
+    entry = store.snapshot().in_flight[0]
+    assert entry["issue"] == 3046
+    assert entry["role"] == "implementation"
+
+
+def test_dispatch_recovers_before_orphan_gate(tmp_path, monkeypatch):
+    """AC-2: 孤児判定の前に develop-running を in_flight へ戻し、dispatch を塞がない."""
+    import json
+    from zoneinfo import ZoneInfo
+
+    import yaml
+
+    from issuesmith.config import load_config, reset_config_cache
+    from issuesmith import config as cfgmod
+    from issuesmith import queue as qmod
+    from issuesmith import queue_store as qstore
+
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump(
+            {
+                "repo": "sumipan/nexus",
+                "label_namespace": "issuesmith",
+                "timezone": "Asia/Tokyo",
+                "supported_repos": ["sumipan/nexus"],
+                "paths": {
+                    "queue": "q.jsonl",
+                    "queue_state": "s.json",
+                    "queue_lock": "lock",
+                    "triage_log": "t.jsonl",
+                    "seed": "seed.yaml",
+                    "night_state": "night.json",
+                    "exec_jsonl": "jobs/exec.jsonl",
+                    "done_dir": "jobs/done",
+                    "quota_state": "quota.json",
+                    "metrics": "metrics.jsonl",
+                    "worktrees_dir": "wt",
+                    "external_dir": "ext",
+                    "workflow": "wf.yml",
+                    "template_dir": "templates",
+                    "engine_state": ".pipeline-state/issuesmith-engine.yml",
+                },
+                "engines": {
+                    "design": {"allowed": ["claude"], "default_model": {"claude": "x"}},
+                    "implementation": {
+                        "allowed": ["claude", "cursor"],
+                        "default_model": {"claude": "x", "cursor": "auto"},
+                    },
+                },
+                "concurrency": {
+                    "default": 1,
+                    "per_engine": {"claude": 2, "cursor": 2},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    cfg = load_config(cfg_path)
+    done_dir = tmp_path / "jobs" / "done"
+    done_dir.mkdir(parents=True)
+    exec_path = tmp_path / "jobs" / "exec.jsonl"
+    exec_path.write_text(
+        json.dumps({"uuid": "impl-3046", "idempotency_key": "issuesmith:impl:3046"})
+        + "\n",
+        encoding="utf-8",
+    )
+    engine_state = tmp_path / ".pipeline-state" / "issuesmith-engine.yml"
+    engine_state.parent.mkdir(parents=True)
+    # Recovered impl uses cursor so design (claude) still has capacity for #50.
+    engine_state.write_text(
+        "design:\n  engine: claude\nimplementation:\n  engine: cursor\n",
+        encoding="utf-8",
+    )
+    new_paths = cfgmod.PathsConfig(
+        queue=tmp_path / "q.jsonl",
+        queue_state=tmp_path / "s.json",
+        queue_lock=tmp_path / "lock",
+        triage_log=tmp_path / "t.jsonl",
+        seed=tmp_path / "seed.yaml",
+        night_state=tmp_path / "night.json",
+        exec_jsonl=exec_path,
+        done_dir=done_dir,
+        quota_state=tmp_path / "quota.json",
+        metrics=tmp_path / "metrics.jsonl",
+        worktrees_dir=tmp_path / "wt",
+        external_dir=tmp_path / "ext",
+        workflow=tmp_path / "wf.yml",
+        template_dir=tmp_path / "templates",
+        engine_state=engine_state,
+    )
+    patched = cfgmod.IssuesmithConfig(
+        repo=cfg.repo,
+        label_namespace=cfg.label_namespace,
+        timezone=cfg.timezone,
+        supported_repos=cfg.supported_repos,
+        root=tmp_path,
+        paths=new_paths,
+        engines=cfg.engines,
+        concurrency=cfg.concurrency,
+    )
+    monkeypatch.setattr(cfgmod, "get_config", lambda: patched)
+    monkeypatch.setattr(qmod, "_cfg", patched)
+    monkeypatch.setattr(qmod, "DONE_DIR", done_dir)
+    monkeypatch.setattr(qmod, "EXEC_PATH", exec_path)
+    monkeypatch.setattr(qmod, "ENGINE_STATE_PATH", engine_state)
+    monkeypatch.setattr(qstore, "_cfg", patched)
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+
+    store = _store(tmp_path)
+    store.enqueue(
+        issue=50,
+        phase="draft",
+        source="skill",
+        actor_kind="human",
+        priority="normal",
+        requested_by=["alice"],
+        requested_at=_NOW,
+    )
+
+    body_3046 = (
+        "```yaml\n"
+        "target_repo: sumipan/nexus\n"
+        "base_branch: main\n"
+        "allow_paths:\n"
+        '  - "skills/**"\n'
+        "```\n"
+    )
+
+    class Client:
+        def issue_get(self, number, fields=None):
+            if number == 3046:
+                return {
+                    "number": 3046,
+                    "state": "OPEN",
+                    "title": "t",
+                    "body": body_3046,
+                    "labels": [{"name": "issuesmith:develop-running"}],
+                }
+            return {
+                "number": number,
+                "state": "OPEN",
+                "title": "t",
+                "body": _VALID_BODY,
+                "labels": [],
+            }
+
+        def list_issues(self, label, state="open"):
+            if label == "issuesmith:develop-running":
+                return [{"number": 3046}]
+            return []
+
+        def get_issue_comments(self, number):
+            return []
+
+        def list_open_issues_for_queue(self):
+            return []
+
+        def api_request(self, *a, **k):
+            return []
+
+        def issue_update(self, number, labels_add=None, labels_remove=None):
+            pass
+
+        def issue_comment(self, number, body):
+            pass
+
+    now = datetime(2026, 9, 10, 19, 5, tzinfo=ZoneInfo("Asia/Tokyo"))
+    # Without recovery this returns pipeline not idle (orphan #3046).
+    result = qmod.dispatch_one(
+        now=now,
+        client=Client(),
+        store=store,
+        skip_seed=True,
+        call_llm=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")),
+    )
+    assert result.dispatched is True
+    assert result.issue == 50
+    assert {e["issue"] for e in store.snapshot().in_flight} >= {50, 3046}
+    reset_config_cache()
+
+
+def test_status_warns_untracked_running(tmp_path, capsys):
+    """AC-3: queue status が追跡外の develop-running を warning 表示する."""
+    from issuesmith import queue as qmod
+
+    store = _store(tmp_path)
+    store.add_in_flight(3020, "claude", role="design")
+
+    class FakeClient:
+        def list_issues(self, label, state="open"):
+            if label == "issuesmith:develop-running":
+                return [{"number": 3039}]
+            return []
+
+        def issue_get(self, number, fields=None):
+            return {"number": number, "state": "OPEN", "labels": []}
+
+    args = argparse.Namespace(
+        queue_path=str(store.queue_path),
+        state_path=str(store.state_path),
+        lock_path=str(store.lock_path),
+    )
+    with patch.object(qmod, "GitHubClient", return_value=FakeClient()):
+        code = qmod._cmd_status(args)
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "warning: untracked running issues: #3039" in captured.out
+
+
+def test_doctor_reports_untracked_running(tmp_path, capsys):
+    """AC-3: queue doctor が status と同じ追跡外判定を返す."""
+    from issuesmith import queue as qmod
+
+    store = _store(tmp_path)
+
+    class FakeClient:
+        def list_issues(self, label, state="open"):
+            if label == "issuesmith:develop-running":
+                return [{"number": 3046}]
+            return []
+
+    args = argparse.Namespace(
+        queue_path=str(store.queue_path),
+        state_path=str(store.state_path),
+        lock_path=str(store.lock_path),
+    )
+    with patch.object(qmod, "GitHubClient", return_value=FakeClient()):
+        code = qmod._cmd_doctor(args)
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "untracked running issues: #3046" in captured.out
