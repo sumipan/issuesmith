@@ -151,3 +151,26 @@ def test_main_allows_non_create_with_foreign_repo():
                 github_api_module.main()
     mock_cli.assert_called_once()
     assert exc_info.value.code == 0
+
+
+# --- Issue #3038: ready-label 禁止時の enqueue 案内は統一 CLI 形式 ---
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["github_api", "issue", "edit", "1", "--add-label", "issuesmith:draft-ready"],
+        ["github_api", "issue", "edit", "1", "--add-label=issuesmith:develop-ready"],
+        ["github_api", "issue", "edit", "1", "--add-label", "issuesmith:merge-ready"],
+    ],
+)
+def test_main_blocks_ready_label_with_unified_queue_enqueue_hint(argv, capsys):
+    with patch("issuesmith.github_api.cli_main", return_value=0) as mock_cli:
+        with patch.object(sys, "argv", argv):
+            with pytest.raises(SystemExit) as exc_info:
+                github_api_module.main()
+    assert exc_info.value.code == 2
+    mock_cli.assert_not_called()
+    err = capsys.readouterr().err
+    assert "python3 -m issuesmith queue enqueue" in err
+    assert ("issuesmith" + ".queue enqueue") not in err

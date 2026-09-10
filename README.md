@@ -1,34 +1,36 @@
 # issuesmith
 
+参照版: v0.10.0 / 確認日: 2026-09-10
+
 issuesmith is a GitHub Issue label-driven workflow framework that runs on [ghdag](https://github.com/sumipan/ghdag). It provides gates, queue triage, context hooks, and a unified CLI for pipelines that advance Issues through design → implementation → merge via labels — not CI YAML alone.
 
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.1.0-blue)
+![version](https://img.shields.io/badge/version-v0.10.0-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-Current release is **v0.1.0** (pre-1.0). Interfaces may evolve before `1.0.0`.
+Current release is **v0.10.0** (pre-1.0). Interfaces may evolve before `1.0.0`.
 
 ## Installation
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.1.0"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.10.0"
 ```
 
 With ghdag (required for gate-preflight and most runtime paths):
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.1.0"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.10.0"
 ```
 
 | Item | Value |
 |---|---|
 | Python requirement | `>=3.10` |
 | Runtime dependencies | `pyyaml`, `ruamel.yaml`, `packaging`, `python-dotenv` |
-| Optional / recommended | `ghdag @ git+https://github.com/sumipan/ghdag.git@v0.35.0` (`[ghdag]` or `[dev]`) |
+| Optional / recommended | `ghdag @ git+https://github.com/sumipan/ghdag.git@v0.44.0` (`[ghdag]` or `[dev]`) |
 | Dev dependencies | `pip install "issuesmith[dev]"` |
 
 ### Usage from nexus
