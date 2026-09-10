@@ -429,10 +429,10 @@ def test_dispatch_recovers_before_orphan_gate(tmp_path, monkeypatch):
 
     import yaml
 
-    from issuesmith.config import load_config, reset_config_cache
     from issuesmith import config as cfgmod
     from issuesmith import queue as qmod
     from issuesmith import queue_store as qstore
+    from issuesmith.config import load_config, reset_config_cache
 
     cfg_path = tmp_path / "issuesmith.yaml"
     cfg_path.write_text(
