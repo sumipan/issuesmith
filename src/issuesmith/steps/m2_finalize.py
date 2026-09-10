@@ -15,7 +15,7 @@ from ghdag.github_client import GitHubClient
 from ghdag.workflow.state_machine import _load_workflow_config, transition
 
 from issuesmith.ac_contract import extract_contract_from_body, run_checks
-from issuesmith.config import get_config
+from issuesmith.config import StepConfig, get_config
 from issuesmith.engine import run_guarded
 from issuesmith.m2_gate import check_gate, synthesize_contract_failures
 from issuesmith.ops.label_hygiene import run as run_label_hygiene
@@ -267,8 +267,8 @@ def _handle_retry(
     return StepResult(exit_code=1, pipeline_status="MERGE_FAILED", recovery=recovery)
 
 
-def _run_guarded_compaction(ctx: StepContext) -> int:
-    template = str(get_config().paths.template_dir / "m2-compact.md")
+def _run_guarded_compaction(ctx: StepContext, template_name: str) -> int:
+    template = str(get_config().paths.template_dir / template_name)
     variables = [
         f"issue_number={ctx.issue_number}",
         f"base_branch={ctx.base_branch}",
@@ -404,7 +404,16 @@ def _close_issue_if_open(client: GitHubClient, issue_number: int) -> None:
         print(f"FINALIZER: issue {issue_number} already {state} (noop close)")
 
 
-def run(ctx: StepContext) -> StepResult:
+def _resolve_compaction_template(step: StepConfig | None) -> str:
+    if step is not None and step.template:
+        return step.template
+    cfg_step = get_config().steps.get("m2-role-dispatch")
+    if cfg_step is None or not cfg_step.template:
+        raise ValueError("steps.m2-role-dispatch.template is required for compaction")
+    return cfg_step.template
+
+
+def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
     """Execute the M2 finalize step."""
     issue_number = int(ctx.issue_number)
     client = _github_client()
@@ -426,7 +435,7 @@ def run(ctx: StepContext) -> StepResult:
         return _handle_retry(ctx, client, labels, contract_failures)
 
     if ctx.source:
-        rc = _run_guarded_compaction(ctx)
+        rc = _run_guarded_compaction(ctx, _resolve_compaction_template(step))
         if rc != 0:
             client.issue_comment(
                 issue_number,
