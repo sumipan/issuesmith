@@ -41,7 +41,7 @@ def main() -> None:
     if _has_ready_label_in_argv(argv):
         print(
             "Error: Direct addition of issuesmith:draft|develop|merge-ready labels is prohibited. "
-            "Use `python3 -m issuesmith.queue enqueue` instead.",
+            "Use `python3 -m issuesmith queue enqueue` instead.",
             file=sys.stderr,
         )
         sys.exit(2)
