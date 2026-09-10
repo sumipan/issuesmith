@@ -13,6 +13,7 @@ from ghdag.github_client import GitHubClient
 
 from issuesmith.gate_rules.b1_migration import B1MigrationRules
 from issuesmith.gate_rules.cp1 import Cp1Rules
+from issuesmith.gate_rules.milestone_consistency import MilestoneConsistencyRules
 
 
 def check_gate(body: str, labels: list[str] | None = None) -> dict:
@@ -23,11 +24,15 @@ def check_gate(body: str, labels: list[str] | None = None) -> dict:
     B1 preflight は advisory（B1 は不備で失敗しない）ため、
     機械ブロックの enforcement point はここになる。
 
+    分割計画パターンと scope:milestone の矛盾はラベル有無に依存せず常に検査する
+    （ラベルが無いこと自体が違反のため条件付きスキップは不可）。
+
     Returns:
         {"status": "PASS"|"FAIL", "reasons": list[str], "intentional_hold": bool}
     """
     label_list = labels or []
     violations = Cp1Rules().check(body, label_list)
+    violations = violations + MilestoneConsistencyRules().check(body, label_list)
     if "scope:migration" in label_list:
         violations = violations + B1MigrationRules().check(body, label_list)
     reasons = [v.message for v in violations]

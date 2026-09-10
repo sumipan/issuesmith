@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Added
+
+- `gate_rules.milestone_consistency`: 本文の分割計画パターン（`### サブイシュー分割計画` /
+  `#### サブN:` / `#### Sub N:`）と `scope:milestone` ラベルの矛盾を検知する。
+  CP1 `check_gate()` と B1 Verify に組み込み、誤って develop 高速経路へ進むのを防ぐ（#3077）
+- `body_editor.normalize_sub_headers` / `relocate_sub_plan`: 英語サブ見出しの正規化と、
+  `## 設計` 配下の分割計画を `## マイルストーン` へ移す決定論正規化（#3077）
+- `issuesmith convert-to-milestone <N>`: develop 誤投入 Issue を milestone 経路へ
+  1 コマンドで復旧（DAG cancel・ラベル・milestone オブジェクト・in_flight 除去・
+  draft redispatch）。`--dry-run` 対応（#3077）
+- `redispatch --phase sub`: milestone 経路の sub フェーズ再投入。`cmd_redispatch` は
+  冒頭で stale `in_flight` を除去する（#3077）
+- `gate_rules.cp1.check_test_version_exact_assert`: tests/ の `version == "X.Y"` /
+  `git+https://…@vX.Y` 完全一致 assert を unified diff から検出する（#3065）
+- Milestone chain multi-repo validation: V1 expects child `target_repo` from the parent
+  split-plan `対象リポジトリ` column (falls back to parent `target_repo` when the column
+  is absent); unsupported repos fail V1; V2 `allow_paths` checks only change-table rows
+  for the child's `target_repo` (#2961)
+- `issuesmith milestone status` shows each child's `target_repo`
+
 ### Fixed
 
 - queue: `draft-done` 直後の design スロット解放がラベルのみに依存していたため、
@@ -22,16 +42,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `src/issuesmith/github_api.py` のエラー文を旧ドット形式（`issuesmith.queue enqueue`）から統一 CLI 形式（`issuesmith queue enqueue`）に修正
 - `engine check` が `DEFAULT_LIGHT_MODELS`（`issuesmith.yaml` の `engines.<role>.light_model.<engine>`）全項目を許可リストと突合し、外れていれば修正キーを案内する。`engine resolve --tier light` に `allowlist_valid` / `reason` を追加。`--engine` 上書き経路でも allowlist 外 light は heavy にフォールバックする（nexus #2981）
 - `_iter_issuesmith_exec_records` が世代付き冪等キー（`issuesmith:impl:2959:1`、redispatch 時に ghdag が付与）の末尾要素を issue 番号と誤解釈し、再投入中の DAG を in_flight 外の「孤児」とみなして `pipeline not idle` で全 dispatch を止めていた。`issuesmith:<handler>:<issue>[:<generation>]` を正しく解釈する（2026-09-09、nexus #2959 の再投入で実測）
-
-### Added
-
-- `gate_rules.cp1.check_test_version_exact_assert`: tests/ の `version == "X.Y"` /
-  `git+https://…@vX.Y` 完全一致 assert を unified diff から検出する（#3065）
-- Milestone chain multi-repo validation: V1 expects child `target_repo` from the parent
-  split-plan `対象リポジトリ` column (falls back to parent `target_repo` when the column
-  is absent); unsupported repos fail V1; V2 `allow_paths` checks only change-table rows
-  for the child's `target_repo` (#2961)
-- `issuesmith milestone status` shows each child's `target_repo`
 
 ### Changed
 

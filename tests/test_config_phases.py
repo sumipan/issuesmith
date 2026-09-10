@@ -25,7 +25,12 @@ _DEFAULT_PHASE_ROLE = {
     "develop": "implementation",
     "merge": "implementation",
 }
-_DEFAULT_ENTRY_STEPS = {"draft": "b1", "develop": "cp2", "merge": "m2"}
+_DEFAULT_ENTRY_STEPS = {
+    "draft": "b1",
+    "sub": "sub-ready",
+    "develop": "cp2",
+    "merge": "m2",
+}
 
 
 def _write_config(tmp_path, monkeypatch, payload: dict) -> None:
@@ -73,9 +78,9 @@ def test_default_phases_match_legacy_when_unset(tmp_path, monkeypatch):
     )
     assert _subparser_option_choices(
         recovery.build_parser(), "redispatch", "--phase"
-    ) == list(_DEFAULT_ENTRY_STEPS)
+    ) == list(_DEFAULT_PHASE_NAMES)
     assert {
-        p.name: p.entry_step for p in get_config().phases if p.name != "sub"
+        p.name: p.entry_step for p in get_config().phases
     } == _DEFAULT_ENTRY_STEPS
 
 

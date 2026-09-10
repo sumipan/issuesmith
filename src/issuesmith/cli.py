@@ -22,7 +22,7 @@ commands:
   verify|b1-verify
   queue  deps  tier  comments  gh
   engine  dispatch  publish  labels  doctor  smoke  gen-live  version-bump
-  recover  redispatch
+  recover  redispatch  convert-to-milestone
   milestone  status / resume for milestone chain
   config show
   apply  ingest-review  (moved to tools/stash/; exit 2)
@@ -217,6 +217,12 @@ def _cmd_redispatch(argv: list[str]) -> int:
     return int(recovery_main(["redispatch", *argv]))
 
 
+def _cmd_convert_to_milestone(argv: list[str]) -> int:
+    from issuesmith.convert_to_milestone import main as convert_main
+
+    return int(convert_main(argv))
+
+
 def _cmd_milestone(argv: list[str]) -> int:
     from issuesmith.milestone import main as milestone_main
 
@@ -273,6 +279,7 @@ _HANDLERS = {
     "version-bump": _cmd_version_bump,
     "recover": _cmd_recover,
     "redispatch": _cmd_redispatch,
+    "convert-to-milestone": _cmd_convert_to_milestone,
     "milestone": _cmd_milestone,
     "config": _cmd_config,
     "apply": _cmd_stash_moved,

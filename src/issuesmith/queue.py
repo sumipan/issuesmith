@@ -748,6 +748,14 @@ def redispatch_label_plan(phase: str) -> tuple[frozenset[str], frozenset[str]]:
                 DONE_LABEL["develop"],
             }
         )
+    if phase == "sub":
+        return frozenset({DONE_LABEL["draft"], "scope:milestone"}), frozenset(
+            {
+                READY_LABEL["sub"],
+                RUNNING_LABEL["sub"],
+                DONE_LABEL["sub"],
+            }
+        )
     if phase == "merge":
         return frozenset(), frozenset(
             {READY_LABEL["merge"], RUNNING_LABEL["merge"], DONE_LABEL["merge"]}

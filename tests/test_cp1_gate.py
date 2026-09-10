@@ -187,7 +187,8 @@ def test_yaml_block_without_target_repo_fails():
 
 
 def test_check_gate_with_milestone_labels_runs_milestone_checks():
-    """labels 引数で scope:milestone を渡すと milestone チェックが実行される"""
+    """分割計画あり + ラベル無しは milestone_consistency で FAIL。
+    scope:milestone 付きなら既存の milestone AC yaml 検査が走る（#3077）。"""
     body = """\
 ```yaml
 target_repo: sumipan/nexus
@@ -231,7 +232,8 @@ paths_must_exist:
 """
     result_no_labels = check_gate(body)
     result_with_labels = check_gate(body, ["scope:milestone"])
-    assert result_no_labels["status"] == "PASS"
+    assert result_no_labels["status"] == "FAIL"
+    assert any("scope:milestone" in r for r in result_no_labels["reasons"])
     assert result_with_labels["status"] == "FAIL"
     assert any("yaml ブロック" in r for r in result_with_labels["reasons"])
 

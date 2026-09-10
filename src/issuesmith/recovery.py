@@ -402,15 +402,17 @@ def cmd_redispatch(
     reason: str = "",
     dry_run: bool = False,
 ) -> int:
+    # stale in_flight があると再 enqueue しても dispatch されないため先に除去する。
+    if not dry_run:
+        QueueStore().remove_in_flight(issue)
+
     labels_data = _github_client().issue_get(issue, fields=["labels"])
     label_names = {
         lab.get("name")
         for lab in (labels_data.get("labels") or [])
         if isinstance(lab, dict) and lab.get("name")
     }
-    failed_step = {
-        p.name: p.entry_step for p in get_config().phases if p.name != "sub"
-    }[phase]
+    failed_step = {p.name: p.entry_step for p in get_config().phases}[phase]
     plan_obj = plan(issue, failed_step, label_names)
 
     if plan_obj.blocked_by:
@@ -462,9 +464,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_redispatch.add_argument(
         "--phase",
         required=True,
-        choices=[
-            p.name for p in get_config().phases if p.name != "sub"
-        ],
+        choices=[p.name for p in get_config().phases],
     )
     p_redispatch.add_argument("--reason", default="")
     p_redispatch.add_argument("--dry-run", action="store_true")
