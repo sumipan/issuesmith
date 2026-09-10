@@ -124,12 +124,25 @@ class PhaseConfig:
     entry_step: str
 
 
+@dataclass(frozen=True)
+class StepConfig:
+    module: str  # "issuesmith.steps.m2_finalize"
+    template: str | None = None  # "m2-compact.md" or None
+
+
 _DEFAULT_PHASES: tuple[PhaseConfig, ...] = (
     PhaseConfig(name="draft", role="design", entry_step="b1"),
     PhaseConfig(name="sub", role="implementation", entry_step="sub-ready"),
     PhaseConfig(name="develop", role="implementation", entry_step="cp2"),
     PhaseConfig(name="merge", role="implementation", entry_step="m2"),
 )
+
+_DEFAULT_STEPS: dict[str, StepConfig] = {
+    "m2-role-dispatch": StepConfig(
+        module="issuesmith.steps.m2_finalize",
+        template="m2-compact.md",
+    ),
+}
 
 _DEFAULT_SECTIONS: dict[str, str] = {
     "acceptance_criteria": "受け入れ条件",
@@ -166,6 +179,7 @@ class IssuesmithConfig:
     phases: tuple[PhaseConfig, ...] = _DEFAULT_PHASES
     sections: Mapping[str, str] = field(default_factory=lambda: dict(_DEFAULT_SECTIONS))
     sub_design_subsections: tuple[str, ...] = _DEFAULT_SUB_DESIGN_SUBSECTIONS
+    steps: Mapping[str, StepConfig] = field(default_factory=lambda: dict(_DEFAULT_STEPS))
 
 
 _cached: IssuesmithConfig | None = None
@@ -354,6 +368,22 @@ def _build_sub_design_subsections(raw: Any) -> tuple[str, ...]:
     return tuple(str(x) for x in raw)
 
 
+def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
+    steps = dict(_DEFAULT_STEPS)
+    if not raw:
+        return steps
+    for step_id, conf in raw.items():
+        if not isinstance(conf, Mapping):
+            raise ValueError(f"steps.{step_id} must be a mapping")
+        module = conf.get("module")
+        if not module or not str(module).strip():
+            raise ValueError(f"steps.{step_id} requires non-empty module")
+        template_raw = conf.get("template")
+        template = None if template_raw is None else str(template_raw)
+        steps[str(step_id)] = StepConfig(module=str(module).strip(), template=template)
+    return steps
+
+
 def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     repo_raw = data.get("repo")
     if not repo_raw or not str(repo_raw).strip():
@@ -373,6 +403,7 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     concurrency_raw = data.get("concurrency") if isinstance(data.get("concurrency"), dict) else None
     milestone_raw = data.get("milestone_chain") if isinstance(data.get("milestone_chain"), dict) else None
     sections_raw = data.get("sections") if isinstance(data.get("sections"), dict) else None
+    steps_raw = data.get("steps") if isinstance(data.get("steps"), dict) else None
     return IssuesmithConfig(
         repo=repo,
         label_namespace=label_namespace,
@@ -388,4 +419,5 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         sub_design_subsections=_build_sub_design_subsections(
             data.get("sub_design_subsections")
         ),
+        steps=_build_steps(steps_raw),
     )

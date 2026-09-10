@@ -31,20 +31,36 @@ from pathlib import Path
 
 from ghdag.github_client import GitHubClient
 
-from issuesmith.config import get_config
+from issuesmith.config import StepConfig, get_config
 from issuesmith.steps.base import StepContext
 
 _cfg = get_config()
 REPO_ROOT = _cfg.root
 TEMPLATE_DIR = _cfg.paths.template_dir
 
-_STEP_MODULES: dict[str, str] = {
-    "m2-role-dispatch": "m2_finalize",
-}
+# None = use get_config().steps. Tests may set a dict (incl. {}) to override.
+_STEP_MODULES: dict[str, str] | None = None
+
+
+def resolve_step_config(step_id: str) -> StepConfig:
+    """Resolve step_id → StepConfig (config.steps, then hyphen→underscore fallback)."""
+    if _STEP_MODULES is not None:
+        if step_id in _STEP_MODULES:
+            short = _STEP_MODULES[step_id]
+            cfg = get_config().steps.get(step_id)
+            template = cfg.template if cfg is not None else None
+            return StepConfig(module=f"issuesmith.steps.{short}", template=template)
+        return StepConfig(module=f"issuesmith.steps.{step_id.replace('-', '_')}")
+
+    steps = get_config().steps
+    if step_id in steps:
+        return steps[step_id]
+    return StepConfig(module=f"issuesmith.steps.{step_id.replace('-', '_')}")
 
 
 def step_id_to_module(step_id: str) -> str:
-    return _STEP_MODULES.get(step_id, step_id.replace("-", "_"))
+    """Return importable module path for step_id (compat / short-name helpers)."""
+    return resolve_step_config(step_id).module
 
 
 def parse_context(args: list[str]) -> dict[str, str]:
@@ -88,20 +104,28 @@ def _context_to_step(context: dict[str, str]) -> StepContext:
     )
 
 
-def _try_python_step(step_id: str, context: dict[str, str]) -> int | None:
-    module_name = step_id_to_module(step_id)
+def _call_step_run(mod: object, ctx: StepContext, step: StepConfig):
+    run_fn = getattr(mod, "run")
     try:
-        mod = importlib.import_module(f"issuesmith.steps.{module_name}")
+        return run_fn(ctx, step)
+    except TypeError:
+        return run_fn(ctx)
+
+
+def _try_python_step(step_id: str, context: dict[str, str]) -> int | None:
+    step = resolve_step_config(step_id)
+    try:
+        mod = importlib.import_module(step.module)
     except ImportError:
         return None
     if not hasattr(mod, "run"):
         return None
 
     print(
-        f"[issuesmith-dispatch] python-step step={step_id} module={module_name}",
+        f"[issuesmith-dispatch] python-step step={step_id} module={step.module}",
         file=sys.stderr,
     )
-    result = mod.run(_context_to_step(context))
+    result = _call_step_run(mod, _context_to_step(context), step)
     if result.recovery:
         GitHubClient().issue_comment(int(context["issue_number"]), result.recovery)
     if result.pipeline_status:
