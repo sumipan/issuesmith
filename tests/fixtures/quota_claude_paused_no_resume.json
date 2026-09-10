@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "deferred_tasks": {},
+  "draining_engines": {},
+  "running_tasks": {},
+  "engines": {
+    "claude": {
+      "status": "paused",
+      "observed_at": "2026-09-10T09:19:19.749925+00:00",
+      "resume_at": null,
+      "reason": "claude conditions=1 session_5h=96.0 weekly=50.0 time_progress=65.66794806960979"
+    },
+    "cursor": {
+      "status": "available",
+      "observed_at": "2026-09-10T09:19:19.749925+00:00",
+      "resume_at": null,
+      "reason": null
+    },
+    "codex": {
+      "status": "available",
+      "observed_at": "2026-09-10T09:19:19.749925+00:00",
+      "resume_at": null,
+      "reason": null
+    }
+  }
+}

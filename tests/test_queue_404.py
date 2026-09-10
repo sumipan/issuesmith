@@ -67,7 +67,7 @@ def test_dispatch_one_completes_404_as_not_found(tmp_path, monkeypatch):
 
     client = Client()
     monkeypatch.setattr(qmod, "_pipeline_idle_enough", lambda idle, now: True)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
     now = datetime(2026, 9, 4, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
 
     out = qmod.dispatch_one(
@@ -118,7 +118,7 @@ def test_dispatch_one_keeps_non_404_api_errors_in_queue(tmp_path, monkeypatch):
             return []
 
     monkeypatch.setattr(qmod, "_pipeline_idle_enough", lambda idle, now: True)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
     now = datetime(2026, 9, 4, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
 
     qmod.dispatch_one(
@@ -193,7 +193,7 @@ def test_dispatch_one_404_among_valid_issues(tmp_path, monkeypatch):
 
     client = Client()
     monkeypatch.setattr(qmod, "_pipeline_idle_enough", lambda idle, now: True)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda: [])
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
     now = datetime(2026, 9, 4, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
 
     out = qmod.dispatch_one(

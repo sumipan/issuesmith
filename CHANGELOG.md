@@ -28,6 +28,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- queue: design engine（claude）が paused でも implementation ロールの
+  `develop` / `merge` / `sub` は投入できるよう、paused 判定をフェーズ別ロールに変更。
+  CP2（design）は `resume_at=null` でも固定インターバルで sleep & retry し、
+  既定最大 6h まで REJECT を遅らせる。`call_managed` の timeout にも待機分を加算（#3091）
 - queue: `draft-done` 直後の design スロット解放がラベルのみに依存していたため、
   brushup/impl の未完了 exec がある Issue が `in_flight` から消え、watcher が
   起動した impl DAG が追跡外になり `_dispatch_pipeline_ready` が queue 全体を
