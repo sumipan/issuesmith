@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ghdag.github_client import GitHubClient
+from ghdag.forge import ForgePort, get_forge
 from ghdag.workflow.state_machine import _load_workflow_config, transition
 
 from issuesmith.ac_contract import extract_contract_from_body, run_checks
@@ -26,8 +26,8 @@ class GateMaterializationError(RuntimeError):
     """origin/base の一時 worktree を作れなかった。"""
 
 
-def _github_client() -> GitHubClient:
-    return GitHubClient()
+def _github_client() -> ForgePort:
+    return get_forge()
 
 
 def _repo_root() -> Path:
@@ -45,7 +45,7 @@ def _run_label_hygiene(issue_number: int) -> int:
     return code
 
 
-def _label_names(client: GitHubClient, issue_number: int) -> list[str]:
+def _label_names(client: ForgePort, issue_number: int) -> list[str]:
     data = client.issue_get(issue_number, fields=["labels"])
     return [label["name"] for label in data.get("labels", [])]
 
@@ -119,7 +119,7 @@ def _evaluate_dual_root(
     return result
 
 
-def _run_gate(ctx: StepContext, client: GitHubClient) -> dict[str, Any]:
+def _run_gate(ctx: StepContext, client: ForgePort) -> dict[str, Any]:
     issue_number = int(ctx.issue_number)
     data = client.issue_get(issue_number, fields=["body", "labels"])
     body = data["body"]
@@ -168,7 +168,7 @@ def _fail(reason: str) -> StepResult:
 
 def _handle_migrate(
     ctx: StepContext,
-    client: GitHubClient,
+    client: ForgePort,
     labels: list[str],
 ) -> StepResult:
     issue_number = int(ctx.issue_number)
@@ -232,7 +232,7 @@ def _retry_body(
 
 def _handle_retry(
     ctx: StepContext,
-    client: GitHubClient,
+    client: ForgePort,
     labels: list[str],
     contract_failures: list[str],
 ) -> StepResult:
@@ -364,7 +364,7 @@ def _cleanup_worktrees(ctx: StepContext) -> None:
 
 def _finalize_merge_done(
     ctx: StepContext,
-    client: GitHubClient,
+    client: ForgePort,
     labels: list[str],
 ) -> StepResult | None:
     issue_number = int(ctx.issue_number)
@@ -395,7 +395,7 @@ def _finalize_merge_done(
     return None
 
 
-def _close_issue_if_open(client: GitHubClient, issue_number: int) -> None:
+def _close_issue_if_open(client: ForgePort, issue_number: int) -> None:
     state = client.issue_get(issue_number, fields=["state"])["state"]
     if state == "OPEN":
         client.issue_close(issue_number)

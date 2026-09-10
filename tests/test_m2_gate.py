@@ -269,7 +269,7 @@ class TestMainRepoRootCli:
             "labels": [],
         }
         monkeypatch.setattr(
-            "issuesmith.m2_gate.GitHubClient",
+            "issuesmith.m2_gate.get_forge",
             lambda: mock_client,
         )
         monkeypatch.setattr(

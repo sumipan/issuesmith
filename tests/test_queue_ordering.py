@@ -618,7 +618,7 @@ def test_status_shows_conflict_waiting(tmp_path, monkeypatch, issuesmith_config,
             2976: {"state": "OPEN", "labels": [], "body": _BODY_SECRETARY},
         }
     )
-    monkeypatch.setattr(qmod, "GitHubClient", lambda repo=None: client)
+    monkeypatch.setattr(qmod, "get_forge", lambda repo=None: client)
     args = argparse.Namespace(
         queue_path=str(store.queue_path),
         state_path=str(store.state_path),

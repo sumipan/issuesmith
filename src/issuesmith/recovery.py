@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from ghdag.github_client import GitHubClient
+from ghdag.forge import ForgePort, get_forge
 from ghdag.io import exec_jsonl
 
 from issuesmith.config import get_config
@@ -73,8 +73,8 @@ def _generation_keys_available() -> bool:
         return False
 
 
-def _github_client() -> GitHubClient:
-    return GitHubClient(repo=_cfg().repo)
+def _github_client() -> ForgePort:
+    return get_forge(repo=_cfg().repo)
 
 
 def _idempotency_key(handler: str, issue: int, generation: int | None = None) -> str:
@@ -226,7 +226,7 @@ def _redispatch_command(issue: int, phase: str, reason: str | None = None) -> st
     return cmd
 
 
-def _merge_redispatch_blocked(issue: int, client: GitHubClient) -> str | None:
+def _merge_redispatch_blocked(issue: int, client: ForgePort) -> str | None:
     issue_data = client.issue_get(issue, fields=["state", "labels"])
     ok, reason = phase_preconditions("merge", issue_data, client, issue)
     if not ok and "PR" in reason:
@@ -239,7 +239,7 @@ def plan(
     failed_step: str,
     labels: set[str],
     *,
-    client: GitHubClient | None = None,
+    client: ForgePort | None = None,
 ) -> Plan:
     handler = handler_for_failed_step(failed_step, labels)
     phase = infer_redispatch_phase(failed_step, labels)

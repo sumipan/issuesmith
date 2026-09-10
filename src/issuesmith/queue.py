@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 
 import yaml
 from ghdag.core.exceptions import GitHubApiError
-from ghdag.github_client import GitHubClient
+from ghdag.forge import ForgePort, get_forge
 from ghdag.quota import QuotaGate
 
 from issuesmith.config import get_config
@@ -282,7 +282,7 @@ def _serial_concurrency() -> bool:
     return concurrency.default <= 1
 
 
-def _issue_is_terminal(client: GitHubClient, issue_number: int) -> bool:
+def _issue_is_terminal(client: ForgePort, issue_number: int) -> bool:
     try:
         issue = client.issue_get(issue_number, fields=["state", "labels"])
     except Exception:
@@ -347,7 +347,7 @@ def _conflict_overlap_path(
     return entry_paths[0] if entry_paths else "?"
 
 
-def _in_flight_should_release(client: GitHubClient, entry: dict[str, Any]) -> bool:
+def _in_flight_should_release(client: ForgePort, entry: dict[str, Any]) -> bool:
     """True when an in_flight entry should be dropped.
 
     Terminal issues always release. Design-slot entries also release after
@@ -391,7 +391,7 @@ def _in_flight_should_release(client: GitHubClient, entry: dict[str, Any]) -> bo
     return True
 
 
-def _find_untracked_running(client: GitHubClient, snap: QueueSnapshot) -> list[int]:
+def _find_untracked_running(client: ForgePort, snap: QueueSnapshot) -> list[int]:
     """Return develop-running issue numbers absent from ``snap.in_flight``."""
     try:
         issues = client.list_issues(RUNNING_LABEL["develop"], state="open")
@@ -413,7 +413,7 @@ def _find_untracked_running(client: GitHubClient, snap: QueueSnapshot) -> list[i
 
 
 def _recover_untracked_in_flight(
-    client: GitHubClient, store: QueueStore, snap: QueueSnapshot
+    client: ForgePort, store: QueueStore, snap: QueueSnapshot
 ) -> int:
     """Re-register develop-running Issues missing from in_flight (#3092 AC-2).
 
@@ -449,7 +449,7 @@ def _recover_untracked_in_flight(
     return recovered
 
 
-def _halt_resolved(snap: QueueSnapshot, client: GitHubClient) -> bool:
+def _halt_resolved(snap: QueueSnapshot, client: ForgePort) -> bool:
     reason = snap.halt_reason or ""
     if "is still OPEN" in reason:
         return len(snap.in_flight) == 0
@@ -525,10 +525,10 @@ def _closes_issue_marker(issue_number: int) -> re.Pattern[str]:
     return re.compile(rf"(?i)\b(?:closes|refs)\s+#{issue_number}(?!\d)")
 
 
-def _find_open_prs_closing_issue(client: GitHubClient, issue_number: int) -> list[dict[str, Any]]:
+def _find_open_prs_closing_issue(client: ForgePort, issue_number: int) -> list[dict[str, Any]]:
     """Find open PRs whose title/body contain ``Closes #N``.
 
-    Production ``GitHubClient.pr_list(search=...)`` only filters title/head, and
+    Production ``pr_list(search=...)`` only filters title/head, and
     ``_normalize_prs`` strips ``body``. Mirror loops_host: list open PRs, then
     ``pr_get`` for each candidate to read the body.
     """
@@ -575,12 +575,12 @@ def _pr_is_merged(pr: dict[str, Any]) -> bool:
     return str(pr.get("state") or "").upper() == "MERGED"
 
 
-def _find_merged_prs_closing_issue(client: GitHubClient, issue_number: int) -> list[dict[str, Any]]:
+def _find_merged_prs_closing_issue(client: ForgePort, issue_number: int) -> list[dict[str, Any]]:
     """Find merged PRs whose title/body contain ``Closes #N``.
 
     ``pr_list(state="closed")`` strips ``body`` and often omits merge metadata.
     Use ``pr_get`` for body and ``api_request("pulls/{n}")`` when merge status
-    is missing from the normalized list (production GitHubClient).
+    is missing from the normalized list (production GitHubClient via get_forge).
     """
     marker = _closes_issue_marker(issue_number)
     try:
@@ -626,8 +626,8 @@ def _find_merged_prs_closing_issue(client: GitHubClient, issue_number: int) -> l
     return matched
 
 
-def _list_open_issues(client: GitHubClient) -> list[dict[str, Any]]:
-    """List all open Issues (excluding PRs) via the production GitHubClient contract.
+def _list_open_issues(client: ForgePort) -> list[dict[str, Any]]:
+    """List all open Issues (excluding PRs) via the production forge client contract.
 
     ``list_issues`` requires a label and cannot scan the whole repo for supersede.
     Use ``api_request("issues?state=open&...")`` which returns raw GitHub JSON.
@@ -770,7 +770,7 @@ def redispatch_label_plan(phase: str) -> tuple[frozenset[str], frozenset[str]]:
 
 
 def apply_redispatch_labels(
-    client: GitHubClient,
+    client: ForgePort,
     issue_number: int,
     phase: str,
     current_labels: set[str],
@@ -785,12 +785,12 @@ def apply_redispatch_labels(
 
 
 def phase_preconditions(
-    phase: str, issue: dict[str, Any], client: GitHubClient, issue_number: int
+    phase: str, issue: dict[str, Any], client: ForgePort, issue_number: int
 ) -> tuple[bool, str]:
     return _phase_preconditions(phase, issue, client, issue_number)
 
 
-def _phase_preconditions(phase: str, issue: dict[str, Any], client: GitHubClient, issue_number: int) -> tuple[bool, str]:
+def _phase_preconditions(phase: str, issue: dict[str, Any], client: ForgePort, issue_number: int) -> tuple[bool, str]:
     state = str(issue.get("state", "")).upper()
     if state != "OPEN":
         return False, "issue not OPEN"
@@ -842,7 +842,7 @@ def _phase_preconditions(phase: str, issue: dict[str, Any], client: GitHubClient
 
 
 def _ensure_comment(
-    client: GitHubClient,
+    client: ForgePort,
     issue_number: int,
     request_id: str,
     outcome: str,
@@ -862,7 +862,7 @@ def _ensure_comment(
 
 def _apply_terminal(
     store: QueueStore,
-    client: GitHubClient,
+    client: ForgePort,
     request_id: str,
     issue_number: int,
     decision_kind: str,
@@ -917,7 +917,7 @@ def ensure_seeds_enqueued(store: QueueStore, *, seed_path: Path | None = None, n
 
 def dispatch_one(
     now: datetime | None = None,
-    client: GitHubClient | None = None,
+    client: ForgePort | None = None,
     *,
     store: QueueStore | None = None,
     seed_path: Path | None = None,
@@ -926,7 +926,7 @@ def dispatch_one(
 ) -> DispatchResult:
     now = now or _now_jst()
     store = store or QueueStore()
-    client = client or GitHubClient(repo=REPO)
+    client = client or get_forge(repo=REPO)
     start, end, idle_minutes = seed_window(seed_path)
 
     if not skip_seed:
@@ -1299,9 +1299,9 @@ def _cmd_status(args: argparse.Namespace) -> int:
         print(f"  - in_flight issue=#{issue_num} engine={engine}{role_part}")
     if snap.halt and snap.halt_reason:
         print(f"  halt_reason: {snap.halt_reason}")
-    client: GitHubClient | None = None
+    client: ForgePort | None = None
     try:
-        client = GitHubClient(repo=REPO)
+        client = get_forge(repo=REPO)
     except Exception:
         client = None
     if snap.last_issue is not None and client is not None:
@@ -1384,9 +1384,9 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     )
     snap = store.snapshot()
     try:
-        client = GitHubClient(repo=REPO)
+        client = get_forge(repo=REPO)
     except Exception as exc:
-        print(f"error: GitHubClient unavailable: {exc}", file=sys.stderr)
+        print(f"error: forge client unavailable: {exc}", file=sys.stderr)
         return 1
     try:
         untracked = _find_untracked_running(client, snap)
@@ -1441,7 +1441,7 @@ def _cmd_skip(args: argparse.Namespace) -> int:
     if snap.halt:
         store.clear_halt()
 
-    client = GitHubClient(repo=REPO)
+    client = get_forge(repo=REPO)
     try:
         client.issue_get(issue, fields=["number", "state"])
     except GitHubApiError as exc:
@@ -1488,7 +1488,7 @@ def _cmd_dequeue(args: argparse.Namespace) -> int:
     store.complete(request_id, "dequeued", extra_meta={"reason": reason})
 
     if req is not None:
-        client = GitHubClient(repo=REPO)
+        client = get_forge(repo=REPO)
         try:
             client.issue_get(req.issue, fields=["number", "state"])
         except GitHubApiError as exc:
@@ -1545,7 +1545,7 @@ def _cmd_audit(args: argparse.Namespace) -> int:
 
     offline = bool(getattr(args, "offline", False))
     if not offline:
-        client = GitHubClient(repo=REPO)
+        client = get_forge(repo=REPO)
         in_flight: set[int] = set()
         for label in (
             READY_LABEL["draft"],

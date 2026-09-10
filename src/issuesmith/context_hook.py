@@ -145,9 +145,9 @@ except ImportError:
 def _fetch_issue_body_from_api(issue_number: int) -> str | None:
     """GitHub API で Issue の最新 body を取得する。失敗時は None を返す。"""
     try:
-        from ghdag.github_client import GitHubClient
+        from ghdag.forge import get_forge
 
-        data = GitHubClient().issue_get(issue_number, fields=["body"])
+        data = get_forge().issue_get(issue_number, fields=["body"])
         body = data.get("body")
         return body.strip() if isinstance(body, str) and body.strip() else None
     except Exception:
@@ -174,9 +174,9 @@ def _pipeline_id_from_comments(issue_number: int, comments: list[dict]) -> str |
 def _fetch_issue_comments_from_api(issue_number: int, issue_repo: str) -> list[dict]:
     """GitHub API で Issue コメント一覧を取得する。失敗時は空リスト。"""
     try:
-        from ghdag.github_client import GitHubClient
+        from ghdag.forge import get_forge
 
-        data = GitHubClient(repo=issue_repo).issue_get(issue_number, fields=["comments"])
+        data = get_forge(repo=issue_repo).issue_get(issue_number, fields=["comments"])
         comments = data.get("comments")
         return comments if isinstance(comments, list) else []
     except Exception:

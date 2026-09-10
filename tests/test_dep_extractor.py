@@ -122,12 +122,17 @@ def test_rescue_path_merged_pr_passes():
             },
         }
     ]
-    client.api_request.return_value = {"merged": True, "merged_at": "2026-01-01T00:00:00Z"}
+    client.pr_get.return_value = {
+        "merged": True,
+        "merged_at": "2026-01-01T00:00:00Z",
+        "state": "CLOSED",
+    }
 
     result = check_dependencies([600], client=client)
     assert result.decision == "PASS"
     assert result.blocking_deps == []
     assert result.dep_statuses[0].rescue_pr == 42
+    client.pr_get.assert_called_once_with(42)
 
 
 def test_exempt_analysis_issue_passes():
@@ -198,8 +203,8 @@ def test_cli_check_outputs_json(capsys):
         "| --- | --- |\n"
         "| 1 | #100 |\n"
     )
-    with patch("issuesmith.dep_extractor.GitHubClient") as mock_cls:
-        client = mock_cls.return_value
+    with patch("issuesmith.dep_extractor.get_forge") as mock_forge:
+        client = mock_forge.return_value
         client.issue_get.side_effect = [
             {"body": body},
             {

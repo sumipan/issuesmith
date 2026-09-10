@@ -24,7 +24,7 @@ def determine_b1_tier(body: str) -> str:
 def main() -> None:
     import argparse
 
-    from ghdag.github_client import GitHubClient
+    from ghdag.forge import get_forge
 
     parser = argparse.ArgumentParser(description="Determine B1 brushup tier")
     group = parser.add_mutually_exclusive_group(required=True)
@@ -33,7 +33,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.issue is not None:
-        data = GitHubClient().issue_get(args.issue, fields=["body"])
+        data = get_forge().issue_get(args.issue, fields=["body"])
         body = data["body"]
     else:
         body = open(args.body_file, encoding="utf-8").read()

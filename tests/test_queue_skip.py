@@ -41,7 +41,7 @@ def test_skip_clears_last_issue_and_comments(tmp_path, monkeypatch, capsys):
 
     client = MagicMock()
     client.issue_get.return_value = {"number": 2297, "state": "OPEN"}
-    monkeypatch.setattr(qmod, "GitHubClient", lambda **kwargs: client)
+    monkeypatch.setattr(qmod, "get_forge", lambda **kwargs: client)
 
     code = qmod.main(
         [
@@ -84,7 +84,7 @@ def test_skip_without_halt_only_clears_last_issue(tmp_path, monkeypatch, capsys)
 
     client = MagicMock()
     client.issue_get.return_value = {"number": 100, "state": "OPEN"}
-    monkeypatch.setattr(qmod, "GitHubClient", lambda **kwargs: client)
+    monkeypatch.setattr(qmod, "get_forge", lambda **kwargs: client)
 
     code = qmod.main([*_cli_paths(tmp_path), "skip", "--issue", "100"])
     assert code == 0
@@ -133,7 +133,7 @@ def test_skip_skips_comment_on_404(tmp_path, monkeypatch, capsys):
 
     client = MagicMock()
     client.issue_get.side_effect = GitHubApiError("missing", status_code=404)
-    monkeypatch.setattr(qmod, "GitHubClient", lambda **kwargs: client)
+    monkeypatch.setattr(qmod, "get_forge", lambda **kwargs: client)
 
     code = qmod.main(
         [*_cli_paths(tmp_path), "skip", "--issue", "12345", "--reason", "gone"]

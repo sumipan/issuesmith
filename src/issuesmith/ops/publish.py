@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from typing import NamedTuple
 
-from ghdag.github_client import GitHubClient
+from ghdag.forge import get_forge
 
 from issuesmith.gate_rules.cp1 import (
     check_test_version_exact_assert,
@@ -262,7 +262,7 @@ def publish(
 
     _run_git(worktree, "push", "-u", "origin", branch)
 
-    client = GitHubClient(repo=repo)
+    client = get_forge(repo=repo)
     existing = client.pr_list(head=branch, state="all", limit=1)
     if existing:
         return PublishResult(status="OK", pr_url=existing[0].get("url", ""), exit_code=0)

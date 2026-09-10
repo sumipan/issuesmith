@@ -22,7 +22,7 @@ import subprocess
 import sys
 
 import yaml
-from ghdag.github_client import GitHubClient
+from ghdag.forge import get_forge
 
 from issuesmith.config import get_config
 from issuesmith.context_hook import build_context
@@ -34,12 +34,12 @@ TEMPLATE_DIR = _cfg.paths.template_dir
 
 
 def _fetch_issue_body(issue_number: int) -> str:
-    return GitHubClient().issue_get(issue_number, ["body"]).get("body", "")
+    return get_forge().issue_get(issue_number, ["body"]).get("body", "")
 
 
 def _open_issuesmith_issues() -> list[int]:
     """issuesmith:* ラベルが付いた open Issue を最大 5 件返す（fallback サンプル）。"""
-    client = GitHubClient()
+    client = get_forge()
     seen: set[int] = set()
     numbers: list[int] = []
     for label in ("issuesmith:reset", "issuesmith:develop-ready", "issuesmith:merge-ready"):
