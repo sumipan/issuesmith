@@ -20,7 +20,7 @@ jobs:
       - name: Install package and ghdag
         run: |
           pip install -e ".[dev]"
-          pip install "ghdag @ git+https://github.com/sumipan/ghdag.git@v0.35.0"
+          pip install "ghdag @ git+https://github.com/sumipan/ghdag.git@v0.52.0"
       - name: Ruff
         run: ruff check src/ tests/
       - name: Pytest
