@@ -50,12 +50,11 @@ def _write_config(tmp_path, monkeypatch, payload: dict) -> None:
 
 
 def _builtin_defaults(tmp_path, monkeypatch) -> None:
-    monkeypatch.delenv("ISSUESMITH_CONFIG", raising=False)
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(
-        "issuesmith.config._package_fallback_yaml",
-        lambda: tmp_path / "missing-issuesmith.yaml",
-    )
+    """repo のみの最小設定（その他はパッケージ既定）。"""
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(yaml.safe_dump({"repo": "example/app"}), encoding="utf-8")
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
 
 
 def test_default_sections_match_legacy_when_unset(tmp_path, monkeypatch):

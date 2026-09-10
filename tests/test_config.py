@@ -15,21 +15,9 @@ from issuesmith.config import (
 )
 
 # 変更前のモジュール定数と一致すべき内蔵既定値（相対パス / スカラー）
+# repo は必須（#3081）。supported_repos のパッケージ既定は空。
 _LEGACY_REPO = "sumipan/nexus"
 _LEGACY_TIMEZONE = "Asia/Tokyo"
-_LEGACY_SUPPORTED = frozenset(
-    {
-        "sumipan/mltgnt",
-        "sumipan/mltgnt-vscode-extension",
-        "sumipan/ghdag",
-        "sumipan/slack-project",
-        "sumipan/diary",
-        "sumipan/nexus-companion",
-        "sumipan/nexus",
-        "sumipan/okr-core",
-        "sumipan/issuesmith",
-    }
-)
 _LEGACY_REL_PATHS = {
     "queue": "jobs/issuesmith-queue.jsonl",
     "queue_state": "logs/issuesmith-queue-state.json",
@@ -57,22 +45,18 @@ def _clear_config_cache():
 
 
 def test_builtin_defaults_match_legacy_constants(tmp_path, monkeypatch):
-    """issuesmith.yaml 不在時の load_config() が変更前の定数値と一致する。"""
-    monkeypatch.delenv("ISSUESMITH_CONFIG", raising=False)
-    monkeypatch.chdir(tmp_path)
-    # パッケージ配置の互換フォールバックも無効化
-    monkeypatch.setattr(
-        "issuesmith.config._package_fallback_yaml",
-        lambda: tmp_path / "missing-issuesmith.yaml",
-    )
+    """repo のみ指定時、その他の内蔵既定が変更前の定数値と一致する。"""
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(yaml.safe_dump({"repo": _LEGACY_REPO}), encoding="utf-8")
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
 
     cfg = load_config()
 
     assert cfg.repo == _LEGACY_REPO
     assert cfg.label_namespace == "issuesmith"
     assert cfg.timezone == _LEGACY_TIMEZONE
-    assert cfg.supported_repos == _LEGACY_SUPPORTED
-    # root はフォールバック探索失敗時、パッケージから見た nexus ルート相当
+    assert cfg.supported_repos == frozenset()
     assert isinstance(cfg.root, Path)
     for name, rel in _LEGACY_REL_PATHS.items():
         assert getattr(cfg.paths, name) == (cfg.root / rel).resolve()
@@ -95,6 +79,20 @@ def test_builtin_defaults_match_legacy_constants(tmp_path, monkeypatch):
         "cursor": "auto",
     }
     assert cfg.engines["implementation"].timeout_sec == 3600
+
+
+def test_missing_repo_raises(tmp_path, monkeypatch):
+    """repo 未設定は get_config / load_config で明示エラー。"""
+    monkeypatch.delenv("ISSUESMITH_CONFIG", raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "issuesmith.config._package_fallback_yaml",
+        lambda: tmp_path / "missing-issuesmith.yaml",
+    )
+    with pytest.raises(
+        ValueError, match="issuesmith.yaml に repo: owner/name を設定してください"
+    ):
+        load_config()
 
 
 def test_issuesmith_config_env_overrides_and_resolves_relative(tmp_path, monkeypatch):

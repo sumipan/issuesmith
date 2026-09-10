@@ -24,19 +24,9 @@ def _package_fallback_yaml() -> Path:
     return _PACKAGE_FILE.parents[2] / _CONFIG_FILENAME
 
 
-_DEFAULT_SUPPORTED_REPOS: frozenset[str] = frozenset(
-    {
-        "sumipan/nexus",
-        "sumipan/mltgnt",
-        "sumipan/mltgnt-vscode-extension",
-        "sumipan/ghdag",
-        "sumipan/slack-project",
-        "sumipan/diary",
-        "sumipan/nexus-companion",
-        "sumipan/okr-core",
-        "sumipan/issuesmith",
-    }
-)
+# nexus 固有のリポジトリ一覧は issuesmith.yaml の supported_repos: に書く。
+# パッケージ既定は空（未設定のままでは cross-repo 検証がすべて拒否される）。
+_DEFAULT_SUPPORTED_REPOS: frozenset[str] = frozenset()
 
 _DEFAULT_REL_PATHS: dict[str, str] = {
     "queue": "jobs/issuesmith-queue.jsonl",
@@ -365,7 +355,12 @@ def _build_sub_design_subsections(raw: Any) -> tuple[str, ...]:
 
 
 def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
-    repo = str(data.get("repo") or "sumipan/nexus")
+    repo_raw = data.get("repo")
+    if not repo_raw or not str(repo_raw).strip():
+        raise ValueError(
+            "issuesmith.yaml に repo: owner/name を設定してください"
+        )
+    repo = str(repo_raw).strip()
     label_namespace = str(data.get("label_namespace") or "issuesmith")
     timezone = str(data.get("timezone") or "Asia/Tokyo")
     supported_raw = data.get("supported_repos")

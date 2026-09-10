@@ -1,5 +1,16 @@
 repo: sumipan/issuesmith
 label_namespace: issuesmith
 timezone: Asia/Tokyo
+# 旧パッケージ既定だった一覧。config 既定は空になったため明示する (#3081)。
+supported_repos:
+  - sumipan/nexus
+  - sumipan/mltgnt
+  - sumipan/mltgnt-vscode-extension
+  - sumipan/ghdag
+  - sumipan/slack-project
+  - sumipan/diary
+  - sumipan/nexus-companion
+  - sumipan/okr-core
+  - sumipan/issuesmith
 concurrency:
   default: 1
