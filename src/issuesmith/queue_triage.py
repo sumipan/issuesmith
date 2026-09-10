@@ -105,6 +105,7 @@ class TriageResult:
     latency_ms: int
     trace_id: str
     prompt_version: str
+    circuit_skipped: bool = False
 
 
 def label_names(issue: dict[str, Any]) -> set[str]:
@@ -328,6 +329,129 @@ def apply_deterministic_order_constraints(
     return [r.request_id for r in sorted(reqs, key=full_key)]
 
 
+def apply_priority_bucket_order(
+    llm_order: list[str],
+    active: list[QueueRequest],
+) -> list[str]:
+    """Restrict LLM reorder to within priority buckets (high → normal → low → other).
+
+    Relative LLM order inside each priority bucket is preserved. Requests missing from
+    ``llm_order`` but present in ``active`` are appended at the end of their bucket
+    in the original active order.
+    """
+    req_map = {r.request_id: r for r in active}
+    seen: set[str] = set()
+    buckets: dict[int, list[str]] = {}
+    for rid in llm_order:
+        req = req_map.get(rid)
+        if req is None or rid in seen:
+            continue
+        rank = PRIORITY_RANK.get(req.priority, 99)
+        buckets.setdefault(rank, []).append(rid)
+        seen.add(rid)
+    for req in active:
+        if req.request_id in seen:
+            continue
+        rank = PRIORITY_RANK.get(req.priority, 99)
+        buckets.setdefault(rank, []).append(req.request_id)
+        seen.add(req.request_id)
+    result: list[str] = []
+    for rank in sorted(buckets.keys()):
+        result.extend(buckets[rank])
+    return result
+
+
+def is_circuit_open(
+    log_path: Path,
+    threshold: int,
+    reset_seconds: int,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Return True when the last ``threshold`` triage entries are recent LLM timeouts."""
+    if threshold <= 0:
+        return False
+    now = now or datetime.now(timezone.utc)
+    if not log_path.exists():
+        return False
+    lines = [ln for ln in log_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    if len(lines) < threshold:
+        return False
+    entries: list[dict[str, Any]] = []
+    for ln in lines[-threshold:]:
+        try:
+            data = json.loads(ln)
+        except json.JSONDecodeError:
+            return False
+        if not isinstance(data, dict):
+            return False
+        entries.append(data)
+    oldest_ts: datetime | None = None
+    for entry in entries:
+        reason = entry.get("fallback_reason")
+        if not isinstance(reason, str):
+            return False
+        if not reason.startswith("llm failed:") or "timed out" not in reason:
+            return False
+        ts_raw = entry.get("timestamp")
+        if not isinstance(ts_raw, str) or not ts_raw.strip():
+            return False
+        try:
+            ts = datetime.fromisoformat(ts_raw)
+        except ValueError:
+            return False
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        if oldest_ts is None or ts < oldest_ts:
+            oldest_ts = ts
+    if oldest_ts is None:
+        return False
+    age = (now - oldest_ts).total_seconds()
+    return age <= float(reset_seconds)
+
+
+def append_cas_conflict_log(
+    *,
+    path: Path | None,
+    order: list[str],
+    revision: int,
+    now: datetime | None = None,
+) -> None:
+    """Record that LLM order CAS failed after retry (``fallback_reason: cas_conflict``)."""
+    now = now or datetime.now(timezone.utc)
+    append_triage_log(
+        {
+            "timestamp": now.isoformat(),
+            "fallback_reason": "cas_conflict",
+            "adopted_order": None,
+            "proposed_order": list(order),
+            "metadata": {"queue_revision": revision},
+            "circuit_skipped": False,
+        },
+        path=path,
+    )
+
+
+def append_circuit_open_log(
+    *,
+    path: Path | None,
+    order: list[str],
+    revision: int,
+    now: datetime | None = None,
+) -> None:
+    now = now or datetime.now(timezone.utc)
+    append_triage_log(
+        {
+            "timestamp": now.isoformat(),
+            "fallback_reason": "circuit_open",
+            "adopted_order": list(order),
+            "circuit_skipped": True,
+            "metadata": {"queue_revision": revision},
+        },
+        path=path,
+    )
+
+
 def _git_prompt_version() -> str:
     try:
         import subprocess
@@ -410,6 +534,7 @@ def triage(
     timeout: int = 60,
     engine: str = "claude",
     model: str = "claude-sonnet-4-6",
+    body_chars: int = 500,
 ) -> TriageResult:
     """Run LLM triage when revision advanced; always write audit log."""
     now = now or datetime.now(timezone.utc)
@@ -442,6 +567,7 @@ def triage(
         )
         return result
 
+    body_limit = max(0, int(body_chars))
     payload_requests = []
     for req in active:
         issue = issues.get(req.issue) or {}
@@ -452,7 +578,7 @@ def triage(
             wait_s = max(0, int((now - at).total_seconds()))
         except ValueError:
             wait_s = 0
-        body = str(issue.get("body") or "")[:500]
+        body = str(issue.get("body") or "")[:body_limit]
         payload_requests.append(
             {
                 "request_id": req.request_id,
@@ -546,6 +672,7 @@ def triage(
 
     latency_ms = int((time.monotonic() - started) * 1000)
     entry = {
+        "timestamp": now.isoformat(),
         "input": {"requests": payload_requests, "prompt": prompt},
         "output": {
             "raw": raw_output,
@@ -567,6 +694,8 @@ def triage(
             "engine": engine,
             "model": model,
             "prompt_version": prompt_version,
+            "timeout": timeout,
+            "body_chars": body_limit,
         },
         "metadata": {
             "trace_id": trace_id,
@@ -577,6 +706,7 @@ def triage(
         "uncertain_flag": uncertain_flag,
         "adopted_order": order if adopted else None,
         "fallback_reason": fallback_reason,
+        "circuit_skipped": False,
     }
     append_triage_log(entry, path=triage_log_path)
 
@@ -590,6 +720,7 @@ def triage(
         latency_ms=latency_ms,
         trace_id=trace_id,
         prompt_version=prompt_version,
+        circuit_skipped=False,
     )
 
 

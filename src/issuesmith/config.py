@@ -118,6 +118,17 @@ class MilestoneChainConfig:
 
 
 @dataclass(frozen=True)
+class TriageConfig:
+    enabled: bool = True
+    engine: str = "claude"
+    model: str = "claude-sonnet-4-6"
+    timeout: int = 60
+    body_chars: int = 500
+    circuit_breaker_threshold: int = 3
+    circuit_breaker_reset_seconds: int = 1800
+
+
+@dataclass(frozen=True)
 class PhaseConfig:
     name: str
     role: str
@@ -176,6 +187,7 @@ class IssuesmithConfig:
     engines: Mapping[str, RoleConfig]
     concurrency: ConcurrencyConfig
     milestone_chain: MilestoneChainConfig = field(default_factory=MilestoneChainConfig)
+    triage: TriageConfig = field(default_factory=TriageConfig)
     phases: tuple[PhaseConfig, ...] = _DEFAULT_PHASES
     sections: Mapping[str, str] = field(default_factory=lambda: dict(_DEFAULT_SECTIONS))
     sub_design_subsections: tuple[str, ...] = _DEFAULT_SUB_DESIGN_SUBSECTIONS
@@ -322,6 +334,28 @@ def _build_milestone_chain(raw: Mapping[str, Any] | None) -> MilestoneChainConfi
     )
 
 
+def _build_triage(raw: Mapping[str, Any] | None) -> TriageConfig:
+    if not raw:
+        return TriageConfig()
+    defaults = TriageConfig()
+    return TriageConfig(
+        enabled=bool(raw.get("enabled", defaults.enabled)),
+        engine=str(raw.get("engine") or defaults.engine),
+        model=str(raw.get("model") or defaults.model),
+        timeout=int(raw.get("timeout", defaults.timeout)),
+        body_chars=int(raw.get("body_chars", defaults.body_chars)),
+        circuit_breaker_threshold=int(
+            raw.get("circuit_breaker_threshold", defaults.circuit_breaker_threshold)
+        ),
+        circuit_breaker_reset_seconds=int(
+            raw.get(
+                "circuit_breaker_reset_seconds",
+                defaults.circuit_breaker_reset_seconds,
+            )
+        ),
+    )
+
+
 def _build_phases(raw: Any) -> tuple[PhaseConfig, ...]:
     if raw is None:
         return _DEFAULT_PHASES
@@ -402,6 +436,7 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     engines_raw = data.get("engines") if isinstance(data.get("engines"), dict) else None
     concurrency_raw = data.get("concurrency") if isinstance(data.get("concurrency"), dict) else None
     milestone_raw = data.get("milestone_chain") if isinstance(data.get("milestone_chain"), dict) else None
+    triage_raw = data.get("triage") if isinstance(data.get("triage"), dict) else None
     sections_raw = data.get("sections") if isinstance(data.get("sections"), dict) else None
     steps_raw = data.get("steps") if isinstance(data.get("steps"), dict) else None
     return IssuesmithConfig(
@@ -414,6 +449,7 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         engines=_build_engines(engines_raw),
         concurrency=_build_concurrency(concurrency_raw),
         milestone_chain=_build_milestone_chain(milestone_raw),
+        triage=_build_triage(triage_raw),
         phases=_build_phases(data.get("phases")),
         sections=_build_sections(sections_raw),
         sub_design_subsections=_build_sub_design_subsections(
