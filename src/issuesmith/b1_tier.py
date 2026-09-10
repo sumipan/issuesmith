@@ -4,14 +4,19 @@ Returns a tier ("light" / "heavy"); the tier-to-model mapping is resolved by
 skills/system-issuesmith/scripts/engine.py per configured engine.
 """
 
+from issuesmith.config import get_config
+
 
 def determine_b1_tier(body: str) -> str:
     """Return the B1 brushup tier for an issue body.
 
-    Design-doc templates (## 背景・目的 or ## 設計) → "heavy".
+    Design-doc templates (background / design section headings) → "heavy".
     Light-fix templates → "light".
     """
-    if "## 背景・目的" in body or "## 設計" in body:
+    sections = get_config().sections
+    background = f"## {sections['background']}"
+    design = f"## {sections['design']}"
+    if background in body or design in body:
         return "heavy"
     return "light"
 

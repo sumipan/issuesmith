@@ -1,6 +1,6 @@
-"""ac_contract.py — 受け入れ条件 YAML 契約（paths_must_exist 等）の抽出と実行。
+"""ac_contract.py — AC YAML 契約（paths_must_exist 等）の抽出と実行。
 
-Issue body の ## 受け入れ条件 セクション内 ```yaml ブロックを契約として解釈し、
+Issue body の AC セクション内 ```yaml ブロックを契約として解釈し、
 paths_must_exist / paths_must_not_exist / references_must_resolve を
 リポジトリ実体に対して検証する。
 
@@ -86,13 +86,14 @@ def extract_key_path_values(data: Any, key_path: str) -> list[Any]:
 
 
 def extract_contract_from_body(body: str) -> dict | None:
-    """## 受け入れ条件 セクション内の最初の ```yaml ブロックを抽出してパースする。
+    """AC セクション内の最初の ```yaml ブロックを抽出してパースする。
 
-    `## 7. 受け入れ条件（Acceptance Criteria）` 等の変形ヘッダにも対応する。
+    番号付き・括弧付きの変形ヘッダ（例: ``## 7. AC（Acceptance Criteria）``）にも対応する。
     契約として解釈できない場合は None。
     """
+    heading = get_config().sections["acceptance_criteria"]
     match = re.search(
-        r"^##[^#\n]*受け入れ条件[^\n]*\n(.*?)(?=^##[^#]|\Z)",
+        rf"^##[^#\n]*{re.escape(heading)}[^\n]*\n(.*?)(?=^##[^#]|\Z)",
         body,
         re.MULTILINE | re.DOTALL,
     )

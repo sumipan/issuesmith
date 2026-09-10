@@ -4,16 +4,22 @@ import re
 
 from ghdag.workflow.gates import GATE_REGISTRY, Violation
 
+from issuesmith.config import get_config
+
 
 def has_acceptance_criteria_section(body: str) -> bool:
-    """## 受け入れ条件 セクションが存在するかを返す。"""
-    return bool(re.search(r"^##\s+受け入れ条件", body, re.MULTILINE))
+    """AC セクションが存在するかを返す。"""
+    heading = get_config().sections["acceptance_criteria"]
+    return bool(
+        re.search(rf"^##\s+{re.escape(heading)}", body, re.MULTILINE)
+    )
 
 
 def get_unchecked_count(body: str) -> int:
-    """## 受け入れ条件 セクション内の未チェック checkbox 数を返す。"""
+    """AC セクション内の未チェック checkbox 数を返す。"""
+    heading = get_config().sections["acceptance_criteria"]
     match = re.search(
-        r"^##\s+受け入れ条件\s*\n(.*?)(?=^##|\Z)",
+        rf"^##\s+{re.escape(heading)}\s*\n(.*?)(?=^##|\Z)",
         body,
         re.MULTILINE | re.DOTALL,
     )
@@ -25,11 +31,12 @@ def get_unchecked_count(body: str) -> int:
 
 class M2Rules:
     def check(self, body: str, labels: list[str]) -> list[Violation]:
+        ac = get_config().sections["acceptance_criteria"]
         if not has_acceptance_criteria_section(body):
             return [Violation(
                 rule_id="m2.ac_section_missing",
                 severity="warn",
-                message="受け入れ条件セクションが見つかりません",
+                message=f"{ac}セクションが見つかりません",
                 location=None,
                 auto_fixable=False,
                 fix_hint=None,
@@ -42,7 +49,7 @@ class M2Rules:
         return [Violation(
             rule_id="m2.unchecked_ac",
             severity="fail",
-            message=f"未チェックの受け入れ条件が {unchecked} 件あります",
+            message=f"未チェックの{ac}が {unchecked} 件あります",
             location=None,
             auto_fixable=False,
             fix_hint=None,

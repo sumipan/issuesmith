@@ -1,5 +1,5 @@
 """
-m2_gate.py — M2 受け入れ条件 checkbox ゲート（薄ラッパ）
+m2_gate.py — M2 AC checkbox ゲート（薄ラッパ）
 
 ロジックは gate_rules/m2.py の M2Rules に委譲する。
 has_acceptance_criteria_section / get_unchecked_count を re-export して後方互換を維持。
@@ -14,6 +14,7 @@ from pathlib import Path
 
 from ghdag.github_client import GitHubClient
 
+from issuesmith.config import get_config
 from issuesmith.gate_rules.m2 import (
     M2Rules,
     get_unchecked_count,
@@ -87,7 +88,7 @@ def synthesize_contract_failures(
 
 
 def _contract_failures_failopen(body: str, repo_root: Path | None = None) -> list[str]:
-    """受け入れ条件 YAML 契約を実行し FAIL を返す。実行系エラーは fail-open。"""
+    """AC YAML 契約を実行し FAIL を返す。実行系エラーは fail-open。"""
     try:
         from issuesmith.ac_contract import contract_failures
 
@@ -212,7 +213,7 @@ def check_gate(body: str, labels: list[str], repo_root: Path | None = None) -> d
     Args:
         body: Issue body。
         labels: Issue ラベル名のリスト。
-        repo_root: 受け入れ条件 YAML の相対パス解決ルート。省略時は ac_contract 既定（nexus ルート）。
+        repo_root: AC YAML の相対パス解決ルート。省略時は ac_contract 既定（nexus ルート）。
 
     Returns:
         dict with keys:
@@ -220,7 +221,7 @@ def check_gate(body: str, labels: list[str], repo_root: Path | None = None) -> d
           - unchecked_count: int
           - has_section: bool
           - has_migration_label: bool
-          - contract_failures: list[str]（受け入れ条件 YAML 契約の FAIL。checkbox 通過時のみ実行）
+          - contract_failures: list[str]（AC YAML 契約の FAIL。checkbox 通過時のみ実行）
     """
     has_migration_label = "scope:migration" in labels
     violations = M2Rules().check(body, labels)
@@ -274,7 +275,10 @@ def main() -> None:
         "--repo-root",
         type=Path,
         default=None,
-        help="(非推奨) 受け入れ条件の相対パスを解決する単一ルート",
+        help=(
+            f"(非推奨) {get_config().sections['acceptance_criteria']}"
+            " の相対パスを解決する単一ルート"
+        ),
     )
     parser.add_argument(
         "--repo-roots",
