@@ -301,6 +301,61 @@ def _paths_covered(allow_paths: list[str], paths: list[str]) -> list[str]:
     return missing
 
 
+_CJK_PATH_CHAR_RE = re.compile(r"[　-鿿＀-￯]")
+_PATH_EXT_RE = re.compile(r"\.[A-Za-z0-9]+$")
+
+
+def is_cjk_placeholder_path(path: str) -> bool:
+    """True when ``path`` looks like a CJK placeholder (no slash, no extension)."""
+    return bool(_CJK_PATH_CHAR_RE.search(path)) and "/" not in path and not _PATH_EXT_RE.search(path)
+
+
+def check_v1_target_repo(
+    child_repo: str | None,
+    expected_repo: str | None,
+    supported: frozenset[str] | set[str],
+) -> list[str]:
+    """V1: child target_repo matches expected and both are in supported_repos."""
+    failures: list[str] = []
+    if expected_repo and child_repo != expected_repo:
+        failures.append(
+            f"V1 target_repo mismatch: expected {expected_repo!r}, got {child_repo!r}"
+        )
+    if child_repo and child_repo not in supported:
+        failures.append(
+            f"V1 target_repo unsupported: {child_repo!r} not in supported_repos"
+        )
+    if expected_repo and expected_repo not in supported:
+        failures.append(
+            f"V1 expected target_repo unsupported: {expected_repo!r} not in supported_repos"
+        )
+    return failures
+
+
+def check_v2_allow_paths(allow_paths: list[str], paths: list[str]) -> list[str]:
+    """V2: every change-table path must be covered by allow_paths (fnmatch)."""
+    missing = _paths_covered(allow_paths, paths)
+    if missing:
+        return [f"V2 allow_paths missing: {', '.join(missing)}"]
+    return []
+
+
+def check_v3_cjk_placeholders(
+    *,
+    body: str | None = None,
+    allow_paths: list[str] | None = None,
+) -> list[str]:
+    """V3: reject CJK placeholder tokens in body and/or allow_paths entries."""
+    failures: list[str] = []
+    if body is not None and _CJK_PLACEHOLDER_RE.search(body):
+        failures.append("V3 CJK placeholder detected")
+    if allow_paths:
+        for path in allow_paths:
+            if is_cjk_placeholder_path(path):
+                failures.append(f"V3: CJK プレースホルダー ({path})")
+    return failures
+
+
 def _dependency_refs_unresolved(body: str) -> list[str]:
     deps_heading = get_config().sections["dependencies"]
     section_match = re.search(
@@ -349,27 +404,12 @@ def validate_children(
 
         child_repo = _target_repo_from_body(body)
         expected_repo = _expected_child_target_repo(parent_body, child)
-        if expected_repo and child_repo != expected_repo:
-            failures.append(
-                f"V1 target_repo mismatch: expected {expected_repo!r}, got {child_repo!r}"
-            )
-        if child_repo and child_repo not in supported:
-            failures.append(
-                f"V1 target_repo unsupported: {child_repo!r} not in supported_repos"
-            )
-        if expected_repo and expected_repo not in supported:
-            failures.append(
-                f"V1 expected target_repo unsupported: {expected_repo!r} not in supported_repos"
-            )
+        failures.extend(check_v1_target_repo(child_repo, expected_repo, supported))
 
         allow_paths = _allow_paths_from_body(body)
         child_paths = _extract_change_paths(body, repo=child_repo)
-        missing = _paths_covered(allow_paths, child_paths)
-        if missing:
-            failures.append(f"V2 allow_paths missing: {', '.join(missing)}")
-
-        if _CJK_PLACEHOLDER_RE.search(body):
-            failures.append("V3 CJK placeholder detected")
+        failures.extend(check_v2_allow_paths(allow_paths, child_paths))
+        failures.extend(check_v3_cjk_placeholders(body=body))
 
         unresolved = _dependency_refs_unresolved(body)
         if unresolved:
