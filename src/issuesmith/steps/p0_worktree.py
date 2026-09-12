@@ -405,6 +405,29 @@ def _prepare_local(ctx: StepContext, repo_root: Path) -> None:
     prepare_worktree(repo_root, Path(ctx.worktree_path.strip()), ctx.branch.strip(), local_base)
 
 
+def _assert_jobs_clean(worktree_dir: Path) -> None:
+    """Fail if ``jobs/`` under the worktree is dirty (daemon auto-commit risk, #3178)."""
+    proc = subprocess.run(
+        ["git", "-C", str(worktree_dir), "status", "--porcelain", "--", "jobs/"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        msg = f"failed to check jobs/ dirty status in {worktree_dir}"
+        if detail:
+            msg = f"{msg}: {detail}"
+        _fail(msg)
+    if (proc.stdout or "").strip():
+        msg = (
+            "P0: worktree 作成後に jobs/ 配下が dirty です。"
+            "daemon の自動コミットが混入している可能性があります。"
+        )
+        print(msg, file=sys.stderr)
+        _fail(msg)
+
+
 def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
     """Execute the P0 worktree provisioning step."""
     del step  # reserved for dispatch StepConfig parity with other steps
@@ -433,8 +456,12 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
 
         if ctx.is_cross_repo == "true":
             _prepare_cross_repo(ctx, repo_root)
+            worktree_dir = repo_root / ctx.target_worktree_path.strip()
         else:
             _prepare_local(ctx, repo_root)
+            worktree_dir = Path(ctx.worktree_path.strip())
+
+        _assert_jobs_clean(worktree_dir)
 
         print(f"WORKTREE_PATH: {ctx.worktree_path}")
         print(f"WORKTREE_BRANCH: {ctx.branch}")

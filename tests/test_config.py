@@ -79,6 +79,14 @@ def test_builtin_defaults_match_legacy_constants(tmp_path, monkeypatch):
         "cursor": "auto",
     }
     assert cfg.engines["implementation"].timeout_sec == 3600
+    assert cfg.forbidden_pr_paths == (
+        "jobs/**",
+        "logs/**",
+        ".sessions/**",
+        "*.jsonl",
+        "*.pid",
+        "*.lock",
+    )
 
 
 def test_missing_repo_raises(tmp_path, monkeypatch):

@@ -14,3 +14,12 @@ supported_repos:
   - sumipan/issuesmith
 concurrency:
   default: 1
+# PR diff scope gate — always-forbidden paths in CP2 (#3178).
+# tests/fixtures/** is excluded from these patterns inside check_pr_diff_scope.
+forbidden_pr_paths:
+  - "jobs/**"
+  - "logs/**"
+  - ".sessions/**"
+  - "*.jsonl"
+  - "*.pid"
+  - "*.lock"
