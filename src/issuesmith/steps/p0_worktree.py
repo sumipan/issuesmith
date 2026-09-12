@@ -276,11 +276,6 @@ def prepare_worktree(
         _fail(msg)
 
 
-def _label_names(client: ForgePort, issue_number: int) -> list[str]:
-    data = client.issue_get(issue_number, fields=["labels"])
-    return [label["name"] for label in data.get("labels", [])]
-
-
 def _transition(issue_number: int, target: str) -> None:
     workflow = _load_workflow_config(_workflow_path())
     transition(
@@ -406,7 +401,7 @@ def _prepare_local(ctx: StepContext, repo_root: Path) -> None:
     try:
         local_base = resolve_base_ref(repo_root, base)
     except WorktreeError:
-        _fail(f"base branch not found in diary repository: {base}")
+        _fail(f"base branch not found: {base}")
     prepare_worktree(repo_root, Path(ctx.worktree_path.strip()), ctx.branch.strip(), local_base)
 
 
