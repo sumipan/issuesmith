@@ -175,6 +175,16 @@ _DEFAULT_SUB_DESIGN_SUBSECTIONS: tuple[str, ...] = (
     "受け入れ条件",
 )
 
+# PR diff scope gate defaults (#3178). Mirrored in issuesmith.yaml.
+_DEFAULT_FORBIDDEN_PR_PATHS: tuple[str, ...] = (
+    "jobs/**",
+    "logs/**",
+    ".sessions/**",
+    "*.jsonl",
+    "*.pid",
+    "*.lock",
+)
+
 
 @dataclass(frozen=True)
 class IssuesmithConfig:
@@ -192,6 +202,7 @@ class IssuesmithConfig:
     sections: Mapping[str, str] = field(default_factory=lambda: dict(_DEFAULT_SECTIONS))
     sub_design_subsections: tuple[str, ...] = _DEFAULT_SUB_DESIGN_SUBSECTIONS
     steps: Mapping[str, StepConfig] = field(default_factory=lambda: dict(_DEFAULT_STEPS))
+    forbidden_pr_paths: tuple[str, ...] = _DEFAULT_FORBIDDEN_PR_PATHS
 
 
 _cached: IssuesmithConfig | None = None
@@ -418,6 +429,14 @@ def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
     return steps
 
 
+def _build_forbidden_pr_paths(raw: Any) -> tuple[str, ...]:
+    if raw is None:
+        return _DEFAULT_FORBIDDEN_PR_PATHS
+    if not isinstance(raw, list):
+        raise ValueError("forbidden_pr_paths must be a list of strings")
+    return tuple(str(x) for x in raw)
+
+
 def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     repo_raw = data.get("repo")
     if not repo_raw or not str(repo_raw).strip():
@@ -456,4 +475,5 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
             data.get("sub_design_subsections")
         ),
         steps=_build_steps(steps_raw),
+        forbidden_pr_paths=_build_forbidden_pr_paths(data.get("forbidden_pr_paths")),
     )

@@ -291,6 +291,50 @@ def test_local_run_success(tmp_path: Path) -> None:
     assert wt.is_dir()
 
 
+def test_jobs_dirty_after_prepare_fails(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """AC-6: untracked jobs/ under worktree → exit_code 1 + reason logged (#3178)."""
+    repo = tmp_path / "nexus"
+    _git_init_with_main(repo)
+    wt = tmp_path / "nexus" / ".claude" / "worktrees" / "issue-3178-dirty"
+    client = MagicMock()
+    client.issue_get.return_value = {
+        "labels": [{"name": "issuesmith:develop-ready"}],
+        "body": "```yaml\nbase_branch: main\nallow_paths:\n  - src/**\n```\n\n## 設計\n",
+    }
+    with (
+        patch.object(p0, "_github_client", return_value=client),
+        patch.object(p0, "_repo_root", return_value=repo),
+    ):
+        first = p0.run(
+            _ctx(
+                worktree_path=str(wt),
+                branch="feat/issue-3178-dirty",
+                is_cross_repo="false",
+            )
+        )
+    assert first.exit_code == 0
+
+    jobs = wt / "jobs"
+    jobs.mkdir()
+    (jobs / "exec.jsonl").write_text("{}\n", encoding="utf-8")
+
+    with (
+        patch.object(p0, "_github_client", return_value=client),
+        patch.object(p0, "_repo_root", return_value=repo),
+    ):
+        result = p0.run(
+            _ctx(
+                worktree_path=str(wt),
+                branch="feat/issue-3178-dirty",
+                is_cross_repo="false",
+            )
+        )
+    assert result.exit_code == 1
+    assert result.pipeline_status == "WORKTREE_FAILED"
+    err = capsys.readouterr().err
+    assert "jobs/ 配下が dirty" in err
+
+
 def test_cross_repo_clone_failure_uses_real_fail_string(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

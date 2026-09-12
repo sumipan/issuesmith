@@ -61,6 +61,54 @@ PR_DETAIL_SUCCESS_JSON = json.dumps(
     ensure_ascii=False,
 )
 
+# Real pr_get shape (2026-09-13): files entries include filename/status/additions/deletions.
+# Captured from GitHubClient.pr_get(3109, repo="sumipan/nexus") — trimmed to fields we read.
+PR_GET_IN_SCOPE_JSON = json.dumps(
+    {
+        "number": 3180,
+        "additions": 3,
+        "deletions": 2,
+        "state": "OPEN",
+        "files": [
+            {
+                "filename": "src/issuesmith/pr_scope.py",
+                "status": "added",
+                "additions": 3,
+                "deletions": 0,
+            }
+        ],
+    },
+    ensure_ascii=False,
+)
+
+PR_GET_FORBIDDEN_JSON = json.dumps(
+    {
+        "number": 3180,
+        "additions": 1,
+        "deletions": 0,
+        "state": "OPEN",
+        "files": [
+            {
+                "filename": "jobs/exec.jsonl",
+                "status": "modified",
+                "additions": 1,
+                "deletions": 0,
+            }
+        ],
+    },
+    ensure_ascii=False,
+)
+
+_ISSUE_BODY_WITH_ALLOW = (
+    "```yaml\n"
+    "target_repo: sumipan/issuesmith\n"
+    "allow_paths:\n"
+    "  - src/**\n"
+    "  - tests/**\n"
+    "```\n\n"
+    "## 受け入れ条件\n- [x] ok\n"
+)
+
 # Engine-specific stdout samples: marker decoration differs; extraction must not.
 _ENGINE_STDOUT = {
     "claude": "Review complete.\nPIPELINE_STATUS: CP2_PASS\n",
@@ -157,20 +205,21 @@ def test_context_to_step_maps_new_fields() -> None:
     assert ctx.p3_result_filename == "p3.md"
 
 
-def test_pr_diff_lines_success_uses_real_list_and_detail_strings() -> None:
+def test_pr_diff_lines_success_uses_real_list_and_pr_get() -> None:
     client = MagicMock()
     list_payload = json.loads(PR_LIST_SUCCESS_JSON)
-    detail_payload = json.loads(PR_DETAIL_SUCCESS_JSON)
+    pr_get_payload = json.loads(PR_GET_IN_SCOPE_JSON)
     assert list_payload[0]["additions"] is None  # real list shape
-    assert detail_payload["additions"] == 3 and detail_payload["deletions"] == 2
+    assert pr_get_payload["additions"] == 3 and pr_get_payload["deletions"] == 2
 
-    client.api_request.side_effect = [list_payload, detail_payload]
+    client.api_request.return_value = list_payload
+    client.pr_get.return_value = pr_get_payload
     lines = cp2._pr_diff_lines(
         client, "sumipan/nexus", "feat/issue-3172-32b12432-diary"
     )
     assert lines == 5
-    assert "head=" in client.api_request.call_args_list[0].args[0]
-    assert client.api_request.call_args_list[1].args[0].endswith("/pulls/3180")
+    assert "head=" in client.api_request.call_args.args[0]
+    client.pr_get.assert_called_once_with(3180, repo="sumipan/nexus")
 
 
 def test_pr_diff_lines_absent_uses_real_empty_list_string() -> None:
@@ -181,6 +230,7 @@ def test_pr_diff_lines_absent_uses_real_empty_list_string() -> None:
     lines = cp2._pr_diff_lines(client, "sumipan/nexus", "feat/nonexistent")
     assert lines == 9999
     client.api_request.assert_called_once()
+    client.pr_get.assert_not_called()
 
 
 def test_unchecked_ac_count_only_inside_section() -> None:
@@ -208,11 +258,9 @@ def test_run_guarded_marker_extraction_stable_across_engines(engine: str) -> Non
 
 def test_run_success_skips_fail_handler() -> None:
     client = MagicMock()
-    client.api_request.side_effect = [
-        json.loads(PR_LIST_SUCCESS_JSON),
-        json.loads(PR_DETAIL_SUCCESS_JSON),
-    ]
-    client.issue_get.return_value = {"body": "## 受け入れ条件\n- [x] ok\n"}
+    client.api_request.return_value = json.loads(PR_LIST_SUCCESS_JSON)
+    client.pr_get.return_value = json.loads(PR_GET_IN_SCOPE_JSON)
+    client.issue_get.return_value = {"body": _ISSUE_BODY_WITH_ALLOW}
 
     with (
         patch.object(cp2, "_github_client", return_value=client),
@@ -252,4 +300,31 @@ def test_run_fail_comments_and_transitions_to_develop_done() -> None:
     assert result.pipeline_status == "CP2_FAILED"
     client.issue_comment.assert_called_once()
     assert "CP2 FAIL" in client.issue_comment.call_args.args[1]
+    transition.assert_called_once_with(3162, "issuesmith:develop-done")
+
+
+def test_run_pr_diff_scope_violation_fails_before_llm() -> None:
+    client = MagicMock()
+    client.api_request.return_value = json.loads(PR_LIST_SUCCESS_JSON)
+    client.pr_get.return_value = json.loads(PR_GET_FORBIDDEN_JSON)
+    client.issue_get.side_effect = [
+        {"body": _ISSUE_BODY_WITH_ALLOW},
+        {"labels": [{"name": "issuesmith:develop-running"}]},
+    ]
+
+    with (
+        patch.object(cp2, "_github_client", return_value=client),
+        patch.object(cp2, "_repo_root", return_value=Path("/nonexistent")),
+        patch.object(cp2, "_run_guarded_design") as guarded,
+        patch.object(cp2, "_transition") as transition,
+    ):
+        result = cp2.run(_ctx())
+
+    assert result.exit_code == 1
+    assert result.pipeline_status == "CP2_FAILED"
+    guarded.assert_not_called()
+    client.issue_comment.assert_called_once()
+    comment = client.issue_comment.call_args.args[1]
+    assert "jobs/exec.jsonl" in comment
+    assert "git checkout main -- jobs/exec.jsonl" in comment
     transition.assert_called_once_with(3162, "issuesmith:develop-done")
