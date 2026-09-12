@@ -631,14 +631,31 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
 
     milestone_number = _milestone_number(parent)
     if milestone_number is None:
+        from issuesmith.convert_to_milestone import _ensure_milestone
+
         try:
+            created_title = _ensure_milestone(client, issue_number, dry_run=False)
+            parent = client.issue_get(
+                issue_number,
+                fields=["number", "body", "labels", "milestone", "comments", "title"],
+            )
+            milestone_number = _milestone_number(parent)
             client.issue_comment(
                 issue_number,
-                "## SUB1 警告: milestone 未設定\n\n"
-                "親 Issue に milestone が設定されていません。サブイシューリンクで続行します。\n",
+                "## SUB1: milestone を自動作成しました\n\n"
+                f"親 Issue に milestone が未設定だったため "
+                f"`{created_title}`（#{milestone_number}）を作成して紐付けました。\n",
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            try:
+                client.issue_comment(
+                    issue_number,
+                    "## SUB1 警告: milestone 自動作成に失敗\n\n"
+                    f"親 Issue に milestone が未設定で、自動作成も失敗しました（{exc}）。"
+                    "サブイシューリンクで続行します。\n",
+                )
+            except Exception:
+                pass
 
     design_err = _parent_design_gate(parent_body)
     if design_err:

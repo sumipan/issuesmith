@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 
+from ghdag.forge import ForgePort
 from ghdag.workflow.gates import GATE_REGISTRY, Violation
 
 from issuesmith.config import get_config
@@ -37,6 +38,19 @@ def _sub_plan_in_section(section: str | None) -> bool:
     return bool(re.search(rf"^###\s+{plan}\s*$", section, re.MULTILINE))
 
 
+def fix_label_missing(client: ForgePort, issue: int, *, dry_run: bool = False) -> str:
+    """Auto-fix for ``label_missing``: add scope:milestone and ensure milestone object.
+
+    Shares ``convert_to_milestone._ensure_milestone`` so title format stays
+    ``<issue>-<YYYYMMDD>`` (#3130 AC-6).
+    """
+    from issuesmith.convert_to_milestone import _ensure_milestone
+
+    if not dry_run:
+        client.issue_update(issue, labels_add=[_MILESTONE_LABEL])
+    return _ensure_milestone(client, issue, dry_run=dry_run)
+
+
 class MilestoneConsistencyRules:
     def check(self, body: str, labels: list[str]) -> list[Violation]:
         violations: list[Violation] = []
@@ -54,7 +68,11 @@ class MilestoneConsistencyRules:
                     ),
                     location=None,
                     auto_fixable=True,
-                    fix_hint="scope:milestone を付与",
+                    fix_hint=(
+                        "scope:milestone を付与し、"
+                        "issuesmith.gate_rules.milestone_consistency.fix_label_missing() "
+                        "で milestone オブジェクト（<issue>-<YYYYMMDD>）を作成・紐付け"
+                    ),
                 )
             )
 
