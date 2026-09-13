@@ -280,6 +280,30 @@ def test_run_merge_clean_still_reports_merge_reported() -> None:
     assert result.exit_code == 0
     assert result.pipeline_status == "MERGE_REPORTED"
     client.pr_merge.assert_called_once()
+    client.issue_update.assert_not_called()
+
+
+def test_post_merge_test_failure_adds_merge_running() -> None:
+    """PR マージ成功後に post_merge_test だけ失敗したら merge-running を付与 (#3221 AC-6)."""
+    client = MagicMock()
+    client.api_request.side_effect = [
+        json.loads(PR_LIST_SUCCESS_JSON),
+        json.loads(PR_DETAIL_OPEN_JSON),
+    ]
+    clean = json.loads(GQL_CLEAN_JSON)["data"]["repository"]["pullRequest"]
+    with (
+        patch.object(m1, "_github_client", return_value=client),
+        patch.object(m1, "_poll_merge_state", return_value=clean),
+        patch.object(m1, "_m2_gate_preflight", return_value=[]),
+        patch.object(m1, "_post_merge_pytest", return_value=1),
+    ):
+        result = m1.run(_ctx())
+    assert result.exit_code == 0
+    assert result.pipeline_status == "MERGE_REPORTED"
+    client.pr_merge.assert_called_once()
+    client.issue_update.assert_called_once_with(
+        3173, labels_add=["issuesmith:merge-running"]
+    )
 
 
 def test_companion_merge_only_when_has_diary_changes() -> None:

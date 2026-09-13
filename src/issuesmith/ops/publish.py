@@ -227,13 +227,40 @@ def _maybe_bump_version(
 
 
 def _check_commit_diff_gates(worktree: Path, base_branch: str) -> PublishResult | None:
-    """commit 後・bump 前に version 行 / テスト完全一致 assert を検査する (#3065)."""
-    diff = _run_git(worktree, "diff", f"origin/{base_branch}..HEAD").stdout
+    """commit 後・bump 前に version 行 / テスト完全一致 assert を検査する (#3065).
+
+    三点ドット差分（merge-base 起点）を使う。二点ドットだと base が進んだだけで
+    逆方向の version 差分が写り、偽陽性になる（#3221）。
+    """
+    diff = _run_git(worktree, "diff", f"origin/{base_branch}...HEAD").stdout
     violations = check_version_line_in_diff(diff) + check_test_version_exact_assert(diff)
     if not violations:
         return None
     msgs = "\n".join(f"[{v.rule_id}] {v.fix_hint or v.message}" for v in violations)
     return PublishResult(status="P3_GATE_FAILED", stderr=msgs, exit_code=1)
+
+
+def _ensure_rebased(worktree: Path, base_branch: str) -> str | None:
+    """fetch + rebase onto origin/<base> when HEAD is behind (#3221 AC-2).
+
+    Returns None on success, ``\"REBASE_CONFLICT\"`` when rebase fails.
+    """
+    _run_git(worktree, "fetch", "origin", base_branch)
+    ancestor = _run_git(
+        worktree,
+        "merge-base",
+        "--is-ancestor",
+        f"origin/{base_branch}",
+        "HEAD",
+        check=False,
+    )
+    if ancestor.returncode == 0:
+        return None
+    rebase = _run_git(worktree, "rebase", f"origin/{base_branch}", check=False)
+    if rebase.returncode == 0:
+        return None
+    _run_git(worktree, "rebase", "--abort", check=False)
+    return "REBASE_CONFLICT"
 
 
 def publish(
@@ -248,6 +275,10 @@ def publish(
     target_count: int = 1,
 ) -> PublishResult:
     _commit_if_needed(worktree, issue_number, allow_paths)
+
+    rebase_status = _ensure_rebased(worktree, base_branch)
+    if rebase_status == "REBASE_CONFLICT":
+        return PublishResult(status="REBASE_CONFLICT", exit_code=1)
 
     gate_fail = _check_commit_diff_gates(worktree, base_branch)
     if gate_fail is not None:

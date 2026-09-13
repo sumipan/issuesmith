@@ -243,3 +243,50 @@ def test_gate_materialization_failure(mock_client):
     assert result.exit_code == 1
     assert result.pipeline_status == "MERGE_FAILED"
     transition.assert_not_called()
+
+
+def test_proceed_from_develop_done_fallback_when_transition_fails(mock_client):
+    """transition がフェーズラベル欠落と判定しても develop-done→merge-done を直付替 (#3221 AC-5)."""
+    gate_result = {"action": "proceed", "unchecked_count": 0, "contract_failures": []}
+    mock_client.issue_get.return_value = {
+        "body": "",
+        "labels": [{"name": "issuesmith:develop-done"}],
+        "state": "OPEN",
+    }
+    with (
+        patch("issuesmith.steps.m2_finalize._github_client", return_value=mock_client),
+        patch("issuesmith.steps.m2_finalize._run_label_hygiene", return_value=0),
+        patch("issuesmith.steps.m2_finalize._run_gate", return_value=gate_result),
+        patch("issuesmith.steps.m2_finalize._cleanup_worktrees"),
+        patch(
+            "issuesmith.steps.m2_finalize._transition",
+            side_effect=ValueError("フェーズラベルがない"),
+        ) as transition,
+        patch("issuesmith.steps.m2_finalize._close_issue_if_open") as close_issue,
+    ):
+        result = run(_ctx())
+
+    assert result.exit_code == 0
+    assert result.pipeline_status == "MERGE_DONE"
+    transition.assert_called_once_with(42, "issuesmith:merge-done")
+    mock_client.issue_update.assert_called_once_with(
+        42,
+        labels_remove=["issuesmith:develop-done"],
+        labels_add=["issuesmith:merge-done"],
+    )
+    close_issue.assert_called_once()
+
+
+def test_proceed_from_merge_ready(gate_patches):
+    """merge-ready からも merge-done に到達できる (#3221 AC-5)."""
+    gate_patches["client"].issue_get.return_value = {
+        "body": "",
+        "labels": [{"name": "issuesmith:merge-ready"}],
+        "state": "OPEN",
+    }
+
+    result = run(_ctx())
+
+    assert result.exit_code == 0
+    assert result.pipeline_status == "MERGE_DONE"
+    gate_patches["transition"].assert_called_once_with(42, "issuesmith:merge-done")

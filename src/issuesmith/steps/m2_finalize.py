@@ -376,10 +376,11 @@ def _finalize_merge_done(
         "issuesmith:develop-running" in label_set
         or "issuesmith:develop-done" in label_set
         or "issuesmith:merge-running" in label_set
+        or "issuesmith:merge-ready" in label_set
     ):
         return _fail(
-            "MERGE_DONE requires develop-running/develop-done/merge-running or merge-done "
-            f"(labels={labels})"
+            "MERGE_DONE requires develop-running/develop-done/merge-running/merge-ready "
+            f"or merge-done (labels={labels})"
         )
     if "issuesmith:develop-running" in label_set:
         try:
@@ -390,7 +391,30 @@ def _finalize_merge_done(
     try:
         _transition(issue_number, "issuesmith:merge-done")
     except ValueError as exc:
-        return _fail(f"finalizer failed to transition to issuesmith:merge-done (labels={labels}): {exc}")
+        # get_current_phase 先頭一致失敗やラベル欠落時の fallback (#3221 AC-5 / #3207)
+        removable = [
+            name
+            for name in (
+                "issuesmith:develop-done",
+                "issuesmith:merge-running",
+                "issuesmith:merge-ready",
+            )
+            if name in label_set
+        ]
+        if not removable:
+            return _fail(
+                f"finalizer failed to transition to issuesmith:merge-done (labels={labels}): {exc}"
+            )
+        client.issue_update(
+            issue_number,
+            labels_remove=removable,
+            labels_add=["issuesmith:merge-done"],
+        )
+        print(
+            f"FINALIZER: fallback label swap → issuesmith:merge-done "
+            f"(removed={removable}; transition error: {exc})"
+        )
+        return None
     print(f"FINALIZER: transitioned issue {issue_number} to issuesmith:merge-done")
     return None
 
