@@ -240,11 +240,39 @@ def _check_commit_diff_gates(worktree: Path, base_branch: str) -> PublishResult 
     return PublishResult(status="P3_GATE_FAILED", stderr=msgs, exit_code=1)
 
 
-def _ensure_rebased(worktree: Path, base_branch: str) -> str | None:
-    """fetch + rebase onto origin/<base> when HEAD is behind (#3221 AC-2).
+def _discard_runtime_dir_dirt(worktree: Path, allow_paths: list[str]) -> None:
+    """Drop unstaged RUNTIME_DIR_EXCLUDES dirt so rebase can proceed (#3227).
 
-    Returns None on success, ``\"REBASE_CONFLICT\"`` when rebase fails.
+    File-level only (not directory-wide clean/restore) to avoid sweeping
+    unintended paths. Untracked (``??``) → ``git clean -f``; tracked →
+    ``git restore``. ``--autostash`` is intentionally not used.
     """
+    status_out = _run_git(worktree, "status", "--porcelain").stdout
+    for line in status_out.splitlines():
+        if not line.strip():
+            continue
+        path = _parse_porcelain_path(line)
+        if not _is_runtime_dir_excluded(path, allow_paths):
+            continue
+        if line.startswith("??"):
+            _run_git(worktree, "clean", "-f", "--", path)
+        else:
+            _run_git(worktree, "restore", "--", path)
+
+
+def _ensure_rebased(
+    worktree: Path,
+    base_branch: str,
+    allow_paths: list[str] | None = None,
+) -> PublishResult | None:
+    """fetch + rebase onto origin/<base> when HEAD is behind (#3221 / #3227).
+
+    Returns None on success, PublishResult on failure (``DIRTY_WORKTREE`` or
+    ``REBASE_CONFLICT``). Before rebasing, discards RUNTIME_DIR_EXCLUDES dirt
+    that is outside allow_paths so nexus worktrees can rebase past jobs/chat
+    noise.
+    """
+    paths = allow_paths or []
     _run_git(worktree, "fetch", "origin", base_branch)
     ancestor = _run_git(
         worktree,
@@ -256,11 +284,31 @@ def _ensure_rebased(worktree: Path, base_branch: str) -> str | None:
     )
     if ancestor.returncode == 0:
         return None
+
+    _discard_runtime_dir_dirt(worktree, paths)
+
+    dirty_in_allow = [p for p in _dirty_paths(worktree) if _matches_allow_paths(p, paths)]
+    if dirty_in_allow:
+        return PublishResult(
+            status="DIRTY_WORKTREE",
+            stderr="\n".join(dirty_in_allow),
+            exit_code=1,
+        )
+
     rebase = _run_git(worktree, "rebase", f"origin/{base_branch}", check=False)
     if rebase.returncode == 0:
         return None
+
+    unmerged = _run_git(
+        worktree, "diff", "--name-only", "--diff-filter=U", check=False
+    ).stdout
+    conflict_files = [p for p in unmerged.splitlines() if p.strip()]
     _run_git(worktree, "rebase", "--abort", check=False)
-    return "REBASE_CONFLICT"
+    return PublishResult(
+        status="REBASE_CONFLICT",
+        stderr="\n".join(conflict_files) if conflict_files else (rebase.stderr or "").strip(),
+        exit_code=1,
+    )
 
 
 def publish(
@@ -276,9 +324,9 @@ def publish(
 ) -> PublishResult:
     _commit_if_needed(worktree, issue_number, allow_paths)
 
-    rebase_status = _ensure_rebased(worktree, base_branch)
-    if rebase_status == "REBASE_CONFLICT":
-        return PublishResult(status="REBASE_CONFLICT", exit_code=1)
+    rebase_result = _ensure_rebased(worktree, base_branch, allow_paths)
+    if rebase_result is not None:
+        return rebase_result
 
     gate_fail = _check_commit_diff_gates(worktree, base_branch)
     if gate_fail is not None:

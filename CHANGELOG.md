@@ -32,6 +32,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- publish: `_ensure_rebased` が rebase 前に `RUNTIME_DIR_EXCLUDES`（`jobs/**`・
+  `chat/**`・`sessions/**`・`logs/**`）配下の未コミット変更を破棄する。allow_paths
+  内に汚れが残る場合は `PUBLISH_STATUS: DIRTY_WORKTREE`、本物の競合は
+  `REBASE_CONFLICT`（競合ファイル一覧付き・`--abort`）を返す。nexus worktree で
+  実行時ファイル汚れにより P3 が全件 `REBASE_CONFLICT` になる障害を防ぐ（#3227）
 - publish: `_check_commit_diff_gates` の差分を二点ドット（`origin/<base>..HEAD`）から
   三点ドット（`origin/<base>...HEAD`、merge-base 起点）に変更。base が進んだだけで
   逆方向の `version =` 差分が写り `P3_GATE_FAILED` になる偽陽性を防ぐ。publish 前に

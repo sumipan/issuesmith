@@ -134,6 +134,7 @@ def test_ensure_rebased_rebases_when_behind():
     worktree = Path("/tmp/fake-wt")
     fetch = MagicMock(returncode=0, stdout="", stderr="")
     not_ancestor = MagicMock(returncode=1, stdout="", stderr="")
+    empty_status = MagicMock(returncode=0, stdout="", stderr="")
     rebase_ok = MagicMock(returncode=0, stdout="", stderr="")
 
     def _run(wt, *args, check=True):
@@ -141,6 +142,8 @@ def test_ensure_rebased_rebases_when_behind():
             return fetch
         if args[:2] == ("merge-base", "--is-ancestor"):
             return not_ancestor
+        if args[0] == "status":
+            return empty_status
         if args[0] == "rebase":
             return rebase_ok
         raise AssertionError(f"unexpected git args: {args}")
@@ -153,7 +156,9 @@ def test_ensure_rebased_returns_conflict():
     worktree = Path("/tmp/fake-wt")
     fetch = MagicMock(returncode=0, stdout="", stderr="")
     not_ancestor = MagicMock(returncode=1, stdout="", stderr="")
+    empty_status = MagicMock(returncode=0, stdout="", stderr="")
     rebase_fail = MagicMock(returncode=1, stdout="", stderr="conflict")
+    unmerged = MagicMock(returncode=0, stdout="src/foo.py\n", stderr="")
     abort = MagicMock(returncode=0, stdout="", stderr="")
 
     def _run(wt, *args, check=True):
@@ -161,20 +166,29 @@ def test_ensure_rebased_returns_conflict():
             return fetch
         if args[:2] == ("merge-base", "--is-ancestor"):
             return not_ancestor
+        if args[0] == "status":
+            return empty_status
         if args == ("rebase", "origin/main"):
             return rebase_fail
+        if args[:3] == ("diff", "--name-only", "--diff-filter=U"):
+            return unmerged
         if args == ("rebase", "--abort"):
             return abort
         raise AssertionError(f"unexpected git args: {args}")
 
     with patch("issuesmith.ops.publish._run_git", side_effect=_run):
-        assert _ensure_rebased(worktree, "main") == "REBASE_CONFLICT"
+        result = _ensure_rebased(worktree, "main")
+    assert result is not None
+    assert result.status == "REBASE_CONFLICT"
+    assert result.exit_code == 1
+    assert "src/foo.py" in result.stderr
 
 
 def test_publish_stops_on_rebase_conflict_before_gates():
+    conflict = PublishResult(status="REBASE_CONFLICT", exit_code=1)
     with (
         patch("issuesmith.ops.publish._commit_if_needed") as commit,
-        patch("issuesmith.ops.publish._ensure_rebased", return_value="REBASE_CONFLICT") as rebase,
+        patch("issuesmith.ops.publish._ensure_rebased", return_value=conflict) as rebase,
         patch("issuesmith.ops.publish._check_commit_diff_gates") as gates,
         patch("issuesmith.ops.publish._maybe_bump_version") as bump,
     ):
@@ -187,7 +201,7 @@ def test_publish_stops_on_rebase_conflict_before_gates():
             issue_repo="sumipan/nexus",
         )
     commit.assert_called_once()
-    rebase.assert_called_once()
+    rebase.assert_called_once_with(Path("/tmp/fake-wt"), "main", None)
     gates.assert_not_called()
     bump.assert_not_called()
     assert result.status == "REBASE_CONFLICT"
