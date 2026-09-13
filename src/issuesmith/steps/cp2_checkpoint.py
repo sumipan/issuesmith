@@ -58,21 +58,26 @@ def _workflow_path() -> Path:
 
 
 def _resolve_repo(ctx: StepContext) -> str:
-    return (ctx.target_repo or ctx.issue_repo or "").strip()
+    repo = (ctx.target_repo or ctx.issue_repo or "").strip()
+    if not repo:
+        repo = (get_config().repo or "").strip()
+    return repo
 
 
-def _head_param(repo: str, branch: str) -> str:
+def _head_param(repo: str, branch: str) -> str | None:
     branch = branch.strip()
     if not branch:
-        return ""
+        return None
     if ":" in branch:
         return branch
     owner = repo.split("/", 1)[0] if "/" in repo else ""
-    return f"{owner}:{branch}" if owner else branch
+    return f"{owner}:{branch}" if owner else None
 
 
-def _pulls_list_path(repo: str, branch: str) -> str:
+def _pulls_list_path(repo: str, branch: str) -> str | None:
     head = _head_param(repo, branch)
+    if head is None:
+        return None
     encoded = urllib.parse.quote(head, safe="")
     if repo:
         return f"repos/{repo}/pulls?head={encoded}&state=open"
@@ -83,15 +88,32 @@ def _open_pr_number(client: ForgePort, repo: str, branch: str) -> int | None:
     """Return the open PR number for ``branch``, or None if absent / unreadable."""
     if not branch.strip():
         return None
+    path = _pulls_list_path(repo, branch)
+    if path is None:
+        print(
+            "CP2: skip PR search (no owner for head filter; "
+            f"repo={repo!r} branch={branch!r})",
+            file=sys.stderr,
+        )
+        return None
     try:
-        listed = client.api_request(_pulls_list_path(repo, branch))
+        listed = client.api_request(path)
     except Exception as exc:
         print(f"CP2: PR list failed ({exc})", file=sys.stderr)
         return None
     if not isinstance(listed, list) or not listed:
         return None
-    first = listed[0]
-    if not isinstance(first, dict) or not isinstance(first.get("number"), int):
+    first = next(
+        (
+            pr
+            for pr in listed
+            if isinstance(pr, dict)
+            and isinstance(pr.get("head"), dict)
+            and pr["head"].get("ref") == branch
+        ),
+        None,
+    )
+    if first is None or not isinstance(first.get("number"), int):
         return None
     return first["number"]
 
@@ -315,11 +337,14 @@ def _check_pr_scope(
     """Run pr_diff_scope gate. Return a FAIL StepResult, or None to continue."""
     if pr_detail is None:
         return None
-    filenames = filenames_from_pr_files(pr_detail.get("files"))
+    file_entries = pr_detail.get("files")
+    filenames = filenames_from_pr_files(file_entries)
     if not filenames:
         return None
     allow_paths = _allow_paths_from_body(body)
-    violations = check_pr_diff_scope(filenames, allow_paths)
+    violations = check_pr_diff_scope(
+        filenames, allow_paths, file_entries=file_entries
+    )
     if not violations:
         return None
     print(
