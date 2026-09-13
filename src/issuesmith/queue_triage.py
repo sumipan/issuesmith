@@ -76,6 +76,20 @@ _SEMVER_RE = re.compile(r"v?(\d+\.\d+\.\d+)")
 
 COMMENT_MARKER = "<!-- ISSUESMITH_QUEUE_REQUEST:{request_id}:{outcome} -->"
 
+# LLM reject reasons that mean "waiting for deps" — keep, do not reject (AC-12).
+_DEPS_REJECT_REASON_RE = re.compile(
+    r"(deps?[_\s-]?(blocked|waiting|not[_\s-]?resolved|unresolved|pending))"
+    r"|(依存\s*(未解決|待ち|ブロック|未充足))"
+    r"|(waiting\s+for\s+deps?)"
+    r"|(dependencies?\s+(not\s+)?(met|resolved|ready))",
+    re.IGNORECASE,
+)
+
+
+def is_deps_waiting_reject_reason(reason: str) -> bool:
+    """True when an LLM reject reason is really a normal deps-wait (must keep)."""
+    return bool(_DEPS_REJECT_REASON_RE.search(reason or ""))
+
 
 @dataclass
 class Decision:
@@ -601,6 +615,8 @@ def triage(
         "Return ONLY a JSON object with keys order and decisions.\n"
         "order must be a permutation of all request_id values.\n"
         "Each decision: request_id, decision(keep|reject), reason(non-empty), uncertain_flag(bool).\n"
+        "Reject ONLY for permanent problems (duplicate, obsolete, unsupported repo, missing YAML).\n"
+        "Do NOT reject for unresolved dependencies / deps waiting — that is normal queue wait; use keep.\n"
         f"requests={json.dumps(payload_requests, ensure_ascii=False)}\n"
     )
 
@@ -654,6 +670,15 @@ def triage(
                             request_id=d.request_id,
                             decision="keep",
                             reason=f"LLM reject ignored for protected request: {d.reason}",
+                            uncertain_flag=d.uncertain_flag,
+                        )
+                    )
+                elif d.decision == "reject" and is_deps_waiting_reject_reason(d.reason):
+                    fixed.append(
+                        TriageDecision(
+                            request_id=d.request_id,
+                            decision="keep",
+                            reason=f"LLM deps reject ignored: {d.reason}",
                             uncertain_flag=d.uncertain_flag,
                         )
                     )

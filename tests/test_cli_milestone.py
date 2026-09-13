@@ -41,6 +41,14 @@ allow_paths:
     def issue_get(self, number, fields=None):
         return dict(self.issues[number])
 
+    def get_issue_comments(self, number):
+        return []
+
+    def list_sub_issues(self, parent_number):
+        if parent_number == 100:
+            return [self.issues[101]]
+        return []
+
     def api_request(self, path, paginate=False):
         if path.startswith("issues?state=all&milestone="):
             return [self.issues[101]]
@@ -53,6 +61,23 @@ class FakeStore:
 
     def get_milestone_chain(self, parent):
         return dict(self.chains.get(str(parent), {}))
+
+    def snapshot(self):
+        from issuesmith.queue_store import QueueSnapshot
+
+        return QueueSnapshot(
+            schema_version=1,
+            revision=0,
+            active_order=[],
+            completed_request_ids=[],
+            last_triaged_revision=0,
+            last_issue=None,
+            halt=False,
+            halt_reason=None,
+            requests={},
+            request_meta={},
+            milestone_chains=dict(self.chains),
+        )
 
     def resume_milestone_chain(self, parent):
         entry = self.chains.get(str(parent))
@@ -87,7 +112,11 @@ allow_paths:
     assert code == 0
     out = capsys.readouterr().out
     assert "target_repo" in out
-    child_line = next(line for line in out.splitlines() if re.search(r"\b101\b", line))
+    child_line = next(
+        line
+        for line in out.splitlines()
+        if re.match(r"^\s*101\b", line)
+    )
     # unset target_repo: title is present, but no owner/repo slug in the row
     assert "child one" in child_line
     assert "sumipan/" not in child_line

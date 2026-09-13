@@ -41,11 +41,18 @@ _MILESTONE_IDLE_OK_LABELS = frozenset(
 _CJK_PLACEHOLDER_RE = re.compile(
     r"(プレースホルダ|プレースホルダー|未記入|TBD|TODO|FIXME|XXX|ＸＸＸ|要記入|ここに)"
 )
+# V3: 説明文中の語は無視し、単独行・YAML・見出し直下セクションのみ検出する。
+_STANDALONE_PLACEHOLDER_RE = re.compile(
+    r"^(?:[-*]\s*)?(?:プレースホルダ|プレースホルダー|未記入|TBD|TODO|FIXME|XXX|ＸＸＸ|要記入|ここに)\s*$"
+)
+_YAML_FENCE_RE = re.compile(r"```ya?ml\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
+_HEADING_SPLIT_RE = re.compile(r"(?m)^(#{1,6}\s+.+)$")
 _TABLE_ROW_RE = re.compile(r"^\|")
 _TABLE_SEPARATOR_RE = re.compile(r"^\|[\s\-:|]+\|$")
 _PLAN_REF_RE = re.compile(r"^\|\s*(\d+)\s*\|")
 # 解決済み Issue 参照（3 桁以上）。plan ref（サブ N の連番）と区別する。
 _RESOLVED_ISSUE_REF_RE = re.compile(r"#(\d{3,})\b")
+_TERMINAL_NEGATIVE_OUTCOMES = frozenset({"rejected", "dequeued", "skipped"})
 
 
 def _change_table_header_re() -> re.Pattern[str]:
@@ -170,36 +177,54 @@ def _plan_section(body: str) -> str | None:
     return match.group(1) if match else None
 
 
-def _expected_child_target_repo(parent_body: str, child: dict[str, Any]) -> str | None:
-    """Resolve V1 expected target_repo from the parent split plan, else parent YAML."""
+def normalize_plan_title(title: str) -> str:
+    """Normalize plan/child titles for V1 matching (shared with normalize_sub_head style).
+
+    Strips backticks, collapses full-width/half-width spaces, and trims edges.
+    """
+    text = str(title).replace("`", "")
+    text = text.replace("\u3000", " ")
+    text = re.sub(r"[ \t]+", " ", text)
+    return text.strip()
+
+
+def _expected_child_target_repo(
+    parent_body: str, child: dict[str, Any]
+) -> tuple[str | None, str | None]:
+    """Resolve V1 expected target_repo from the parent split plan, else parent YAML.
+
+    Returns ``(expected_repo, error)``. When the plan has title+repo columns but no
+    normalized title match, ``error`` is set and callers must not fall back.
+    """
     parent_repo = _target_repo_from_body(parent_body)
     section = _plan_section(parent_body)
     if section is None:
-        return parent_repo
+        return parent_repo, None
     rows = _parse_table_rows(section)
     if len(rows) <= 1:
-        return parent_repo
+        return parent_repo, None
     header = rows[0]
     try:
         title_idx = next(i for i, cell in enumerate(header) if "タイトル" in cell)
     except StopIteration:
-        return parent_repo
+        return parent_repo, None
     try:
         repo_idx = next(i for i, cell in enumerate(header) if "対象リポジトリ" in cell)
     except StopIteration:
-        return parent_repo
+        return parent_repo, None
 
-    child_title = str(child.get("title") or "").strip()
+    child_title = str(child.get("title") or "")
+    child_norm = normalize_plan_title(child_title)
     for row in rows[1:]:
         if len(row) <= title_idx:
             continue
-        if row[title_idx].strip() != child_title:
+        if normalize_plan_title(row[title_idx]) != child_norm:
             continue
         if len(row) <= repo_idx:
-            return parent_repo
+            return parent_repo, None
         value = row[repo_idx].strip().strip("`")
-        return value or parent_repo
-    return parent_repo
+        return (value or parent_repo), None
+    return None, f"V1 plan row not found for title {child_title!r}"
 
 
 def _allow_paths_from_body(body: str) -> list[str]:
@@ -340,14 +365,47 @@ def check_v2_allow_paths(allow_paths: list[str], paths: list[str]) -> list[str]:
     return []
 
 
+def _is_placeholder_only_section(text: str) -> bool:
+    lines = [
+        ln.strip()
+        for ln in text.splitlines()
+        if ln.strip() and not ln.strip().startswith("<!--")
+    ]
+    if not lines:
+        return False
+    return all(
+        _STANDALONE_PLACEHOLDER_RE.match(ln) or bool(_CJK_PLACEHOLDER_RE.fullmatch(ln))
+        for ln in lines
+    )
+
+
+def _body_has_restricted_placeholder(body: str) -> bool:
+    """True when placeholder tokens appear in YAML / standalone lines / heading sections."""
+    for match in _YAML_FENCE_RE.finditer(body):
+        if _CJK_PLACEHOLDER_RE.search(match.group(1)):
+            return True
+    for line in body.splitlines():
+        if _STANDALONE_PLACEHOLDER_RE.match(line.strip()):
+            return True
+    parts = _HEADING_SPLIT_RE.split(body)
+    # parts: [preamble, heading, content, heading, content, ...]
+    idx = 1
+    while idx < len(parts):
+        content = parts[idx + 1] if idx + 1 < len(parts) else ""
+        if _is_placeholder_only_section(content):
+            return True
+        idx += 2
+    return False
+
+
 def check_v3_cjk_placeholders(
     *,
     body: str | None = None,
     allow_paths: list[str] | None = None,
 ) -> list[str]:
-    """V3: reject CJK placeholder tokens in body and/or allow_paths entries."""
+    """V3: reject unfilled placeholder tokens (not prose mentions) and CJK allow_paths."""
     failures: list[str] = []
-    if body is not None and _CJK_PLACEHOLDER_RE.search(body):
+    if body is not None and _body_has_restricted_placeholder(body):
         failures.append("V3 CJK placeholder detected")
     if allow_paths:
         for path in allow_paths:
@@ -403,8 +461,11 @@ def validate_children(
         failures: list[str] = []
 
         child_repo = _target_repo_from_body(body)
-        expected_repo = _expected_child_target_repo(parent_body, child)
-        failures.extend(check_v1_target_repo(child_repo, expected_repo, supported))
+        expected_repo, plan_err = _expected_child_target_repo(parent_body, child)
+        if plan_err:
+            failures.append(plan_err)
+        else:
+            failures.extend(check_v1_target_repo(child_repo, expected_repo, supported))
 
         allow_paths = _allow_paths_from_body(body)
         child_paths = _extract_change_paths(body, repo=child_repo)
@@ -489,8 +550,21 @@ def _list_chain_children(
     return [child for child in children if child.get("number") != parent_number]
 
 
-def _has_request(store: QueueStore, snap: QueueSnapshot, issue: int, phase: str) -> bool:
-    seen: set[str] = set(snap.active_order) | set(snap.completed_request_ids)
+def _has_request(
+    store: QueueStore | None, snap: QueueSnapshot, issue: int, phase: str
+) -> bool:
+    """True when an active or successfully-completed request exists for issue+phase.
+
+    Completed requests with outcome in ``rejected`` / ``dequeued`` / ``skipped``
+    do not count as already enqueued (chain may re-enqueue after deps resolve).
+    """
+    _ = store
+    positive_completed = {
+        rid
+        for rid in snap.completed_request_ids
+        if (snap.request_meta.get(rid) or {}).get("outcome") not in _TERMINAL_NEGATIVE_OUTCOMES
+    }
+    seen: set[str] = set(snap.active_order) | positive_completed
     for rid in seen:
         req = snap.requests.get(rid)
         if req is not None and req.issue == issue and req.phase == phase:
@@ -796,6 +870,70 @@ def _sub_issues_summary(client: ForgePort, parent: int, parent_issue: dict[str, 
     return {"total": 0, "completed": 0, "percent_completed": 0}
 
 
+def _format_chain_waiting_line(
+    *,
+    parent: int,
+    parent_issue: dict[str, Any],
+    chain: dict[str, Any],
+    store: QueueStore,
+    snap: QueueSnapshot,
+    client: ForgePort,
+) -> str:
+    """One-line summary of what the milestone chain is waiting for next."""
+    stage = str(chain.get("stage") or "-")
+    if chain.get("halted_reason"):
+        return f"chain: halted ({chain['halted_reason']})"
+
+    labels = label_names(parent_issue)
+
+    def _active_req(issue: int, phase: str) -> str | None:
+        for rid in snap.active_order:
+            req = snap.requests.get(rid)
+            if req is not None and req.issue == issue and req.phase == phase:
+                return rid[:8]
+        return None
+
+    if DONE_LABEL["sub"] not in labels:
+        rid = _active_req(parent, "sub")
+        if rid:
+            return f"chain: {stage} (sub request {rid} active, waiting for sub-done)"
+        try:
+            comments = client.get_issue_comments(parent)
+        except Exception:
+            comments = []
+        if not isinstance(comments, list) or not _has_cp1_intentional_hold(comments):
+            return f"chain: {stage} (hold comment missing, waiting for CP1 intentional hold)"
+        return f"chain: {stage} (no sub request yet, waiting to enqueue sub)"
+
+    children = _list_chain_children(client, parent, parent_issue)
+    waiting_deps: list[int] = []
+    pending_develop: list[int] = []
+    for child in children:
+        child_num = child.get("number")
+        if not isinstance(child_num, int):
+            continue
+        body = str(child.get("body") or "")
+        deps = extract_dependencies(body)
+        if deps:
+            result = check_dependencies(deps, client=client)
+            if result.decision != "PASS":
+                waiting_deps.append(child_num)
+                continue
+        if not _has_request(store, snap, child_num, "develop"):
+            pending_develop.append(child_num)
+
+    if waiting_deps:
+        deps_txt = ", ".join(f"#{n}" for n in waiting_deps)
+        rid = _active_req(parent, "sub")
+        if rid:
+            return f"chain: {stage} (sub request {rid} active, waiting for deps {deps_txt})"
+        return f"chain: {stage} (waiting for deps {deps_txt})"
+    if pending_develop:
+        kids = ", ".join(f"#{n}" for n in pending_develop)
+        return f"chain: {stage} (ready to enqueue develop for {kids})"
+    return f"chain: {stage}"
+
+
 def milestone_status(parent: int, *, client: ForgePort | None = None, store: QueueStore | None = None) -> int:
     client = client or get_forge()
     store = store or QueueStore()
@@ -808,9 +946,21 @@ def milestone_status(parent: int, *, client: ForgePort | None = None, store: Que
         print(f"error: failed to fetch parent #{parent}: {exc}", file=sys.stderr)
         return 1
 
+    snap = store.snapshot()
     chain = store.get_milestone_chain(parent)
     parent_state = str(parent_issue.get("state") or "-")
     print(f"milestone chain #{parent}: stage={chain.get('stage', '-')}")
+    print(
+        "  "
+        + _format_chain_waiting_line(
+            parent=parent,
+            parent_issue=parent_issue,
+            chain=chain,
+            store=store,
+            snap=snap,
+            client=client,
+        )
+    )
     print(f"  state: {parent_state}")
     if chain.get("halted_reason"):
         print(f"  halted_reason: {chain['halted_reason']}")

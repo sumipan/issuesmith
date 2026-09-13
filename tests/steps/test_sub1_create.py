@@ -331,6 +331,74 @@ def test_run_creates_child_and_returns_sub_created() -> None:
     client.issue_update.assert_called()  # draft-done / scope labels
 
 
+def test_run_auto_creates_milestone_when_unset() -> None:
+    """AC-7: SUB1 creates milestone object when parent has none."""
+    parent_body = _parent_body()
+    parent_no_ms = {
+        "number": 3166,
+        "body": parent_body,
+        "labels": [{"name": "scope:milestone"}],
+        "milestone": None,
+        "comments": [
+            {"body": "PIPELINE_STATUS: BRUSHUP_DONE", "createdAt": "2026-01-01T00:00:00Z"},
+            {"body": "CP1_STATUS: PASS", "createdAt": "2026-01-01T01:00:00Z"},
+        ],
+    }
+    parent_with_ms = {
+        **parent_no_ms,
+        "milestone": {"number": 42, "title": "3166-20260913"},
+    }
+
+    client = MagicMock()
+    # 1) run initial  2) _ensure_milestone check  3) refresh after create
+    # 4+) ensure_sub1_binding / validate
+    client.issue_get.side_effect = [
+        parent_no_ms,
+        parent_no_ms,
+        parent_with_ms,
+        {"number": 3166, "milestone": {"number": 42}},
+        {
+            "number": 9001,
+            "title": "child work",
+            "body": "",
+            "milestone": {"number": 42},
+            "labels": [{"name": "issuesmith:draft-done"}],
+        },
+    ]
+    client.list_sub_issues = MagicMock(return_value=[])
+    client.issue_create.return_value = 9001
+    client.milestone_list.return_value = []
+    client.milestone_create.return_value = 42
+
+    with (
+        patch.object(sub1, "_github_client", return_value=client),
+        patch.object(sub1, "ensure_sub1_binding", return_value=True),
+        patch.object(
+            sub1,
+            "validate_children",
+            return_value=MagicMock(passed=True, results=[]),
+        ),
+        patch("issuesmith.convert_to_milestone.get_config") as ctm_cfg,
+        patch.object(sub1, "get_config") as cfg,
+    ):
+        ctm_cfg.return_value.timezone = "Asia/Tokyo"
+        cfg.return_value.supported_repos = frozenset({"sumipan/nexus"})
+        cfg.return_value.sections = {
+            "sub_plan": "サブイシュー分割計画",
+            "milestone": "マイルストーン",
+            "design": "設計",
+            "changed_files": "変更対象ファイル",
+            "dependencies": "依存（先行）",
+        }
+        result = sub1.run(_ctx())
+
+    assert result.exit_code == 0
+    assert result.pipeline_status == "SUB_CREATED"
+    assert client.milestone_create.called
+    comment_bodies = [c.args[1] for c in client.issue_comment.call_args_list]
+    assert any("milestone を自動作成" in b for b in comment_bodies)
+
+
 def test_run_all_rows_fail_validation_exits_nonzero() -> None:
     # 5-col plan with empty 対象リポジトリ → row validation failure
     body = (

@@ -827,7 +827,9 @@ class TestSubIssuesEnumeration:
         assert "completed=1" in out
         assert "percent_completed=100" in out
         assert "101" in out
-        assert client.list_sub_issues_calls == [100]
+        assert "chain:" in out
+        assert client.list_sub_issues_calls.count(100) >= 1
+        assert all(c == 100 for c in client.list_sub_issues_calls)
 
     def test_list_open_milestones_still_available_as_deprecated(self):
         """deprecated 関数は残存し、scope:milestone ラベル検索を返す。"""
@@ -836,3 +838,174 @@ class TestSubIssuesEnumeration:
         found = _list_open_milestones(client)
         assert len(found) == 1
         assert found[0]["number"] == 100
+
+
+class TestIssue3130Fixes:
+    """AC-8/9/10/11/13/14 for milestone chain (#3130)."""
+
+    def test_v1_title_normalized_with_backticks_and_spaces(self):
+        from issuesmith.milestone import check_v3_cjk_placeholders, normalize_plan_title
+
+        assert normalize_plan_title("  `foo　bar`  ") == "foo bar"
+        parent_body = (
+            _PARENT_BODY
+            + "\n## マイルストーン\n\n### サブイシュー分割計画\n"
+            "| # | タイトル | 対象リポジトリ | 内容 | 依存 |\n"
+            "|---|--------|----------------|------|------|\n"
+            "| 1 | `child　work` | `sumipan/nexus` | x | なし |\n"
+        )
+        parent = {
+            "number": 100,
+            "body": parent_body,
+            "milestone": {"number": 1},
+            "labels": [{"name": "scope:milestone"}],
+        }
+        child = {
+            "number": 101,
+            "title": "child work",
+            "body": _CHILD_BODY,
+            "milestone": {"number": 1},
+            "labels": [{"name": "issuesmith:draft-done"}],
+        }
+        result = validate_children(parent, [child], client=FakeClient(issues={101: child}))
+        assert result.passed is True
+        # prose mention of プレースホルダ must not trip V3
+        assert check_v3_cjk_placeholders(
+            body="本 Issue はプレースホルダ検出を実装する\n"
+        ) == []
+
+    def test_v1_plan_row_not_found_no_fallback(self):
+        parent_body = (
+            _PARENT_BODY
+            + "\n## マイルストーン\n\n### サブイシュー分割計画\n"
+            "| # | タイトル | 対象リポジトリ | 内容 | 依存 |\n"
+            "|---|--------|----------------|------|------|\n"
+            "| 1 | expected title | `sumipan/nexus` | x | なし |\n"
+        )
+        parent = {
+            "number": 100,
+            "body": parent_body,
+            "milestone": {"number": 1},
+            "labels": [{"name": "scope:milestone"}],
+        }
+        child = {
+            "number": 101,
+            "title": "totally different",
+            "body": _CHILD_BODY,
+            "milestone": {"number": 1},
+            "labels": [{"name": "issuesmith:draft-done"}],
+        }
+        result = validate_children(parent, [child], client=FakeClient(issues={101: child}))
+        assert result.passed is False
+        assert any(
+            f.startswith("V1 plan row not found for title")
+            for f in result.results[0].failures
+        )
+
+    def test_v3_standalone_tbd_still_detected(self):
+        from issuesmith.milestone import check_v3_cjk_placeholders
+
+        assert check_v3_cjk_placeholders(body="## 設計\n\nTBD\n") == [
+            "V3 CJK placeholder detected"
+        ]
+        assert check_v3_cjk_placeholders(
+            body="```yaml\ntarget_repo: TBD\n```\n"
+        ) == ["V3 CJK placeholder detected"]
+
+    def test_has_request_ignores_rejected_completed(self, tmp_path):
+        from issuesmith.milestone import _has_request
+
+        store = _store(tmp_path)
+        rid = store.enqueue(
+            issue=3166,
+            phase="develop",
+            source="milestone-chain",
+            actor_kind="automation",
+            priority="normal",
+            requested_by=["milestone-chain"],
+            requested_at=_NOW,
+            request_id="e82db96f-0000-4000-8000-000000003166",
+        ).request_id
+        store.complete(rid, "rejected")
+        snap = store.snapshot()
+        assert _has_request(store, snap, 3166, "develop") is False
+
+    def test_ac14_rejected_fixture_reenqueues_develop(self, tmp_path):
+        """AC-14: rejected completed develop requests must not block re-enqueue."""
+        # Real request_meta prefixes from #3130 investigation.
+        fixtures = [
+            ("e82db96f-0000-4000-8000-000000003166", 3166, "rejected"),
+            ("1466283b-0000-4000-8000-000000003168", 3168, "rejected"),
+            ("e7d79eb3-0000-4000-8000-000000003166", 3166, "dequeued"),
+            ("e242a525-0000-4000-8000-000000003168", 3168, "skipped"),
+            ("ba981aea-0000-4000-8000-000000003100", 3100, "rejected"),
+        ]
+        store = _store(tmp_path)
+        for rid, issue, outcome in fixtures:
+            store.enqueue(
+                issue=issue,
+                phase="develop",
+                source="milestone-chain",
+                actor_kind="automation",
+                priority="normal",
+                requested_by=["milestone-chain"],
+                requested_at=_NOW,
+                request_id=rid,
+            )
+            store.complete(rid, outcome)
+
+        child_3166 = _child_issue(
+            3166, state="OPEN", labels=["issuesmith:draft-done"], title="child 3166"
+        )
+        child_3168 = _child_issue(
+            3168, state="OPEN", labels=["issuesmith:draft-done"], title="child 3168"
+        )
+        parent = _parent_issue(
+            labels=[
+                {"name": "scope:milestone"},
+                {"name": DONE_LABEL["draft"]},
+                {"name": DONE_LABEL["sub"]},
+            ]
+        )
+        client = FakeClient(
+            issues={100: parent, 3166: child_3166, 3168: child_3168},
+            sub_issues={100: [child_3166, child_3168]},
+        )
+        store.update_milestone_chain(100, {"stage": "idle"})
+        advance_milestone_chains(store, client, _chain_config())
+        snap = store.snapshot()
+        develop_issues = {
+            snap.requests[rid].issue
+            for rid in snap.active_order
+            if rid in snap.requests and snap.requests[rid].phase == "develop"
+        }
+        assert 3166 in develop_issues
+        assert 3168 in develop_issues
+
+    def test_milestone_status_chain_waiting_line(self, tmp_path, capsys):
+        parent = _parent_issue(
+            labels=[
+                {"name": "scope:milestone"},
+                {"name": DONE_LABEL["draft"]},
+            ]
+        )
+        client = FakeClient(
+            issues={100: parent},
+            comments={},
+        )
+        store = _store(tmp_path)
+        store.update_milestone_chain(100, {"stage": "sub_enqueued"})
+        rid = store.enqueue(
+            issue=100,
+            phase="sub",
+            source="milestone-chain",
+            actor_kind="automation",
+            priority="normal",
+            requested_by=["milestone-chain"],
+            requested_at=_NOW,
+            request_id="acb4496f-0000-4000-8000-000000000100",
+        ).request_id
+        code = milestone_status(100, client=client, store=store)
+        assert code == 0
+        out = capsys.readouterr().out
+        assert f"chain: sub_enqueued (sub request {rid[:8]} active, waiting for sub-done)" in out

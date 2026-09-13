@@ -98,3 +98,56 @@ def test_ac6_normalized_fixture_not_sub_plan_missing():
 
 def test_registry_exposes_milestone_consistency():
     assert "milestone_consistency" in GATE_REGISTRY
+
+
+def test_fix_label_missing_adds_label_and_milestone_object():
+    """AC-6: label_missing auto-fix creates milestone object too."""
+    from issuesmith.gate_rules.milestone_consistency import fix_label_missing
+
+    class _Client:
+        def __init__(self):
+            self.labels: set[str] = set()
+            self.milestones: list[dict] = []
+            self.issue_milestone = None
+            self.updates: list[dict] = []
+            self._next = 50
+
+        def issue_get(self, number, fields=None):
+            return {
+                "number": number,
+                "labels": [{"name": n} for n in sorted(self.labels)],
+                "milestone": self.issue_milestone,
+            }
+
+        def issue_update(self, number, **kwargs):
+            self.updates.append({"number": number, **kwargs})
+            for lab in kwargs.get("labels_add") or []:
+                self.labels.add(lab)
+            if kwargs.get("milestone") is not None:
+                self.issue_milestone = {
+                    "number": kwargs["milestone"],
+                    "title": f"{number}-attached",
+                }
+
+        def milestone_list(self):
+            return list(self.milestones)
+
+        def milestone_create(self, title, description=""):
+            num = self._next
+            self._next += 1
+            self.milestones.append({"number": num, "title": title})
+            return num
+
+    client = _Client()
+    title = fix_label_missing(client, 3130)
+    assert "scope:milestone" in client.labels
+    assert title.startswith("3130-")
+    assert client.issue_milestone is not None
+    assert any(u.get("labels_add") == ["scope:milestone"] for u in client.updates)
+
+
+def test_label_missing_fix_hint_mentions_milestone_object():
+    vs = _check(_FIXTURE, [])
+    label_v = next(v for v in vs if v.rule_id == "milestone_consistency.label_missing")
+    assert "milestone" in (label_v.fix_hint or "").lower()
+    assert "fix_label_missing" in (label_v.fix_hint or "")
