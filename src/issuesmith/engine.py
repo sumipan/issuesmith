@@ -24,7 +24,7 @@ import tempfile
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -92,7 +92,10 @@ _RATE_LIMIT_PATTERNS = ("resource_exhausted", "rate limit", "ratelimit", "429")
 
 _RETRY_WAIT_MAX_SECONDS: int = 1800
 _WAIT_MAX_SEC_DEFAULT: int = 21600  # 6h — budget brake 5h 枠を超えて待つ既定上限 (#3091)
-_RETRY_INTERVAL_SEC_DEFAULT: int = 3600  # resume_at=null 時の固定インターバル (#3091)
+_RETRY_INTERVAL_SEC_DEFAULT: int = 3600  # 旧 INTERVAL 既定（互換参照用・#3091）
+_WAIT_POLL_SEC_DEFAULT: int = 60  # 全 engine pause 時の再確認周期 (#3256)
+_LLM_RESERVE_SEC: float = 300.0  # 待機後に LLM 実行へ残す最低余裕 (#3256)
+_WAIT_LOG_INTERVAL_SEC: float = 300.0  # waiting 進捗ログの間隔 (#3256)
 
 
 def _wait_max_sec() -> int:
@@ -103,14 +106,24 @@ def _wait_max_sec() -> int:
         return _WAIT_MAX_SEC_DEFAULT
 
 
-def _wait_interval_sec() -> int:
-    raw = os.environ.get(
-        "ISSUESMITH_ENGINE_WAIT_INTERVAL_SEC", str(_RETRY_INTERVAL_SEC_DEFAULT)
-    )
+def _wait_poll_sec() -> int:
+    """全 engine pause 時の snapshot 再取得周期（秒）。
+
+    ``ISSUESMITH_ENGINE_WAIT_POLL_SEC`` を優先し、未設定時だけ互換で
+    ``ISSUESMITH_ENGINE_WAIT_INTERVAL_SEC`` を読む。1〜60 以外・非数値は 60。
+    """
+    raw = os.environ.get("ISSUESMITH_ENGINE_WAIT_POLL_SEC")
+    if raw is None:
+        raw = os.environ.get(
+            "ISSUESMITH_ENGINE_WAIT_INTERVAL_SEC", str(_WAIT_POLL_SEC_DEFAULT)
+        )
     try:
-        return int(raw)
-    except ValueError:
-        return _RETRY_INTERVAL_SEC_DEFAULT
+        value = int(raw)
+    except (TypeError, ValueError):
+        return _WAIT_POLL_SEC_DEFAULT
+    if value < 1 or value > 60:
+        return _WAIT_POLL_SEC_DEFAULT
+    return value
 
 
 def _is_rate_limited(text: str) -> bool:
@@ -589,6 +602,8 @@ def _execute(
 
     working_directory = _working_directory(cwd)
     timeout_sec = _resolve_timeout_sec(role)
+    started_mono = time.monotonic()
+    total_deadline = started_mono + float(timeout_sec)
     fallback_candidates = [
         (alt, DEFAULT_MODELS[(role, alt)])
         for alt in sorted(ROLE_ENGINES[role] - {selection.engine})
@@ -611,46 +626,71 @@ def _execute(
                 break
         else:
             all_engines = [selection.engine] + [e for e, _ in fallback_candidates]
-            # AC-3: 待機予測分を call_managed timeout に加算（ghdag task 占有対策）
-            quota_state = snapshot.engines.get(selection.engine)
-            if quota_state and quota_state.status == "paused":
-                if quota_state.resume_at is not None:
-                    extra = max(
-                        0.0,
-                        (
-                            quota_state.resume_at - datetime.now(timezone.utc)
-                        ).total_seconds(),
-                    )
-                else:
-                    extra = float(_wait_interval_sec())
-                timeout_sec += extra
+            wait_deadline = min(
+                started_mono + float(_wait_max_sec()),
+                total_deadline - _LLM_RESERVE_SEC,
+            )
+            if wait_deadline <= started_mono:
+                raise RuntimeError(f"All engines paused for role {role}")
 
-            deadline = datetime.now(timezone.utc) + timedelta(seconds=_wait_max_sec())
+            poll_sec = float(_wait_poll_sec())
+            last_log_mono: float | None = None
+            immediate_refetch_done = False
+
             while True:
-                now = datetime.now(timezone.utc)
-                resume_ats: list[datetime] = []
+                now_mono = time.monotonic()
+                if now_mono >= wait_deadline:
+                    raise RuntimeError(f"All engines paused for role {role}")
+
+                remaining_wait = wait_deadline - now_mono
+                paused_names = [
+                    eng
+                    for eng in all_engines
+                    if (st := snapshot.engines.get(eng)) is not None
+                    and st.status == "paused"
+                ]
+                if last_log_mono is None or (
+                    now_mono - last_log_mono
+                ) >= _WAIT_LOG_INTERVAL_SEC:
+                    elapsed = now_mono - started_mono
+                    print(
+                        f"[issuesmith-engine] waiting role={role} "
+                        f"paused=[{','.join(paused_names)}] "
+                        f"elapsed={elapsed:.0f}s remaining={remaining_wait:.0f}s",
+                        file=sys.stderr,
+                    )
+                    last_log_mono = now_mono
+
+                positive_deltas: list[float] = []
+                any_due_resume = False
                 for eng in all_engines:
                     eng_state = snapshot.engines.get(eng)
-                    if eng_state and eng_state.status == "paused":
-                        if eng_state.resume_at is None:
-                            resume_ats.append(
-                                now + timedelta(seconds=_wait_interval_sec())
-                            )
-                        else:
-                            resume_ats.append(eng_state.resume_at)
-                if not resume_ats:
-                    break
-                min_resume = min(resume_ats)
-                if min_resume > deadline:
-                    raise RuntimeError(f"All engines paused for role {role}")
-                wait_sec = max(0.0, (min_resume - now).total_seconds())
-                print(
-                    f"[issuesmith-engine] waiting for {role} engine to resume "
-                    f"(wait={wait_sec:.0f}s, deadline={deadline.isoformat()})",
-                    file=sys.stderr,
-                )
-                if wait_sec > 0:
-                    time.sleep(min(wait_sec, _RETRY_WAIT_MAX_SECONDS))
+                    if (
+                        not eng_state
+                        or eng_state.status != "paused"
+                        or eng_state.resume_at is None
+                    ):
+                        continue
+                    delta = (
+                        eng_state.resume_at - datetime.now(timezone.utc)
+                    ).total_seconds()
+                    if delta > 0:
+                        positive_deltas.append(delta)
+                    else:
+                        any_due_resume = True
+
+                if any_due_resume and not immediate_refetch_done and not positive_deltas:
+                    sleep_sec = 0.0
+                    immediate_refetch_done = True
+                else:
+                    sleep_sec = min(poll_sec, remaining_wait)
+                    if positive_deltas:
+                        sleep_sec = min(sleep_sec, min(positive_deltas))
+                    immediate_refetch_done = False
+
+                if sleep_sec > 0:
+                    time.sleep(sleep_sec)
+
                 snapshot = quota_gate.snapshot()
                 primary = snapshot.engines.get(selection.engine)
                 if not primary or primary.status != "paused":
@@ -670,7 +710,12 @@ def _execute(
                         break
                 if switched:
                     break
-                # 全 engine がまだ paused — ループ継続（deadline 超過は次回先頭で判定）
+
+    remaining_timeout = total_deadline - time.monotonic()
+    if remaining_timeout < 1.0:
+        raise RuntimeError(f"All engines paused for role {role}")
+    timeout_sec = remaining_timeout
+
     print(
         f"[issuesmith-engine] start role={role} engine={selection.engine} "
         f"model={selection.model} tier={tier or 'heavy'} "
