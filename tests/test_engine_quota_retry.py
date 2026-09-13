@@ -398,3 +398,37 @@ def test_resume_at_soon_caps_sleep_to_poll(execute_mocks, monkeypatch):
     timeout = execute_mocks["call_managed"].call_args.kwargs["timeout"]
     assert timeout <= 600
     assert timeout == 600 - int(wait_sec) or timeout == int(600 - wait_sec)
+
+
+def test_due_resume_refetches_immediately_once_with_future_fallback(
+    execute_mocks, monkeypatch
+):
+    """A due primary is re-fetched now even when a fallback resumes later."""
+    monkeypatch.setenv("ISSUESMITH_ENGINE_WAIT_POLL_SEC", "60")
+    monkeypatch.setenv("ISSUESMITH_ENGINE_WAIT_MAX_SEC", "3600")
+    _install_fake_clock(monkeypatch, execute_mocks["sleep"])
+
+    now = datetime.now(timezone.utc)
+    snap_paused = _snapshot(
+        {
+            "claude": _paused(now - timedelta(seconds=1)),
+            "codex": _paused(now + timedelta(hours=2)),
+        }
+    )
+    snap_available = _snapshot(
+        {
+            "claude": _available(),
+            "codex": _paused(now + timedelta(hours=2)),
+        }
+    )
+    execute_mocks["quota_gate"].snapshot.side_effect = [
+        snap_paused,
+        snap_paused,
+        snap_available,
+    ]
+
+    result = _execute("design", "prompt")
+
+    assert result.returncode == 0
+    execute_mocks["sleep"].assert_called_once_with(60.0)
+    assert execute_mocks["quota_gate"].snapshot.call_count == 3

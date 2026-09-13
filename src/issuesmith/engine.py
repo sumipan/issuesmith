@@ -679,14 +679,15 @@ def _execute(
                     else:
                         any_due_resume = True
 
-                if any_due_resume and not immediate_refetch_done and not positive_deltas:
+                if any_due_resume and not immediate_refetch_done:
                     sleep_sec = 0.0
                     immediate_refetch_done = True
                 else:
                     sleep_sec = min(poll_sec, remaining_wait)
                     if positive_deltas:
                         sleep_sec = min(sleep_sec, min(positive_deltas))
-                    immediate_refetch_done = False
+                    if not any_due_resume:
+                        immediate_refetch_done = False
 
                 if sleep_sec > 0:
                     time.sleep(sleep_sec)
