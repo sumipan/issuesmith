@@ -32,6 +32,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- publish: rebase 後の再 push で non-fast-forward にならないよう、リモート tip が
+  `HEAD` の祖先でないときは `git push --force-with-lease=<branch>:<remote_sha>` で
+  更新する。lease 失敗（他者の未知コミット等）は `PUBLISH_STATUS: PUSH_DIVERGED`
+  を返す。push 前に `fetch` し `rev-list` の ahead/behind を stdout に残す（#3237）
 - publish: `_ensure_rebased` が rebase 前に `RUNTIME_DIR_EXCLUDES`（`jobs/**`・
   `chat/**`・`sessions/**`・`logs/**`）配下の未コミット変更を破棄する。allow_paths
   内に汚れが残る場合は `PUBLISH_STATUS: DIRTY_WORKTREE`、本物の競合は

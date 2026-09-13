@@ -311,6 +311,59 @@ def _ensure_rebased(
     )
 
 
+def _push_branch(worktree: Path, branch: str) -> PublishResult | None:
+    """Push ``branch`` with rebase-aware ``--force-with-lease`` (#3237).
+
+    After ``_ensure_rebased``, a previously pushed tip may no longer be an
+    ancestor of HEAD (same content, new SHAs). Plain ``git push`` then fails
+    non-fast-forward. When the remote tip is not an ancestor, push with
+    ``--force-with-lease=<branch>:<remote_sha>`` so a concurrent unknown
+    remote update is rejected (``PUSH_DIVERGED``) instead of overwritten.
+    """
+    _run_git(worktree, "fetch", "origin", branch, check=False)
+    remote_ref = _run_git(worktree, "rev-parse", f"origin/{branch}", check=False)
+    if remote_ref.returncode != 0:
+        _run_git(worktree, "push", "-u", "origin", branch)
+        return None
+
+    remote_sha = remote_ref.stdout.strip()
+    ahead = _run_git(
+        worktree, "rev-list", "--count", f"HEAD..origin/{branch}"
+    ).stdout.strip()
+    behind = _run_git(
+        worktree, "rev-list", "--count", f"origin/{branch}..HEAD"
+    ).stdout.strip()
+    print(f"rev-list ahead={ahead} behind={behind}")
+
+    ancestor = _run_git(
+        worktree,
+        "merge-base",
+        "--is-ancestor",
+        f"origin/{branch}",
+        "HEAD",
+        check=False,
+    )
+    if ancestor.returncode == 0:
+        _run_git(worktree, "push", "-u", "origin", branch)
+        return None
+
+    pushed = _run_git(
+        worktree,
+        "push",
+        f"--force-with-lease={branch}:{remote_sha}",
+        "-u",
+        "origin",
+        branch,
+        check=False,
+    )
+    if pushed.returncode == 0:
+        return None
+    err = (pushed.stderr or pushed.stdout or "").strip() or (
+        f"git push --force-with-lease failed with exit {pushed.returncode}"
+    )
+    return PublishResult(status="PUSH_DIVERGED", stderr=err, exit_code=1)
+
+
 def publish(
     *,
     issue_number: int,
@@ -339,7 +392,9 @@ def publish(
     if _ahead_commit_count(worktree, base_branch) == 0:
         return PublishResult(status="NO_DIFF", exit_code=1)
 
-    _run_git(worktree, "push", "-u", "origin", branch)
+    push_result = _push_branch(worktree, branch)
+    if push_result is not None:
+        return push_result
 
     client = get_forge(repo=repo)
     existing = client.pr_list(head=branch, state="all", limit=1)
