@@ -591,6 +591,13 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
         posttest_rc = _post_merge_pytest(_worktree_path(ctx))
         if posttest_rc != 0:
             failed.append("post_merge_test")
+            # PR はマージ済みだが post_merge_test 失敗 → M1r/M2 が
+            # merge-running → merge-done を辿れるようラベルを先に付与 (#3221 AC-6)
+            try:
+                client.issue_update(issue_number, labels_add=["issuesmith:merge-running"])
+                print("LABEL: added issuesmith:merge-running (post_merge_test failed)")
+            except Exception as exc:
+                print(f"merge-running label failed: {exc}", file=sys.stderr)
     else:
         print("POST_MERGE_TEST: skipped (merge did not run successfully)")
     print(f"POSTTEST_RC: {posttest_rc}")

@@ -32,6 +32,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- publish: `_check_commit_diff_gates` の差分を二点ドット（`origin/<base>..HEAD`）から
+  三点ドット（`origin/<base>...HEAD`、merge-base 起点）に変更。base が進んだだけで
+  逆方向の `version =` 差分が写り `P3_GATE_FAILED` になる偽陽性を防ぐ。publish 前に
+  `git fetch` + 必要時 `rebase` し、競合時は `PUBLISH_STATUS: REBASE_CONFLICT` を返す（#3221）
+- M1: PR マージ成功後に `post_merge_test` だけ失敗したとき `issuesmith:merge-running` を付与し、
+  M1r → M2 のラベル遷移欠落を防ぐ（#3221）
+- M2 finalizer: `develop-done` / `merge-ready` / `merge-running` から `merge-done` へ到達可能にし、
+  `transition()` がフェーズラベル欠落で失敗したときは `issue_update` で直付替する fallback を追加（#3221）
 - queue: design engine（claude）が paused でも implementation ロールの
   `develop` / `merge` / `sub` は投入できるよう、paused 判定をフェーズ別ロールに変更。
   CP2（design）は `resume_at=null` でも固定インターバルで sleep & retry し、
