@@ -32,6 +32,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- engine: 全エンジン pause 時に `resume_at=None`（budget-brake 等）でも最大 30〜60 分
+  一括 sleep せず、`ISSUESMITH_ENGINE_WAIT_POLL_SEC`（既定 60 秒）ごとに
+  `QuotaGate.snapshot()` を再取得する。待機と LLM 実行の合計は `ISSUESMITH_TIMEOUT_SEC`
+  に収め、待機予測分を `call_managed` timeout に加算しない。2026-09-13 の nexus #3252
+  CP2 で codex pause 解除後も長時間再確認されず `DAG_TASK_TIMEOUT` と二重実行した事象の修正（#3256）
 - publish: rebase 後の再 push で non-fast-forward にならないよう、リモート tip が
   `HEAD` の祖先でないときは `git push --force-with-lease=<branch>:<remote_sha>` で
   更新する。lease 失敗（他者の未知コミット等）は `PUBLISH_STATUS: PUSH_DIVERGED`

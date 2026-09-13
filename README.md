@@ -145,7 +145,10 @@ Orchestration (polling, DAG, label transitions) remains in **ghdag** `WorkflowDi
 | `ISSUESMITH_QUEUE_DIR` | env | Override directory for queue / triage files |
 | `AGENT_SKILLS_DIR` | env | Skills directory for doctor/preflight (default `~/.agents/skills`) |
 | `METRICS_JSONL_PATH` | env | Override metrics JSONL path for `issuesmith.engine` |
-| `ISSUESMITH_TIMEOUT_SEC` | env | Override engine timeout seconds |
+| `ISSUESMITH_TIMEOUT_SEC` | env | Override engine timeout seconds. Total wall budget for wait + LLM (`call_managed`); waiting time is not added on top |
+| `ISSUESMITH_ENGINE_WAIT_POLL_SEC` | env | While all engines are paused, re-check quota every N seconds (default `60`, clamped to 1–60). Prefer this over `ISSUESMITH_ENGINE_WAIT_INTERVAL_SEC` |
+| `ISSUESMITH_ENGINE_WAIT_INTERVAL_SEC` | env | Legacy alias for the pause re-check interval when `ISSUESMITH_ENGINE_WAIT_POLL_SEC` is unset (same 1–60 clamp) |
+| `ISSUESMITH_ENGINE_WAIT_MAX_SEC` | env | Max seconds to wait for an engine to leave pause (default `21600`). Wait also stops early to leave ≥300s for the LLM within `ISSUESMITH_TIMEOUT_SEC` |
 | `issuesmith.yaml` | file | Repo / paths / engines / supported_repos (see Quick Start) |
 
 Optional `milestone_chain` keys in `issuesmith.yaml`:
