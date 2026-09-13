@@ -328,3 +328,158 @@ def test_run_pr_diff_scope_violation_fails_before_llm() -> None:
     assert "jobs/exec.jsonl" in comment
     assert "git checkout main -- jobs/exec.jsonl" in comment
     transition.assert_called_once_with(3162, "issuesmith:develop-done")
+
+
+# --- #3216: empty-repo / owner-less head / branch match (AC-1 / AC-2 / AC-3) ---
+# Real list shapes captured 2026-09-13 (CLAUDE.md §10 / AGENTS.md §16):
+#   pulls?head=feat%2Fissue-3169-2309b9d6&state=open
+#     → [3215, 3214, 2720, 1164]  (owner 無し・head 無視で全 open PR)
+#   repos/sumipan/nexus/pulls?head=sumipan%3Afeat%2Fissue-3169-2309b9d6&state=open
+#     → [3214]
+
+_BRANCH_3169 = "feat/issue-3169-2309b9d6"
+
+PR_LIST_OWNERLESS_ALL_OPEN_JSON = json.dumps(
+    [
+        {
+            "number": 3215,
+            "state": "open",
+            "head": {"label": "sumipan:feat/other-a", "ref": "feat/other-a"},
+        },
+        {
+            "number": 3214,
+            "state": "open",
+            "head": {
+                "label": f"sumipan:{_BRANCH_3169}",
+                "ref": _BRANCH_3169,
+            },
+        },
+        {
+            "number": 2720,
+            "state": "open",
+            "head": {
+                "label": "sumipan:worktree-skill-github-ops",
+                "ref": "worktree-skill-github-ops",
+            },
+        },
+        {
+            "number": 1164,
+            "state": "open",
+            "head": {
+                "label": "sumipan:claude/persona-nakadoi",
+                "ref": "claude/persona-nakadoi",
+            },
+        },
+    ],
+    ensure_ascii=False,
+)
+
+PR_LIST_OWNER_FILTERED_JSON = json.dumps(
+    [
+        {
+            "number": 3214,
+            "state": "open",
+            "head": {
+                "label": f"sumipan:{_BRANCH_3169}",
+                "ref": _BRANCH_3169,
+            },
+        }
+    ],
+    ensure_ascii=False,
+)
+
+
+def test_resolve_repo_falls_back_to_config_repo() -> None:
+    cfg = MagicMock()
+    cfg.repo = "sumipan/nexus"
+    with patch.object(cp2, "get_config", return_value=cfg):
+        assert cp2._resolve_repo(_ctx(target_repo="", issue_repo="")) == "sumipan/nexus"
+
+
+def test_resolve_repo_empty_when_config_repo_empty() -> None:
+    cfg = MagicMock()
+    cfg.repo = ""
+    with patch.object(cp2, "get_config", return_value=cfg):
+        assert cp2._resolve_repo(_ctx(target_repo="", issue_repo="")) == ""
+
+
+def test_head_param_returns_none_without_owner() -> None:
+    assert cp2._head_param("", _BRANCH_3169) is None
+    assert cp2._head_param("not-a-slug", _BRANCH_3169) is None
+
+
+def test_head_param_with_owner() -> None:
+    assert cp2._head_param("sumipan/nexus", _BRANCH_3169) == f"sumipan:{_BRANCH_3169}"
+
+
+def test_open_pr_number_skips_api_when_head_unavailable(capsys) -> None:
+    client = MagicMock()
+    number = cp2._open_pr_number(client, "", _BRANCH_3169)
+    assert number is None
+    client.api_request.assert_not_called()
+    err = capsys.readouterr().err
+    assert err  # stderr reason when search skipped
+
+
+def test_open_pr_number_rejects_ownerless_all_open_without_matching_ref() -> None:
+    """AC-3: owner 無し全件 fixture で listed[0] を盲信しない。
+
+    listed[0]=3215 は別ブランチ。一致する 3214 だけ採用する。
+    """
+    client = MagicMock()
+    listed = json.loads(PR_LIST_OWNERLESS_ALL_OPEN_JSON)
+    assert [p["number"] for p in listed] == [3215, 3214, 2720, 1164]
+    assert listed[0]["head"]["ref"] != _BRANCH_3169
+    client.api_request.return_value = listed
+    number = cp2._open_pr_number(client, "sumipan/nexus", _BRANCH_3169)
+    assert number == 3214
+
+
+def test_open_pr_number_returns_none_when_no_head_ref_matches() -> None:
+    client = MagicMock()
+    listed = json.loads(PR_LIST_OWNERLESS_ALL_OPEN_JSON)
+    # Drop the only matching PR so nothing matches the requested branch.
+    listed = [p for p in listed if p["number"] != 3214]
+    client.api_request.return_value = listed
+    assert cp2._open_pr_number(client, "sumipan/nexus", _BRANCH_3169) is None
+
+
+def test_open_pr_number_owner_filtered_cross_repo() -> None:
+    """AC-3: owner あり 1 件 fixture（cross-repo / target_repo あり）。"""
+    client = MagicMock()
+    listed = json.loads(PR_LIST_OWNER_FILTERED_JSON)
+    assert [p["number"] for p in listed] == [3214]
+    client.api_request.return_value = listed
+    number = cp2._open_pr_number(client, "sumipan/nexus", _BRANCH_3169)
+    assert number == 3214
+    path = client.api_request.call_args.args[0]
+    assert path.startswith("repos/sumipan/nexus/pulls?")
+    assert "sumipan%3A" in path or "sumipan:" in path
+
+
+def test_run_nexus_target_empty_repo_skips_scope_when_config_empty(capsys) -> None:
+    """AC-1 / AC-3: nexus 対象（target_repo 空）で config.repo も空なら PR 検索しない。"""
+    client = MagicMock()
+    client.issue_get.return_value = {"body": _ISSUE_BODY_WITH_ALLOW}
+    cfg = MagicMock()
+    cfg.repo = ""
+    cfg.paths.template_dir = Path("/tmp")
+    cfg.steps = {}
+
+    with (
+        patch.object(cp2, "_github_client", return_value=client),
+        patch.object(cp2, "_repo_root", return_value=Path("/nonexistent")),
+        patch.object(cp2, "get_config", return_value=cfg),
+        patch.object(cp2, "_tier_via_cli", return_value="light"),
+        patch.object(cp2, "resolve", return_value=MagicMock(engine="claude", model="m")),
+        patch.object(cp2, "_run_guarded_design", return_value=0) as guarded,
+        patch.object(cp2, "_handle_fail") as fail,
+    ):
+        result = cp2.run(_ctx(target_repo="", issue_repo="", branch=_BRANCH_3169))
+
+    assert result.exit_code == 0
+    client.api_request.assert_not_called()
+    client.pr_get.assert_not_called()
+    guarded.assert_called_once()
+    fail.assert_not_called()
+    assert capsys.readouterr().err  # skip reason on stderr
