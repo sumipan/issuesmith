@@ -432,3 +432,156 @@ def test_due_resume_refetches_immediately_once_with_future_fallback(
     assert result.returncode == 0
     execute_mocks["sleep"].assert_called_once_with(60.0)
     assert execute_mocks["quota_gate"].snapshot.call_count == 3
+
+
+def test_ac6_brake_only_paused_uses_fallback(execute_mocks, monkeypatch, tmp_path):
+    """AC-6: primary が brake のみ paused、fallback は両 gate available → fallback。"""
+    quota_path = tmp_path / "quota.json"
+    brake_path = tmp_path / "brake.json"
+    monkeypatch.setattr("issuesmith.engine.QUOTA_STATE_PATH", quota_path)
+    monkeypatch.setattr("issuesmith.engine.BRAKE_STATE_PATH", brake_path)
+
+    quota_gate = MagicMock()
+    brake_gate = MagicMock()
+    gates = {str(quota_path): quota_gate, str(brake_path): brake_gate}
+    monkeypatch.setattr(
+        "issuesmith.engine.QuotaGate",
+        lambda state_path: gates[str(state_path)],
+    )
+
+    quota_gate.snapshot.return_value = _snapshot(
+        {"claude": _available(), "codex": _available()}
+    )
+    brake_gate.snapshot.return_value = _snapshot(
+        {"claude": _paused(None), "codex": _available()}
+    )
+    execute_mocks["call_managed"].return_value = _success_result(engine="codex")
+    monkeypatch.setattr(
+        "issuesmith.engine.call_managed", execute_mocks["call_managed"]
+    )
+
+    result = _execute("design", "prompt")
+
+    assert result.returncode == 0
+    execute_mocks["sleep"].assert_not_called()
+    assert execute_mocks["call_managed"].call_args.kwargs["engine"] == "codex"
+    assert execute_mocks["call_managed"].call_args.kwargs["quota_gate"] is quota_gate
+    brake_gate.report.assert_not_called()
+
+
+def test_ac6_all_paused_across_gates_raises(execute_mocks, monkeypatch, tmp_path):
+    """AC-6: 全候補がいずれかの gate で paused → 既存 timeout 契約で失敗。"""
+    quota_path = tmp_path / "quota.json"
+    brake_path = tmp_path / "brake.json"
+    monkeypatch.setattr("issuesmith.engine.QUOTA_STATE_PATH", quota_path)
+    monkeypatch.setattr("issuesmith.engine.BRAKE_STATE_PATH", brake_path)
+    monkeypatch.setenv("ISSUESMITH_ENGINE_WAIT_POLL_SEC", "60")
+    monkeypatch.setenv("ISSUESMITH_ENGINE_WAIT_MAX_SEC", "120")
+    _install_fake_clock(monkeypatch, execute_mocks["sleep"])
+
+    quota_gate = MagicMock()
+    brake_gate = MagicMock()
+    gates = {str(quota_path): quota_gate, str(brake_path): brake_gate}
+    monkeypatch.setattr(
+        "issuesmith.engine.QuotaGate",
+        lambda state_path: gates[str(state_path)],
+    )
+
+    # claude paused on quota, codex paused on brake → both unavailable
+    quota_gate.snapshot.return_value = _snapshot(
+        {"claude": _paused(None), "codex": _available()}
+    )
+    brake_gate.snapshot.return_value = _snapshot(
+        {"claude": _available(), "codex": _paused(None)}
+    )
+
+    with pytest.raises(RuntimeError, match="All engines paused for role design"):
+        _execute("design", "prompt")
+
+    execute_mocks["call_managed"].assert_not_called()
+
+
+def test_ac7_rate_limit_report_writes_quota_gate_only(
+    execute_mocks, monkeypatch, tmp_path
+):
+    """AC-7: rate_limit_detected は quota gate のみ更新し brake は触らない。"""
+    quota_path = tmp_path / "quota.json"
+    brake_path = tmp_path / "brake.json"
+    monkeypatch.setattr("issuesmith.engine.QUOTA_STATE_PATH", quota_path)
+    monkeypatch.setattr("issuesmith.engine.BRAKE_STATE_PATH", brake_path)
+
+    quota_gate = MagicMock()
+    brake_gate = MagicMock()
+    gates = {str(quota_path): quota_gate, str(brake_path): brake_gate}
+    monkeypatch.setattr(
+        "issuesmith.engine.QuotaGate",
+        lambda state_path: gates[str(state_path)],
+    )
+
+    available = _snapshot({"claude": _available(), "codex": _available()})
+    quota_gate.snapshot.return_value = available
+    brake_gate.snapshot.return_value = available
+
+    rate_limited = ManagedResult(
+        body="rate limit exceeded, please try again later",
+        usage=None,
+        returncode=1,
+        failure_class=None,
+        engine_used="claude",
+        model_used="m",
+        attempts=1,
+        quota_reported=False,
+        additional_tags={},
+    )
+    execute_mocks["call_managed"].side_effect = [
+        rate_limited,
+        _success_result(engine="codex"),
+    ]
+    monkeypatch.setattr(
+        "issuesmith.engine.call_managed", execute_mocks["call_managed"]
+    )
+    monkeypatch.setattr("issuesmith.engine._is_rate_limited", lambda body: True)
+
+    result = _execute("design", "prompt")
+
+    assert result.returncode == 0
+    quota_gate.report.assert_called_once()
+    assert quota_gate.report.call_args.kwargs["reason"] == "rate_limit_detected"
+    brake_gate.report.assert_not_called()
+    assert (
+        execute_mocks["call_managed"].call_args_list[0].kwargs["quota_gate"]
+        is quota_gate
+    )
+    assert (
+        execute_mocks["call_managed"].call_args_list[1].kwargs["quota_gate"]
+        is quota_gate
+    )
+
+
+def test_ac7_call_managed_receives_quota_gate_not_brake(
+    execute_mocks, monkeypatch, tmp_path
+):
+    """AC-7: call_managed には常に global quota_gate を渡す。"""
+    quota_path = tmp_path / "quota.json"
+    brake_path = tmp_path / "brake.json"
+    monkeypatch.setattr("issuesmith.engine.QUOTA_STATE_PATH", quota_path)
+    monkeypatch.setattr("issuesmith.engine.BRAKE_STATE_PATH", brake_path)
+
+    quota_gate = MagicMock()
+    brake_gate = MagicMock()
+    gates = {str(quota_path): quota_gate, str(brake_path): brake_gate}
+    monkeypatch.setattr(
+        "issuesmith.engine.QuotaGate",
+        lambda state_path: gates[str(state_path)],
+    )
+    available = _snapshot({"claude": _available(), "codex": _available()})
+    quota_gate.snapshot.return_value = available
+    brake_gate.snapshot.return_value = available
+    monkeypatch.setattr(
+        "issuesmith.engine.call_managed", execute_mocks["call_managed"]
+    )
+
+    _execute("design", "prompt")
+
+    assert execute_mocks["call_managed"].call_args.kwargs["quota_gate"] is quota_gate
+    assert execute_mocks["call_managed"].call_args.kwargs["quota_gate"] is not brake_gate

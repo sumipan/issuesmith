@@ -89,6 +89,9 @@ class PathsConfig:
     workflow: Path
     template_dir: Path
     engine_state: Path
+    # budget-brake 用。未指定時は _build_paths が quota_state へフォールバックする。
+    # 手動構築のテスト互換のため default None（None は quota_state と同義）。
+    brake_state: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -291,7 +294,14 @@ def _build_paths(raw: Mapping[str, Any] | None, root: Path) -> PathsConfig:
         for key in _DEFAULT_REL_PATHS:
             if key in raw and raw[key] is not None:
                 src[key] = str(raw[key])
-    return PathsConfig(**{k: _abs(root, v) for k, v in src.items()})
+    resolved = {k: _abs(root, v) for k, v in src.items()}
+    # brake_state は固定既定を持たず、未指定時は同一設定の quota_state にフォールバック
+    # （既存利用者は単一 gate のまま動く）。
+    if raw and raw.get("brake_state") is not None:
+        resolved["brake_state"] = _abs(root, str(raw["brake_state"]))
+    else:
+        resolved["brake_state"] = resolved["quota_state"]
+    return PathsConfig(**resolved)
 
 
 def _build_role(raw: Mapping[str, Any]) -> RoleConfig:

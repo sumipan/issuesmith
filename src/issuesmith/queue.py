@@ -66,6 +66,7 @@ JOBS_DIR = _cfg.paths.exec_jsonl.parent
 DONE_DIR = _cfg.paths.done_dir
 EXEC_PATH = _cfg.paths.exec_jsonl
 QUOTA_STATE_PATH = _cfg.paths.quota_state
+BRAKE_STATE_PATH = _cfg.paths.brake_state or _cfg.paths.quota_state
 
 
 def _configured_phases():
@@ -472,26 +473,53 @@ def _required_engines_paused(
     quota_path: Path | None = None,
     engine_state_path: Path | None = None,
     role: str | None = None,
+    brake_path: Path | None = None,
 ) -> list[str]:
     """投入に必要なロールの engine のうち paused なものを返す。
+
+    global quota gate と budget gate の和集合で判定する。どちらか一方で
+    ``paused`` なら対象に含める。
 
     ``role`` 指定時はそのロールの engine のみ。未指定時は design / implementation
     両ロールの和集合（後方互換）。フェーズ別判定は ``dispatch_one`` が
     ``role=_phase_role_map()[phase]`` で呼ぶ（#3091）。
+
+    ``quota_path`` のみ明示し ``brake_path`` を省略した既存呼び出しでは、
+    同じパスを両 gate に使ってテスト互換を維持する。同一パス時は snapshot を
+    一度だけ読む。
     """
-    snapshot = QuotaGate(state_path=quota_path or QUOTA_STATE_PATH).snapshot()
-    if not snapshot.engines:
+    resolved_quota = quota_path or QUOTA_STATE_PATH
+    if brake_path is not None:
+        resolved_brake = brake_path
+    elif quota_path is not None:
+        resolved_brake = quota_path
+    else:
+        resolved_brake = BRAKE_STATE_PATH
+
+    if resolved_quota == resolved_brake:
+        snapshots = [QuotaGate(state_path=resolved_quota).snapshot()]
+    else:
+        snapshots = [
+            QuotaGate(state_path=resolved_quota).snapshot(),
+            QuotaGate(state_path=resolved_brake).snapshot(),
+        ]
+
+    if all(not snapshot.engines for snapshot in snapshots):
         return []
+
     role_map = _required_engines(engine_state_path)
     if role is not None:
         engine_name = role_map.get(role)
         required = {engine_name} if engine_name else set()
     else:
         required = set(role_map.values())
-    return sorted(
-        name for name, engine in snapshot.engines.items()
-        if name in required and engine.status == "paused"
-    )
+
+    paused: set[str] = set()
+    for snapshot in snapshots:
+        for name, engine in snapshot.engines.items():
+            if name in required and engine.status == "paused":
+                paused.add(name)
+    return sorted(paused)
 
 
 def _all_engines_paused(quota_path: Path | None = None) -> bool:

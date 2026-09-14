@@ -2218,6 +2218,81 @@ def test_required_engines_paused_role_filters_to_phase_engine(tmp_path):
     assert qmod._required_engines_paused(q, e, role="implementation") == []
 
 
+def test_required_engines_paused_brake_only(tmp_path):
+    """AC-3: budget gate だけで paused なら waiting 対象になる。"""
+    from issuesmith import queue as qmod
+
+    q = tmp_path / "quota.json"
+    b = tmp_path / "brake.json"
+    e = tmp_path / "engine.yml"
+    _write_quota(q, {"claude": "available", "cursor": "available"})
+    _write_quota(b, {"claude": "paused", "cursor": "available"})
+    _write_engine_state(e, "claude", "cursor")
+    assert qmod._required_engines_paused(q, e, role="design", brake_path=b) == ["claude"]
+    assert qmod._required_engines_paused(q, e, role="implementation", brake_path=b) == []
+
+
+def test_required_engines_paused_quota_only(tmp_path):
+    """AC-4: global quota gate だけで paused でも停止対象。"""
+    from issuesmith import queue as qmod
+
+    q = tmp_path / "quota.json"
+    b = tmp_path / "brake.json"
+    e = tmp_path / "engine.yml"
+    _write_quota(q, {"claude": "paused", "cursor": "available"})
+    _write_quota(b, {"claude": "available", "cursor": "available"})
+    _write_engine_state(e, "claude", "cursor")
+    assert qmod._required_engines_paused(q, e, role="design", brake_path=b) == ["claude"]
+
+
+def test_required_engines_paused_same_path_no_duplicate(tmp_path, monkeypatch):
+    """AC-5: 同一パス時は snapshot 1 回・engine 名の重複なし。"""
+    from issuesmith import queue as qmod
+    from ghdag.quota import QuotaGate
+
+    q = tmp_path / "quota.json"
+    e = tmp_path / "engine.yml"
+    _write_quota(q, {"claude": "paused", "cursor": "paused"})
+    _write_engine_state(e, "claude", "cursor")
+
+    snap_count = {"n": 0}
+    real_snapshot = QuotaGate.snapshot
+
+    def counting_snapshot(self, *args, **kwargs):
+        snap_count["n"] += 1
+        return real_snapshot(self, *args, **kwargs)
+
+    monkeypatch.setattr(QuotaGate, "snapshot", counting_snapshot)
+    assert qmod._required_engines_paused(q, e, brake_path=q) == ["claude", "cursor"]
+    assert snap_count["n"] == 1
+
+
+def test_required_engines_paused_union_dedupes(tmp_path):
+    """両方で同一 engine が paused でも 1 回だけ返す。"""
+    from issuesmith import queue as qmod
+
+    q = tmp_path / "quota.json"
+    b = tmp_path / "brake.json"
+    e = tmp_path / "engine.yml"
+    _write_quota(q, {"claude": "paused"})
+    _write_quota(b, {"claude": "paused"})
+    _write_engine_state(e, "claude", "cursor")
+    assert qmod._required_engines_paused(q, e, brake_path=b) == ["claude"]
+
+
+def test_required_engines_paused_both_available(tmp_path):
+    """両 gate で available なら空リスト。"""
+    from issuesmith import queue as qmod
+
+    q = tmp_path / "quota.json"
+    b = tmp_path / "brake.json"
+    e = tmp_path / "engine.yml"
+    _write_quota(q, {"claude": "available"})
+    _write_quota(b, {"claude": "available"})
+    _write_engine_state(e, "claude", "cursor")
+    assert qmod._required_engines_paused(q, e, role="design", brake_path=b) == []
+
+
 _FIXTURES = Path(__file__).resolve().parent / "fixtures"
 _QUOTA_CLAUDE_PAUSED = _FIXTURES / "quota_claude_paused_no_resume.json"
 _ENGINE_DESIGN_CLAUDE = _FIXTURES / "engine_state_design_claude_impl_cursor.yml"

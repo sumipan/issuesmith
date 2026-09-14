@@ -60,6 +60,8 @@ def test_builtin_defaults_match_legacy_constants(tmp_path, monkeypatch):
     assert isinstance(cfg.root, Path)
     for name, rel in _LEGACY_REL_PATHS.items():
         assert getattr(cfg.paths, name) == (cfg.root / rel).resolve()
+    # AC-1: brake_state 省略時は quota_state へフォールバック（単一 gate）
+    assert cfg.paths.brake_state == cfg.paths.quota_state
     assert ZoneInfo(cfg.timezone) == ZoneInfo("Asia/Tokyo")
 
     assert set(cfg.engines) == {"design", "implementation"}
@@ -154,3 +156,49 @@ def test_issuesmith_config_env_overrides_and_resolves_relative(tmp_path, monkeyp
     assert cfg.root == cfg_dir.resolve()
     assert cfg.paths.queue == (cfg_dir / "data/queue.jsonl").resolve()
     assert cfg.paths.queue.is_absolute()
+    # brake_state 未指定 → quota_state と同値
+    assert cfg.paths.brake_state == cfg.paths.quota_state
+    assert cfg.paths.quota_state == (cfg_dir / "data/quota.json").resolve()
+
+
+def test_brake_state_explicit_resolves_relative(tmp_path, monkeypatch):
+    """AC-2: paths.brake_state 明示時は設定ファイル基準の絶対 Path になる。"""
+    cfg_dir = tmp_path / "instance"
+    cfg_dir.mkdir()
+    cfg_path = cfg_dir / "issuesmith.yaml"
+    payload = {
+        "repo": "example/other",
+        "paths": {
+            "quota_state": "jobs/quota-gate.json",
+            "brake_state": "jobs/issuesmith-brake.json",
+        },
+    }
+    cfg_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+
+    cfg = load_config()
+
+    assert cfg.paths.quota_state == (cfg_dir / "jobs/quota-gate.json").resolve()
+    assert cfg.paths.brake_state == (cfg_dir / "jobs/issuesmith-brake.json").resolve()
+    assert cfg.paths.brake_state != cfg.paths.quota_state
+
+
+def test_brake_state_omitted_equals_quota_state(tmp_path, monkeypatch):
+    """AC-1: brake_state キー自体が無い設定でも brake_state == quota_state。"""
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump(
+            {
+                "repo": "example/other",
+                "paths": {"quota_state": "data/quota.json"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+
+    cfg = load_config()
+    assert cfg.paths.brake_state == cfg.paths.quota_state
+    assert cfg.paths.quota_state == (tmp_path / "data/quota.json").resolve()

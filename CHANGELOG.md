@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `paths.brake_state`: issuesmith budget gate（既定フォールバックは `quota_state`）を追加し、
+  queue / engine の pause 判定を global quota gate と budget gate の和集合にする。
+  `call_managed` と `rate_limit_detected` の書き込み先は `quota_state` に固定する（#3263）
 - `pr_diff_scope` gate (`issuesmith.pr_scope.check_pr_diff_scope`): CP2 冒頭で
   PR 変更ファイルを `allow_paths` / `forbidden_pr_paths`（`jobs/**`・`*.jsonl` 等）と照合し、
   違反時はコメント + `CP2_FAILED` で M1/M2 を止める。P0 は worktree 作成後に `jobs/` dirty

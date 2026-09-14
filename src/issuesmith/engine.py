@@ -48,6 +48,7 @@ LEGACY_STATE_FILE = REPO_ROOT / ".issuesmith-engine"
 METRICS_FILE = _cfg.paths.metrics
 METRICS_ENV_VAR = "METRICS_JSONL_PATH"
 QUOTA_STATE_PATH = _cfg.paths.quota_state
+BRAKE_STATE_PATH = _cfg.paths.brake_state or _cfg.paths.quota_state
 
 # call_managed に渡す設計書どおりの capabilities。試行ごとの実効値は
 # `_issuesmith_call` が engine 別に上書きする（codex/cursor は
@@ -571,6 +572,35 @@ def _record_task_metrics(
     )
 
 
+def _dual_gate_snapshots(
+    quota_gate: QuotaGate, brake_gate: QuotaGate
+) -> tuple[Any, Any]:
+    """Read quota and brake snapshots; reuse when both gates are the same object."""
+    quota_snap = quota_gate.snapshot()
+    if brake_gate is quota_gate:
+        return quota_snap, quota_snap
+    return quota_snap, brake_gate.snapshot()
+
+
+def _engine_paused(engine_name: str, *snapshots: Any) -> bool:
+    """True if any snapshot marks the engine as paused."""
+    for snap in snapshots:
+        state = snap.engines.get(engine_name)
+        if state is not None and state.status == "paused":
+            return True
+    return False
+
+
+def _paused_resume_ats(engine_name: str, *snapshots: Any) -> list[Any]:
+    """Collect resume_at values from gates where the engine is paused."""
+    values: list[Any] = []
+    for snap in snapshots:
+        state = snap.engines.get(engine_name)
+        if state is not None and state.status == "paused":
+            values.append(state.resume_at)
+    return values
+
+
 def _execute(
     role: str,
     content: str,
@@ -609,13 +639,18 @@ def _execute(
         for alt in sorted(ROLE_ENGINES[role] - {selection.engine})
     ]
 
+    # global quota: read + write (call_managed / rate_limit_detected)
+    # budget brake: read-only pause 判定
     quota_gate = QuotaGate(state_path=QUOTA_STATE_PATH)
-    snapshot = quota_gate.snapshot()
-    initial_state = snapshot.engines.get(selection.engine)
-    if initial_state and initial_state.status == "paused" and fallback_candidates:
+    if BRAKE_STATE_PATH == QUOTA_STATE_PATH:
+        brake_gate = quota_gate
+    else:
+        brake_gate = QuotaGate(state_path=BRAKE_STATE_PATH)
+
+    quota_snap, brake_snap = _dual_gate_snapshots(quota_gate, brake_gate)
+    if _engine_paused(selection.engine, quota_snap, brake_snap) and fallback_candidates:
         for alt_engine, alt_model in fallback_candidates:
-            alt_state = snapshot.engines.get(alt_engine)
-            if not alt_state or alt_state.status != "paused":
+            if not _engine_paused(alt_engine, quota_snap, brake_snap):
                 print(
                     f"[issuesmith-engine] {selection.engine} is paused, "
                     f"switching to {alt_engine}",
@@ -646,8 +681,7 @@ def _execute(
                 paused_names = [
                     eng
                     for eng in all_engines
-                    if (st := snapshot.engines.get(eng)) is not None
-                    and st.status == "paused"
+                    if _engine_paused(eng, quota_snap, brake_snap)
                 ]
                 if last_log_mono is None or (
                     now_mono - last_log_mono
@@ -664,20 +698,18 @@ def _execute(
                 positive_deltas: list[float] = []
                 any_due_resume = False
                 for eng in all_engines:
-                    eng_state = snapshot.engines.get(eng)
-                    if (
-                        not eng_state
-                        or eng_state.status != "paused"
-                        or eng_state.resume_at is None
-                    ):
+                    if not _engine_paused(eng, quota_snap, brake_snap):
                         continue
-                    delta = (
-                        eng_state.resume_at - datetime.now(timezone.utc)
-                    ).total_seconds()
-                    if delta > 0:
-                        positive_deltas.append(delta)
-                    else:
-                        any_due_resume = True
+                    for resume_at in _paused_resume_ats(eng, quota_snap, brake_snap):
+                        if resume_at is None:
+                            continue
+                        delta = (
+                            resume_at - datetime.now(timezone.utc)
+                        ).total_seconds()
+                        if delta > 0:
+                            positive_deltas.append(delta)
+                        else:
+                            any_due_resume = True
 
                 if any_due_resume and not immediate_refetch_done:
                     sleep_sec = 0.0
@@ -692,14 +724,12 @@ def _execute(
                 if sleep_sec > 0:
                     time.sleep(sleep_sec)
 
-                snapshot = quota_gate.snapshot()
-                primary = snapshot.engines.get(selection.engine)
-                if not primary or primary.status != "paused":
+                quota_snap, brake_snap = _dual_gate_snapshots(quota_gate, brake_gate)
+                if not _engine_paused(selection.engine, quota_snap, brake_snap):
                     break
                 switched = False
                 for alt_engine, alt_model in fallback_candidates:
-                    alt_state = snapshot.engines.get(alt_engine)
-                    if not alt_state or alt_state.status != "paused":
+                    if not _engine_paused(alt_engine, quota_snap, brake_snap):
                         print(
                             f"[issuesmith-engine] {selection.engine} is paused, "
                             f"switching to {alt_engine}",
@@ -760,10 +790,11 @@ def _execute(
                 reason="rate_limit_detected",
             )
             alt = None
-            rate_snapshot = quota_gate.snapshot()
+            rate_quota_snap, rate_brake_snap = _dual_gate_snapshots(
+                quota_gate, brake_gate
+            )
             for alt_engine, alt_model in fallback_candidates:
-                alt_state = rate_snapshot.engines.get(alt_engine)
-                if not alt_state or alt_state.status != "paused":
+                if not _engine_paused(alt_engine, rate_quota_snap, rate_brake_snap):
                     alt = (alt_engine, alt_model)
                     break
             if alt is not None:
