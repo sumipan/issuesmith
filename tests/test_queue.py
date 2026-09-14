@@ -2247,8 +2247,9 @@ def test_required_engines_paused_quota_only(tmp_path):
 
 def test_required_engines_paused_same_path_no_duplicate(tmp_path, monkeypatch):
     """AC-5: 同一パス時は snapshot 1 回・engine 名の重複なし。"""
-    from issuesmith import queue as qmod
     from ghdag.quota import QuotaGate
+
+    from issuesmith import queue as qmod
 
     q = tmp_path / "quota.json"
     e = tmp_path / "engine.yml"
