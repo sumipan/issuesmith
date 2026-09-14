@@ -742,6 +742,14 @@ def _execute(
                 if switched:
                     break
 
+    # call_managed は global quota gate しか参照しないため、budget gate で paused の
+    # engine を内部 fallback で起動しないよう候補を事前に絞る。
+    fallback_candidates = [
+        (alt_engine, alt_model)
+        for alt_engine, alt_model in fallback_candidates
+        if not _engine_paused(alt_engine, quota_snap, brake_snap)
+    ]
+
     remaining_timeout = total_deadline - time.monotonic()
     if remaining_timeout < 1.0:
         raise RuntimeError(f"All engines paused for role {role}")

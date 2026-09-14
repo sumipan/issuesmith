@@ -585,3 +585,35 @@ def test_ac7_call_managed_receives_quota_gate_not_brake(
 
     assert execute_mocks["call_managed"].call_args.kwargs["quota_gate"] is quota_gate
     assert execute_mocks["call_managed"].call_args.kwargs["quota_gate"] is not brake_gate
+
+
+def test_brake_paused_engine_excluded_from_managed_fallbacks(
+    execute_mocks, monkeypatch, tmp_path
+):
+    """Budget gate で paused の engine は call_managed の fallback に渡さない。"""
+    quota_path = tmp_path / "quota.json"
+    brake_path = tmp_path / "brake.json"
+    monkeypatch.setattr("issuesmith.engine.QUOTA_STATE_PATH", quota_path)
+    monkeypatch.setattr("issuesmith.engine.BRAKE_STATE_PATH", brake_path)
+
+    quota_gate = MagicMock()
+    brake_gate = MagicMock()
+    gates = {str(quota_path): quota_gate, str(brake_path): brake_gate}
+    monkeypatch.setattr(
+        "issuesmith.engine.QuotaGate",
+        lambda state_path: gates[str(state_path)],
+    )
+    quota_gate.snapshot.return_value = _snapshot(
+        {"claude": _available(), "codex": _available()}
+    )
+    brake_gate.snapshot.return_value = _snapshot(
+        {"claude": _available(), "codex": _paused(None)}
+    )
+    monkeypatch.setattr(
+        "issuesmith.engine.call_managed", execute_mocks["call_managed"]
+    )
+
+    _execute("design", "prompt")
+
+    assert execute_mocks["call_managed"].call_args.kwargs["engine"] == "claude"
+    assert execute_mocks["call_managed"].call_args.kwargs["fallback_candidates"] == []
