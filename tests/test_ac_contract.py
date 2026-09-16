@@ -84,3 +84,33 @@ def test_contract_failures_returns_human_readable_fail_lines(tmp_path):
 
 def test_contract_failures_empty_without_contract(tmp_path):
     assert contract_failures("## 概要\n本文\n", repo_root=tmp_path) == []
+
+
+def test_run_checks_references_plain_string_checks_file_existence(tmp_path):
+    """plain string 形式（"docs/FOO.md"）はファイル存在のみを検査し TypeError にしない（#3290）。"""
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "MLTGNT.md").write_text("# not yaml\n", encoding="utf-8")
+    contract = {"references_must_resolve": ["docs/MLTGNT.md", "docs/MISSING.md"]}
+
+    records = run_checks(contract, tmp_path)
+
+    by_path = {r["path"]: r["result"] for r in records if r["check"] == "references_must_resolve"}
+    assert by_path == {"docs/MLTGNT.md": "PASS", "docs/MISSING.md": "FAIL"}
+
+
+def test_run_checks_references_dict_without_key_path_checks_file_existence(tmp_path):
+    (tmp_path / "config.yaml").write_text("a: 1\n", encoding="utf-8")
+    contract = {"references_must_resolve": [{"file": "config.yaml"}]}
+
+    records = run_checks(contract, tmp_path)
+
+    assert [(r["path"], r["result"]) for r in records] == [("config.yaml", "PASS")]
+
+
+def test_run_checks_references_invalid_entry_fails_without_raising(tmp_path):
+    contract = {"references_must_resolve": [{"key_path": "a.b"}, 42]}
+
+    records = run_checks(contract, tmp_path)
+
+    assert [r["result"] for r in records] == ["FAIL", "FAIL"]
+    assert all("invalid reference entry" in r["detail"] for r in records)

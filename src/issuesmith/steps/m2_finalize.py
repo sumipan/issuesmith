@@ -108,10 +108,14 @@ def _evaluate_dual_root(
     if contract is None:
         return base
 
-    records_by_root = {
-        "nexus": run_checks(contract, nexus_root),
-        "target": run_checks(contract, target_root),
-    }
+    try:
+        records_by_root = {
+            "nexus": run_checks(contract, nexus_root),
+            "target": run_checks(contract, target_root),
+        }
+    except Exception as exc:  # 契約フォーマット変異等で M2 全体を落とさない（fail-open、#3290）
+        print(f"[m2-gate] dual-root contract check skipped (fail-open): {exc}", file=sys.stderr)
+        return base
     failures = synthesize_contract_failures(records_by_root)
     result = dict(base)
     result["contract_failures"] = failures
