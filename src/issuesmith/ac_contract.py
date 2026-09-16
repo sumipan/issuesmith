@@ -187,8 +187,22 @@ def run_checks(contract: dict, repo_root: Path, *, base_ref: str = "HEAD") -> li
                 )
 
     for ref in contract.get("references_must_resolve", []):
+        # plain string 形式（"docs/FOO.md"）は「ファイルが存在すること」のみを検査する（#3290）
+        if isinstance(ref, str):
+            ref = {"file": ref, "key_path": None}
+        if not isinstance(ref, dict) or not ref.get("file"):
+            records.append(
+                {
+                    "check": "references_must_resolve",
+                    "path": str(ref),
+                    "result": "FAIL",
+                    "detail": f"invalid reference entry (expected str or {{file, key_path}}): {ref!r}",
+                    "git_log": "",
+                }
+            )
+            continue
         source = ref["file"]
-        key_path = ref["key_path"]
+        key_path = ref.get("key_path")
         source_path = repo_root / source
         if not source_path.exists():
             records.append(
@@ -198,6 +212,18 @@ def run_checks(contract: dict, repo_root: Path, *, base_ref: str = "HEAD") -> li
                     "result": "FAIL",
                     "detail": f"source file not found: {source}",
                     "git_log": _git_log(repo_root, source),
+                }
+            )
+            continue
+
+        if not key_path:
+            records.append(
+                {
+                    "check": "references_must_resolve",
+                    "path": source,
+                    "result": "PASS",
+                    "detail": "",
+                    "git_log": "",
                 }
             )
             continue

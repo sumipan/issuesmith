@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Fixed
+
+- `ac_contract.run_checks`: `references_must_resolve` の plain string 形式（`- docs/FOO.md`）を
+  「ファイルが存在すること」の検査として受理し、`key_path` 省略の dict も同様に扱う。
+  従来は `TypeError: string indices must be integers` で M2 が落ちていた（nexus #3290）
+- `steps.m2_finalize._evaluate_dual_root`: 契約実行中の例外を fail-open（stderr ログ + 基本判定を返す）にし、
+  契約フォーマット変異で impl ステップ全体がクラッシュしないようにする（nexus #3290）
+
 ### Added
 
 - `paths.brake_state`: issuesmith budget gate（既定フォールバックは `quota_state`）を追加し、
