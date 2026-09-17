@@ -339,6 +339,173 @@ def test_jobs_dirty_after_prepare_fails(tmp_path: Path, capsys: pytest.CaptureFi
     assert "jobs/ 配下が dirty" in err
 
 
+def test_scope_gate_exceeded_returns_scope_too_large(tmp_path: Path) -> None:
+    """AC-2: oversized allow_paths → SCOPE_TOO_LARGE + comment + label transition."""
+    repo = tmp_path / "nexus"
+    _git_init_with_main(repo)
+    wt = tmp_path / "nexus" / ".claude" / "worktrees" / "issue-3349-big"
+    # Create 81 tracked files under tests/ after prepare by building them into base
+    tests = repo / "tests"
+    tests.mkdir()
+    for i in range(81):
+        (tests / f"t{i}.py").write_text(f"# {i}\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-m", "many"],
+        check=True,
+        capture_output=True,
+    )
+
+    client = MagicMock()
+    # Japanese text intentionally kept for CJK processing test
+    client.issue_get.return_value = {
+        "labels": [{"name": "issuesmith:develop-ready"}],
+        "body": (
+            "```yaml\n"
+            "target_repo: sumipan/nexus\n"
+            "base_branch: main\n"
+            "allow_paths:\n"
+            "  - tests/**\n"
+            "```\n\n## 設計\n"
+        ),
+    }
+    with (
+        patch.object(p0, "_github_client", return_value=client),
+        patch.object(p0, "_repo_root", return_value=repo),
+        patch.object(p0, "_transition") as transition,
+        patch.object(p0, "get_config") as cfg_mock,
+    ):
+        from issuesmith.config import ScopeGateConfig
+
+        cfg = MagicMock()
+        cfg.scope_gate = ScopeGateConfig()
+        cfg_mock.return_value = cfg
+        # get_config is imported into p0 module as get_config
+        result = p0.run(
+            _ctx(
+                worktree_path=str(wt),
+                branch="feat/issue-3349-big",
+                is_cross_repo="false",
+                allow_paths="- tests/**",
+            )
+        )
+    assert result.exit_code == 1
+    assert result.pipeline_status == "SCOPE_TOO_LARGE"
+    transition.assert_called_once_with(3168, "issuesmith:scope-too-large")
+    client.issue_comment.assert_called_once()
+    comment = client.issue_comment.call_args.args[1]
+    assert "81" in comment
+
+
+def test_scope_gate_disabled_skips_and_succeeds(tmp_path: Path) -> None:
+    """AC-5: scope_gate.enabled false → WORKTREE_READY even when oversized."""
+    repo = tmp_path / "nexus"
+    _git_init_with_main(repo)
+    wt = tmp_path / "nexus" / ".claude" / "worktrees" / "issue-3349-skip"
+    tests = repo / "tests"
+    tests.mkdir()
+    for i in range(81):
+        (tests / f"t{i}.py").write_text(f"# {i}\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-m", "many"],
+        check=True,
+        capture_output=True,
+    )
+
+    client = MagicMock()
+    # Japanese text intentionally kept for CJK processing test
+    client.issue_get.return_value = {
+        "labels": [{"name": "issuesmith:develop-ready"}],
+        "body": (
+            "```yaml\n"
+            "target_repo: sumipan/nexus\n"
+            "base_branch: main\n"
+            "allow_paths:\n"
+            "  - tests/**\n"
+            "```\n\n## 設計\n"
+        ),
+    }
+    with (
+        patch.object(p0, "_github_client", return_value=client),
+        patch.object(p0, "_repo_root", return_value=repo),
+        patch.object(p0, "_transition") as transition,
+        patch("issuesmith.steps.p0_worktree.get_config") as cfg_mock,
+    ):
+        from issuesmith.config import ScopeGateConfig
+
+        cfg = MagicMock()
+        cfg.scope_gate = ScopeGateConfig(enabled=False)
+        cfg_mock.return_value = cfg
+        result = p0.run(
+            _ctx(
+                worktree_path=str(wt),
+                branch="feat/issue-3349-skip",
+                is_cross_repo="false",
+                allow_paths="- tests/**",
+            )
+        )
+    assert result.exit_code == 0
+    assert result.pipeline_status == "WORKTREE_READY"
+    transition.assert_not_called()
+    client.issue_comment.assert_not_called()
+
+
+def test_scope_gate_yaml_override_allows_larger_scope(tmp_path: Path) -> None:
+    """AC-3: Issue YAML scope_gate.max_files override raises the threshold."""
+    repo = tmp_path / "nexus"
+    _git_init_with_main(repo)
+    wt = tmp_path / "nexus" / ".claude" / "worktrees" / "issue-3349-ov"
+    tests = repo / "tests"
+    tests.mkdir()
+    for i in range(100):
+        (tests / f"t{i}.py").write_text(f"# {i}\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-m", "many"],
+        check=True,
+        capture_output=True,
+    )
+
+    client = MagicMock()
+    # Japanese text intentionally kept for CJK processing test
+    client.issue_get.return_value = {
+        "labels": [{"name": "issuesmith:develop-ready"}],
+        "body": (
+            "```yaml\n"
+            "target_repo: sumipan/nexus\n"
+            "base_branch: main\n"
+            "allow_paths:\n"
+            "  - tests/**\n"
+            "scope_gate:\n"
+            "  max_files: 120\n"
+            "```\n\n## 設計\n"
+        ),
+    }
+    with (
+        patch.object(p0, "_github_client", return_value=client),
+        patch.object(p0, "_repo_root", return_value=repo),
+        patch.object(p0, "_transition") as transition,
+        patch("issuesmith.steps.p0_worktree.get_config") as cfg_mock,
+    ):
+        from issuesmith.config import ScopeGateConfig
+
+        cfg = MagicMock()
+        cfg.scope_gate = ScopeGateConfig()
+        cfg_mock.return_value = cfg
+        result = p0.run(
+            _ctx(
+                worktree_path=str(wt),
+                branch="feat/issue-3349-ov",
+                is_cross_repo="false",
+                allow_paths="- tests/**",
+            )
+        )
+    assert result.exit_code == 0
+    assert result.pipeline_status == "WORKTREE_READY"
+    transition.assert_not_called()
+
+
 def test_cross_repo_clone_failure_uses_real_fail_string(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

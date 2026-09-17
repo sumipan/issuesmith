@@ -16,6 +16,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- P0 **scope_gate** (`steps.scope_gate` / `config.ScopeGateConfig`): worktree 作成後に
+  `allow_paths` 一致の追跡ファイル数・行数を計測し、既定閾値（80 files / 20000 lines）超過時は
+  Issue コメント + `issuesmith:scope-too-large` + `SCOPE_TOO_LARGE` で P1 を止める。
+  Issue YAML の `scope_gate.max_files` で個別上書き可（`hard_max_files` は CP1 が検証）（#3349）
 - `paths.brake_state`: issuesmith budget gate（既定フォールバックは `quota_state`）を追加し、
   queue / engine の pause 判定を global quota gate と budget gate の和集合にする。
   `call_managed` と `rate_limit_detected` の書き込み先は `quota_state` に固定する（#3263）

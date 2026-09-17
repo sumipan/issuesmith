@@ -159,6 +159,45 @@ def _yaml_contract_fix(code: str) -> tuple[bool, str]:
     return _YAML_CONTRACT_FIXES.get(code, _YAML_CONTRACT_DEFAULT_FIX)
 
 
+def _check_scope_gate_hard_max(metadata: dict) -> list[Violation]:
+    """Reject Issue YAML scope_gate.max_files above config hard_max_files (#3349)."""
+    raw = metadata.get("scope_gate")
+    if not isinstance(raw, dict) or "max_files" not in raw:
+        return []
+    try:
+        max_files = int(raw["max_files"])
+    except (TypeError, ValueError):
+        return [
+            Violation(
+                rule_id="cp1.yaml_contract.scope_gate_over_hard_max",
+                severity="fail",
+                message="scope_gate.max_files が整数ではありません",
+                location="scope_gate.max_files",
+                auto_fixable=True,
+                fix_hint=(
+                    f"scope_gate.max_files を "
+                    f"{get_config().scope_gate.hard_max_files} 以下の整数にしてください"
+                ),
+            )
+        ]
+    hard = get_config().scope_gate.hard_max_files
+    if max_files <= hard:
+        return []
+    return [
+        Violation(
+            rule_id="cp1.yaml_contract.scope_gate_over_hard_max",
+            severity="fail",
+            message=(
+                f"scope_gate.max_files ({max_files}) が "
+                f"hard_max_files ({hard}) を超えています"
+            ),
+            location="scope_gate.max_files",
+            auto_fixable=True,
+            fix_hint=f"scope_gate.max_files を {hard} 以下にしてください",
+        )
+    ]
+
+
 def _extract_sub_ac_section(block: str) -> str | None:
     ac = get_config().sections["acceptance_criteria"]
     match = re.search(
@@ -258,6 +297,7 @@ class Cp1Rules:
                     auto_fixable=auto_fixable,
                     fix_hint=fix_hint,
                 ))
+            violations.extend(_check_scope_gate_hard_max(metadata))
 
         if "scope:milestone" in labels:
             violations.append(Violation(
