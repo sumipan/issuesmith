@@ -15,6 +15,8 @@ from ghdag.forge import ForgePort, get_forge
 from ghdag.workflow.state_machine import _load_workflow_config, transition
 
 from issuesmith.config import StepConfig, get_config
+from issuesmith.context_hook import parse_issue_metadata
+from issuesmith.steps import scope_gate as scope_gate_mod
 from issuesmith.steps.base import StepContext, StepResult
 
 _MILESTONE_COMMENT = """## P0 中断: scope:milestone イシュー
@@ -316,6 +318,60 @@ def _handle_milestone(client: ForgePort, issue_number: int) -> StepResult:
     return StepResult(exit_code=1, pipeline_status="WORKTREE_FAILED")
 
 
+def _allow_paths_for_scope(ctx: StepContext, body: str) -> list[str]:
+    """Prefer Issue YAML allow_paths; fall back to StepContext.allow_paths."""
+    try:
+        meta = parse_issue_metadata(body)
+        raw = meta.get("allow_paths", [])
+        if isinstance(raw, str):
+            raw = [raw]
+        if isinstance(raw, list) and raw:
+            return [str(p).strip().strip('"') for p in raw if p is not None and str(p).strip()]
+    except (ValueError, Exception):  # noqa: BLE001 — fall back to ctx
+        pass
+    return scope_gate_mod.parse_allow_paths_from_ctx(ctx.allow_paths)
+
+
+def _handle_scope_gate(
+    client: ForgePort,
+    issue_number: int,
+    worktree_dir: Path,
+    body: str,
+    ctx: StepContext,
+) -> StepResult | None:
+    """Measure allow_paths size; return SCOPE_TOO_LARGE StepResult or None to continue."""
+    cfg = get_config().scope_gate
+    if not cfg.enabled:
+        return None
+
+    try:
+        metadata = parse_issue_metadata(body)
+    except (ValueError, Exception):  # noqa: BLE001
+        metadata = {}
+
+    override = scope_gate_mod.override_from_metadata(metadata, cfg)
+    allow_paths = _allow_paths_for_scope(ctx, body)
+    measure = scope_gate_mod.measure_scope(worktree_dir, allow_paths)
+    verdict = scope_gate_mod.evaluate(measure, cfg, override=override)
+    if not verdict.exceeded:
+        return None
+
+    comment = scope_gate_mod.format_comment(verdict)
+    try:
+        client.issue_comment(issue_number, comment)
+    except Exception as exc:  # noqa: BLE001
+        print(f"P0 scope_gate comment failed: {exc}", file=sys.stderr)
+    try:
+        _transition(issue_number, "issuesmith:scope-too-large")
+    except Exception as exc:  # noqa: BLE001
+        print(f"P0 scope_gate transition failed: {exc}", file=sys.stderr)
+    print(
+        f"WORKTREE_ERROR: scope too large ({verdict.reason})",
+        file=sys.stderr,
+    )
+    return StepResult(exit_code=1, pipeline_status="SCOPE_TOO_LARGE")
+
+
 def _prepare_cross_repo(ctx: StepContext, repo_root: Path) -> None:
     target_rel = ctx.target_worktree_path.strip()
     _validate_target_worktree_path(target_rel)
@@ -462,6 +518,10 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
             worktree_dir = Path(ctx.worktree_path.strip())
 
         _assert_jobs_clean(worktree_dir)
+
+        gate = _handle_scope_gate(client, issue_number, worktree_dir, body, ctx)
+        if gate is not None:
+            return gate
 
         print(f"WORKTREE_PATH: {ctx.worktree_path}")
         print(f"WORKTREE_BRANCH: {ctx.branch}")

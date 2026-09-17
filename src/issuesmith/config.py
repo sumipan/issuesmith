@@ -190,6 +190,16 @@ _DEFAULT_FORBIDDEN_PR_PATHS: tuple[str, ...] = (
 
 
 @dataclass(frozen=True)
+class ScopeGateConfig:
+    """P0 allow_paths size gate (#3349)."""
+
+    enabled: bool = True
+    max_files: int = 80
+    max_lines: int = 20_000
+    hard_max_files: int = 200
+
+
+@dataclass(frozen=True)
 class IssuesmithConfig:
     repo: str
     label_namespace: str
@@ -206,6 +216,7 @@ class IssuesmithConfig:
     sub_design_subsections: tuple[str, ...] = _DEFAULT_SUB_DESIGN_SUBSECTIONS
     steps: Mapping[str, StepConfig] = field(default_factory=lambda: dict(_DEFAULT_STEPS))
     forbidden_pr_paths: tuple[str, ...] = _DEFAULT_FORBIDDEN_PR_PATHS
+    scope_gate: ScopeGateConfig = field(default_factory=ScopeGateConfig)
 
 
 _cached: IssuesmithConfig | None = None
@@ -447,6 +458,18 @@ def _build_forbidden_pr_paths(raw: Any) -> tuple[str, ...]:
     return tuple(str(x) for x in raw)
 
 
+def _build_scope_gate(raw: Mapping[str, Any] | None) -> ScopeGateConfig:
+    defaults = ScopeGateConfig()
+    if not raw:
+        return defaults
+    return ScopeGateConfig(
+        enabled=bool(raw.get("enabled", defaults.enabled)),
+        max_files=int(raw.get("max_files", defaults.max_files)),
+        max_lines=int(raw.get("max_lines", defaults.max_lines)),
+        hard_max_files=int(raw.get("hard_max_files", defaults.hard_max_files)),
+    )
+
+
 def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     repo_raw = data.get("repo")
     if not repo_raw or not str(repo_raw).strip():
@@ -468,6 +491,9 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     triage_raw = data.get("triage") if isinstance(data.get("triage"), dict) else None
     sections_raw = data.get("sections") if isinstance(data.get("sections"), dict) else None
     steps_raw = data.get("steps") if isinstance(data.get("steps"), dict) else None
+    scope_gate_raw = (
+        data.get("scope_gate") if isinstance(data.get("scope_gate"), dict) else None
+    )
     return IssuesmithConfig(
         repo=repo,
         label_namespace=label_namespace,
@@ -486,4 +512,5 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         ),
         steps=_build_steps(steps_raw),
         forbidden_pr_paths=_build_forbidden_pr_paths(data.get("forbidden_pr_paths")),
+        scope_gate=_build_scope_gate(scope_gate_raw),
     )

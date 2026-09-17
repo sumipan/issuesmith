@@ -149,7 +149,16 @@ Orchestration (polling, DAG, label transitions) remains in **ghdag** `WorkflowDi
 | `ISSUESMITH_ENGINE_WAIT_POLL_SEC` | env | While all engines are paused, re-check quota every N seconds (default `60`, clamped to 1–60). Prefer this over `ISSUESMITH_ENGINE_WAIT_INTERVAL_SEC` |
 | `ISSUESMITH_ENGINE_WAIT_INTERVAL_SEC` | env | Legacy alias for the pause re-check interval when `ISSUESMITH_ENGINE_WAIT_POLL_SEC` is unset (same 1–60 clamp) |
 | `ISSUESMITH_ENGINE_WAIT_MAX_SEC` | env | Max seconds to wait for an engine to leave pause (default `21600`). Wait also stops early to leave ≥300s for the LLM within `ISSUESMITH_TIMEOUT_SEC` |
-| `issuesmith.yaml` | file | Repo / paths / engines / supported_repos (see Quick Start) |
+| `issuesmith.yaml` | file | Repo / paths / engines / supported_repos / scope_gate (see Quick Start) |
+
+Optional `scope_gate` keys in `issuesmith.yaml` (P0 allow_paths size check, #3349):
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `true` | When `false`, skip measurement and always proceed to P1 |
+| `max_files` | `80` | Max tracked files matching `allow_paths` |
+| `max_lines` | `20000` | Max text lines (excludes `*.jsonl` and binaries) |
+| `hard_max_files` | `200` | Ceiling for Issue YAML `scope_gate.max_files` overrides (CP1 enforces) |
 
 Optional `milestone_chain` keys in `issuesmith.yaml`:
 

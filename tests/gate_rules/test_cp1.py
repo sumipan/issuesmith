@@ -190,6 +190,49 @@ def test_missing_yaml_block_is_fail_with_fix_hint():
     assert "allow_paths" in (v.fix_hint or "")
 
 
+def test_scope_gate_over_hard_max_returns_violation():
+    """AC-3: scope_gate.max_files above hard_max_files fails CP1 yaml contract."""
+    # Japanese text intentionally kept for CJK processing test
+    body = (
+        "```yaml\n"
+        "target_repo: sumipan/nexus\n"
+        "base_branch: main\n"
+        "allow_paths:\n"
+        "  - tests/**\n"
+        "scope_gate:\n"
+        "  max_files: 250\n"
+        "```\n\n## 概要\n通常の内容\n"
+    )
+    violations = Cp1Rules().check(body, [])
+    assert any(
+        v.rule_id == "cp1.yaml_contract.scope_gate_over_hard_max" for v in violations
+    )
+    v = next(
+        v for v in violations if v.rule_id == "cp1.yaml_contract.scope_gate_over_hard_max"
+    )
+    assert v.severity == "fail"
+    assert v.auto_fixable is True
+    assert "200" in (v.fix_hint or "") or "hard_max" in (v.fix_hint or "").lower()
+
+
+def test_scope_gate_within_hard_max_is_ok():
+    # Japanese text intentionally kept for CJK processing test
+    body = (
+        "```yaml\n"
+        "target_repo: sumipan/nexus\n"
+        "base_branch: main\n"
+        "allow_paths:\n"
+        "  - tests/**\n"
+        "scope_gate:\n"
+        "  max_files: 150\n"
+        "```\n\n## 概要\n通常の内容\n"
+    )
+    violations = Cp1Rules().check(body, [])
+    assert not any(
+        v.rule_id == "cp1.yaml_contract.scope_gate_over_hard_max" for v in violations
+    )
+
+
 def test_broken_yaml_block_is_missing_block():
     # Japanese text intentionally kept for CJK processing test
     body = "```yaml\n: : broken [\n```\n\n## 概要\n本文\n"
