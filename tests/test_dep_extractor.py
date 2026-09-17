@@ -1,4 +1,4 @@
-"""test_dep_extractor.py — 依存抽出・検証の回帰テスト"""
+"""test_dep_extractor.py — regression tests for dependency extract/validate"""
 
 from __future__ import annotations
 
@@ -16,47 +16,55 @@ from issuesmith.dep_extractor import (
 
 
 def test_no_dependency_section_returns_empty():
-    body = "## 背景・目的\n\n説明のみ\n"
+    # Japanese text intentionally kept for CJK processing test
+    body = "## 背景・目的\n\ndescription only\n"
     assert extract_dependencies(body) == []
 
 
 def test_dependency_prefix_line_without_h2():
+    # Japanese text intentionally kept for CJK processing test
     body = "依存: #200, #201\n"
     assert extract_dependencies(body) == [200, 201]
 
 
 def test_parent_issue_line_excluded():
+    # Japanese text intentionally kept for CJK processing test
     body = "親イシュー: #300\n"
     assert extract_dependencies(body) == []
 
 
 def test_child_issue_line_excluded():
+    # Japanese text intentionally kept for CJK processing test
     body = "子イシュー: #400\n"
     assert extract_dependencies(body) == []
 
 
 def test_table_extracts_prose_excluded():
+    # Japanese text intentionally kept for CJK processing test
     body = (
         "## 依存（先行）\n\n"
         "| # | Issue |\n"
         "| --- | --- |\n"
         "| 1 | #100 |\n\n"
-        "前回は #200 で失敗した\n"
+        "Previously failed on #200\n"
     )
     assert extract_dependencies(body) == [100]
 
 
 def test_section_without_table_returns_empty():
-    body = "## 依存（先行）\n\n#300 に言及\n"
+    # Japanese text intentionally kept for CJK processing test
+    body = "## 依存（先行）\n\nmentions #300\n"
     assert extract_dependencies(body) == []
 
 
 def test_section_list_format_no_longer_extracts():
+    # Japanese text intentionally kept for CJK processing test
     body = "## 依存（先行）\n\n- #400\n"
     assert extract_dependencies(body) == []
 
 
 def test_dep_prefix_line_unaffected():
+    # Japanese text intentionally kept for CJK processing test
     body = "依存: #500, #501\n"
     assert extract_dependencies(body) == [500, 501]
 
@@ -102,8 +110,8 @@ def test_open_dependency_blocks():
 
 
 def test_rescue_path_merged_pr_passes():
-    # issuesmith 管理下（merge-done 以外の issuesmith: ラベルあり）でないと
-    # F2 の non-issuesmith exempt に吸われるため、rescue 経路を検証できない
+    # Without issuesmith management (issuesmith: label other than merge-done),
+    # F2's non-issuesmith exempt absorbs the case and the rescue path cannot be tested
     client = MagicMock()
     client.issue_get = _mock_issue_get(
         {
@@ -141,7 +149,8 @@ def test_exempt_analysis_issue_passes():
         {
             2302: {
                 "state": "CLOSED",
-                "title": "【障害分析】issuesmith #2297 brushup 停止",
+                # Japanese text intentionally kept for CJK processing test
+                "title": "【障害分析】issuesmith #2297 brushup stopped",
                 "labels": [],
             }
         }
@@ -197,6 +206,7 @@ def test_empty_deps_passes():
 
 
 def test_cli_check_outputs_json(capsys):
+    # Japanese text intentionally kept for CJK processing test
     body = (
         "## 依存（先行）\n\n"
         "| # | Issue |\n"
@@ -228,14 +238,14 @@ def test_cli_check_outputs_json(capsys):
 
 
 def test_is_exempt_closed_milestone_with_sub_done():
-    """split 完了した milestone（scope:milestone + sub-done）は CLOSED で解消済み扱い (2026-09-05, #2821 が #2820 で BLOCK)."""
+    """A split-complete milestone (scope:milestone + sub-done) is treated as resolved when CLOSED (2026-09-05, #2821 blocked on #2820)."""
     from issuesmith.dep_extractor import _is_exempt
     labels = [{"name": "scope:milestone"}, {"name": "issuesmith:sub-done"}, {"name": "issuesmith:draft-done"}]
-    assert _is_exempt("issuesmith 切り出し フェーズ1", labels) is True
+    assert _is_exempt("issuesmith extract phase 1", labels) is True
 
 
 def test_is_exempt_milestone_without_sub_done_is_not_exempt():
-    """split 未完了の milestone は除外しない（sub-done が必要）."""
+    """Incomplete milestone split is not exempt (sub-done required)."""
     from issuesmith.dep_extractor import _is_exempt
     labels = [{"name": "scope:milestone"}, {"name": "issuesmith:draft-done"}]
     assert _is_exempt("some milestone", labels) is False

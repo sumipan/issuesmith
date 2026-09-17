@@ -1,4 +1,4 @@
-"""tests/gate_rules/test_milestone_consistency.py — milestone_consistency ゲート。"""
+"""tests/gate_rules/test_milestone_consistency.py — milestone_consistency gate."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -42,6 +42,7 @@ def test_fixture_with_milestone_label_skips_label_missing():
 
 
 def test_plain_issue_without_split_plan_has_no_violations():
+    # Japanese text intentionally kept for CJK processing test
     body = (
         '```yaml\n'
         "target_repo: sumipan/nexus\n"
@@ -55,6 +56,7 @@ def test_plain_issue_without_split_plan_has_no_violations():
 
 
 def test_normalized_japanese_headers_with_milestone_label_pass():
+    # Japanese text intentionally kept for CJK processing test
     body = """\
 ```yaml
 target_repo: sumipan/nexus
@@ -90,7 +92,7 @@ allow_paths:
 
 
 def test_ac6_normalized_fixture_not_sub_plan_missing():
-    """AC-6: normalize + relocate 後は b1_milestone_subdesign.sub_plan_missing を出さない。"""
+    """AC-6: after normalize + relocate, no b1_milestone_subdesign.sub_plan_missing."""
     normalized = relocate_sub_plan(normalize_sub_headers(_FIXTURE))
     vs = B1MilestoneSubdesignRules().check(normalized, ["scope:milestone"])
     assert not any(v.rule_id == "b1_milestone_subdesign.sub_plan_missing" for v in vs)

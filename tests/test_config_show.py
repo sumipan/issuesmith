@@ -1,4 +1,4 @@
-"""config show CLI と repo 必須化 / supported_repos 空既定のテスト (#3081)。"""
+"""Tests for config show CLI and required repo / empty supported_repos default (#3081)."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from issuesmith.config import get_config, load_config, reset_config_cache
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_PATH = REPO_ROOT / "src"
 
+# Japanese text intentionally kept for CJK processing test
 _REPO_REQUIRED_MSG = "issuesmith.yaml に repo: owner/name を設定してください"
 
 
@@ -49,21 +50,21 @@ def _isolate_no_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_get_config_requires_repo(tmp_path, monkeypatch):
-    """issuesmith.yaml に repo: が無いと get_config() が明示エラーになる。"""
+    """get_config() raises an explicit error when issuesmith.yaml has no repo:."""
     _write_config(tmp_path, monkeypatch, {"timezone": "UTC"})
     with pytest.raises(ValueError, match=_REPO_REQUIRED_MSG):
         get_config()
 
 
 def test_load_config_requires_repo_when_missing_file(tmp_path, monkeypatch):
-    """設定ファイル不在（builtin 経路）でも repo 未設定はエラー。"""
+    """Missing config file (builtin path) still errors when repo is unset."""
     _isolate_no_config(tmp_path, monkeypatch)
     with pytest.raises(ValueError, match=_REPO_REQUIRED_MSG):
         load_config()
 
 
 def test_supported_repos_default_empty_when_repo_set(tmp_path, monkeypatch):
-    """supported_repos 未指定の既定は空 frozenset。"""
+    """Default supported_repos when unset is an empty frozenset."""
     _write_config(tmp_path, monkeypatch, {"repo": "example/app"})
     cfg = get_config()
     assert cfg.repo == "example/app"
@@ -71,7 +72,7 @@ def test_supported_repos_default_empty_when_repo_set(tmp_path, monkeypatch):
 
 
 def test_config_show_prints_json(tmp_path, monkeypatch, capsys):
-    """config show が解決後設定を JSON で出力し exit 0。"""
+    """config show prints resolved config as JSON and exits 0."""
     _write_config(
         tmp_path,
         monkeypatch,
@@ -97,7 +98,7 @@ def test_config_show_prints_json(tmp_path, monkeypatch, capsys):
 
 
 def test_config_show_via_module_subprocess(tmp_path, monkeypatch):
-    """python -m issuesmith config show が JSON を返し exit 0。"""
+    """python -m issuesmith config show returns JSON and exits 0."""
     cfg_path = tmp_path / "issuesmith.yaml"
     cfg_path.write_text(
         yaml.safe_dump({"repo": "example/cli-show", "supported_repos": ["example/cli-show"]}),

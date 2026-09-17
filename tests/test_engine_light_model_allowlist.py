@@ -1,8 +1,8 @@
-"""DEFAULT_LIGHT_MODELS の許可リスト突合と resolve --tier light の allowlist_valid。
+"""DEFAULT_LIGHT_MODELS allowlist checks and resolve --tier light allowlist_valid.
 
-#2981: engine check は config 既定 light の全 (role, engine) を検査し、
-外れていれば issuesmith.yaml の修正キーを案内する。resolve --tier light は
-allowlist_valid を出力する。
+#2981: engine check inspects every (role, engine) config-default light model and,
+if out of allowlist, points at the issuesmith.yaml key to fix. resolve --tier light
+emits allowlist_valid.
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def _state(
 
 @pytest.fixture
 def codex_allowlist(monkeypatch):
-    """nexus configs/llm-models.yml の codex 実値（2026-09-09）。"""
+    """codex values from nexus configs/llm-models.yml (2026-09-09)."""
     allowed = {"gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.5"}
 
     def _allowed_models(eng: str):
@@ -41,7 +41,7 @@ def codex_allowlist(monkeypatch):
 def test_default_light_models_all_entries_checked_even_if_not_current_engine(
     monkeypatch, codex_allowlist
 ):
-    """現在 engine が claude でも、codex の config 既定が外れていれば NG。"""
+    """Even when current engine is claude, an out-of-allowlist codex config default is NG."""
     monkeypatch.setattr(engine, "load_state", lambda: _state(design_engine="claude", design_model="claude-opus-4-6"))
     monkeypatch.setitem(engine.DEFAULT_LIGHT_MODELS, ("design", "codex"), "gpt-5.4-mini")
     errors = engine.light_model_errors()
@@ -76,7 +76,7 @@ def test_check_state_includes_default_light_allowlist_errors(monkeypatch, codex_
     monkeypatch.setattr(engine.shutil, "which", lambda cmd: "/bin/true")
     monkeypatch.setattr(engine, "_load_workflow", lambda: {"handlers": {}})
     monkeypatch.setattr(engine, "_iter_steps", lambda wf: [])
-    # IMPLEMENTATION_STEP_IDS 欠落エラーを避けるため空集合に
+    # Empty set to avoid IMPLEMENTATION_STEP_IDS missing errors
     monkeypatch.setattr(engine, "IMPLEMENTATION_STEP_IDS", frozenset())
     errors = engine.check_state()
     assert any("engines.design.light_model.codex" in e for e in errors)
@@ -126,7 +126,7 @@ def test_resolve_cli_prints_allowlist_valid_false_with_reason(
 def test_execute_engine_override_falls_back_when_light_not_allowed(
     monkeypatch, codex_allowlist, capsys
 ):
-    """--engine 上書き経路でも allowlist 外 light は heavy に戻す。"""
+    """--engine override path also falls back from out-of-allowlist light to heavy."""
     monkeypatch.setitem(engine.DEFAULT_LIGHT_MODELS, ("design", "codex"), "gpt-5.4-mini")
     monkeypatch.setitem(engine.DEFAULT_MODELS, ("design", "codex"), "gpt-5.6-sol")
     model = engine._apply_light_or_fallback(

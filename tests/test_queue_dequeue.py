@@ -1,4 +1,4 @@
-"""F4: issuesmith.queue dequeue サブコマンドのテスト."""
+"""F4: tests for the issuesmith.queue dequeue subcommand."""
 from __future__ import annotations
 
 from datetime import datetime, timezone

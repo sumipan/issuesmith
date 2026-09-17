@@ -29,7 +29,7 @@ def _store(tmp_path: Path) -> QueueStore:
 
 
 def test_dispatch_blocks_when_ready_label_exists(tmp_path, monkeypatch):
-    """別 Issue が -ready のとき dispatch_one は another issue is running で拒否する."""
+    """When another Issue is -ready, dispatch_one rejects with another issue is running."""
     from zoneinfo import ZoneInfo
 
     from issuesmith import queue as qmod
@@ -87,7 +87,7 @@ def test_dispatch_blocks_when_ready_label_exists(tmp_path, monkeypatch):
 
 
 def test_concurrent_dispatch_single_winner(tmp_path, monkeypatch):
-    """2 スレッド同時 dispatch_one では成功が最大 1 回（dispatch_lock + in-flight）."""
+    """Concurrent dispatch_one from 2 threads succeeds at most once (dispatch_lock + in-flight)."""
     from zoneinfo import ZoneInfo
 
     from issuesmith import queue as qmod
@@ -189,7 +189,7 @@ def test_concurrent_dispatch_single_winner(tmp_path, monkeypatch):
 
 
 def test_audit_detects_multiple_in_flight(tmp_path, capsys):
-    """2 件以上が同時に -ready/-running なら AUDIT FAIL + exit 1."""
+    """Two or more simultaneous -ready/-running → AUDIT FAIL + exit 1."""
     from issuesmith import queue as qmod
 
     store = _store(tmp_path)
@@ -216,7 +216,7 @@ def test_audit_detects_multiple_in_flight(tmp_path, capsys):
 
 
 def test_audit_offline_skips_github(tmp_path, capsys):
-    """--offline では GitHub API を呼ばずローカル検査のみ."""
+    """--offline skips GitHub API and runs local checks only."""
     from issuesmith import queue as qmod
 
     store = _store(tmp_path)
@@ -264,10 +264,10 @@ def _legacy_design_release(labels: set[str], role: str | None = "design") -> boo
 
 
 def test_incomplete_exec_blocks_draft_done_release(tmp_path, monkeypatch):
-    """AC-1/AC-4: #3039-style — draft-done でも未完了 exec があれば解放しない.
+    """AC-1/AC-4: #3039-style — do not release if incomplete exec exists even when draft-done.
 
-    (a) 従来ロジックは draft-done + develop 未ラベルで True
-    (b) 新コードは incomplete exec を見て False
+    (a) Legacy logic: draft-done + no develop label → True
+    (b) New code: sees incomplete exec → False
     """
     import json
 
@@ -288,7 +288,7 @@ def test_incomplete_exec_blocks_draft_done_release(tmp_path, monkeypatch):
     monkeypatch.setattr(qmod, "DONE_DIR", done_dir)
 
     labels = {"issuesmith:draft-done"}
-    assert _legacy_design_release(labels) is True  # (a) 従来は解放する
+    assert _legacy_design_release(labels) is True  # (a) legacy releases
 
     class Client:
         def issue_get(self, number, fields=None):
@@ -304,7 +304,7 @@ def test_incomplete_exec_blocks_draft_done_release(tmp_path, monkeypatch):
 
 
 def test_draft_done_still_releases_when_exec_complete(tmp_path, monkeypatch):
-    """AC-1: 未完了 exec が無ければ従来どおり design スロットを解放する."""
+    """AC-1: with no incomplete exec, release the design slot as before."""
     import json
 
     from issuesmith import queue as qmod
@@ -337,7 +337,7 @@ def test_draft_done_still_releases_when_exec_complete(tmp_path, monkeypatch):
 
 
 def test_recover_untracked_develop_running_3039_fixture(tmp_path, monkeypatch):
-    """AC-2/AC-4: 16:30 state — in_flight=#3020 only; #3039 develop-running を再登録."""
+    """AC-2/AC-4: 16:30 state — in_flight=#3020 only; re-register #3039 develop-running."""
     from issuesmith import queue as qmod
 
     store = _store(tmp_path)
@@ -388,7 +388,7 @@ def test_recover_untracked_develop_running_3039_fixture(tmp_path, monkeypatch):
 
 
 def test_recover_untracked_3046_case(tmp_path, monkeypatch):
-    """AC-4: 19:0x #3046 — develop-running なのに in_flight 不在なら再登録."""
+    """AC-4: 19:0x #3046 — re-register when develop-running but missing from in_flight."""
     from issuesmith import queue as qmod
 
     store = _store(tmp_path)
@@ -423,7 +423,7 @@ def test_recover_untracked_3046_case(tmp_path, monkeypatch):
 
 
 def test_dispatch_recovers_before_orphan_gate(tmp_path, monkeypatch):
-    """AC-2: 孤児判定の前に develop-running を in_flight へ戻し、dispatch を塞がない."""
+    """AC-2: restore develop-running into in_flight before orphan checks so dispatch stays blocked."""
     import json
     from zoneinfo import ZoneInfo
 
@@ -601,7 +601,7 @@ def test_dispatch_recovers_before_orphan_gate(tmp_path, monkeypatch):
 
 
 def test_status_warns_untracked_running(tmp_path, capsys):
-    """AC-3: queue status が追跡外の develop-running を warning 表示する."""
+    """AC-3: queue status warns about untracked develop-running."""
     from issuesmith import queue as qmod
 
     store = _store(tmp_path)
@@ -629,7 +629,7 @@ def test_status_warns_untracked_running(tmp_path, capsys):
 
 
 def test_doctor_reports_untracked_running(tmp_path, capsys):
-    """AC-3: queue doctor が status と同じ追跡外判定を返す."""
+    """AC-3: queue doctor returns the same untracked judgment as status."""
     from issuesmith import queue as qmod
 
     store = _store(tmp_path)

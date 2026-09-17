@@ -1,4 +1,4 @@
-"""tests/test_publish_diff_gates.py — publish の commit 後 diff ゲート (#3065 / #3221)."""
+"""tests/test_publish_diff_gates.py — publish post-commit diff gates (#3065 / #3221)."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ index 1111111..2222222 100644
 +version = "0.27.0"
 """
 
-# 実測 fixture (#3216 / #3221): base が進んだだけの二点ドット差分（逆方向 version）
+# Measured fixture (#3216 / #3221): two-dot diff where only base advanced (reverse version)
 _BASE_ADVANCED_TWO_DOT_DIFF = """\
 diff --git a/pyproject.toml b/pyproject.toml
 index aaaaaaa..bbbbbbb 100644
@@ -77,17 +77,17 @@ def test_check_commit_diff_gates_passes_clean_diff():
 
 
 def test_check_commit_diff_gates_passes_when_only_base_advanced():
-    """三点ドット差分が空なら、base だけ進んだブランチはゲート通過 (#3221 AC-3)."""
+    """Empty three-dot diff: branch with only base advanced passes the gate (#3221 AC-3)."""
     worktree = Path("/tmp/fake-wt")
     mock_result = MagicMock()
-    mock_result.stdout = ""  # git diff origin/main...HEAD -- 実測: 差分なし
+    mock_result.stdout = ""  # git diff origin/main...HEAD — measured: no diff
     with patch("issuesmith.ops.publish._run_git", return_value=mock_result) as run_git:
         assert _check_commit_diff_gates(worktree, "main") is None
     run_git.assert_called_once_with(worktree, "diff", "origin/main...HEAD")
 
 
 def test_two_dot_base_advanced_diff_would_fail_but_three_dot_empty_passes():
-    """実測二点ドット差分は version 行違反だが、ゲートは三点ドットを使うので通過."""
+    """Measured two-dot diff violates version, but the gate uses three-dot so it passes."""
     from issuesmith.gate_rules.cp1 import check_version_line_in_diff
 
     assert check_version_line_in_diff(_BASE_ADVANCED_TWO_DOT_DIFF)
@@ -99,7 +99,7 @@ def test_two_dot_base_advanced_diff_would_fail_but_three_dot_empty_passes():
 
 
 def test_check_commit_diff_gates_still_rejects_real_branch_version_change():
-    """ブランチ側で本当に version を触った三点ドット差分は引き続き FAIL."""
+    """Three-dot diff that really touches version on the branch still FAILs."""
     worktree = Path("/tmp/fake-wt")
     mock_result = MagicMock()
     mock_result.stdout = _VERSION_LINE_DIFF
@@ -209,7 +209,7 @@ def test_publish_stops_on_rebase_conflict_before_gates():
 
 
 def test_publish_stops_on_gate_failure_before_bump():
-    """_commit_if_needed 後・_maybe_bump_version 前にゲートが止まり bump しない."""
+    """Gate stops after _commit_if_needed and before _maybe_bump_version; no bump."""
     with (
         patch("issuesmith.ops.publish._commit_if_needed") as commit,
         patch("issuesmith.ops.publish._ensure_rebased", return_value=None) as rebase,

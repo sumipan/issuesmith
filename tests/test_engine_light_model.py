@@ -1,9 +1,9 @@
-"""light tier のモデル解決が allowlist を尊重し、パイプラインを止めないことの検証。
+"""Verify light-tier model resolution respects the allowlist and does not halt the pipeline.
 
-2026-09-09、codex の light 既定 `gpt-5.4-mini` が nexus の allowlist から外れ、
-B1 light tier が `EngineModelError` で停止する事故が #2968 / #2986 と 2 度起きた。
-`engine check` は state に light_model が無い（= config 既定を使う）ケースを
-検査しておらず、`resolve` も allowlist を見ずにモデルを返していた。
+On 2026-09-09, codex's light default `gpt-5.4-mini` fell outside nexus's allowlist and
+B1 light tier stopped with `EngineModelError` twice (#2968 / #2986).
+`engine check` did not inspect the case where state has no light_model (= uses the
+config default), and `resolve` returned the model without consulting the allowlist.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def _state(light_model: str | None = None) -> dict[str, dict[str, str]]:
 
 @pytest.fixture
 def codex_allowlist(monkeypatch):
-    """nexus configs/llm-models.yml の codex 実値（2026-09-09）。"""
+    """codex values from nexus configs/llm-models.yml (2026-09-09)."""
     allowed = {"gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.5"}
 
     def _allowed_models(eng: str):

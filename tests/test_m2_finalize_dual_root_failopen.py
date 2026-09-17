@@ -1,4 +1,4 @@
-"""tests/test_m2_finalize_dual_root_failopen.py — _evaluate_dual_root は契約実行エラーで落ちない（#3290）。"""
+"""tests/test_m2_finalize_dual_root_failopen.py — _evaluate_dual_root must not fail on contract execution errors (#3290)."""
 
 from __future__ import annotations
 

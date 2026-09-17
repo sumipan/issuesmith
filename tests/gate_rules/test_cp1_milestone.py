@@ -1,4 +1,4 @@
-"""tests/gate_rules/test_cp1_milestone.py — CP1 milestone チェック 8〜11 のユニットテスト。"""
+"""tests/gate_rules/test_cp1_milestone.py — unit tests for CP1 milestone checks 8–11."""
 from __future__ import annotations
 
 from issuesmith.gate_rules.cp1 import Cp1Rules, _keyword_tokens
@@ -6,6 +6,7 @@ from issuesmith.gate_rules.cp1 import Cp1Rules, _keyword_tokens
 MILESTONE_LABELS = ["scope:milestone"]
 
 
+# Japanese text intentionally kept for CJK processing test
 def _sub_block(num: int, *, with_yaml: bool = True, extra_text: str = "") -> str:
     yaml_block = """\
 ```yaml
@@ -31,6 +32,7 @@ paths_must_exist:
 """
 
 
+# Japanese text intentionally kept for CJK processing test
 def _milestone_body(*, parent_ac: list[str] | None = None, sub_extra: str = "") -> str:
     if parent_ac is None:
         parent_ac = [
@@ -75,6 +77,7 @@ paths_must_exist:
 
 
 def test_check8_sub_block_todo():
+    # Japanese text intentionally kept for CJK processing test
     body = _milestone_body(sub_extra="TODO: 後で決める\n")
     violations = Cp1Rules().check(body, MILESTONE_LABELS)
     assert any(v.rule_id == "cp1.forbidden_word.todo.sub1" for v in violations)
@@ -103,6 +106,7 @@ def test_check9_sub_ac_yaml_present_passes():
 
 
 def test_check10_parent_ac_orphan():
+    # Japanese text intentionally kept for CJK processing test
     body = _milestone_body(parent_ac=[
         "孤立した親受け入れ条件トークン xyzunique",
         "サブイシューすべての実装が完了する",
@@ -113,6 +117,7 @@ def test_check10_parent_ac_orphan():
 
 
 def test_check10_meta_pattern_passes():
+    # Japanese text intentionally kept for CJK processing test
     body = _milestone_body(parent_ac=[
         "PR #9999 がマージ済み",
         "子 Issue 起票が完了",
@@ -123,6 +128,7 @@ def test_check10_meta_pattern_passes():
 
 
 def test_keyword_tokens_japanese_punctuation_split():
+    # Japanese text intentionally kept for CJK processing test
     tokens = _keyword_tokens("監査し、診断レポートを投稿")
     assert len(tokens) >= 2
     assert "監査し" in tokens
@@ -134,6 +140,7 @@ def test_keyword_tokens_english_phase_unchanged():
 
 
 def test_check10_japanese_punctuation_parent_ac_cover_passes():
+    # Japanese text intentionally kept for CJK processing test
     body = _milestone_body(
         parent_ac=[
             "監査し、診断レポートを投稿",
@@ -147,6 +154,7 @@ def test_check10_japanese_punctuation_parent_ac_cover_passes():
 
 
 def test_check10_keyword_cover_passes():
+    # Japanese text intentionally kept for CJK processing test
     body = _milestone_body(parent_ac=[
         "サブ1 alpha 項目テストが pass する",
         "サブイシューすべての実装が完了する",
@@ -157,6 +165,7 @@ def test_check10_keyword_cover_passes():
 
 
 def test_check10_optional_prefix_passes():
+    # Japanese text intentionally kept for CJK processing test
     body = _milestone_body(parent_ac=[
         "（オプション）ghdag 側で副作用ありスキルの動的直列化 PR が出ている",
         "サブイシューすべての実装が完了する",
@@ -167,6 +176,7 @@ def test_check10_optional_prefix_passes():
 
 
 def test_check10_optional_prefix_midtext_fails():
+    # Japanese text intentionally kept for CJK processing test
     body = _milestone_body(parent_ac=[
         "ghdag 側で（オプション）副作用ありスキルの動的直列化 PR が出ている",
         "サブイシューすべての実装が完了する",
@@ -177,6 +187,7 @@ def test_check10_optional_prefix_midtext_fails():
 
 
 def test_check11_paths_must_exist_unmapped():
+    # Japanese text intentionally kept for CJK processing test
     body = _milestone_body()
     body = body.replace(
         "## 受け入れ条件\n\n```yaml\npaths_must_exist:\n  - tools/foo/a.py\n```",
@@ -192,6 +203,7 @@ def test_check11_paths_must_exist_mapped_passes():
     assert not any(v.rule_id == "cp1.milestone.paths_must_exist_unmapped" for v in violations)
 
 
+# Japanese text intentionally kept for CJK processing test
 def _sub_block_modify(num: int, *, path: str = "src/ghdag/pipeline/audit_query.py") -> str:
     return f"""\
 #### サブ{num}: audit
@@ -214,6 +226,7 @@ paths_must_exist:
 """
 
 
+# Japanese text intentionally kept for CJK processing test
 def _milestone_body_with_modify_path() -> str:
     return f"""\
 ```yaml
@@ -257,12 +270,14 @@ def test_check11_paths_must_exist_modify_mapped_passes():
 
 
 def test_milestone_checks_skipped_without_label():
+    # Japanese text intentionally kept for CJK processing test
     body = _milestone_body(sub_extra="TODO: 残存\n")
     violations = Cp1Rules().check(body, [])
     assert not any("milestone" in v.rule_id for v in violations)
     assert not any(".sub1" in v.rule_id for v in violations)
 
 
+# Japanese text intentionally kept for CJK processing test
 def _milestone_body_without_sub_blocks(*, parent_ac: list[str] | None = None) -> str:
     if parent_ac is None:
         parent_ac = [

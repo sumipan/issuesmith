@@ -1,8 +1,10 @@
-"""queue が ready ラベル付与時に ghdag の世代を上げる経路の検証。
+"""Verify queue bumps the ghdag generation when applying a ready label.
 
-2026-09-09、#2980 の CP2 FAIL 復旧で `redispatch` → queue dispatch → `develop-ready` 付与
-まで進んだのに、ghdag watcher が「dispatch skipped (already dispatched) key=issuesmith:impl:2980」
-で起動しなかった。冪等キーが消費済みの場合は `ghdag trigger --redispatch` 相当が必要。
+On 2026-09-09, #2980 CP2 FAIL recovery reached `redispatch` → queue dispatch →
+`develop-ready`, but the ghdag watcher logged
+"dispatch skipped (already dispatched) key=issuesmith:impl:2980" and never started.
+When the idempotency key is already consumed, the equivalent of
+`ghdag trigger --redispatch` is required.
 """
 from __future__ import annotations
 
@@ -19,11 +21,11 @@ def _write_exec(path, keys: list[str]) -> None:
 def test_key_consumed_detects_base_and_generation_keys(tmp_path, monkeypatch):
     exec_path = tmp_path / "exec.jsonl"
     monkeypatch.setattr(qmod, "EXEC_PATH", exec_path)
-    assert qmod._handler_key_consumed("impl", 2980) is False  # exec.jsonl なし
+    assert qmod._handler_key_consumed("impl", 2980) is False  # no exec.jsonl
 
     _write_exec(exec_path, ["issuesmith:brushup:2980", "issuesmith:impl:2967:1"])
     assert qmod._handler_key_consumed("brushup", 2980) is True
-    assert qmod._handler_key_consumed("impl", 2967) is True  # 世代付きキーのみ
+    assert qmod._handler_key_consumed("impl", 2967) is True  # generation-suffixed key only
     assert qmod._handler_key_consumed("impl", 2980) is False
     assert qmod._handler_key_consumed("merge", 2967) is False
 
@@ -60,7 +62,7 @@ def test_phase_handler_map_matches_workflow_triggers():
 
 
 def test_issue_from_idempotency_key_handles_generation_suffix():
-    """世代付きキー（ghdag redispatch）でも issue 番号を取り出す（2026-09-09、#2959 の再投入で実測）。"""
+    """Extract issue number even from generation-suffixed keys (ghdag redispatch; measured 2026-09-09 #2959)."""
     assert qmod._issue_from_idempotency_key("issuesmith:impl:2959") == 2959
     assert qmod._issue_from_idempotency_key("issuesmith:impl:2959:1") == 2959
     assert qmod._issue_from_idempotency_key("issuesmith:brushup:2980:12") == 2980

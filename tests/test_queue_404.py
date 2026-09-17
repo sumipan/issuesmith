@@ -1,4 +1,4 @@
-"""F3: 存在しない Issue（404）を dispatch_one が not_found として除去する."""
+"""F3: dispatch_one removes missing Issues (404) as not_found."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -85,7 +85,7 @@ def test_dispatch_one_completes_404_as_not_found(tmp_path, monkeypatch):
     meta = snap.request_meta.get(rid) or {}
     assert meta.get("outcome") == "not_found"
     assert "404" in str(meta.get("reason", ""))
-    # Issue が存在しないためコメントは投稿しない
+    # Do not post a comment when the Issue does not exist
     assert client.comments == []
 
 
@@ -135,7 +135,7 @@ def test_dispatch_one_keeps_non_404_api_errors_in_queue(tmp_path, monkeypatch):
 
 
 def test_dispatch_one_404_among_valid_issues(tmp_path, monkeypatch):
-    """404 のエントリだけ除去し、有効 Issue は dispatch できる."""
+    """Remove only 404 entries; valid Issues can still dispatch."""
     from issuesmith import queue as qmod
 
     store = _store(tmp_path)

@@ -358,6 +358,7 @@ def test_phase_preconditions_block_unsatisfied_deps(phase, monkeypatch):
         def pr_list(self, *a, **k):
             return []
 
+    # Japanese text intentionally kept for CJK processing test
     body = (
         _BODY_QUEUE
         + "\n## 依存（先行）\n\n"
@@ -635,7 +636,7 @@ def test_status_shows_conflict_waiting(tmp_path, monkeypatch, issuesmith_config,
 
 
 def test_sub_done_milestone_parent_releases_in_flight(tmp_path, monkeypatch, issuesmith_config):
-    """sub-done の milestone 親は in_flight を解放し、allow_paths が重なる子の develop を通す（2026-09-10 #2934）。"""
+    """A sub-done milestone parent releases in_flight and allows overlapping-child develop (2026-09-10 #2934)."""
     _patch_paths(tmp_path, monkeypatch, issuesmith_config)
     from issuesmith import queue as qmod
 

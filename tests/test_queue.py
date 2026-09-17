@@ -295,7 +295,7 @@ class TestDeterministicDecision:
         assert d.close_issue is False
 
     def test_closed_force_without_done_keeps(self):
-        """CLOSED + force かつ要求フェーズの done 未付与なら keep（#2825 問題2）."""
+        """CLOSED + force without the requested phase's done label → keep (#2825 issue 2)."""
         from issuesmith.queue_store import QueueRequest
         from issuesmith.queue_triage import deterministic_decision
 
@@ -316,7 +316,7 @@ class TestDeterministicDecision:
         assert d.kind == "keep"
 
     def test_closed_force_with_done_still_closed(self):
-        """CLOSED + force でも要求フェーズの done 済みなら closed（#2825 問題2）."""
+        """CLOSED + force with the requested phase already done → closed (#2825 issue 2)."""
         from issuesmith.queue_store import QueueRequest
         from issuesmith.queue_triage import deterministic_decision
 
@@ -357,7 +357,7 @@ class TestDeterministicDecision:
         assert d.comment is False
 
     def test_done_label_blocks_without_force(self):
-        """develop-done 済み Issue への develop 再投入は force なしでは弾かれる (2026-09-04)."""
+        """Re-enqueue develop on a develop-done Issue is blocked without force (2026-09-04)."""
         from issuesmith.queue_store import QueueRequest
         from issuesmith.queue_triage import deterministic_decision
 
@@ -377,11 +377,11 @@ class TestDeterministicDecision:
         assert d.kind == "already_processed"
 
     def test_done_label_allows_redispatch_with_force(self):
-        """CP2 FAIL で develop-done に差し戻された Issue は --force で再投入できる (2026-09-04)。
+        """Issues rolled back to develop-done after CP2 FAIL can re-enqueue with --force (2026-09-04).
 
-        F3 の FAIL ハンドラは `enqueue --phase develop ... --force` を復旧手順として
-        案内するが、force が deterministic_decision に伝わっておらず常に
-        already_processed で弾かれていた回帰の再現テスト。
+        F3 FAIL handler documents `enqueue --phase develop ... --force` as recovery,
+        but force was not passed into deterministic_decision so requests were always
+        rejected as already_processed. Regression reproduction.
         """
         from issuesmith.queue_store import QueueRequest
         from issuesmith.queue_triage import deterministic_decision
@@ -403,7 +403,7 @@ class TestDeterministicDecision:
         assert d.kind == "keep"
 
     def test_running_label_blocks_even_with_force(self):
-        """force=True でも -running（現在実行中）は bypass しない — #2813 の二重投入対策と矛盾させない。"""
+        """force=True must not bypass -running (in progress) — keep #2813 double-enqueue protection."""
         from issuesmith.queue_store import QueueRequest
         from issuesmith.queue_triage import deterministic_decision
 
@@ -424,7 +424,7 @@ class TestDeterministicDecision:
         assert d.kind == "already_processed"
 
     def test_ready_label_blocks_even_with_force(self):
-        """force=True でも -ready（投入済み・未着手）は bypass しない。"""
+        """force=True must not bypass -ready (queued, not started)."""
         from issuesmith.queue_store import QueueRequest
         from issuesmith.queue_triage import deterministic_decision
 
@@ -669,7 +669,7 @@ class TestTriage:
         assert (tmp_path / "triage.jsonl").exists()
 
     def test_default_engine_model_is_allowlisted(self):
-        """triage デフォルト engine/model が configs allowlist に存在すること (#2803)."""
+        """Default triage engine/model must exist in the configs allowlist (#2803)."""
         from ghdag.llm import EngineModelError, validate_engine_model
 
         validate_engine_model("claude", "claude-sonnet-4-6")
@@ -677,7 +677,7 @@ class TestTriage:
             validate_engine_model("cursor", "gemini-3-flash")
 
     def test_engine_model_mismatch_is_config_error(self, tmp_path):
-        """engine/model 不整合は llm failed ではなく config error として区別される (#2803)."""
+        """engine/model mismatch is a config error, not llm failed (#2803)."""
         from issuesmith.queue_triage import triage
 
         store = _store(tmp_path)
@@ -727,7 +727,7 @@ class TestTriage:
         assert (log.get("fallback_reason") or "").startswith("config error:")
 
     def test_default_triage_logs_claude_engine_model(self, tmp_path):
-        """デフォルト呼び出しの triage ログに claude / claude-sonnet-4-6 が記録される (#2803)."""
+        """Default triage log records claude / claude-sonnet-4-6 (#2803)."""
         from issuesmith.queue_triage import triage
 
         store = _store(tmp_path)
@@ -771,7 +771,7 @@ class TestTriage:
         assert log["config"]["model"] == "claude-sonnet-4-6"
 
     def test_no_hardcoded_cursor_gemini_in_triage_source(self):
-        """LLM 呼び出し・ログ箇所にハードコードされた engine/model が残っていないこと (#2803)."""
+        """No hardcoded engine/model left in LLM call or log sites (#2803)."""
         import issuesmith.queue_triage as triage_mod
 
         src = Path(triage_mod.__file__).read_text(encoding="utf-8")
@@ -847,7 +847,7 @@ class TestCLI:
         assert not (tmp_path / "q.jsonl").exists()
 
     def test_reset_clears_halt_and_last_issue(self, tmp_path, capsys):
-        """reset は halt と last_issue を両方クリアする (#2808)."""
+        """reset clears both halt and last_issue (#2808)."""
         from issuesmith import queue as qmod
 
         store = _store(tmp_path)
@@ -874,7 +874,7 @@ class TestCLI:
         assert "last_issue=None" in out
 
     def test_reset_keep_last_issue(self, tmp_path, capsys):
-        """--keep-last-issue では halt のみクリアし last_issue を残す (#2808)."""
+        """--keep-last-issue clears only halt and keeps last_issue (#2808)."""
         from issuesmith import queue as qmod
 
         store = _store(tmp_path)
@@ -902,7 +902,7 @@ class TestCLI:
         assert "last_issue=2297 (kept)" in out
 
     def test_status_shows_halt_reason(self, tmp_path, capsys):
-        """halt=true のとき status は halt_reason を表示する (#2808)."""
+        """When halt=true, status shows halt_reason (#2808)."""
         from issuesmith import queue as qmod
 
         store = _store(tmp_path)
@@ -933,7 +933,7 @@ class TestCLI:
         assert "issue=#2808" in out
 
     def test_status_warns_when_last_issue_closed_without_terminal(self, tmp_path, capsys, monkeypatch):
-        """last_issue が CLOSED かつ終端ラベル無しなら status が警告する (#2825)."""
+        """status warns when last_issue is CLOSED without a terminal label (#2825)."""
         from issuesmith import queue as qmod
 
         store = _store(tmp_path)
@@ -1401,13 +1401,14 @@ class _ProdShapeClient:
 
 class TestCp2MergePrDetection:
     def test_phase_preconditions_merge_finds_closes_in_body(self):
-        """PR body に Closes #N がある通常ケースで merge 事前条件が通る."""
+        """Merge preconditions pass for the usual case of Closes #N in the PR body."""
         from issuesmith import queue as qmod
 
         client = _ProdShapeClient(
             open_prs=[
                 {
                     "number": 2789,
+                    # Japanese text intentionally kept for CJK processing test
                     "title": "実装: Issue #2773",
                     "body": "P1/P2 result より自動生成。\n\nCloses #2773",
                     "state": "OPEN",
@@ -1427,7 +1428,7 @@ class TestCp2MergePrDetection:
         assert client.pr_get_calls == [2789]
 
     def test_phase_preconditions_merge_finds_refs_in_body(self):
-        """publish.py はもう Closes を発行しない（2026-09-06）。Refs #N でも見つかること。"""
+        """publish.py no longer emits Closes (2026-09-06); Refs #N must still be found."""
         from issuesmith import queue as qmod
 
         client = _ProdShapeClient(
@@ -1452,13 +1453,14 @@ class TestCp2MergePrDetection:
         assert ok is True, why
 
     def test_phase_preconditions_merge_search_alone_insufficient(self):
-        """pr_list(search='Closes #N') は body を見ないので、pr_get が必須."""
+        """pr_list(search='Closes #N') does not inspect body, so pr_get is required."""
         from issuesmith import queue as qmod
 
         client = _ProdShapeClient(
             open_prs=[
                 {
                     "number": 1,
+                    # Japanese text intentionally kept for CJK processing test
                     "title": "実装: Issue #10",
                     "body": "Closes #10",
                     "state": "OPEN",
@@ -1473,7 +1475,7 @@ class TestCp2MergePrDetection:
         assert ok is True, why
 
     def test_phase_preconditions_merge_already_merged(self):
-        """オープン PR 無し・既マージ PR あり・merge-done 未付与 → already_merged (#2825)."""
+        """No open PR, already-merged PR present, merge-done missing → already_merged (#2825)."""
         from issuesmith import queue as qmod
 
         client = _ProdShapeClient(
@@ -1498,7 +1500,7 @@ class TestCp2MergePrDetection:
         assert why == "already_merged"
 
     def test_phase_preconditions_merge_no_open_or_merged(self):
-        """オープンもマージ済みも無し → 拒否メッセージ (#2825)."""
+        """Neither open nor merged PR → rejection message (#2825)."""
         from issuesmith import queue as qmod
 
         client = _ProdShapeClient(open_prs=[], closed_prs=[])
@@ -1529,6 +1531,7 @@ class TestCp2MergePrDetection:
             open_prs=[
                 {
                     "number": 2789,
+                    # Japanese text intentionally kept for CJK processing test
                     "title": "実装: Issue #2773",
                     "body": "P1/P2 result より自動生成。\n\nCloses #2773",
                     "state": "OPEN",
@@ -1562,7 +1565,7 @@ class TestCp2MergePrDetection:
 
 class TestCp2SupersedeRepoWide:
     def test_supersede_scans_open_issues_outside_queue(self, tmp_path, monkeypatch):
-        """キューに無い新しい同種 SemVer Issue でも superseded になる."""
+        """A new same-kind SemVer Issue not yet in the queue is still superseded."""
         from datetime import datetime
         from zoneinfo import ZoneInfo
 
@@ -1622,7 +1625,7 @@ class TestCp2SupersedeRepoWide:
 
 class TestCp2LlmRelativeOrder:
     def test_same_priority_preserves_llm_relative_order(self):
-        """同一 priority / aging 区分では LLM の相対順序を requested_at で上書きしない."""
+        """Within the same priority/aging bucket, do not override LLM relative order with requested_at."""
         from datetime import timedelta
 
         from issuesmith.queue_store import QueueRequest
@@ -1802,10 +1805,10 @@ class TestCp2DevelopDispatch:
         assert "halted" in result.reason or "previous" in result.reason or "merge-done" in result.reason
 
     def test_last_issue_guard_skipped_when_per_engine(self, tmp_path, monkeypatch):
-        """per_engine 設定時は last_issue 未終端でも直列ガードを掛けない (#2980).
+        """With per_engine, do not apply the serial last_issue guard even if unterminated (#2980).
 
-        順序は allow_paths 競合ゲート側で守る。last_issue はレーン横断の
-        「最後に出した issue」を指すだけになり、直列待ちには使わない。
+        Ordering is enforced by the allow_paths conflict gate. last_issue only
+        records the last dispatched issue across lanes and is not used for serial waits.
         """
         from datetime import datetime
         from zoneinfo import ZoneInfo
@@ -1888,15 +1891,13 @@ class TestCp2DevelopDispatch:
     def test_pipeline_ready_tolerates_in_flight_issues_own_pending_steps(
         self, tmp_path, monkeypatch
     ):
-        """#2978 の per-engine concurrency 有効化後に発覚: 実行中 issue 自身の
-        後続ステップ（cp2/m1/m1r/m2 等）が未完了なのは当然だが、これを
-        「pipeline not idle」の根拠にしてしまうと、別 engine への新規
-        ディスパッチまで巻き添えでブロックされる（実測: #2969 の
-        cp2/m1/m1r/m2 が未完了のまま in_flight だった間、
-        _dispatch_pipeline_ready は常に False を返していた）。
-        in_flight 追跡済みの issue の未完了ステップは許容し、
-        in_flight に無い issue の未完了ステップ（孤児タスク）だけを
-        引き続きブロック対象とする。
+        """Found after enabling per-engine concurrency in #2978: an in-flight issue's
+        own later steps (cp2/m1/m1r/m2, etc.) being incomplete is expected, but
+        treating that as "pipeline not idle" also blocks new dispatch to other
+        engines (measured: while #2969's cp2/m1/m1r/m2 stayed incomplete in
+        in_flight, _dispatch_pipeline_ready always returned False).
+        Tolerate incomplete steps for issues already tracked in in_flight;
+        only incomplete steps for issues not in in_flight (orphan tasks) stay blocked.
         """
         from issuesmith import queue as qmod
 
@@ -1906,7 +1907,7 @@ class TestCp2DevelopDispatch:
         monkeypatch.setattr(qmod, "EXEC_PATH", exec_path)
         monkeypatch.setattr(qmod, "DONE_DIR", done_dir)
 
-        # issue 2969 (in_flight) の cp2/m1/m2 はまだ done マーカーが無い。
+        # issue 2969 (in_flight) cp2/m1/m2 still lack done markers.
         lines = [
             {"uuid": "u-cp2", "idempotency_key": "issuesmith:impl:2969"},
             {"uuid": "u-m1", "idempotency_key": "issuesmith:impl:2969"},
@@ -1923,7 +1924,7 @@ class TestCp2DevelopDispatch:
 
         assert qmod._dispatch_pipeline_ready(snap, 5, now) is True
 
-        # 別 issue (9999) の未完了ステップは in_flight に無いので孤児扱い→引き続きブロック。
+        # Incomplete steps for another issue (9999) not in in_flight → orphan → still blocked.
         with exec_path.open("a", encoding="utf-8") as fh:
             fh.write(
                 json.dumps({"uuid": "u-orphan", "idempotency_key": "issuesmith:impl:9999"})
@@ -1932,7 +1933,7 @@ class TestCp2DevelopDispatch:
         assert qmod._dispatch_pipeline_ready(snap, 5, now) is False
 
     def test_dispatch_label_boundary_rerun_is_idempotent(self, tmp_path, monkeypatch):
-        """ready 付与直後に停止→再実行してもラベル二重付与せず terminal になる."""
+        """Stop right after ready, then rerun: no double label apply; ends terminal."""
         from datetime import datetime
         from zoneinfo import ZoneInfo
 
@@ -2014,7 +2015,7 @@ class TestCp2DevelopDispatch:
 def test_dispatch_allows_when_previous_issue_terminal_without_merge(
     tmp_path, monkeypatch, terminal_label
 ):
-    """last_issue が CLOSED + TERMINAL_WITHOUT_MERGE なら次をディスパッチできる (#2825)."""
+    """When last_issue is CLOSED + TERMINAL_WITHOUT_MERGE, the next can dispatch (#2825)."""
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
@@ -2067,7 +2068,7 @@ def test_dispatch_allows_when_previous_issue_terminal_without_merge(
 
 
 def test_dispatch_halts_when_previous_closed_without_terminal(tmp_path, monkeypatch):
-    """CLOSED だが終端ラベル無しの last_issue は halt して理由を残す (#2825)."""
+    """CLOSED last_issue without a terminal label halts and records a reason (#2825)."""
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
@@ -2116,7 +2117,7 @@ def test_dispatch_halts_when_previous_closed_without_terminal(tmp_path, monkeypa
 
 
 def test_apply_terminal_superseded_adds_label(tmp_path):
-    """superseded 終端時に issuesmith:superseded ラベルを付与する (#2825)."""
+    """On superseded terminal, add the issuesmith:superseded label (#2825)."""
     from issuesmith import queue as qmod
 
     store = _store(tmp_path)
@@ -2207,7 +2208,7 @@ def test_required_engines_defaults_when_state_missing(tmp_path):
 
 
 def test_required_engines_paused_role_filters_to_phase_engine(tmp_path):
-    """role= 指定時はそのロールの engine だけを見る (#3091)."""
+    """With role=, only look at that role's engine (#3091)."""
     from issuesmith import queue as qmod
 
     q = tmp_path / "quota.json"
@@ -2219,7 +2220,7 @@ def test_required_engines_paused_role_filters_to_phase_engine(tmp_path):
 
 
 def test_required_engines_paused_brake_only(tmp_path):
-    """AC-3: budget gate だけで paused なら waiting 対象になる。"""
+    """AC-3: paused on budget gate alone becomes a waiting target."""
     from issuesmith import queue as qmod
 
     q = tmp_path / "quota.json"
@@ -2233,7 +2234,7 @@ def test_required_engines_paused_brake_only(tmp_path):
 
 
 def test_required_engines_paused_quota_only(tmp_path):
-    """AC-4: global quota gate だけで paused でも停止対象。"""
+    """AC-4: paused on global quota gate alone is also a stop target."""
     from issuesmith import queue as qmod
 
     q = tmp_path / "quota.json"
@@ -2246,7 +2247,7 @@ def test_required_engines_paused_quota_only(tmp_path):
 
 
 def test_required_engines_paused_same_path_no_duplicate(tmp_path, monkeypatch):
-    """AC-5: 同一パス時は snapshot 1 回・engine 名の重複なし。"""
+    """AC-5: same path → one snapshot and no duplicate engine names."""
     from ghdag.quota import QuotaGate
 
     from issuesmith import queue as qmod
@@ -2269,7 +2270,7 @@ def test_required_engines_paused_same_path_no_duplicate(tmp_path, monkeypatch):
 
 
 def test_required_engines_paused_union_dedupes(tmp_path):
-    """両方で同一 engine が paused でも 1 回だけ返す。"""
+    """Same engine paused on both gates still returns once."""
     from issuesmith import queue as qmod
 
     q = tmp_path / "quota.json"
@@ -2282,7 +2283,7 @@ def test_required_engines_paused_union_dedupes(tmp_path):
 
 
 def test_required_engines_paused_both_available(tmp_path):
-    """両 gate で available なら空リスト。"""
+    """Available on both gates → empty list."""
     from issuesmith import queue as qmod
 
     q = tmp_path / "quota.json"
@@ -2300,7 +2301,7 @@ _ENGINE_DESIGN_CLAUDE = _FIXTURES / "engine_state_design_claude_impl_cursor.yml"
 
 
 class TestRoleScopedPausedDispatch:
-    """AC-4: claude paused / resume_at=null でも develop(cursor) は通る (#3091)."""
+    """AC-4: claude paused with resume_at=null still allows develop(cursor) (#3091)."""
 
     def test_develop_dispatches_while_design_engine_paused(self, tmp_path, monkeypatch):
         from datetime import datetime

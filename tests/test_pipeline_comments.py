@@ -11,22 +11,27 @@ def test_pipeline_status_excluded():
 
 
 def test_b1_section_excluded():
+    # Japanese text intentionally kept for CJK processing test
     assert is_pipeline_comment("## B1 ブラッシュアップ結果\ncontent")
 
 
 def test_cp1_section_excluded():
+    # Japanese text intentionally kept for CJK processing test
     assert is_pipeline_comment("## CP1 チェックポイント結果\nCP1_STATUS: PASS")
 
 
 def test_cp2_section_excluded():
+    # Japanese text intentionally kept for CJK processing test
     assert is_pipeline_comment("## CP2 チェックポイント結果\nCP2_STATUS: PASS")
 
 
 def test_p3_section_excluded():
+    # Japanese text intentionally kept for CJK processing test
     assert is_pipeline_comment("## P3 実装報告\ncontent")
 
 
 def test_m1_section_excluded():
+    # Japanese text intentionally kept for CJK processing test
     assert is_pipeline_comment("## M1 マージ結果\ncontent")
 
 
@@ -39,13 +44,15 @@ def test_user_comment_not_excluded():
 
 
 def test_normal_markdown_not_excluded():
-    assert not is_pipeline_comment("## 設計\n詳細はこちら")
+    # Japanese text intentionally kept for CJK processing test
+    assert not is_pipeline_comment("## 設計\nDetails here")
 
 
 def test_extract_user_comments_filters_pipeline():
     comments = [
         {"body": "PIPELINE_STATUS: BRUSHUP_DONE"},
         {"body": "Please also add tests"},
+        # Japanese text intentionally kept for CJK processing test
         {"body": "## CP1 チェックポイント結果\nCP1_STATUS: PASS"},
         {"body": "Thanks for the fix"},
     ]
@@ -62,6 +69,7 @@ def test_extract_user_comments_empty():
 def test_extract_user_comments_all_pipeline():
     comments = [
         {"body": "PIPELINE_STATUS: DONE"},
+        # Japanese text intentionally kept for CJK processing test
         {"body": "## B1 結果"},
     ]
     assert extract_user_comments(comments) == []
@@ -72,6 +80,7 @@ def test_patterns_list_not_empty():
 
 
 def test_validate_b1_dep_comment_valid():
+    # Japanese text intentionally kept for CJK processing test
     body = """## B1 事前検証失敗: 未マージ依存
 
 未マージ: #100, #200
@@ -82,6 +91,7 @@ PIPELINE_STATUS: BRUSHUP_FAILED
 
 
 def test_validate_b1_dep_comment_missing_header():
+    # Japanese text intentionally kept for CJK processing test
     body = """未マージ: #100
 
 PIPELINE_STATUS: BRUSHUP_FAILED
@@ -91,6 +101,7 @@ PIPELINE_STATUS: BRUSHUP_FAILED
 
 
 def test_validate_b1_dep_comment_missing_issue_ref():
+    # Japanese text intentionally kept for CJK processing test
     body = """## B1 事前検証失敗: 未マージ依存
 
 未マージ: none
@@ -102,6 +113,7 @@ PIPELINE_STATUS: BRUSHUP_FAILED
 
 
 def test_validate_b1_dep_comment_missing_pipeline_status():
+    # Japanese text intentionally kept for CJK processing test
     body = """## B1 事前検証失敗: 未マージ依存
 
 未マージ: #100
@@ -120,8 +132,9 @@ def test_main_filters_pipeline_comments_from_stdin_json(monkeypatch, capsys):
     payload = {
         "body": "issue body",
         "comments": [
-            {"author": "user", "body": "制約: X 禁止", "createdAt": "2026-01-01"},
+            {"author": "user", "body": "Constraint: X forbidden", "createdAt": "2026-01-01"},
             {"author": "bot", "body": "PIPELINE_STATUS: BRUSHUP_DONE", "createdAt": "2026-01-02"},
+            # Japanese text intentionally kept for CJK processing test
             {"author": "bot", "body": "## CP2 チェック結果", "createdAt": "2026-01-03"},
         ],
     }
@@ -131,4 +144,4 @@ def test_main_filters_pipeline_comments_from_stdin_json(monkeypatch, capsys):
 
     output = json.loads(capsys.readouterr().out)
     assert output["body"] == "issue body"
-    assert [c["body"] for c in output["comments"]] == ["制約: X 禁止"]
+    assert [c["body"] for c in output["comments"]] == ["Constraint: X forbidden"]

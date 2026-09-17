@@ -1,7 +1,7 @@
 """
 tests/tools/issuesmith/test_m2_gate.py
 
-M2 checkbox gate のユニットテスト。
+Unit tests for the M2 checkbox gate.
 """
 
 from __future__ import annotations
@@ -13,57 +13,62 @@ from unittest.mock import MagicMock
 from issuesmith.m2_gate import check_gate, get_unchecked_count, has_acceptance_criteria_section
 
 BODY_NO_SECTION = """\
-## 背景
+## Background
 
-無関係なコンテンツ。
+Unrelated content.
 
-- [ ] これはセクション外のチェックボックス
+- [ ] Checkbox outside any AC section
 """
 
+# Japanese text intentionally kept for CJK processing test
 BODY_ALL_CHECKED = """\
 ## 受け入れ条件
 
-- [x] 完了した項目
-- [x] これも完了
+- [x] Completed item
+- [x] Also completed
 """
 
+# Japanese text intentionally kept for CJK processing test
 BODY_ONE_UNCHECKED = """\
 ## 受け入れ条件
 
-- [x] 完了した項目
-- [ ] 未完了の項目
+- [x] Completed item
+- [ ] Unchecked item
 """
 
+# Japanese text intentionally kept for CJK processing test
 BODY_ALL_UNCHECKED = """\
 ## 受け入れ条件
 
-- [ ] 未完了 1
-- [ ] 未完了 2
+- [ ] Unchecked 1
+- [ ] Unchecked 2
 """
 
+# Japanese text intentionally kept for CJK processing test
 BODY_UNCHECKED_ONLY_IN_SECTION = """\
-## その他
+## Other
 
-- [ ] セクション外（カウント対象外）
+- [ ] Outside section (not counted)
 
 ## 受け入れ条件
 
-- [ ] セクション内 1
+- [ ] Inside section 1
 
-## 次のセクション
+## Next section
 
-- [ ] 別セクション（カウント対象外）
+- [ ] Other section (not counted)
 """
 
+# Japanese text intentionally kept for CJK processing test
 BODY_WITH_YAML_PREAMBLE = """\
 ```yaml
 base_branch: main
 allow_paths: ["**"]
 ```
 
-## 背景
+## Background
 
-説明文。
+Description.
 
 ## 受け入れ条件
 
@@ -154,6 +159,7 @@ class TestCheckGate:
         }
 
 
+# Japanese text intentionally kept for CJK processing test
 BODY_CONTRACT_PASS = """\
 ## 受け入れ条件
 
@@ -165,6 +171,7 @@ paths_must_exist:
 - [x] AC1
 """
 
+# Japanese text intentionally kept for CJK processing test
 BODY_CONTRACT_FAIL = """\
 ## 受け入れ条件
 
@@ -193,7 +200,7 @@ class TestCheckGateContract:
         )
 
     def test_unchecked_ac_skips_contract_check(self):
-        # checkbox が未完了なら契約実行前に retry/migrate へ落ちる
+        # Unchecked checkboxes fail to retry/migrate before running the contract.
         result = check_gate(BODY_ONE_UNCHECKED, [])
         assert result["action"] == "retry"
         assert result["contract_failures"] == []
@@ -210,6 +217,7 @@ class TestCheckGateContract:
         assert result["contract_failures"] == []
 
 
+# Japanese text intentionally kept for CJK processing test
 BODY_CROSS_REPO_CONTRACT = """\
 ## 受け入れ条件
 
@@ -223,12 +231,12 @@ paths_must_exist:
 
 
 class TestCheckGateRepoRoot:
-    """クロスレポ: paths_must_exist は --repo-root / repo_root で解決する。"""
+    """Cross-repo: paths_must_exist resolves via --repo-root / repo_root."""
 
     def test_external_repo_root_with_path_returns_proceed(self, tmp_path: Path):
         external = tmp_path / "mltgnt"
         (external / "src" / "mltgnt" / "loops").mkdir(parents=True)
-        # nexus 側には同パスが無い前提を明示（tmp_path 自体を誤ルートに見立てる）
+        # Explicit: the same path must not exist on the nexus-like wrong root (tmp_path).
         assert not (tmp_path / "src" / "mltgnt" / "loops").exists()
 
         result = check_gate(BODY_CROSS_REPO_CONTRACT, [], repo_root=external)

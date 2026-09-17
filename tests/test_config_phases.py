@@ -1,4 +1,4 @@
-"""phases: 設定の導出 — 無設定は現行動作、カスタムは反映、engine resolve は不変。"""
+"""phases: config derivation — unset keeps current behavior, custom applies, engine resolve unchanged."""
 
 from __future__ import annotations
 
@@ -137,7 +137,7 @@ def test_milestone_child_phase_order_follows_reversed_config(tmp_path, monkeypat
 
 
 def test_engine_resolve_unchanged_across_phase_role_change(tmp_path, monkeypatch):
-    """PHASE_ROLE（phases.role）変更前後で engine.resolve は role 単位で不変。"""
+    """engine.resolve stays role-stable before/after PHASE_ROLE (phases.role) changes."""
     monkeypatch.setattr(engine, "_allowed_models", lambda eng: None)
 
     states = {

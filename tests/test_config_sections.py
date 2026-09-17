@@ -1,4 +1,4 @@
-"""sections: / sub_design_subsections: — 無設定は現行動作、カスタムは反映。"""
+"""sections: / sub_design_subsections: — unset keeps current behavior; custom values apply."""
 
 from __future__ import annotations
 
@@ -27,6 +27,7 @@ def _clear_config_cache():
     reset_config_cache()
 
 
+# Japanese text intentionally kept for CJK processing test
 _DEFAULT_SECTIONS = {
     "acceptance_criteria": "受け入れ条件",
     "migration": "マイグレーション手順",
@@ -50,7 +51,7 @@ def _write_config(tmp_path, monkeypatch, payload: dict) -> None:
 
 
 def _builtin_defaults(tmp_path, monkeypatch) -> None:
-    """repo のみの最小設定（その他はパッケージ既定）。"""
+    """Minimal config with only repo (everything else uses package defaults)."""
     cfg_path = tmp_path / "issuesmith.yaml"
     cfg_path.write_text(yaml.safe_dump({"repo": "example/app"}), encoding="utf-8")
     monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
@@ -64,9 +65,10 @@ def test_default_sections_match_legacy_when_unset(tmp_path, monkeypatch):
     assert dict(cfg.sections) == _DEFAULT_SECTIONS
     assert cfg.sub_design_subsections == _DEFAULT_SUB_DESIGN
 
+    # Japanese text intentionally kept for CJK processing test
     body = (
-        "## 背景・目的\n\n背景\n\n"
-        "## 設計\n\n設計本文\n\n"
+        "## 背景・目的\n\nbackground\n\n"
+        "## 設計\n\ndesign body\n\n"
         "## 受け入れ条件\n\n"
         "```yaml\npaths_must_exist:\n  - a.py\n```\n"
         "- [ ] item\n"
@@ -78,9 +80,10 @@ def test_default_sections_match_legacy_when_unset(tmp_path, monkeypatch):
     assert get_unchecked_count(body) == 1
     assert extract_contract_from_body(body) == {"paths_must_exist": ["a.py"]}
 
+    # Japanese text intentionally kept for CJK processing test
     dep_body = (
         "## 依存（先行）\n\n"
-        "| # | 依存先 | 状態 |\n|---|---|---|\n| 1 | #1234 | OPEN |\n"
+        "| # | dependency | state |\n|---|---|---|\n| 1 | #1234 | OPEN |\n"
     )
     assert extract_dependencies(dep_body) == [1234]
 
@@ -96,9 +99,11 @@ def test_custom_acceptance_criteria_propagates_to_consumers(tmp_path, monkeypatc
     )
     cfg = get_config()
     assert cfg.sections["acceptance_criteria"] == "AC"
-    # 他キーは既定のまま（部分上書き）
+    # Other keys stay at defaults (partial override)
+    # Japanese text intentionally kept for CJK processing test
     assert cfg.sections["design"] == "設計"
 
+    # Japanese text intentionally kept for CJK processing test
     body_legacy = "## 受け入れ条件\n\n```yaml\npaths_must_exist:\n  - a.py\n```\n"
     body_custom = "## AC\n\n```yaml\npaths_must_exist:\n  - a.py\n```\n- [ ] todo\n"
 
@@ -128,7 +133,7 @@ def test_re_escape_allows_special_chars_in_section_heading(tmp_path, monkeypatch
     )
     assert get_ac_section(body) is not None
     assert extract_contract_from_body(body) == {"paths_must_exist": ["escaped.py"]}
-    # 括弧がリテラルとして扱われること（正規表現グループにならない）
+    # Parentheses treated as literals (not regex groups)
     heading = get_config().sections["acceptance_criteria"]
     pattern = rf"^##\s+{re.escape(heading)}\s*\n"
     assert re.search(pattern, body, re.MULTILINE)
@@ -146,6 +151,7 @@ def test_custom_background_and_design_affect_b1_tier(tmp_path, monkeypatch):
             },
         },
     )
+    # Japanese text intentionally kept for CJK processing test
     assert determine_b1_tier("## 背景・目的\n\nx\n") == "light"
     assert determine_b1_tier("## Background\n\nx\n") == "heavy"
     assert determine_b1_tier("## Design\n\nx\n") == "heavy"
@@ -160,13 +166,14 @@ def test_custom_dependencies_section(tmp_path, monkeypatch):
             "sections": {"dependencies": "Deps"},
         },
     )
+    # Japanese text intentionally kept for CJK processing test
     legacy = (
         "## 依存（先行）\n\n"
-        "| # | 依存先 |\n|---|---|\n| 1 | #99 |\n"
+        "| # | dependency |\n|---|---|\n| 1 | #99 |\n"
     )
     custom = (
         "## Deps\n\n"
-        "| # | 依存先 |\n|---|---|\n| 1 | #88 |\n"
+        "| # | dependency |\n|---|---|\n| 1 | #88 |\n"
     )
     assert extract_dependencies(legacy) == []
     assert extract_dependencies(custom) == [88]
@@ -186,23 +193,24 @@ def test_sub_design_subsections_default_and_custom(tmp_path, monkeypatch):
     )
     assert get_config().sub_design_subsections == ("Scope", "Plan", "Files", "AC")
 
-    # 必須サブセクション欠落を custom 名で検出
+    # Detect missing required subsections under custom names
+    # Japanese text intentionally kept for CJK processing test
     body = (
         "## マイルストーン\n\n"
         "### サブイシュー分割計画\n\n"
-        "| # | タイトル |\n|---|---|\n| 1 | A |\n\n"
+        "| # | Title |\n|---|---|\n| 1 | A |\n\n"
         "## 設計\n\n"
         "#### サブ1: A\n\n"
         "**Scope**:\n\nok\n\n"
         "**Plan**:\n\nok\n\n"
         "**Files**:\n\n"
-        "| リポジトリ | ファイルパス | 変更種別 | 変更内容 |\n"
+        "| Repository | File path | Change type | Description |\n"
         "|---|---|---|---|\n"
-        "| `r` | `a.py` | 修正 | x |\n\n"
+        "| `r` | `a.py` | modify | x |\n\n"
         "**AC**:\n\n"
         "- [ ] one\n- [ ] two\n- [ ] three\n"
     )
-    # custom subsections 揃い → subsection_missing 無し
+    # custom subsections complete → no subsection_missing
     v = B1MilestoneSubdesignRules().check(body, ["scope:milestone"])
     missing = [x for x in v if x.rule_id == "b1_milestone_subdesign.subsection_missing"]
     assert missing == []

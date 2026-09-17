@@ -1,4 +1,4 @@
-"""tests/test_m2_gate_multiroot.py — M2 multi-root 契約合成テスト（#2866）"""
+"""tests/test_m2_gate_multiroot.py — M2 multi-root contract synthesis tests (#2866)"""
 
 from pathlib import Path
 
@@ -8,6 +8,7 @@ from issuesmith.m2_gate import (
     synthesize_contract_failures,
 )
 
+# Japanese text intentionally kept for CJK processing test
 BODY_ALL_CHECKED = """\
 ## 受け入れ条件
 

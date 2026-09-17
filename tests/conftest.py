@@ -1,5 +1,5 @@
 """
-issuesmith テスト共通設定。
+Shared pytest fixtures for the issuesmith test suite.
 """
 
 from unittest.mock import patch
@@ -9,11 +9,11 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def no_gh_fetch(request):
-    """デフォルトで _fetch_issue_body_from_gh を None 返しにモック化する。
+    """By default, mock _fetch_issue_body_from_gh to return None.
 
-    gh CLI に依存しないよう、ローカル design.md を使うテストが意図せず
-    実際の GitHub Issue を取得しないように抑制する。
-    gh fetch 動作を明示的にテストしたい場合は patch で上書きすること。
+    Prevents tests that use a local design.md from accidentally fetching
+    a real GitHub Issue (no gh CLI dependency). Override with patch when
+    explicitly testing gh fetch behavior.
     """
     if "gh_fetch" in request.keywords:
         yield

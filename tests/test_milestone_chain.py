@@ -21,6 +21,7 @@ from issuesmith.queue_triage import DONE_LABEL
 
 _NOW = datetime.now(timezone.utc).isoformat()
 
+# Japanese text intentionally kept for CJK processing test
 _PARENT_BODY = """\
 ```yaml
 target_repo: sumipan/nexus
@@ -35,6 +36,7 @@ allow_paths:
 | `sumipan/nexus` | `src/foo/a.py` | 新規 | add |
 """
 
+# Japanese text intentionally kept for CJK processing test
 _CHILD_BODY = """\
 ```yaml
 target_repo: sumipan/nexus
@@ -499,6 +501,7 @@ class TestChainRules:
         advance_milestone_chains(store, client, _chain_config())
         assert client.closed == []
         assert len(client.posted_comments) == 1
+        # Japanese text intentionally kept for CJK processing test
         assert "確認待ち: #101 が merge-done 以外で終了" in client.posted_comments[0][1]
         chain = store.get_milestone_chain(100)
         assert chain.get("stage") == "halted"
@@ -507,7 +510,7 @@ class TestChainRules:
     def test_c4_resume_reevaluates_after_halt(self, tmp_path):
         store = _store(tmp_path)
         store.update_milestone_chain(100, {"stage": "children_validated"})
-        # draft-done を残し、resume 後の C2 検証を通したうえで C4 を再評価させる。
+        # Keep draft-done so C2 validation passes after resume, then re-evaluate C4.
         child_101 = _child_issue(
             101,
             state="CLOSED",
@@ -545,6 +548,7 @@ class TestChainRules:
         advance_milestone_chains(store, client, _chain_config(auto_close_parent=False))
         advance_milestone_chains(store, client, _chain_config(auto_close_parent=False))
         assert len(client.posted_comments) == 1
+        # Japanese text intentionally kept for CJK processing test
         assert "親の close は人間が行う" in client.posted_comments[0][1]
         assert client.closed == []
         chain = store.get_milestone_chain(100)
@@ -591,10 +595,11 @@ class TestChainRules:
 
 
 def test_dependency_table_index_column_with_resolved_ref_is_not_plan_ref():
-    """`| # | 依存先 | 状態 |` の連番列を plan ref と誤判定しない（2026-09-10、#3000 実測）。"""
+    """Do not treat the serial `#` index column as a plan ref (measured 2026-09-10, #3000)."""
     from issuesmith.milestone import _dependency_refs_unresolved
 
     body = (
+        # Japanese text intentionally kept for CJK processing test
         "親イシュー: #2934\n依存: #2999\n\n"
         "## 依存（先行）\n\n"
         "| # | 依存先 | 状態 |\n"
@@ -657,7 +662,7 @@ class TestLinkSubIssue:
         assert "101" in err
 
     def test_ensure_sub1_binding_no_milestone_link_ok_continues(self):
-        """#3059: milestone 未設定でもサブイシューリンク成功なら SUB1 は停止しない。"""
+        """#3059: if sub-issue link succeeds without milestone, SUB1 does not stop."""
         child = {"number": 101, "id": 5407000506, "state": "OPEN", "labels": []}
         parent = {
             "number": 100,
@@ -671,7 +676,7 @@ class TestLinkSubIssue:
         assert client.posted_comments == []
 
     def test_ensure_sub1_binding_no_milestone_link_fail_stops_with_comment(self):
-        """milestone 未設定かつリンク失敗 → エラーコメントを投稿して False。"""
+        """No milestone and link failure → post error comment and return False."""
         child = {"number": 101, "id": 5407000506, "state": "OPEN", "labels": []}
         parent = {
             "number": 100,
@@ -686,11 +691,12 @@ class TestLinkSubIssue:
         assert ensure_sub1_binding(client, 100, 101) is False
         assert len(client.posted_comments) == 1
         body = client.posted_comments[0][1]
+        # Japanese text intentionally kept for CJK processing test
         assert "milestone 未設定" in body
         assert "<!-- issuesmith:sub1:no-milestone-no-sub-link -->" in body
 
     def test_ensure_sub1_binding_with_milestone_continues_even_if_link_fails(self):
-        """従来 milestone 経路が生きていればリンク失敗でも続行（握りつぶし）。"""
+        """If the legacy milestone path is alive, continue even when link fails (swallowed)."""
         child = {"number": 101, "id": 5407000506, "state": "OPEN", "labels": []}
         parent = {
             "number": 100,
@@ -707,7 +713,7 @@ class TestLinkSubIssue:
 
 
 class TestSubIssuesEnumeration:
-    """#3127: 子列挙を list_sub_issues に切り替え、milestone フォールバック付き。"""
+    """#3127: enumerate children via list_sub_issues, with milestone fallback."""
 
     def test_list_sub_issues_enumerates_linked_children(self, tmp_path):
         store = _store(tmp_path)
@@ -716,7 +722,7 @@ class TestSubIssuesEnumeration:
         client = FakeClient(
             issues={100: parent, 101: child},
             sub_issues={100: [child]},
-            children={1: []},  # milestone 列挙は空でも sub_issues で進む
+            children={1: []},  # empty milestone enum; still advance via sub_issues
         )
         advance_milestone_chains(store, client, _chain_config())
         assert client.list_sub_issues_calls == [100]
@@ -757,7 +763,7 @@ class TestSubIssuesEnumeration:
         assert chain.get("halted_reason") == "no children"
 
     def test_sub_issues_works_without_milestone_object(self, tmp_path):
-        """サブイシューリンク済みなら親に milestone オブジェクトが無くても C2 が進む。"""
+        """With sub-issues linked, C2 advances even if parent has no milestone object."""
         store = _store(tmp_path)
         child = _child_issue(101, state="OPEN", labels=["issuesmith:draft-done"], milestone=None)
         parent = _parent_issue(milestone=None)
@@ -832,7 +838,7 @@ class TestSubIssuesEnumeration:
         assert all(c == 100 for c in client.list_sub_issues_calls)
 
     def test_list_open_milestones_still_available_as_deprecated(self):
-        """deprecated 関数は残存し、scope:milestone ラベル検索を返す。"""
+        """Deprecated function remains and returns a scope:milestone label search."""
         parent = _parent_issue()
         client = FakeClient(issues={100: parent})
         found = _list_open_milestones(client)
@@ -849,6 +855,7 @@ class TestIssue3130Fixes:
         assert normalize_plan_title("  `foo　bar`  ") == "foo bar"
         parent_body = (
             _PARENT_BODY
+            # Japanese text intentionally kept for CJK processing test
             + "\n## マイルストーン\n\n### サブイシュー分割計画\n"
             "| # | タイトル | 対象リポジトリ | 内容 | 依存 |\n"
             "|---|--------|----------------|------|------|\n"
@@ -869,6 +876,7 @@ class TestIssue3130Fixes:
         }
         result = validate_children(parent, [child], client=FakeClient(issues={101: child}))
         assert result.passed is True
+        # Japanese text intentionally kept for CJK processing test
         # prose mention of プレースホルダ must not trip V3
         assert check_v3_cjk_placeholders(
             body="本 Issue はプレースホルダ検出を実装する\n"

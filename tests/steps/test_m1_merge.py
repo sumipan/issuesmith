@@ -34,6 +34,7 @@ from issuesmith.steps.base import StepContext
 
 # --- Real API strings (trimmed to fields the step reads; values unchanged) ---
 
+# Japanese text intentionally kept for CJK processing test
 PR_LIST_SUCCESS_JSON = json.dumps(
     [
         {
@@ -53,6 +54,7 @@ PR_LIST_SUCCESS_JSON = json.dumps(
 
 PR_LIST_ABSENT_JSON = "[]"
 
+# Japanese text intentionally kept for CJK processing test
 PR_DETAIL_OPEN_JSON = json.dumps(
     {
         "number": 3183,
@@ -71,6 +73,7 @@ PR_DETAIL_OPEN_JSON = json.dumps(
     ensure_ascii=False,
 )
 
+# Japanese text intentionally kept for CJK processing test
 PR_DETAIL_MERGED_JSON = json.dumps(
     {
         "number": 3181,
@@ -284,7 +287,7 @@ def test_run_merge_clean_still_reports_merge_reported() -> None:
 
 
 def test_post_merge_test_failure_adds_merge_running() -> None:
-    """PR マージ成功後に post_merge_test だけ失敗したら merge-running を付与 (#3221 AC-6)."""
+    """After PR merge succeeds, post_merge_test-only failure still adds merge-running (#3221 AC-6)."""
     client = MagicMock()
     client.api_request.side_effect = [
         json.loads(PR_LIST_SUCCESS_JSON),

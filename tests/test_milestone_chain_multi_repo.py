@@ -21,6 +21,7 @@ allow_paths:
 
 
 def _change_table(rows: list[tuple[str, str]]) -> str:
+    # Japanese text intentionally kept for CJK processing test
     lines = [
         "**変更対象ファイル**:",
         "| リポジトリ | ファイルパス | 変更種別 | 変更内容 |",
@@ -37,6 +38,7 @@ def _parent_with_plan(
     parent_repo: str = "sumipan/nexus",
     with_repo_column: bool = True,
 ) -> str:
+    # Japanese text intentionally kept for CJK processing test
     if with_repo_column:
         header = "| # | タイトル | 内容 | 依存 | 対象リポジトリ |"
         sep = "|---|--------|------|------|----------------|"

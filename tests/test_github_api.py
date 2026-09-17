@@ -33,7 +33,7 @@ def test_no_args_shows_usage(capsys):
     assert "usage" in captured.err.lower()
 
 
-# --- Issue #2819: issue create の作成先を nexus に固定 ---
+# --- Issue #2819: pin issue create target to nexus ---
 
 
 def test_issue_create_target_returns_none_for_non_create():
@@ -153,7 +153,7 @@ def test_main_allows_non_create_with_foreign_repo():
     assert exc_info.value.code == 0
 
 
-# --- Issue #3038: ready-label 禁止時の enqueue 案内は統一 CLI 形式 ---
+# --- Issue #3038: ready-label blocked → unified queue enqueue CLI hint ---
 
 
 @pytest.mark.parametrize(

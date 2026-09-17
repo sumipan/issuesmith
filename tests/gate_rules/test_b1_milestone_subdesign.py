@@ -1,4 +1,4 @@
-"""tests/gate_rules/test_b1_milestone_subdesign.py — b1_milestone_subdesign ゲートのユニットテスト。"""
+"""tests/gate_rules/test_b1_milestone_subdesign.py — unit tests for b1_milestone_subdesign gate."""
 from __future__ import annotations
 
 import issuesmith.gate_rules.b1_milestone_subdesign  # noqa: F401
@@ -13,6 +13,7 @@ def _check(body: str, labels: list[str]):
     return gate.check(body, labels)
 
 
+# Japanese text intentionally kept for CJK processing test
 def _sub_block(
     num: int,
     title: str,
@@ -44,6 +45,7 @@ def _sub_block(
 """
 
 
+# Japanese text intentionally kept for CJK processing test
 def _valid_body(*, sub2_path: str = "tools/foo/b.py") -> str:
     return f"""\
 ```yaml
@@ -82,7 +84,8 @@ paths_must_exist:
 """
 
 
-# milestone/30 (#1827) 由来のドリフト fixture — 7 カテゴリを意図的に含む
+# Drift fixture from milestone/30 (#1827) — intentionally includes 7 violation categories
+# Japanese text intentionally kept for CJK processing test
 MILESTONE30_DRIFT_BODY = f"""\
 ```yaml
 target_repo: sumipan/nexus
@@ -121,6 +124,9 @@ allow_paths:
 - [ ] diagnostics フィールドが存在する
 - [ ] 既存テストが通る
 
+"""
+# Japanese text intentionally kept for CJK processing test
+MILESTONE30_DRIFT_BODY += """\
 ## マイルストーン
 
 ### サブイシュー分割計画
@@ -165,6 +171,7 @@ def test_sub_count_mismatch():
 
 
 def test_subsection_missing():
+    # Japanese text intentionally kept for CJK processing test
     body = _valid_body().replace("**設計方針**: サブ1 の設計方針", "")
     violations = _check(body, MILESTONE_LABELS)
     assert any(v.rule_id == "b1_milestone_subdesign.subsection_missing" for v in violations)

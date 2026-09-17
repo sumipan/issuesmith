@@ -1,4 +1,4 @@
-"""test_ac_contract.py — 受け入れ条件 YAML 契約の抽出・実行のユニットテスト。"""
+"""test_ac_contract.py — unit tests for acceptance-criteria YAML contract extract/run."""
 from __future__ import annotations
 
 from issuesmith.ac_contract import (
@@ -7,10 +7,11 @@ from issuesmith.ac_contract import (
     run_checks,
 )
 
+# Japanese text intentionally kept for CJK processing test
 BODY_WITH_CONTRACT = """\
 ## 設計
 
-説明。
+Description.
 
 ## 受け入れ条件
 
@@ -34,19 +35,22 @@ def test_extract_contract_from_body():
 
 
 def test_extract_returns_none_without_ac_section():
-    assert extract_contract_from_body("## 概要\n本文のみ\n") is None
+    assert extract_contract_from_body("## Overview\nbody only\n") is None
 
 
 def test_extract_returns_none_without_yaml_block():
+    # Japanese text intentionally kept for CJK processing test
     assert extract_contract_from_body("## 受け入れ条件\n\n- [x] AC1\n") is None
 
 
 def test_extract_returns_none_for_invalid_yaml():
+    # Japanese text intentionally kept for CJK processing test
     body = "## 受け入れ条件\n\n```yaml\n: : broken [\n```\n"
     assert extract_contract_from_body(body) is None
 
 
 def test_extract_supports_header_variants():
+    # Japanese text intentionally kept for CJK processing test
     body = "## 7. 受け入れ条件（Acceptance Criteria）\n\n```yaml\npaths_must_exist:\n  - a.py\n```\n"
     assert extract_contract_from_body(body) == {"paths_must_exist": ["a.py"]}
 
@@ -83,11 +87,11 @@ def test_contract_failures_returns_human_readable_fail_lines(tmp_path):
 
 
 def test_contract_failures_empty_without_contract(tmp_path):
-    assert contract_failures("## 概要\n本文\n", repo_root=tmp_path) == []
+    assert contract_failures("## Overview\nbody\n", repo_root=tmp_path) == []
 
 
 def test_run_checks_references_plain_string_checks_file_existence(tmp_path):
-    """plain string 形式（"docs/FOO.md"）はファイル存在のみを検査し TypeError にしない（#3290）。"""
+    """Plain-string form ("docs/FOO.md") checks file existence only; no TypeError (#3290)."""
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "MLTGNT.md").write_text("# not yaml\n", encoding="utf-8")
     contract = {"references_must_resolve": ["docs/MLTGNT.md", "docs/MISSING.md"]}

@@ -120,7 +120,7 @@ def test_apply_priority_bucket_order_prevents_inversion():
 def test_deterministic_first_applies_priority_when_llm_times_out(
     tmp_path, monkeypatch,
 ):
-    """AC-2 / AC-6: LLM timeout でも high が先頭に来る（実測投入順 fixture）."""
+    """AC-2 / AC-6: even on LLM timeout, high comes first (measured enqueue-order fixture)."""
     _write_minimal_config(tmp_path, monkeypatch)
     from issuesmith import queue as qmod
 
@@ -197,7 +197,7 @@ def test_deterministic_first_applies_priority_when_llm_times_out(
 def test_cas_retry_keeps_triage_order_and_appends_new_request(
     tmp_path, monkeypatch,
 ):
-    """AC-1: LLM 中に enqueue で revision が進んでも 1 回リトライで採用する."""
+    """AC-1: if enqueue advances revision during LLM, adopt on one retry."""
     _write_minimal_config(tmp_path, monkeypatch)
     from issuesmith import queue as qmod
 
@@ -279,7 +279,7 @@ def test_cas_retry_keeps_triage_order_and_appends_new_request(
 
 
 def test_cas_conflict_logged_when_retry_fails(tmp_path, monkeypatch):
-    """AC-1: 再試行も失敗したら fallback_reason=cas_conflict をログする."""
+    """AC-1: if retry also fails, log fallback_reason=cas_conflict."""
     _write_minimal_config(tmp_path, monkeypatch)
     from issuesmith import queue as qmod
 
@@ -355,7 +355,7 @@ def test_cas_conflict_logged_when_retry_fails(tmp_path, monkeypatch):
 
 
 def test_purge_orphan_ids_and_doctor_audit(tmp_path, monkeypatch, capsys):
-    """AC-5: doctor が孤立 ID を検出し、audit が purge する."""
+    """AC-5: doctor detects orphan IDs and audit purges them."""
     _write_minimal_config(tmp_path, monkeypatch)
     from issuesmith import queue as qmod
 

@@ -30,6 +30,7 @@ from issuesmith.steps.base import StepContext
 
 # --- Real API strings (values unchanged from live capture) ---
 
+# Japanese text intentionally kept for CJK processing test
 ISSUE_CREATE_SUCCESS_JSON = json.dumps(
     {
         "number": 3000,
@@ -79,6 +80,7 @@ def _yaml(target_repo: str, allow_paths: list[str]) -> str:
     )
 
 
+# Japanese text intentionally kept for CJK processing test
 def _parent_body(
     *,
     child_repo: str = "sumipan/nexus",
@@ -162,13 +164,14 @@ def test_run_guarded_marker_extraction_stable_across_engines(engine: str) -> Non
 
 
 def test_v1_v2_v3_helpers_used_by_validate_children_and_sub1() -> None:
-    """共通ヘルパーが validate_children と sub1_create の双方から呼ばれる。"""
+    """Shared helpers are called from both validate_children and sub1_create."""
     parent = {
         "number": 100,
         "body": _parent_body(),
         "milestone": {"number": 1},
         "labels": [{"name": "scope:milestone"}],
     }
+    # Japanese text intentionally kept for CJK processing test
     child_body = (
         _yaml("sumipan/nexus", ["src/**"])
         + "\n**変更対象ファイル**:\n"
@@ -202,6 +205,7 @@ def test_v1_v2_v3_helpers_used_by_validate_children_and_sub1() -> None:
         assert result.passed is True
         assert v1.called and v2.called and v3.called
 
+    # Japanese text intentionally kept for CJK processing test
     failures = sub1._prevalidate_child_body(
         body=child_body,
         row_repo="sumipan/nexus",
@@ -232,6 +236,7 @@ def test_v1_v2_v3_helpers_used_by_validate_children_and_sub1() -> None:
 
 
 def test_parse_plan_table_by_header_names_not_column_order() -> None:
+    # Japanese text intentionally kept for CJK processing test
     body = (
         "## マイルストーン\n\n"
         "### サブイシュー分割計画\n"
@@ -250,6 +255,7 @@ def test_parse_plan_table_by_header_names_not_column_order() -> None:
 
 
 def test_four_column_plan_falls_back_to_parent_target_repo() -> None:
+    # Japanese text intentionally kept for CJK processing test
     body = (
         "## マイルストーン\n\n"
         "### サブイシュー分割計画\n"
@@ -314,6 +320,7 @@ def test_run_creates_child_and_returns_sub_created() -> None:
         cfg.return_value.supported_repos = frozenset(
             {"sumipan/nexus", "sumipan/issuesmith", "sumipan/ghdag"}
         )
+        # Japanese text intentionally kept for CJK processing test
         cfg.return_value.sections = {
             "sub_plan": "サブイシュー分割計画",
             "milestone": "マイルストーン",
@@ -383,6 +390,7 @@ def test_run_auto_creates_milestone_when_unset() -> None:
     ):
         ctm_cfg.return_value.timezone = "Asia/Tokyo"
         cfg.return_value.supported_repos = frozenset({"sumipan/nexus"})
+        # Japanese text intentionally kept for CJK processing test
         cfg.return_value.sections = {
             "sub_plan": "サブイシュー分割計画",
             "milestone": "マイルストーン",
@@ -396,11 +404,13 @@ def test_run_auto_creates_milestone_when_unset() -> None:
     assert result.pipeline_status == "SUB_CREATED"
     assert client.milestone_create.called
     comment_bodies = [c.args[1] for c in client.issue_comment.call_args_list]
+    # Japanese text intentionally kept for CJK processing test
     assert any("milestone を自動作成" in b for b in comment_bodies)
 
 
 def test_run_all_rows_fail_validation_exits_nonzero() -> None:
-    # 5-col plan with empty 対象リポジトリ → row validation failure
+    # 5-col plan with empty target-repo column → row validation failure
+    # Japanese text intentionally kept for CJK processing test
     body = (
         _yaml("sumipan/nexus", ["src/**"])
         + "\n## 設計\n\n設計本文です。\n\n"
@@ -430,6 +440,7 @@ def test_run_all_rows_fail_validation_exits_nonzero() -> None:
         patch.object(sub1, "get_config") as cfg,
     ):
         cfg.return_value.supported_repos = frozenset({"sumipan/nexus"})
+        # Japanese text intentionally kept for CJK processing test
         cfg.return_value.sections = {
             "sub_plan": "サブイシュー分割計画",
             "milestone": "マイルストーン",
