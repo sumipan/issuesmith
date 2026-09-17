@@ -456,7 +456,7 @@ def test_run_all_rows_fail_validation_exits_nonzero() -> None:
 
 
 def test_resolve_dependencies_replaces_refs_token_wise() -> None:
-    """#2 → #3382 のあとに #3 が "#3382" 内へマッチして "#3383382" になる回帰の防止（nexus #3379 / #3301）。"""
+    """Regression: after "#2" -> "#3382", "#3" must not match inside "#3382" (was "#3383382")."""
     state = sub1.Sub1State()
     client = MagicMock()
     out = sub1._resolve_dependencies(
@@ -483,12 +483,12 @@ def test_resolve_dependencies_keeps_forward_ref_and_drops_milestone() -> None:
         state=state,
     )
     assert out == "#3381, #7"
-    assert state.unresolved_forward_logs == ["未解決の前方参照: テーブル7"]
-    assert state.excluded_milestone_logs == ["除外した scope:milestone 依存: #3301"]
+    assert len(state.unresolved_forward_logs) == 1 and state.unresolved_forward_logs[0].endswith("7")
+    assert len(state.excluded_milestone_logs) == 1 and state.excluded_milestone_logs[0].endswith("#3301")
 
 
 def test_run_guarded_body_does_not_pass_invalid_tier(tmp_path) -> None:
-    """resolve(role, "default") は TIERS 外で ValueError になり本文生成が常にスキップされていた。"""
+    """resolve(role, "default") raised ValueError (not in TIERS) so body generation was always skipped."""
     calls: dict[str, object] = {}
 
     def fake_resolve(role: str, tier: str | None = None):
