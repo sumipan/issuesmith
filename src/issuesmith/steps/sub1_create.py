@@ -206,29 +206,38 @@ def _resolve_dependencies(
     dep = (dep_raw or "").strip()
     if not dep or dep == "なし":
         return "なし"
-    resolved = dep
     seen: list[int] = []
-    for match in _DEP_REF_RE.finditer(dep):
+    labels_cache: dict[int, list[str]] = {}
+
+    def _repl(match: re.Match[str]) -> str:
+        # トークン単位で置換する（#2 → #3382 のあとに #3 が "#3382" 内にマッチして
+        # "#3383382" になる substring 置換の再発防止）
         k = int(match.group(1))
-        if k in seen:
-            continue
-        seen.append(k)
+        first = k not in seen
+        if first:
+            seen.append(k)
         if k <= table_row_count:
             if k in row_to_issue:
                 target = f"#{row_to_issue[k]}"
-                resolved = resolved.replace(f"#{k}", target, 1)
-                state.resolved_logs.append(f"連番解決: テーブル{k} → {target}")
-            else:
+                if first:
+                    state.resolved_logs.append(f"連番解決: テーブル{k} → {target}")
+                return target
+            if first:
                 state.unresolved_forward_logs.append(f"未解決の前方参照: テーブル{k}")
-            continue
-        try:
-            issue = client.issue_get(k, fields=["labels"])
-            labels = _label_names_from_issue(issue)
-        except Exception:
-            labels = []
-        if "scope:milestone" in labels:
-            resolved = resolved.replace(f"#{k}", "", 1)
-            state.excluded_milestone_logs.append(f"除外した scope:milestone 依存: #{k}")
+            return match.group(0)
+        if k not in labels_cache:
+            try:
+                issue = client.issue_get(k, fields=["labels"])
+                labels_cache[k] = _label_names_from_issue(issue)
+            except Exception:
+                labels_cache[k] = []
+        if "scope:milestone" in labels_cache[k]:
+            if first:
+                state.excluded_milestone_logs.append(f"除外した scope:milestone 依存: #{k}")
+            return ""
+        return match.group(0)
+
+    resolved = _DEP_REF_RE.sub(_repl, dep)
     resolved = re.sub(r"\s+", " ", resolved).strip(" ,;|")
     if not resolved or resolved == "なし":
         return "なし"
@@ -560,7 +569,7 @@ def _run_guarded_body(
 ) -> int:
     """LLM body generation via run-guarded implementation (optional template)."""
     template = str(get_config().paths.template_dir / template_name)
-    selection = resolve("implementation", "default")
+    selection = resolve("implementation")  # tier=None: state のモデルをそのまま使う
     variables = [
         f"issue_number={ctx.issue_number}",
         f"row_num={row.row_num}",

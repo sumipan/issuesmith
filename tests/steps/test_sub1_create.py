@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from issuesmith.config import reset_config_cache
-from issuesmith.engine import _extract_status_values
+from issuesmith.engine import RoleSelection, _extract_status_values
 from issuesmith.milestone import (
     check_v1_target_repo,
     check_v2_allow_paths,
@@ -453,3 +453,58 @@ def test_run_all_rows_fail_validation_exits_nonzero() -> None:
     assert result.exit_code == 1
     assert result.pipeline_status == "IMPL_FAILED"
     client.issue_create.assert_not_called()
+
+
+def test_resolve_dependencies_replaces_refs_token_wise() -> None:
+    """Regression: after "#2" -> "#3382", "#3" must not match inside "#3382" (was "#3383382")."""
+    state = sub1.Sub1State()
+    client = MagicMock()
+    out = sub1._resolve_dependencies(
+        "#2, #3",
+        table_row_count=8,
+        row_to_issue={2: 3382, 3: 3383},
+        client=client,
+        state=state,
+    )
+    assert out == "#3382, #3383"
+    assert state.unresolved_forward_logs == []
+    client.issue_get.assert_not_called()
+
+
+def test_resolve_dependencies_keeps_forward_ref_and_drops_milestone() -> None:
+    state = sub1.Sub1State()
+    client = MagicMock()
+    client.issue_get.return_value = {"labels": [{"name": "scope:milestone"}]}
+    out = sub1._resolve_dependencies(
+        "#1, #7, #3301",
+        table_row_count=8,
+        row_to_issue={1: 3381},
+        client=client,
+        state=state,
+    )
+    assert out == "#3381, #7"
+    assert len(state.unresolved_forward_logs) == 1 and state.unresolved_forward_logs[0].endswith("7")
+    assert len(state.excluded_milestone_logs) == 1 and state.excluded_milestone_logs[0].endswith("#3301")
+
+
+def test_run_guarded_body_does_not_pass_invalid_tier(tmp_path) -> None:
+    """resolve(role, "default") raised ValueError (not in TIERS) so body generation was always skipped."""
+    calls: dict[str, object] = {}
+
+    def fake_resolve(role: str, tier: str | None = None):
+        calls["resolve"] = (role, tier)
+        return RoleSelection(engine="claude", model="m")
+
+    def fake_run_guarded(role, template, variables, **kw):
+        calls["run_guarded"] = (role, variables)
+        return 0
+
+    ctx = MagicMock(issue_number="3379", target_repo="sumipan/nexus")
+    row = MagicMock(row_num=1, title="t", repo="sumipan/nexus")
+    with patch.object(sub1, "resolve", side_effect=fake_resolve), patch.object(
+        sub1, "run_guarded", side_effect=fake_run_guarded
+    ):
+        rc = sub1._run_guarded_body(ctx, row=row, body_path=tmp_path / "b.md", template_name="sub-body.md")
+    assert rc == 0
+    assert calls["resolve"] == ("implementation", None)
+    assert "model=m" in calls["run_guarded"][1]
