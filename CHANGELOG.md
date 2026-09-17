@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `steps.sub1_create._run_guarded_body`: `resolve("implementation", "default")` が TIERS（light / heavy）外で
+  ValueError になり、子 Issue の LLM 本文生成が常にスキップされて雛形（設計空・AC「(from parent)」）のまま
+  起票されていた。tier を渡さない（state のモデルをそのまま使う）ように修正（nexus #3379 / #3322）
+- `steps.sub1_create._resolve_dependencies`: 依存の連番参照を substring 置換していたため `#2, #3` が
+  `#3382` 置換後に `#3` が `#3382` 内へマッチして `#3383382` になり、子 Issue 検証（V4）で chain が
+  halted になっていた。トークン単位の正規表現置換に変更し、milestone 参照の除外も同じ経路に統合（nexus #3379 / #3301）
+
+### Fixed
+
 - `ac_contract.run_checks`: `references_must_resolve` の plain string 形式（`- docs/FOO.md`）を
   「ファイルが存在すること」の検査として受理し、`key_path` 省略の dict も同様に扱う。
   従来は `TypeError: string indices must be integers` で M2 が落ちていた（nexus #3290）
