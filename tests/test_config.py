@@ -14,8 +14,8 @@ from issuesmith.config import (
     reset_config_cache,
 )
 
-# 変更前のモジュール定数と一致すべき内蔵既定値（相対パス / スカラー）
-# repo は必須（#3081）。supported_repos のパッケージ既定は空。
+# Builtin defaults that must match pre-change module constants (relative paths / scalars).
+# repo is required (#3081). Package default for supported_repos is empty.
 _LEGACY_REPO = "sumipan/nexus"
 _LEGACY_TIMEZONE = "Asia/Tokyo"
 _LEGACY_REL_PATHS = {
@@ -45,7 +45,7 @@ def _clear_config_cache():
 
 
 def test_builtin_defaults_match_legacy_constants(tmp_path, monkeypatch):
-    """repo のみ指定時、その他の内蔵既定が変更前の定数値と一致する。"""
+    """With only repo set, other builtin defaults match pre-change constant values."""
     cfg_path = tmp_path / "issuesmith.yaml"
     cfg_path.write_text(yaml.safe_dump({"repo": _LEGACY_REPO}), encoding="utf-8")
     monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
@@ -60,7 +60,7 @@ def test_builtin_defaults_match_legacy_constants(tmp_path, monkeypatch):
     assert isinstance(cfg.root, Path)
     for name, rel in _LEGACY_REL_PATHS.items():
         assert getattr(cfg.paths, name) == (cfg.root / rel).resolve()
-    # AC-1: brake_state 省略時は quota_state へフォールバック（単一 gate）
+    # AC-1: when brake_state is omitted, fall back to quota_state (single gate)
     assert cfg.paths.brake_state == cfg.paths.quota_state
     assert ZoneInfo(cfg.timezone) == ZoneInfo("Asia/Tokyo")
 
@@ -92,13 +92,14 @@ def test_builtin_defaults_match_legacy_constants(tmp_path, monkeypatch):
 
 
 def test_missing_repo_raises(tmp_path, monkeypatch):
-    """repo 未設定は get_config / load_config で明示エラー。"""
+    """Missing repo raises an explicit error from get_config / load_config."""
     monkeypatch.delenv("ISSUESMITH_CONFIG", raising=False)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         "issuesmith.config._package_fallback_yaml",
         lambda: tmp_path / "missing-issuesmith.yaml",
     )
+    # Japanese text intentionally kept for CJK processing test
     with pytest.raises(
         ValueError, match="issuesmith.yaml に repo: owner/name を設定してください"
     ):
@@ -106,7 +107,7 @@ def test_missing_repo_raises(tmp_path, monkeypatch):
 
 
 def test_issuesmith_config_env_overrides_and_resolves_relative(tmp_path, monkeypatch):
-    """ISSUESMITH_CONFIG 指定時、値と相対パス絶対化がそのファイル基準になる。"""
+    """With ISSUESMITH_CONFIG set, values and relative paths resolve against that file."""
     cfg_dir = tmp_path / "instance"
     cfg_dir.mkdir()
     cfg_path = cfg_dir / "issuesmith.yaml"
@@ -156,13 +157,13 @@ def test_issuesmith_config_env_overrides_and_resolves_relative(tmp_path, monkeyp
     assert cfg.root == cfg_dir.resolve()
     assert cfg.paths.queue == (cfg_dir / "data/queue.jsonl").resolve()
     assert cfg.paths.queue.is_absolute()
-    # brake_state 未指定 → quota_state と同値
+    # brake_state omitted → same value as quota_state
     assert cfg.paths.brake_state == cfg.paths.quota_state
     assert cfg.paths.quota_state == (cfg_dir / "data/quota.json").resolve()
 
 
 def test_brake_state_explicit_resolves_relative(tmp_path, monkeypatch):
-    """AC-2: paths.brake_state 明示時は設定ファイル基準の絶対 Path になる。"""
+    """AC-2: explicit paths.brake_state becomes an absolute Path relative to the config file."""
     cfg_dir = tmp_path / "instance"
     cfg_dir.mkdir()
     cfg_path = cfg_dir / "issuesmith.yaml"
@@ -185,7 +186,7 @@ def test_brake_state_explicit_resolves_relative(tmp_path, monkeypatch):
 
 
 def test_brake_state_omitted_equals_quota_state(tmp_path, monkeypatch):
-    """AC-1: brake_state キー自体が無い設定でも brake_state == quota_state。"""
+    """AC-1: even when the brake_state key is absent, brake_state == quota_state."""
     cfg_path = tmp_path / "issuesmith.yaml"
     cfg_path.write_text(
         yaml.safe_dump(

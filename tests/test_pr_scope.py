@@ -134,7 +134,7 @@ _FILE_CHANGELOG_APPEND_ONLY = {
 
 
 def test_publish_only_pyproject_version_excluded_from_out_of_scope() -> None:
-    """AC-6: version 行のみの pyproject.toml 差分は PASS（違反なし）。"""
+    """AC-6: pyproject.toml diff with only the version line is PASS (no violation)."""
     entries = [_FILE_PYPROJECT_VERSION_ONLY]
     violations = check_pr_diff_scope(
         _filenames(*entries),
@@ -146,7 +146,7 @@ def test_publish_only_pyproject_version_excluded_from_out_of_scope() -> None:
 
 
 def test_pyproject_non_version_change_still_out_of_scope() -> None:
-    """AC-6: version 以外の pyproject 変更は FAIL。"""
+    """AC-6: non-version pyproject changes are FAIL."""
     entries = [_FILE_PYPROJECT_EXTRA_CHANGE]
     violations = check_pr_diff_scope(
         _filenames(*entries),
@@ -160,7 +160,7 @@ def test_pyproject_non_version_change_still_out_of_scope() -> None:
 
 
 def test_publish_only_changelog_append_excluded_from_out_of_scope() -> None:
-    """AC-5: CHANGELOG 追記のみ（deletions=0）は PASS。"""
+    """AC-5: CHANGELOG append-only (deletions=0) is PASS."""
     entries = [_FILE_CHANGELOG_APPEND_ONLY]
     violations = check_pr_diff_scope(
         _filenames(*entries),
@@ -172,7 +172,7 @@ def test_publish_only_changelog_append_excluded_from_out_of_scope() -> None:
 
 
 def test_pyproject_without_file_entries_still_out_of_scope() -> None:
-    """file_entries 無しでは従来どおりファイル名だけで判定する。"""
+    """Without file_entries, fall back to filename-only checks as before."""
     violations = check_pr_diff_scope(
         ["pyproject.toml"],
         allow_paths=["src/**"],

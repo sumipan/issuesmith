@@ -1,4 +1,4 @@
-"""test_ac_contract_migration.py — migration 契約（removed_trees / post_merge）のユニットテスト。"""
+"""test_ac_contract_migration.py — unit tests for migration contract (removed_trees / post_merge)."""
 from __future__ import annotations
 
 import subprocess

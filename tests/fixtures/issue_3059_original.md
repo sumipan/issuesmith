@@ -7,6 +7,7 @@ allow_paths:
   - "issuesmith.yaml"
 ```
 
+<!-- Japanese text intentionally kept for CJK processing test -->
 ## 背景・目的
 
 issuesmith を「ghdag 上の汎用ワークフロー基盤」にするため、パッケージに焼き込まれた nexus 固有ポリシーを設定へ外出しする。
@@ -41,6 +42,7 @@ issuesmith を「ghdag 上の汎用ワークフロー基盤」にするため、
 - [ ] カスタム phases で反映
 - [ ] 3 エンジンで engine resolve 不変
 
+<!-- Japanese text intentionally kept for CJK processing test -->
 #### Sub 2: セクション名を sections 設定に外出しする
 
 **スコープ**: sections / sub_design_subsections を config 化
@@ -69,6 +71,7 @@ issuesmith を「ghdag 上の汎用ワークフロー基盤」にするため、
 - [ ] config show が JSON を返す
 - [ ] nexus issuesmith.yaml は既存 repo で通る
 
+<!-- Japanese text intentionally kept for CJK processing test -->
 #### Sub 4: ステップ実装を steps 設定に外出しする
 
 **スコープ**: StepConfig と steps キー

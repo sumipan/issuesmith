@@ -70,14 +70,15 @@ def test_pyproject_uses_src_layout() -> None:
     find = data["tool"]["setuptools"]["packages"]["find"]
     assert find["where"] == ["src"]
     assert data["project"]["name"] == "issuesmith"
-    # version はリリースごとに変わるため固定値で縛らない。固定すると version bump を含む
-    # Issue のたびに tests/test_cli.py を allow_paths に入れないと CP2 が落ちる
-    # （2026-09-09、#2980 / #2959 で 2 度再発）。形式だけを検証する。
+    # Do not pin version: it changes per release. Pinning forces every version-bump
+    # Issue to add tests/test_cli.py to allow_paths or CP2 fails
+    # (regressed twice on 2026-09-09, #2980 / #2959). Validate format only.
     assert re.fullmatch(r"\d+\.\d+\.\d+", data["project"]["version"]), data["project"]["version"]
 
 
 def test_gate_alias_matches_gate_preflight(tmp_path: Path) -> None:
     body = tmp_path / "body.md"
+    # Japanese text intentionally kept for CJK processing test
     body.write_text("## 受け入れ条件\n\n```yaml\npaths_must_exist: []\n```\n", encoding="utf-8")
 
     old = _run_module("gate-preflight", "--gate", "cp1", "--body-file", str(body))

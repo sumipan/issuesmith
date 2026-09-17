@@ -28,6 +28,7 @@ from issuesmith.steps.base import StepContext
 
 # --- Real API strings (trimmed to fields the step reads; values unchanged) ---
 
+# Japanese text intentionally kept for CJK processing test
 PR_LIST_SUCCESS_JSON = json.dumps(
     [
         {
@@ -99,6 +100,7 @@ PR_GET_FORBIDDEN_JSON = json.dumps(
     ensure_ascii=False,
 )
 
+# Japanese text intentionally kept for CJK processing test
 _ISSUE_BODY_WITH_ALLOW = (
     "```yaml\n"
     "target_repo: sumipan/issuesmith\n"
@@ -234,6 +236,7 @@ def test_pr_diff_lines_absent_uses_real_empty_list_string() -> None:
 
 
 def test_unchecked_ac_count_only_inside_section() -> None:
+    # Japanese text intentionally kept for CJK processing test
     body = (
         "## 概要\n- [ ] ignore\n"
         "## 受け入れ条件\n- [x] done\n- [ ] todo\n- [ ] other\n"
@@ -281,6 +284,7 @@ def test_run_success_skips_fail_handler() -> None:
 def test_run_fail_comments_and_transitions_to_develop_done() -> None:
     client = MagicMock()
     client.api_request.return_value = []
+    # Japanese text intentionally kept for CJK processing test
     client.issue_get.side_effect = [
         {"body": "## 受け入れ条件\n- [ ] left\n"},
         {"labels": [{"name": "issuesmith:develop-running"}]},
@@ -333,7 +337,7 @@ def test_run_pr_diff_scope_violation_fails_before_llm() -> None:
 # --- #3216: empty-repo / owner-less head / branch match (AC-1 / AC-2 / AC-3) ---
 # Real list shapes captured 2026-09-13 (CLAUDE.md §10 / AGENTS.md §16):
 #   pulls?head=feat%2Fissue-3169-2309b9d6&state=open
-#     → [3215, 3214, 2720, 1164]  (owner 無し・head 無視で全 open PR)
+#     → [3215, 3214, 2720, 1164]  (no owner; head ignored → all open PRs)
 #   repos/sumipan/nexus/pulls?head=sumipan%3Afeat%2Fissue-3169-2309b9d6&state=open
 #     → [3214]
 
@@ -422,9 +426,9 @@ def test_open_pr_number_skips_api_when_head_unavailable(capsys) -> None:
 
 
 def test_open_pr_number_rejects_ownerless_all_open_without_matching_ref() -> None:
-    """AC-3: owner 無し全件 fixture で listed[0] を盲信しない。
+    """AC-3: do not blindly trust listed[0] on an owner-less all-open fixture.
 
-    listed[0]=3215 は別ブランチ。一致する 3214 だけ採用する。
+    listed[0]=3215 is a different branch; only matching 3214 is accepted.
     """
     client = MagicMock()
     listed = json.loads(PR_LIST_OWNERLESS_ALL_OPEN_JSON)
@@ -445,7 +449,7 @@ def test_open_pr_number_returns_none_when_no_head_ref_matches() -> None:
 
 
 def test_open_pr_number_owner_filtered_cross_repo() -> None:
-    """AC-3: owner あり 1 件 fixture（cross-repo / target_repo あり）。"""
+    """AC-3: owner-filtered single-item fixture (cross-repo / target_repo set)."""
     client = MagicMock()
     listed = json.loads(PR_LIST_OWNER_FILTERED_JSON)
     assert [p["number"] for p in listed] == [3214]
@@ -458,7 +462,7 @@ def test_open_pr_number_owner_filtered_cross_repo() -> None:
 
 
 def test_run_nexus_target_empty_repo_skips_scope_when_config_empty(capsys) -> None:
-    """AC-1 / AC-3: nexus 対象（target_repo 空）で config.repo も空なら PR 検索しない。"""
+    """AC-1 / AC-3: nexus target (empty target_repo) with empty config.repo skips PR search."""
     client = MagicMock()
     client.issue_get.return_value = {"body": _ISSUE_BODY_WITH_ALLOW}
     cfg = MagicMock()

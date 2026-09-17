@@ -1,4 +1,4 @@
-"""steps: 設定 — 無設定は現行動作、カスタムは dispatch に反映。"""
+"""steps: config — unset keeps current behavior; custom values apply to dispatch."""
 
 from __future__ import annotations
 
@@ -62,7 +62,7 @@ def test_custom_step_module_loaded_by_dispatch(tmp_path, monkeypatch):
         module="issuesmith.steps.custom",
         template=None,
     )
-    # 既定エントリは部分上書きでも維持
+    # Default entries remain after partial override
     assert cfg.steps["m2-role-dispatch"] == _DEFAULT_M2
 
     loaded: dict[str, object] = {}

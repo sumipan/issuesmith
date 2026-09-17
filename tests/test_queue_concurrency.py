@@ -598,7 +598,7 @@ def test_halt_auto_clears_when_in_flight_resolved(
 def test_dispatch_bumps_ghdag_generation_when_handler_key_consumed(
     tmp_path, monkeypatch, issuesmith_config,
 ):
-    """ready ラベル付与時に冪等キーが消費済みなら ghdag redispatch を呼ぶ（2026-09-09 #2980）。"""
+    """When ready label is applied and the idempotency key is consumed, call ghdag redispatch (2026-09-09 #2980)."""
     _patch_paths(tmp_path, monkeypatch, issuesmith_config)
 
     from issuesmith import queue as qmod

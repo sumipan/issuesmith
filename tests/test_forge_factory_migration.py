@@ -1,4 +1,4 @@
-"""Acceptance: issuesmith constructs forge clients via get_forge() (#3102 / #3066 サブ4)."""
+"""Acceptance: issuesmith constructs forge clients via get_forge() (#3102 / #3066 sub4)."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def test_no_github_client_construction_in_src():
 
 def test_get_forge_imported_where_clients_are_built():
     """Modules that previously constructed clients must import get_forge."""
-    # Spot-check high-traffic modules listed in #3066 サブ4.
+    # Spot-check high-traffic modules listed in #3066 sub4.
     modules = [
         "dep_extractor.py",
         "queue.py",

@@ -1,4 +1,4 @@
-"""tests/gate_rules/test_b1_ac_format.py — b1_ac_format ゲートのユニットテスト。"""
+"""tests/gate_rules/test_b1_ac_format.py — unit tests for the b1_ac_format gate."""
 from __future__ import annotations
 
 import issuesmith.gate_rules.b1_ac_format  # noqa: F401 — registers on import
@@ -13,6 +13,7 @@ def _check(body: str, labels: list[str]):
 NON_MILESTONE_LABELS = ["scope:feature", "issuesmith:develop-ready"]
 MILESTONE_LABELS = ["scope:milestone"]
 
+# Japanese text intentionally kept for CJK processing test
 BODY_WITH_AC_AND_YAML = """\
 ## 背景・目的
 some background
@@ -29,12 +30,14 @@ paths_must_not_exist:
 - [ ] 何かのチェック
 """
 
+# Japanese text intentionally kept for CJK processing test
 BODY_WITH_AC_NO_YAML = """\
 ## 受け入れ条件
 
 - [ ] 何かのチェック
 """
 
+# Japanese text intentionally kept for CJK processing test
 BODY_NO_AC_SECTION = """\
 ## 背景・目的
 
@@ -45,6 +48,7 @@ some text
 some design
 """
 
+# Japanese text intentionally kept for CJK processing test
 BODY_WITH_INVALID_YAML = """\
 ## 受け入れ条件
 
@@ -56,6 +60,7 @@ paths_must_exist:
 ```
 """
 
+# Japanese text intentionally kept for CJK processing test
 BODY_WITH_UNPARSEABLE_YAML = """\
 ## 受け入れ条件
 
@@ -65,6 +70,7 @@ BODY_WITH_UNPARSEABLE_YAML = """\
 ```
 """
 
+# Japanese text intentionally kept for CJK processing test
 BODY_WITH_ALL_ALLOWED_KEYS = """\
 ## 受け入れ条件
 
@@ -79,6 +85,7 @@ references_must_resolve:
 ```
 """
 
+# Japanese text intentionally kept for CJK processing test
 BODY_WITH_DESIGN_TABLE = """\
 ## 設計
 
@@ -99,7 +106,7 @@ paths_must_exist:
 
 
 # ---------------------------------------------------------------------------
-# scope:milestone ラベルなし → 常に空リスト
+# Without scope:milestone → always empty list
 # ---------------------------------------------------------------------------
 
 
@@ -119,7 +126,7 @@ def test_empty_labels_returns_empty():
 
 
 # ---------------------------------------------------------------------------
-# scope:milestone ラベルあり + ## 受け入れ条件 セクションなし → section_missing
+# With scope:milestone + no acceptance-criteria section → section_missing
 # ---------------------------------------------------------------------------
 
 
@@ -133,7 +140,7 @@ def test_section_missing_violation():
 
 
 # ---------------------------------------------------------------------------
-# scope:milestone ラベルあり + YAML ブロックなし → yaml_block_missing
+# With scope:milestone + no YAML block → yaml_block_missing
 # ---------------------------------------------------------------------------
 
 
@@ -148,7 +155,7 @@ def test_yaml_block_missing_violation():
 
 
 # ---------------------------------------------------------------------------
-# scope:milestone ラベルあり + 不正 YAML → yaml_invalid
+# With scope:milestone + invalid YAML → yaml_invalid
 # ---------------------------------------------------------------------------
 
 
@@ -167,7 +174,7 @@ def test_unparseable_yaml_returns_invalid():
 
 
 # ---------------------------------------------------------------------------
-# scope:milestone ラベルあり + 正常 YAML → 空リスト
+# With scope:milestone + valid YAML → empty list
 # ---------------------------------------------------------------------------
 
 
@@ -187,7 +194,7 @@ def test_design_table_body_returns_empty():
 
 
 # ---------------------------------------------------------------------------
-# GATE_REGISTRY への登録確認
+# Registration in GATE_REGISTRY
 # ---------------------------------------------------------------------------
 
 
@@ -196,11 +203,12 @@ def test_registered_in_gate_registry():
 
 
 # ---------------------------------------------------------------------------
-# auto_fix のヒント: yaml_block_missing 時に ## 設計 テーブルから派生
+# auto_fix hint: for yaml_block_missing, derive from design-section table
 # ---------------------------------------------------------------------------
 
 
 def test_yaml_block_missing_fix_hint_derives_from_design_table():
+    # Japanese text intentionally kept for CJK processing test
     body = """\
 ## 設計
 
@@ -224,7 +232,7 @@ def test_yaml_block_missing_fix_hint_derives_from_design_table():
 
 
 # ---------------------------------------------------------------------------
-# scope:migration も YAML 契約の形式検証対象
+# scope:migration is also subject to YAML contract format checks
 # ---------------------------------------------------------------------------
 
 

@@ -1,4 +1,4 @@
-"""tests/test_context_hook.py — context_hook.py のユニットテスト"""
+"""tests/test_context_hook.py — unit tests for context_hook.py"""
 from __future__ import annotations
 
 import json
@@ -18,10 +18,10 @@ def _body(target_repo: str = "", base_branch: str = "main", allow_paths: str = "
     if allow_paths:
         lines.append(f"allow_paths:\n  - {allow_paths}")
     yaml_block = "\n".join(lines)
-    return f"```yaml\n{yaml_block}\n```\n\n## 目的\ntest"
+    return f"```yaml\n{yaml_block}\n```\n\n## Purpose\ntest"
 
 
-# --- AC-3: ghdag クロスリポジトリモード ---
+# --- AC-3: ghdag cross-repo mode ---
 
 def test_ghdag_cross_repo_is_cross_repo():
     body = _body(target_repo="sumipan/ghdag", allow_paths="src/**")
@@ -47,21 +47,23 @@ def test_ghdag_cross_repo_worktree_path_prefix():
     assert ctx["target_worktree_path"].startswith(".claude/external/ghdag/worktrees/issue-")
 
 
-# --- AC-4: 未対応リポジトリは ValueError ---
+# --- AC-4: unsupported repo raises ValueError ---
 
 def test_unknown_repo_raises_value_error():
     body = _body(target_repo="sumipan/unknown-repo")
+    # Japanese text intentionally kept for CJK processing test
     with pytest.raises(ValueError, match="未対応"):
         build_context(999, body=body)
 
 
 def test_invalid_format_raises_value_error():
     body = _body(target_repo="invalid-format")
+    # Japanese text intentionally kept for CJK processing test
     with pytest.raises(ValueError, match="未対応"):
         build_context(999, body=body)
 
 
-# --- 回帰: mltgnt は既存通り動作 ---
+# --- regression: mltgnt still works as before ---
 
 def test_mltgnt_still_works():
     body = _body(target_repo="sumipan/mltgnt")
@@ -95,7 +97,7 @@ def test_okr_core_supported():
 
 
 def test_issuesmith_cross_repo_supported():
-    """sumipan/issuesmith は SUPPORTED_REPOS に含まれ、cross-repo として導出される。"""
+    """sumipan/issuesmith is in SUPPORTED_REPOS and is derived as cross-repo."""
     body = _body(target_repo="sumipan/issuesmith", allow_paths="src/**")
     violations = validate_issue_metadata({"target_repo": "sumipan/issuesmith", "allow_paths": ["src/**"]})
     assert violations == []
@@ -117,15 +119,16 @@ def test_diary_static_docs_supported():
 
 
 def test_nexus_target_repo_is_normalized_to_native():
-    """自リポ（issue_repo と同じ）を指した target_repo はネイティブ経路に正規化される。
+    """target_repo pointing at the native repo (same as issue_repo) is normalized to the native path.
 
-    250868cee44（#2567）で、target_repo == issue_repo のときは cross-repo 扱いを
-    やめる挙動になった。external clone/worktree 経路に乗せると、M2 の受け入れ条件
-    ゲートがマージ後に消える feature worktree を契約検査して偽陰性を出すため。
-    issue_repo の既定は ghdag.github_client.DEFAULT_REPO = "sumipan/nexus"。
+    As of 250868cee44 (#2567), when target_repo == issue_repo we stop treating it as
+    cross-repo. Putting it on the external clone/worktree path would make M2's
+    acceptance-criteria gate inspect a feature worktree that disappears after merge,
+    causing false negatives. issue_repo defaults to
+    ghdag.github_client.DEFAULT_REPO = "sumipan/nexus".
 
-    sumipan/nexus は SUPPORTED_REPOS に含まれるので指定自体は受理される（
-    validate_issue_metadata が弾かない）が、cross-repo にはならない。
+    sumipan/nexus is in SUPPORTED_REPOS so the value itself is accepted
+    (validate_issue_metadata does not reject it), but it is not cross-repo.
     """
     body = _body(target_repo="sumipan/nexus")
     ctx = build_context(5, body=body)
@@ -136,7 +139,7 @@ def test_nexus_target_repo_is_normalized_to_native():
 
 
 def test_nexus_target_repo_passes_metadata_validation():
-    """正規化されても SUPPORTED_REPOS 検証は通る（target_repo は全件必須）。"""
+    """Even after normalization, SUPPORTED_REPOS validation passes (target_repo required on all)."""
     from issuesmith.context_hook import parse_issue_metadata, validate_issue_metadata
 
     body = _body(target_repo="sumipan/nexus")
@@ -144,7 +147,7 @@ def test_nexus_target_repo_passes_metadata_validation():
     assert violations == []
 
 
-# --- 回帰: target_repo 空 / 未指定は diary 内モード（context_hook 内部変数名は維持） ---
+# --- regression: empty/unset target_repo is in-repo (diary) mode (keep context_hook internal names) ---
 
 def test_empty_target_repo_is_diary_mode():
     body = _body(target_repo="")
@@ -156,7 +159,7 @@ def test_empty_target_repo_is_diary_mode():
 
 
 def test_no_target_repo_field_is_diary_mode():
-    body = "```yaml\nbase_branch: main\n```\n\n## 目的\ntest"
+    body = "```yaml\nbase_branch: main\n```\n\n## Purpose\ntest"
     ctx = build_context(11, body=body)
     assert ctx["is_cross_repo"] == "false"
     assert ctx["repo_name"] == ""
@@ -176,7 +179,7 @@ def _body_cross_repo_with_diary(diary_allow_paths=None):
         for p in diary_allow_paths:
             lines.append(f"  - {p}")
     yaml_block = "\n".join(lines)
-    return f"```yaml\n{yaml_block}\n```\n\n## 目的\ntest"
+    return f"```yaml\n{yaml_block}\n```\n\n## Purpose\ntest"
 
 
 def test_diary_allow_paths_has_diary_changes_true():
@@ -216,7 +219,7 @@ def test_no_diary_allow_paths_has_diary_changes_false():
 
 
 def test_diary_only_mode_has_diary_changes_false():
-    body = "```yaml\nbase_branch: main\n```\n\n## 目的\ntest"
+    body = "```yaml\nbase_branch: main\n```\n\n## Purpose\ntest"
     ctx = build_context(11, body=body)
     assert ctx["has_diary_changes"] == "false"
     assert ctx["diary_worktree_path"] == ""
@@ -224,7 +227,7 @@ def test_diary_only_mode_has_diary_changes_false():
 
 
 def test_diary_allow_paths_without_target_repo_is_false():
-    body = "```yaml\nbase_branch: main\ndiary_allow_paths:\n  - workflows/**\n```\n\n## 目的\ntest"
+    body = "```yaml\nbase_branch: main\ndiary_allow_paths:\n  - workflows/**\n```\n\n## Purpose\ntest"
     ctx = build_context(100, body=body)
     assert ctx["has_diary_changes"] == "false"
 
@@ -237,6 +240,7 @@ def test_lint_warning_nodo_diary_mention_no_diary_allow_paths(capsys):
         "allow_paths:\n"
         "  - src/**\n"
         "```\n\n"
+        # Japanese text intentionally kept for CJK processing test
         "## やらないこと\n"
         "- diary 側の変更は別途行う\n"
     )
@@ -245,12 +249,12 @@ def test_lint_warning_nodo_diary_mention_no_diary_allow_paths(capsys):
     assert "diary_allow_paths" in captured.err or "やらないこと" in captured.err
 
 
-# --- Issue #1719: YAML パース失敗時の warning ログ ---
+# --- Issue #1719: warning log when YAML parse fails ---
 
 
 def test_build_context_warns_on_missing_yaml(caplog):
-    """YAML ブロックなし body で build_context() を呼ぶと logging.warning が 1 回出る。"""
-    body = "## 目的\ntest"
+    """Calling build_context() with a body that has no YAML block emits one logging.warning."""
+    body = "## Purpose\ntest"
     with caplog.at_level(logging.WARNING, logger="issuesmith.context_hook"):
         build_context(42, body=body)
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
@@ -259,8 +263,8 @@ def test_build_context_warns_on_missing_yaml(caplog):
 
 
 def test_build_context_warns_on_invalid_yaml(caplog):
-    """冒頭コードブロックが json の body で build_context() を呼ぶと logging.warning が 1 回出る。"""
-    body = "```json\n{\"key\": \"value\"}\n```\n\n## 目的\ntest"
+    """Calling build_context() when the leading code block is json emits one logging.warning."""
+    body = "```json\n{\"key\": \"value\"}\n```\n\n## Purpose\ntest"
     with caplog.at_level(logging.WARNING, logger="issuesmith.context_hook"):
         build_context(99, body=body)
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
@@ -271,7 +275,7 @@ def test_build_context_warns_on_invalid_yaml(caplog):
 # --- Issue #1757: validate_issue_metadata() ---
 
 def test_validate_missing_target_repo():
-    """target_repo キーなし → missing_required"""
+    """No target_repo key → missing_required"""
     violations = validate_issue_metadata({"base_branch": "main", "allow_paths": ["src/**"]})
     assert len(violations) == 1
     assert violations[0].field == "target_repo"
@@ -279,7 +283,7 @@ def test_validate_missing_target_repo():
 
 
 def test_validate_empty_target_repo():
-    """target_repo 空文字列 → missing_required"""
+    """Empty-string target_repo → missing_required"""
     violations = validate_issue_metadata({"target_repo": "", "allow_paths": ["src/**"]})
     assert len(violations) == 1
     assert violations[0].field == "target_repo"
@@ -287,7 +291,7 @@ def test_validate_empty_target_repo():
 
 
 def test_validate_unsupported_target_repo():
-    """未対応リポジトリ → unsupported_repo"""
+    """Unsupported repository → unsupported_repo"""
     violations = validate_issue_metadata({"target_repo": "sumipan/unknown"})
     assert len(violations) == 1
     assert violations[0].field == "target_repo"
@@ -295,8 +299,9 @@ def test_validate_unsupported_target_repo():
 
 
 def test_validate_annotation_in_allow_paths():
-    """allow_paths に注記混入 → annotation_in_path"""
+    """Annotation mixed into allow_paths → annotation_in_path"""
     violations = validate_issue_metadata(
+        # Japanese text intentionally kept for CJK processing test
         {"target_repo": "sumipan/ghdag", "allow_paths": ["(ghdag リポ) src/**"]}
     )
     assert len(violations) == 1
@@ -305,7 +310,7 @@ def test_validate_annotation_in_allow_paths():
 
 
 def test_validate_var_tmp_in_allow_paths():
-    """allow_paths に /var/tmp/ → invalid_path_format"""
+    """allow_paths contains /var/tmp/ → invalid_path_format"""
     violations = validate_issue_metadata(
         {"target_repo": "sumipan/ghdag", "allow_paths": ["/var/tmp/ghdag/"]}
     )
@@ -315,7 +320,7 @@ def test_validate_var_tmp_in_allow_paths():
 
 
 def test_validate_valid_cross_repo():
-    """正常（クロスリポ）→ violations なし"""
+    """Valid (cross-repo) → no violations"""
     violations = validate_issue_metadata(
         {"target_repo": "sumipan/ghdag", "allow_paths": ["src/**"], "base_branch": "main"}
     )
@@ -323,7 +328,7 @@ def test_validate_valid_cross_repo():
 
 
 def test_validate_valid_nexus():
-    """正常（nexus）→ violations なし"""
+    """Valid (nexus) → no violations"""
     violations = validate_issue_metadata(
         {"target_repo": "sumipan/nexus", "allow_paths": ["tools/**"]}
     )
@@ -365,12 +370,12 @@ def test_targets_json_backward_compat_flat_keys():
 
 
 # ===========================================================================
-# nexus tests/tools/issuesmith/test_issuesmith_context_hook.py から移設
+# Moved from nexus tests/tools/issuesmith/test_issuesmith_context_hook.py
 # ===========================================================================
 
 
 def test_build_context_defaults():
-    """YAML ブロックがない body の場合、デフォルト値が返る。"""
+    """When body has no YAML block, default values are returned."""
     import os
 
     ctx = build_context(42, body="# Title\n\nNo yaml here")
@@ -381,11 +386,12 @@ def test_build_context_defaults():
     assert ctx["worktree_path"].endswith(f"/.claude/worktrees/{ctx['pipeline_id']}")
     assert ctx["branch"] == f"feat/{ctx['pipeline_id']}"
     assert ctx["base_branch"] == "main"
+    # Japanese text intentionally kept for CJK processing test
     assert ctx["allow_paths"] == "（制限なし）"
 
 
 def test_worktree_path_is_absolute():
-    """worktree_path が絶対パスであること（CWD 非依存）。"""
+    """worktree_path is an absolute path (CWD-independent)."""
     import os
 
     ctx = build_context(42, body="# Title")
@@ -394,13 +400,13 @@ def test_worktree_path_is_absolute():
 
 
 def test_worktree_path_no_tools_issuesmith():
-    """worktree_path に tools/issuesmith が含まれないこと。"""
+    """worktree_path does not contain tools/issuesmith."""
     ctx = build_context(42, body="# Title")
     assert "tools/issuesmith" not in ctx["worktree_path"]
 
 
 def test_diary_worktree_path_is_absolute():
-    """diary_worktree_path が絶対パスであること（dual mode 時）。"""
+    """diary_worktree_path is an absolute path (in dual mode)."""
     import os
 
     body = textwrap.dedent("""\
@@ -417,7 +423,7 @@ def test_diary_worktree_path_is_absolute():
 
 
 def test_build_context_with_metadata():
-    """body に YAML メタデータがある場合、値が反映される。"""
+    """When body has YAML metadata, values are applied."""
     body = textwrap.dedent("""\
         ```yaml
         base_branch: develop
@@ -426,8 +432,8 @@ def test_build_context_with_metadata():
           - tests/**
         ```
 
-        ## §1 目的
-        テスト用設計書
+        ## §1 Purpose
+        Design doc for tests
     """)
 
     ctx = build_context(88, body=body)
@@ -439,7 +445,7 @@ def test_build_context_with_metadata():
 
 
 def test_build_context_allow_paths_string():
-    """allow_paths が文字列の場合でもリストとして扱われる。"""
+    """allow_paths as a string is still treated as a list."""
     body = textwrap.dedent("""\
         ```yaml
         allow_paths: src/main.py
@@ -451,7 +457,7 @@ def test_build_context_allow_paths_string():
 
 
 def test_build_context_empty_allow_paths():
-    """allow_paths が空リストの場合、制限なしになる。"""
+    """Empty allow_paths list means unrestricted."""
     body = textwrap.dedent("""\
         ```yaml
         allow_paths: []
@@ -460,11 +466,12 @@ def test_build_context_empty_allow_paths():
     """)
 
     ctx = build_context(20, body=body)
+    # Japanese text intentionally kept for CJK processing test
     assert ctx["allow_paths"] == "（制限なし）"
 
 
 def test_build_context_invalid_yaml():
-    """YAML がパースできない場合、デフォルト値にフォールバックする。"""
+    """When YAML cannot be parsed, fall back to defaults."""
     body = textwrap.dedent("""\
         ```yaml
         : invalid: yaml: [
@@ -473,18 +480,20 @@ def test_build_context_invalid_yaml():
 
     ctx = build_context(99, body=body)
     assert ctx["base_branch"] == "main"
+    # Japanese text intentionally kept for CJK processing test
     assert ctx["allow_paths"] == "（制限なし）"
 
 
 def test_build_context_no_yaml_block():
-    """YAML ブロックがない body の場合、デフォルト値にフォールバックする。"""
-    ctx = build_context(55, body="## §1 目的\nテスト")
+    """When body has no YAML block, fall back to defaults."""
+    ctx = build_context(55, body="## §1 Purpose\ntest")
     assert ctx["base_branch"] == "main"
+    # Japanese text intentionally kept for CJK processing test
     assert ctx["allow_paths"] == "（制限なし）"
 
 
 def test_build_context_unique_pipeline_ids():
-    """コメントに pipeline-branch が無いとき、同じ issue_number でも毎回異なる pipeline_id が生成される。"""
+    """Without pipeline-branch in comments, a different pipeline_id is generated each time for the same issue_number."""
     with patch("issuesmith.context_hook._fetch_issue_comments_from_api", return_value=[]):
         ctx1 = build_context(42, body="# Title")
         ctx2 = build_context(42, body="# Title")
@@ -492,7 +501,7 @@ def test_build_context_unique_pipeline_ids():
 
 
 def test_main_no_args(capsys):
-    """引数なしの場合、usage を stderr に出力して exit 1。"""
+    """With no args, print usage to stderr and exit 1."""
     import sys
 
     with pytest.raises(SystemExit, match="1"):
@@ -505,7 +514,7 @@ def test_main_no_args(capsys):
 
 
 def test_main_invalid_arg(capsys):
-    """整数でない引数の場合、エラーメッセージを stderr に出力して exit 1。"""
+    """Non-integer args print an error to stderr and exit 1."""
     import sys
 
     with pytest.raises(SystemExit, match="1"):
@@ -518,7 +527,7 @@ def test_main_invalid_arg(capsys):
 
 
 def test_build_context_all_values_are_strings():
-    """全ての出力値が文字列であること（ghdag プロトコル準拠）。"""
+    """All output values are strings (ghdag protocol)."""
     body = textwrap.dedent("""\
         ```yaml
         base_branch: main
@@ -533,7 +542,7 @@ def test_build_context_all_values_are_strings():
 
 
 def test_build_context_output_keys():
-    """期待するキーがすべて含まれていること（stash_file_rel/diary_branch は廃止）。"""
+    """All expected keys are present (stash_file_rel/diary_branch removed)."""
     ctx = build_context(42, body="# Title")
     expected_keys = {
         "pipeline_id",
@@ -557,14 +566,14 @@ def test_build_context_output_keys():
 
 
 def test_stash_file_rel_not_in_output():
-    """stash_file_rel キーが出力辞書に存在しない（廃止済み）。"""
+    """stash_file_rel key is absent from the output dict (removed)."""
     ctx = build_context(42, body="# Title")
     assert "stash_file_rel" not in ctx
 
 
 def test_diary_keys_not_in_output():
-    """diary_branch は廃止済みで出力辞書に存在しない。
-    target_repo あり + diary_allow_paths 未設定時は has_diary_changes == 'false' かつ diary_worktree_path は空文字。
+    """diary_branch is removed and absent from the output dict.
+    With target_repo set and diary_allow_paths unset, has_diary_changes == 'false' and diary_worktree_path is empty.
     """
     body = textwrap.dedent("""\
         ```yaml
@@ -578,7 +587,7 @@ def test_diary_keys_not_in_output():
 
 
 def test_no_local_file_created(tmp_path, monkeypatch):
-    """build_context() は jobs/issue-N-design.md を作成しない。"""
+    """build_context() does not create jobs/issue-N-design.md."""
     monkeypatch.setattr("issuesmith.context_hook._REPO_ROOT", str(tmp_path))
     jobs_path = tmp_path / "jobs"
     jobs_path.mkdir()
@@ -590,7 +599,7 @@ def test_no_local_file_created(tmp_path, monkeypatch):
 
 
 def test_cross_repo_defaults_when_no_target_repo():
-    """target_repo 未指定時: is_cross_repo=false, パスは空文字列。"""
+    """When target_repo is unset: is_cross_repo=false, paths are empty strings."""
     ctx = build_context(42, body="# Title")
     assert ctx["target_repo"] == ""
     assert ctx["repo_name"] == ""
@@ -600,7 +609,7 @@ def test_cross_repo_defaults_when_no_target_repo():
 
 
 def test_cross_repo_with_target_repo():
-    """target_repo 指定時: パス変数が正しく生成される。"""
+    """When target_repo is set: path variables are generated correctly."""
     body = textwrap.dedent("""\
         ```yaml
         target_repo: sumipan/ghdag
@@ -618,7 +627,7 @@ def test_cross_repo_with_target_repo():
 
 
 def test_cross_repo_coexists_with_existing_fields():
-    """target_repo + base_branch 同時指定: 既存フィールドがすべて正しい。"""
+    """target_repo + base_branch together: all existing fields are correct."""
     body = textwrap.dedent("""\
         ```yaml
         target_repo: sumipan/ghdag
@@ -640,7 +649,7 @@ def test_cross_repo_coexists_with_existing_fields():
 
 
 def test_cross_repo_all_values_are_strings():
-    """target_repo 指定時も全 value が str 型。"""
+    """With target_repo set, all values are still str."""
     body = textwrap.dedent("""\
         ```yaml
         target_repo: sumipan/ghdag
@@ -653,7 +662,7 @@ def test_cross_repo_all_values_are_strings():
 
 
 def test_cross_repo_empty_target_repo():
-    """target_repo が空文字列: is_cross_repo=false。"""
+    """Empty-string target_repo: is_cross_repo=false."""
     body = textwrap.dedent("""\
         ```yaml
         target_repo: ""
@@ -667,7 +676,7 @@ def test_cross_repo_empty_target_repo():
 
 
 def test_cross_repo_invalid_yaml():
-    """YAML パースエラー: is_cross_repo=false、既存デフォルト値にフォールバック。"""
+    """YAML parse error: is_cross_repo=false, fall back to existing defaults."""
     body = textwrap.dedent("""\
         ```yaml
         : invalid: yaml: [
@@ -680,7 +689,7 @@ def test_cross_repo_invalid_yaml():
 
 
 def test_yaml_metadata_extraction_t1():
-    """T1: base_branch/allow_paths/target_repo を正しく抽出する。"""
+    """T1: correctly extract base_branch/allow_paths/target_repo."""
     body = textwrap.dedent("""\
         ```yaml
         base_branch: develop
@@ -698,16 +707,17 @@ def test_yaml_metadata_extraction_t1():
 
 
 def test_yaml_none_issue_t2():
-    """T2: YAML なし Issue では metadata={}, base_branch=main, allow_paths=制限なし, is_cross_repo=false。"""
-    body = "# Design\n\n本文のみ"
+    """T2: Issue without YAML → metadata={}, base_branch=main, allow_paths=unrestricted, is_cross_repo=false."""
+    body = "# Design\n\nbody only"
     ctx = build_context(42, body=body)
     assert ctx["base_branch"] == "main"
+    # Japanese text intentionally kept for CJK processing test
     assert ctx["allow_paths"] == "（制限なし）"
     assert ctx["is_cross_repo"] == "false"
 
 
 def test_gh_fetch_failure_exits_immediately():
-    """T6: _fetch_issue_body_from_gh() が None を返す → SystemExit で非ゼロ終了。ローカルファイルフォールバックなし。"""
+    """T6: _fetch_issue_body_from_gh() returns None → SystemExit non-zero; no local-file fallback."""
     with patch("issuesmith.context_hook._fetch_issue_body_from_gh", return_value=None):
         with pytest.raises(SystemExit) as exc_info:
             build_context(42)
@@ -715,7 +725,7 @@ def test_gh_fetch_failure_exits_immediately():
 
 
 def test_main_exits_on_api_failure():
-    """main() で API が失敗した場合、非ゼロで終了する。"""
+    """When the API fails in main(), exit non-zero."""
     import sys
 
     with patch("issuesmith.context_hook._fetch_issue_body_from_gh", return_value=None):
@@ -777,7 +787,7 @@ def test_issue_repo_from_yaml():
 
 
 def test_self_target_repo_is_not_cross_repo():
-    """target_repo が issue_repo 自身なら external 経路に乗せない（#2567）"""
+    """If target_repo is the issue_repo itself, do not use the external path (#2567)"""
     body = """```yaml
 target_repo: sumipan/nexus
 base_branch: main

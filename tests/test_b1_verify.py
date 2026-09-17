@@ -1,4 +1,4 @@
-"""test_b1_verify.py — B1 決定論 Verify（#2541）のユニットテスト。"""
+"""test_b1_verify.py — unit tests for B1 deterministic Verify (#2541)."""
 from __future__ import annotations
 
 from issuesmith.b1_verify import collect_violations, format_report
@@ -10,7 +10,7 @@ _VALID_BODY = (
     'allow_paths:\n'
     '  - "**"\n'
     '```\n\n'
-    "## 概要\nクリーンな本文\n"
+    "## Overview\nclean body\n"
 )
 
 
@@ -19,12 +19,12 @@ def test_valid_body_has_no_violations():
 
 
 def test_missing_yaml_is_reported():
-    violations = collect_violations("## 概要\nyaml なし\n", [])
+    violations = collect_violations("## Overview\nno yaml\n", [])
     assert any(v.rule_id == "cp1.yaml_contract.missing_block" for v in violations)
 
 
 def test_intentional_hold_is_excluded():
-    """scope:milestone の intentional_hold は B1 成果物不備ではないため除外"""
+    """scope:milestone intentional_hold is not a B1 artifact defect; exclude it"""
     violations = collect_violations(_VALID_BODY, ["scope:milestone"])
     assert not any(v.rule_id == "cp1.intentional_hold" for v in violations)
 
@@ -35,7 +35,7 @@ def test_migration_rules_are_included():
 
 
 def test_format_report_shape():
-    violations = collect_violations("## 概要\nyaml なし\n", [])
+    violations = collect_violations("## Overview\nno yaml\n", [])
     report = format_report(violations)
     assert report.startswith("VERIFY_FAILED_CHECKS: ")
     assert "## cp1.yaml_contract.missing_block" in report

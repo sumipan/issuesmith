@@ -1,10 +1,11 @@
-"""test_m2_gate_post_merge.py — M2 post_merge 実行時検証のユニットテスト。"""
+"""test_m2_gate_post_merge.py — unit tests for M2 post_merge runtime verification."""
 from __future__ import annotations
 
 from unittest.mock import patch
 
 from issuesmith.m2_gate import _proceed_or_contract_retry
 
+# Japanese text intentionally kept for CJK processing test
 BODY_WITH_POST_MERGE = """\
 ## 受け入れ条件
 

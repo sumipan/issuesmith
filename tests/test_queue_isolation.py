@@ -1,4 +1,4 @@
-"""F1: ISSUESMITH_QUEUE_DIR による本番キュー／triage 隔離の回帰テスト."""
+"""F1: regression — ISSUESMITH_QUEUE_DIR isolates prod queue/triage."""
 from __future__ import annotations
 
 import json
@@ -19,7 +19,7 @@ def _fingerprint(path: Path) -> tuple[bool, str | None, int | None]:
 
 
 def test_queue_store_defaults_respect_issuesmith_queue_dir(tmp_path, monkeypatch):
-    """ISSUESMITH_QUEUE_DIR 設定時、QueueStore() は本番ではなく env 配下へ書く."""
+    """With ISSUESMITH_QUEUE_DIR set, QueueStore() writes under env, not prod."""
     queue_dir = tmp_path / "isolated-queue"
     queue_dir.mkdir()
     monkeypatch.setenv("ISSUESMITH_QUEUE_DIR", str(queue_dir))
@@ -48,7 +48,7 @@ def test_queue_store_defaults_respect_issuesmith_queue_dir(tmp_path, monkeypatch
 
 
 def test_explicit_paths_override_env_dir(tmp_path, monkeypatch):
-    """明示 path は ISSUESMITH_QUEUE_DIR より優先される."""
+    """An explicit path takes precedence over ISSUESMITH_QUEUE_DIR."""
     env_dir = tmp_path / "env-dir"
     env_dir.mkdir()
     monkeypatch.setenv("ISSUESMITH_QUEUE_DIR", str(env_dir))
@@ -72,7 +72,7 @@ def test_explicit_paths_override_env_dir(tmp_path, monkeypatch):
 
 
 def test_dispatch_one_triage_log_uses_env_dir(tmp_path, monkeypatch):
-    """dispatch_one の triage_log も ISSUESMITH_QUEUE_DIR 配下を使い、本番を汚さない."""
+    """dispatch_one triage_log also uses ISSUESMITH_QUEUE_DIR and does not dirty prod."""
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
@@ -139,7 +139,7 @@ def test_dispatch_one_triage_log_uses_env_dir(tmp_path, monkeypatch):
 
 
 def test_production_queue_unchanged_after_default_store_ops(tmp_path, monkeypatch):
-    """AC: ISSUESMITH_QUEUE_DIR 下での操作で本番 jsonl が変化しない."""
+    """AC: operations under ISSUESMITH_QUEUE_DIR must not change prod jsonl."""
     queue_dir = tmp_path / "ac-queue"
     queue_dir.mkdir()
     monkeypatch.setenv("ISSUESMITH_QUEUE_DIR", str(queue_dir))

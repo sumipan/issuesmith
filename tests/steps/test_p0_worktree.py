@@ -263,6 +263,7 @@ def test_target_worktree_path_rejects_absolute_and_traversal() -> None:
 
 def test_yaml_metadata_required() -> None:
     with pytest.raises(p0.WorktreeError, match="yaml metadata block"):
+        # Japanese text intentionally kept for CJK processing test
         p0._require_yaml_metadata("## 背景\nno yaml\n")
 
 
@@ -271,6 +272,7 @@ def test_local_run_success(tmp_path: Path) -> None:
     _git_init_with_main(repo)
     wt = tmp_path / "nexus" / ".claude" / "worktrees" / "issue-3168-abcd"
     client = MagicMock()
+    # Japanese text intentionally kept for CJK processing test
     client.issue_get.return_value = {
         "labels": [{"name": "issuesmith:develop-ready"}],
         "body": "```yaml\nbase_branch: main\nallow_paths:\n  - src/**\n```\n\n## 設計\n",
@@ -297,6 +299,7 @@ def test_jobs_dirty_after_prepare_fails(tmp_path: Path, capsys: pytest.CaptureFi
     _git_init_with_main(repo)
     wt = tmp_path / "nexus" / ".claude" / "worktrees" / "issue-3178-dirty"
     client = MagicMock()
+    # Japanese text intentionally kept for CJK processing test
     client.issue_get.return_value = {
         "labels": [{"name": "issuesmith:develop-ready"}],
         "body": "```yaml\nbase_branch: main\nallow_paths:\n  - src/**\n```\n\n## 設計\n",
@@ -332,6 +335,7 @@ def test_jobs_dirty_after_prepare_fails(tmp_path: Path, capsys: pytest.CaptureFi
     assert result.exit_code == 1
     assert result.pipeline_status == "WORKTREE_FAILED"
     err = capsys.readouterr().err
+    # Japanese text intentionally kept for CJK processing test
     assert "jobs/ 配下が dirty" in err
 
 

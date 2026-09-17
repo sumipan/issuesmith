@@ -22,16 +22,16 @@ def test_violation_with_all_fields():
     v = Violation(
         rule_id="cp1.forbidden_word.tbd",
         severity="warn",
-        message="TBD が残存",
+        message="TBD still present",
         location="line 5",
         auto_fixable=True,
-        fix_hint="具体的な方針に置き換えてください",
+        fix_hint="Replace with a concrete policy",
     )
     assert v.rule_id == "cp1.forbidden_word.tbd"
     assert v.severity == "warn"
     assert v.location == "line 5"
     assert v.auto_fixable is True
-    assert v.fix_hint == "具体的な方針に置き換えてください"
+    assert v.fix_hint == "Replace with a concrete policy"
 
 
 def test_gate_registry_is_dict():

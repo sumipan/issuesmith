@@ -1,4 +1,4 @@
-"""tests/gate_rules/test_cp1_version_assert.py — テスト完全一致 assert ゲート (#3065)."""
+"""tests/gate_rules/test_cp1_version_assert.py — exact version-assert gate in tests (#3065)."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from issuesmith.gate_rules.cp1 import check_test_version_exact_assert
 
 _FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "version_exact_assert"
 _RULE_ID = "cp1.test_version_exact_assert"
+# Japanese text intentionally kept for CJK processing test
 _FIX_HINT = "版・pin は下限（`>=`）で検査するか、テストを書かない。bump は publish が決定論的に行う"
 
 
@@ -16,16 +17,16 @@ def _exact_assert_diff() -> str:
 
 
 def _pin_only_diff() -> str:
-    """実コミット aaf46d1 側 hunk のみ（pattern a の + 行を含まない）。"""
+    """Only the real-commit aaf46d1 hunk (no pattern-a '+' lines)."""
     parts = _exact_assert_diff().split("diff --git ")
-    assert len(parts) >= 3, "fixture に pattern a/b の 2 hunk が必要"
+    assert len(parts) >= 3, "fixture needs 2 hunks for patterns a/b"
     return "diff --git " + parts[2]
 
 
 def test_exact_version_assert_fails():
-    """パターン a: project[\"version\"] == \"X.Y.Z\" → Violation."""
+    """Pattern a: project[\"version\"] == \"X.Y.Z\" → Violation."""
     vs = check_test_version_exact_assert(_exact_assert_diff())
-    assert vs, "exact version assert を検出すべき"
+    assert vs, "should detect exact version assert"
     assert vs[0].rule_id == _RULE_ID
     assert vs[0].severity == "fail"
     assert vs[0].auto_fixable is False
@@ -34,9 +35,9 @@ def test_exact_version_assert_fails():
 
 
 def test_pin_exact_assert_fails():
-    """パターン b: git+https://…@vX.Y.Z の pin 完全一致 → Violation."""
+    """Pattern b: exact pin of git+https://…@vX.Y.Z → Violation."""
     vs = check_test_version_exact_assert(_pin_only_diff())
-    assert vs, "git pin exact assert を検出すべき"
+    assert vs, "should detect git pin exact assert"
     assert vs[0].rule_id == _RULE_ID
     assert vs[0].severity == "fail"
     assert vs[0].auto_fixable is False
@@ -45,13 +46,13 @@ def test_pin_exact_assert_fails():
 
 
 def test_ge_version_check_passes():
-    """下限検査 parts >= [0, 43, 0] は Violation なし."""
+    """Lower-bound check parts >= [0, 43, 0] yields no Violation."""
     diff = (_FIXTURES / "mltgnt_ge_check.diff").read_text(encoding="utf-8")
     assert check_test_version_exact_assert(diff) == []
 
 
 def test_non_test_file_skipped():
-    """src/ 以下の version == 行は対象外."""
+    """version == lines under src/ are out of scope."""
     diff = """\
 diff --git a/src/pkg/version.py b/src/pkg/version.py
 index 1111111..2222222 100644

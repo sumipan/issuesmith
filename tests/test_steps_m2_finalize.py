@@ -29,6 +29,7 @@ def _ctx(**overrides: str) -> StepContext:
 @pytest.fixture
 def mock_client():
     client = MagicMock()
+    # Japanese text intentionally kept for CJK processing test
     client.issue_get.return_value = {
         "body": "## 受け入れ条件\n\n- [x] done\n",
         "labels": [{"name": "issuesmith:merge-running"}],
@@ -125,6 +126,7 @@ def test_retry_posts_recovery_and_blocks(mock_client):
     assert result.exit_code == 1
     assert result.pipeline_status == "MERGE_FAILED"
     assert result.recovery is not None
+    # Japanese text intentionally kept for CJK processing test
     assert "YAML 契約の検証に失敗" in result.recovery
     transition.assert_called_once_with(42, "issuesmith:develop-done")
 
@@ -177,6 +179,7 @@ def test_compaction_failure_does_not_block_close(mock_client):
     assert result.exit_code == 0
     assert result.pipeline_status == "MERGE_DONE"
     mock_client.issue_comment.assert_called()
+    # Japanese text intentionally kept for CJK processing test
     assert "コンパクション失敗" in mock_client.issue_comment.call_args.args[1]
     close_issue.assert_called_once()
 
@@ -246,7 +249,7 @@ def test_gate_materialization_failure(mock_client):
 
 
 def test_proceed_from_develop_done_fallback_when_transition_fails(mock_client):
-    """transition がフェーズラベル欠落と判定しても develop-done→merge-done を直付替 (#3221 AC-5)."""
+    """Even if transition reports missing phase labels, hop develop-done→merge-done directly (#3221 AC-5)."""
     gate_result = {"action": "proceed", "unchecked_count": 0, "contract_failures": []}
     mock_client.issue_get.return_value = {
         "body": "",
@@ -260,7 +263,7 @@ def test_proceed_from_develop_done_fallback_when_transition_fails(mock_client):
         patch("issuesmith.steps.m2_finalize._cleanup_worktrees"),
         patch(
             "issuesmith.steps.m2_finalize._transition",
-            side_effect=ValueError("フェーズラベルがない"),
+            side_effect=ValueError("no phase label"),
         ) as transition,
         patch("issuesmith.steps.m2_finalize._close_issue_if_open") as close_issue,
     ):
@@ -278,7 +281,7 @@ def test_proceed_from_develop_done_fallback_when_transition_fails(mock_client):
 
 
 def test_proceed_from_merge_ready(gate_patches):
-    """merge-ready からも merge-done に到達できる (#3221 AC-5)."""
+    """Can also reach merge-done from merge-ready (#3221 AC-5)."""
     gate_patches["client"].issue_get.return_value = {
         "body": "",
         "labels": [{"name": "issuesmith:merge-ready"}],

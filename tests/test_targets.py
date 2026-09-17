@@ -1,4 +1,4 @@
-"""tests/test_targets.py — targets_from_issue() のユニットテスト"""
+"""tests/test_targets.py — unit tests for targets_from_issue()"""
 
 import pytest
 
@@ -8,6 +8,7 @@ ISSUE_REPO = "sumipan/nexus"
 
 
 def _ac_body(*, paths_must_exist=None, targets=None) -> str:
+    # Japanese text intentionally kept for CJK processing test
     lines = ["## 受け入れ条件", "", "```yaml"]
     if targets is not None:
         lines.append("targets:")
@@ -152,7 +153,7 @@ def test_multiple_primary_raises():
 
 
 def test_nexus_target_repo_normalized_to_issue_repo():
-    """target_repo == issue_repo はネイティブ単一ターゲットに正規化（#2567）。"""
+    """target_repo == issue_repo normalizes to a native single target (#2567)."""
     metadata = {"target_repo": ISSUE_REPO, "allow_paths": ["tools/**"]}
     targets = targets_from_issue(metadata, issue_repo=ISSUE_REPO)
     assert len(targets) == 1

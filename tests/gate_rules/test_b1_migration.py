@@ -1,4 +1,4 @@
-"""tests/gate_rules/test_b1_migration.py — b1_migration ゲートのユニットテスト。"""
+"""tests/gate_rules/test_b1_migration.py — unit tests for the b1_migration gate."""
 from __future__ import annotations
 
 import issuesmith.gate_rules.b1_migration  # noqa: F401 — registers on import
@@ -7,6 +7,7 @@ from issuesmith.gate_rules import GATE_REGISTRY
 MIGRATION_LABELS = ["scope:migration"]
 NON_MIGRATION_LABELS = ["scope:feature"]
 
+# Japanese text intentionally kept for CJK processing test
 MIGRATION_PROCEDURE_SKELETON = """\
 ## マイグレーション手順
 
@@ -32,7 +33,8 @@ def _rule_ids(body: str, labels: list[str]) -> set[str]:
     return {v.rule_id for v in _check(body, labels)}
 
 
-# 3 要件（手順・実行時状態調査・移行検証テスト契約）をすべて満たす body
+# Body that satisfies all 3 requirements (procedure, runtime-state survey, migration test contract)
+# Japanese text intentionally kept for CJK processing test
 BODY_COMPLETE = """\
 ## 影響範囲調査
 
@@ -67,12 +69,14 @@ removed_trees:
 - [ ] 移行テストが通ること
 """
 
+# Japanese text intentionally kept for CJK processing test
 BODY_WITHOUT_MIGRATION_PROCEDURE = """\
 ## 影響範囲調査
 
 some impact analysis
 """
 
+# Japanese text intentionally kept for CJK processing test
 BODY_MISSING_STATE_SURVEY = """\
 ## 影響範囲調査
 
@@ -98,6 +102,7 @@ removed_trees:
 ```
 """
 
+# Japanese text intentionally kept for CJK processing test
 BODY_MISSING_TEST_CONTRACT = """\
 ## 影響範囲調査
 
@@ -163,11 +168,13 @@ def test_missing_state_survey_returns_violation_with_skeleton():
     assert set(by_id) == {"b1_migration.state_survey_missing"}
     v = by_id["b1_migration.state_survey_missing"]
     assert v.auto_fixable is True
+    # Japanese text intentionally kept for CJK processing test
     assert "実行時状態の調査" in v.fix_hint
     assert "永続 state ファイル" in v.fix_hint
 
 
 def test_empty_state_survey_section_is_violation():
+    # Japanese text intentionally kept for CJK processing test
     body = BODY_MISSING_STATE_SURVEY.replace(
         "some impact analysis",
         "some impact analysis\n\n### 実行時状態の調査\n",
@@ -194,6 +201,7 @@ def test_registered_in_gate_registry():
     assert "b1_migration" in GATE_REGISTRY
 
 
+# Japanese text intentionally kept for CJK processing test
 BODY_MISSING_POST_MERGE = """\
 ## 影響範囲調査
 
@@ -217,6 +225,7 @@ removed_trees:
 ```
 """
 
+# Japanese text intentionally kept for CJK processing test
 BODY_MISSING_REMOVED_TREES = """\
 ## 影響範囲調査
 

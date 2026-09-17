@@ -122,15 +122,15 @@ def test_retry_wait_max_seconds_constant():
     ("poll", "interval", "expected"),
     [
         ("30", None, 30),
-        ("45", "10", 45),  # POLL 優先
-        (None, "45", 45),  # 未設定時は INTERVAL 互換
+        ("45", "10", 45),  # POLL takes precedence
+        (None, "45", 45),  # when unset, INTERVAL is compatible
         (None, None, 60),
         ("0", None, 60),
         ("-1", None, 60),
         ("61", None, 60),
         ("abc", None, 60),
         (None, "0", 60),
-        (None, "3600", 60),  # 旧既定 3600 も 60 に正規化
+        (None, "3600", 60),  # legacy default 3600 also normalized to 60
         ("1", None, 1),
         ("60", None, 60),
     ],
@@ -394,7 +394,7 @@ def test_resume_at_soon_caps_sleep_to_poll(execute_mocks, monkeypatch):
     execute_mocks["sleep"].assert_called_once()
     wait_sec = execute_mocks["sleep"].call_args.args[0]
     assert 0 < wait_sec <= 60
-    # 待機分を timeout に加算しない（総予算 600 - 待機）
+    # Do not add wait time into timeout (total budget 600 - wait)
     timeout = execute_mocks["call_managed"].call_args.kwargs["timeout"]
     assert timeout <= 600
     assert timeout == 600 - int(wait_sec) or timeout == int(600 - wait_sec)
@@ -435,7 +435,7 @@ def test_due_resume_refetches_immediately_once_with_future_fallback(
 
 
 def test_ac6_brake_only_paused_uses_fallback(execute_mocks, monkeypatch, tmp_path):
-    """AC-6: primary が brake のみ paused、fallback は両 gate available → fallback。"""
+    """AC-6: primary paused on brake only; fallback available on both gates → use fallback."""
     quota_path = tmp_path / "quota.json"
     brake_path = tmp_path / "brake.json"
     monkeypatch.setattr("issuesmith.engine.QUOTA_STATE_PATH", quota_path)
@@ -470,7 +470,7 @@ def test_ac6_brake_only_paused_uses_fallback(execute_mocks, monkeypatch, tmp_pat
 
 
 def test_ac6_all_paused_across_gates_raises(execute_mocks, monkeypatch, tmp_path):
-    """AC-6: 全候補がいずれかの gate で paused → 既存 timeout 契約で失敗。"""
+    """AC-6: all candidates paused on some gate → fail under existing timeout contract."""
     quota_path = tmp_path / "quota.json"
     brake_path = tmp_path / "brake.json"
     monkeypatch.setattr("issuesmith.engine.QUOTA_STATE_PATH", quota_path)
@@ -504,7 +504,7 @@ def test_ac6_all_paused_across_gates_raises(execute_mocks, monkeypatch, tmp_path
 def test_ac7_rate_limit_report_writes_quota_gate_only(
     execute_mocks, monkeypatch, tmp_path
 ):
-    """AC-7: rate_limit_detected は quota gate のみ更新し brake は触らない。"""
+    """AC-7: rate_limit_detected updates only the quota gate; does not touch brake."""
     quota_path = tmp_path / "quota.json"
     brake_path = tmp_path / "brake.json"
     monkeypatch.setattr("issuesmith.engine.QUOTA_STATE_PATH", quota_path)
@@ -561,7 +561,7 @@ def test_ac7_rate_limit_report_writes_quota_gate_only(
 def test_ac7_call_managed_receives_quota_gate_not_brake(
     execute_mocks, monkeypatch, tmp_path
 ):
-    """AC-7: call_managed には常に global quota_gate を渡す。"""
+    """AC-7: call_managed always receives the global quota_gate."""
     quota_path = tmp_path / "quota.json"
     brake_path = tmp_path / "brake.json"
     monkeypatch.setattr("issuesmith.engine.QUOTA_STATE_PATH", quota_path)
@@ -590,7 +590,7 @@ def test_ac7_call_managed_receives_quota_gate_not_brake(
 def test_brake_paused_engine_excluded_from_managed_fallbacks(
     execute_mocks, monkeypatch, tmp_path
 ):
-    """Budget gate で paused の engine は call_managed の fallback に渡さない。"""
+    """Engines paused on the budget gate are not passed as call_managed fallbacks."""
     quota_path = tmp_path / "quota.json"
     brake_path = tmp_path / "brake.json"
     monkeypatch.setattr("issuesmith.engine.QUOTA_STATE_PATH", quota_path)

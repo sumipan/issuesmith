@@ -38,7 +38,7 @@ def _fetch_issue_body(issue_number: int) -> str:
 
 
 def _open_issuesmith_issues() -> list[int]:
-    """issuesmith:* ラベルが付いた open Issue を最大 5 件返す（fallback サンプル）。"""
+    """Return up to 5 open Issues labeled issuesmith:* (fallback sample set)."""
     client = get_forge()
     seen: set[int] = set()
     numbers: list[int] = []

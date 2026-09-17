@@ -1,14 +1,14 @@
-"""tests/test_publish_metadata.py — publish PR 本文メタデータ（#2866, 2026-09-06 改訂）"""
+"""tests/test_publish_metadata.py — publish PR body metadata (#2866, revised 2026-09-06)"""
 
 from issuesmith.ops.publish import _build_pr_metadata
 
 
 def test_same_repo_never_uses_closes():
-    """同一リポ・単一ターゲットでも Closes は使わない（2026-09-06 決定）。
+    """Never use Closes even for same-repo single target (decision 2026-09-06).
 
-    issue を閉じるのは常に M2 finalize の役目。GitHub の "Closes" auto-close は
-    target_count・same-repo/cross-repo を問わず一切使わない
-    （#2852・#2873 で premature close が実測されたため）。
+    Closing the issue is always M2 finalize's job. GitHub's "Closes" auto-close
+    is never used regardless of target_count or same-repo/cross-repo
+    (premature close observed in #2852 / #2873).
     """
     title, body = _build_pr_metadata(42, "sumipan/nexus", "sumipan/nexus", target_count=1)
     assert "Refs #42" in body
@@ -34,7 +34,8 @@ def test_same_repo_multi_target_never_closes():
 
 
 def test_title_unaffected_by_target_count():
-    """タイトルは target_count に依存しない（本文のみが変わる）。"""
+    """Title does not depend on target_count (only the body changes)."""
     t1, _ = _build_pr_metadata(1, "sumipan/nexus", "sumipan/nexus", target_count=1)
     t2, _ = _build_pr_metadata(1, "sumipan/nexus", "sumipan/nexus", target_count=5)
+    # Japanese text intentionally kept for CJK processing test
     assert t1 == t2 == "実装: Issue #1"

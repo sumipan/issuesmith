@@ -1,8 +1,9 @@
-"""test_m2.py — M2Rules ユニットテスト"""
+"""test_m2.py — M2Rules unit tests"""
 
 from issuesmith.gate_rules import GATE_REGISTRY
 from issuesmith.gate_rules.m2 import M2Rules
 
+# Japanese text intentionally kept for CJK processing test
 BODY_WITH_UNCHECKED = """\
 ## 受け入れ条件
 
@@ -10,6 +11,7 @@ BODY_WITH_UNCHECKED = """\
 - [ ] 未完了の項目
 """
 
+# Japanese text intentionally kept for CJK processing test
 BODY_ALL_CHECKED = """\
 ## 受け入れ条件
 
@@ -17,6 +19,7 @@ BODY_ALL_CHECKED = """\
 - [x] これも完了
 """
 
+# Japanese text intentionally kept for CJK processing test
 BODY_NO_AC_SECTION = """\
 ## 背景
 
@@ -25,12 +28,14 @@ BODY_NO_AC_SECTION = """\
 - [ ] これはセクション外のチェックボックス
 """
 
+# Japanese text intentionally kept for CJK processing test
 BODY_AC_SECTION_NO_CHECKBOXES = """\
 ## 受け入れ条件
 
 受け入れ条件を自由記述で記載する。チェックボックスなし。
 """
 
+# Japanese text intentionally kept for CJK processing test
 BODY_MULTIPLE_UNCHECKED = """\
 ## 受け入れ条件
 
@@ -41,7 +46,7 @@ BODY_MULTIPLE_UNCHECKED = """\
 
 
 def test_unchecked_returns_fail_violation():
-    """AC: 未チェック checkbox がある場合 m2.unchecked_ac severity=fail を返す"""
+    """AC: unchecked checkbox yields m2.unchecked_ac severity=fail."""
     violations = M2Rules().check(BODY_WITH_UNCHECKED, [])
     assert len(violations) == 1
     v = violations[0]
@@ -52,13 +57,13 @@ def test_unchecked_returns_fail_violation():
 
 
 def test_all_checked_returns_empty():
-    """AC: 全 checkbox がチェック済みの場合は空リスト"""
+    """AC: all checkboxes checked → empty list."""
     violations = M2Rules().check(BODY_ALL_CHECKED, [])
     assert violations == []
 
 
 def test_no_ac_section_returns_warn_violation():
-    """AC: 受け入れ条件セクションが存在しない場合 m2.ac_section_missing severity=warn を返す"""
+    """AC: missing acceptance-criteria section → m2.ac_section_missing severity=warn."""
     violations = M2Rules().check(BODY_NO_AC_SECTION, [])
     assert len(violations) == 1
     v = violations[0]
@@ -68,7 +73,7 @@ def test_no_ac_section_returns_warn_violation():
 
 
 def test_empty_body_returns_warn_violation():
-    """AC: 空 body は m2.ac_section_missing severity=warn を返す（エッジケース）"""
+    """AC: empty body → m2.ac_section_missing severity=warn (edge case)."""
     violations = M2Rules().check("", [])
     assert len(violations) == 1
     v = violations[0]
@@ -77,20 +82,20 @@ def test_empty_body_returns_warn_violation():
 
 
 def test_ac_section_no_checkboxes_returns_empty():
-    """AC: セクションあり・checkbox なしの場合は空リスト"""
+    """AC: section present with no checkboxes → empty list."""
     violations = M2Rules().check(BODY_AC_SECTION_NO_CHECKBOXES, [])
     assert violations == []
 
 
 def test_unchecked_count_in_message():
-    """未チェック数がメッセージに含まれる"""
+    """Unchecked count is included in the message."""
     violations = M2Rules().check(BODY_MULTIPLE_UNCHECKED, [])
     v = next(v for v in violations if v.rule_id == "m2.unchecked_ac")
     assert "3" in v.message
 
 
 def test_labels_param_not_used():
-    """labels は GateRule プロトコル準拠のために受け取るが動作に影響しない"""
+    """labels is accepted for GateRule protocol compliance but does not affect behavior."""
     violations_no_label = M2Rules().check(BODY_WITH_UNCHECKED, [])
     violations_with_migration = M2Rules().check(BODY_WITH_UNCHECKED, ["scope:migration"])
     assert len(violations_no_label) == len(violations_with_migration)

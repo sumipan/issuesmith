@@ -1,4 +1,4 @@
-"""tests/tools/issuesmith/test_queue_skip.py — skip サブコマンドの単体テスト (#2808)."""
+"""tests/tools/issuesmith/test_queue_skip.py — unit tests for the skip subcommand (#2808)."""
 from __future__ import annotations
 
 import json
