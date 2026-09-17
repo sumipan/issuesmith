@@ -5,8 +5,6 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-import pytest
-
 from issuesmith.config import ScopeGateConfig
 from issuesmith.steps import scope_gate as sg
 
