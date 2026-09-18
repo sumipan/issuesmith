@@ -15,8 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- `tests/steps/test_m1_merge.py`, `tests/steps/test_cp2_checkpoint.py`,
-  `tests/steps/test_sub1_create.py`: Replace Japanese PR/issue titles in live-capture fixtures
+- `tests/steps/test_m1_merge.py`: Replace Japanese PR/issue titles in live-capture fixtures
   with English equivalents (#3385)
 - `tests/test_body_editor_shim.py`: Replace Japanese section names with English in all assertions
   (#3385)
