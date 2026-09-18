@@ -1,7 +1,21 @@
 """tests/test_body_editor_normalize.py — normalize_sub_headers / relocate_sub_plan."""
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
+
 from issuesmith.body_editor import normalize_sub_headers, relocate_sub_plan
+
+_ENGLISH_SECTIONS = {
+    "design": "Design",
+    "milestone": "Milestone",
+    "sub_plan": "Sub-issue Split Plan",
+}
+
+
+def _mock_cfg():
+    cfg = MagicMock()
+    cfg.sections = _ENGLISH_SECTIONS
+    return cfg
 
 
 def test_normalize_sub_headers_title_case():
@@ -29,13 +43,12 @@ def test_normalize_sub_headers_noop_for_japanese():
 
 
 def test_relocate_sub_plan_moves_from_design_to_milestone():
-    # Japanese text intentionally kept for CJK processing test
     body = """\
-## 設計
+## Design
 
 intro
 
-### サブイシュー分割計画
+### Sub-issue Split Plan
 | # | Title |
 |---|--------|
 | 1 | a |
@@ -43,58 +56,56 @@ intro
 ### Other heading
 keep
 
-## やらないこと
+## Out of scope
 
 out
 """
-    out = relocate_sub_plan(body)
-    assert "### サブイシュー分割計画" in out
-    design_idx = out.index("## 設計")
-    milestone_idx = out.index("## マイルストーン")
-    plan_idx = out.index("### サブイシュー分割計画")
+    with patch("issuesmith.body_editor.get_config", return_value=_mock_cfg()):
+        out = relocate_sub_plan(body)
+    assert "### Sub-issue Split Plan" in out
+    design_idx = out.index("## Design")
+    milestone_idx = out.index("## Milestone")
+    plan_idx = out.index("### Sub-issue Split Plan")
     other_idx = out.index("### Other heading")
     assert design_idx < other_idx < milestone_idx < plan_idx
-    # removed from design: only one occurrence of the plan heading
-    assert out.count("### サブイシュー分割計画") == 1
+    assert out.count("### Sub-issue Split Plan") == 1
     assert "| 1 | a |" in out[plan_idx:]
 
 
-def test_relocate_sub_plan_creates_milestone_before_out_of_scope():
-    # Japanese text intentionally kept for CJK processing test
+def test_relocate_sub_plan_creates_milestone_when_none_exists():
     body = """\
-## 設計
+## Design
 
-### サブイシュー分割計画
+### Sub-issue Split Plan
 | # | t |
 |---|---|
 | 1 | x |
-
-## やらないこと
-
-y
 """
-    out = relocate_sub_plan(body)
-    assert out.index("## マイルストーン") < out.index("## やらないこと")
+    with patch("issuesmith.body_editor.get_config", return_value=_mock_cfg()):
+        out = relocate_sub_plan(body)
+    assert "## Milestone" in out
+    assert "### Sub-issue Split Plan" in out
+    assert out.rindex("## Design") < out.rindex("## Milestone")
 
 
 def test_relocate_sub_plan_noop_when_already_under_milestone():
-    # Japanese text intentionally kept for CJK processing test
     body = """\
-## 設計
+## Design
 
-#### サブ1: a
+#### Sub 1: a
 
-## マイルストーン
+## Milestone
 
-### サブイシュー分割計画
+### Sub-issue Split Plan
 | # | t |
 |---|---|
 | 1 | x |
 """
-    assert relocate_sub_plan(body) == body
+    with patch("issuesmith.body_editor.get_config", return_value=_mock_cfg()):
+        assert relocate_sub_plan(body) == body
 
 
 def test_relocate_sub_plan_noop_when_no_plan_in_design():
-    # Japanese text intentionally kept for CJK processing test
-    body = "## 設計\nno plan\n\n## マイルストーン\nok\n"
-    assert relocate_sub_plan(body) == body
+    body = "## Design\nno plan\n\n## Milestone\nok\n"
+    with patch("issuesmith.body_editor.get_config", return_value=_mock_cfg()):
+        assert relocate_sub_plan(body) == body

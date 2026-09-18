@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Added
+
+- `tests/test_no_cjk.py`: CI gate enforcing zero CJK characters in the fully-migrated test files
+  (`steps/test_m1_merge.py`, `test_body_editor_shim.py`, `gate_rules/test_cp1_gate.py`) (#3385)
+- `tests/gate_rules/test_cp1_gate.py`: ASCII-only duplicate of core CP1 gate tests, no Japanese
+  fixture data (#3385)
+
+### Changed
+
+- `tests/steps/test_m1_merge.py`, `tests/steps/test_cp2_checkpoint.py`,
+  `tests/steps/test_sub1_create.py`: Replace Japanese PR/issue titles in live-capture fixtures
+  with English equivalents (#3385)
+- `tests/test_body_editor_shim.py`: Replace Japanese section names with English in all assertions
+  (#3385)
+- `tests/test_body_editor_normalize.py`: Inject English config in `relocate_sub_plan` tests;
+  replace hardcoded Japanese section names with config-driven English names (#3385)
+
 ### Fixed
 
 - `steps.sub1_create._run_guarded_body`: `resolve("implementation", "default")` が TIERS（light / heavy）外で

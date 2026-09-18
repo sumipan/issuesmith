@@ -28,13 +28,12 @@ from issuesmith.steps.base import StepContext
 
 # --- Real API strings (trimmed to fields the step reads; values unchanged) ---
 
-# Japanese text intentionally kept for CJK processing test
 PR_LIST_SUCCESS_JSON = json.dumps(
     [
         {
             "number": 3180,
             "state": "open",
-            "title": "実装: Issue #3172",
+            "title": "Implement: Issue #3172",
             "additions": None,
             "deletions": None,
             "head": {
@@ -43,7 +42,6 @@ PR_LIST_SUCCESS_JSON = json.dumps(
             },
         }
     ],
-    ensure_ascii=False,
 )
 
 PR_LIST_ABSENT_JSON = "[]"

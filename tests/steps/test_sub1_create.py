@@ -30,16 +30,14 @@ from issuesmith.steps.base import StepContext
 
 # --- Real API strings (values unchanged from live capture) ---
 
-# Japanese text intentionally kept for CJK processing test
 ISSUE_CREATE_SUCCESS_JSON = json.dumps(
     {
         "number": 3000,
-        "title": "スレッドからの委譲ジョブのキャンセル",
+        "title": "Cancel thread delegation job",
         "state": "CLOSED",
         "html_url": "https://github.com/sumipan/nexus/issues/3000",
         "id": 5401620429,
     },
-    ensure_ascii=False,
 )
 
 ISSUE_CREATE_FAILURE_MESSAGE = (
