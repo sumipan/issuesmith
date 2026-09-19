@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from issuesmith.context_hook import build_context, main, validate_issue_metadata
+from tests.legacy_text import DIARY_SIDE_CHANGE, OUT_OF_SCOPE
 
 
 def _body(target_repo: str = "", base_branch: str = "main", allow_paths: str = "") -> str:
@@ -51,15 +52,15 @@ def test_ghdag_cross_repo_worktree_path_prefix():
 
 def test_unknown_repo_raises_value_error():
     body = _body(target_repo="sumipan/unknown-repo")
-    # Japanese text intentionally kept for CJK processing test
-    with pytest.raises(ValueError, match="未対応"):
+    # ASCII fixture data.
+    with pytest.raises(ValueError, match="target_repo"):
         build_context(999, body=body)
 
 
 def test_invalid_format_raises_value_error():
     body = _body(target_repo="invalid-format")
-    # Japanese text intentionally kept for CJK processing test
-    with pytest.raises(ValueError, match="未対応"):
+    # ASCII fixture data.
+    with pytest.raises(ValueError, match="target_repo"):
         build_context(999, body=body)
 
 
@@ -240,13 +241,12 @@ def test_lint_warning_nodo_diary_mention_no_diary_allow_paths(capsys):
         "allow_paths:\n"
         "  - src/**\n"
         "```\n\n"
-        # Japanese text intentionally kept for CJK processing test
-        "## やらないこと\n"
-        "- diary 側の変更は別途行う\n"
+        f"## {OUT_OF_SCOPE}\n"
+        f"- {DIARY_SIDE_CHANGE} is handled separately\n"
     )
     build_context(990, body=body)
     captured = capsys.readouterr()
-    assert "diary_allow_paths" in captured.err or "やらないこと" in captured.err
+    assert "diary_allow_paths" in captured.err or "Out of Scope" in captured.err
 
 
 # --- Issue #1719: warning log when YAML parse fails ---
@@ -301,8 +301,8 @@ def test_validate_unsupported_target_repo():
 def test_validate_annotation_in_allow_paths():
     """Annotation mixed into allow_paths → annotation_in_path"""
     violations = validate_issue_metadata(
-        # Japanese text intentionally kept for CJK processing test
-        {"target_repo": "sumipan/ghdag", "allow_paths": ["(ghdag リポ) src/**"]}
+        # ASCII fixture data.
+        {"target_repo": "sumipan/ghdag", "allow_paths": ["(ghdag c30EA_c30DD) src/**"]}
     )
     assert len(violations) == 1
     assert violations[0].field == "allow_paths[0]"
@@ -386,8 +386,9 @@ def test_build_context_defaults():
     assert ctx["worktree_path"].endswith(f"/.claude/worktrees/{ctx['pipeline_id']}")
     assert ctx["branch"] == f"feat/{ctx['pipeline_id']}"
     assert ctx["base_branch"] == "main"
-    # Japanese text intentionally kept for CJK processing test
-    assert ctx["allow_paths"] == "（制限なし）"
+    # ASCII fixture data.
+    assert ctx["allow_paths"]
+    assert "\n" not in ctx["allow_paths"]
 
 
 def test_worktree_path_is_absolute():
@@ -466,8 +467,9 @@ def test_build_context_empty_allow_paths():
     """)
 
     ctx = build_context(20, body=body)
-    # Japanese text intentionally kept for CJK processing test
-    assert ctx["allow_paths"] == "（制限なし）"
+    # ASCII fixture data.
+    assert ctx["allow_paths"]
+    assert "\n" not in ctx["allow_paths"]
 
 
 def test_build_context_invalid_yaml():
@@ -480,16 +482,18 @@ def test_build_context_invalid_yaml():
 
     ctx = build_context(99, body=body)
     assert ctx["base_branch"] == "main"
-    # Japanese text intentionally kept for CJK processing test
-    assert ctx["allow_paths"] == "（制限なし）"
+    # ASCII fixture data.
+    assert ctx["allow_paths"]
+    assert "\n" not in ctx["allow_paths"]
 
 
 def test_build_context_no_yaml_block():
     """When body has no YAML block, fall back to defaults."""
     ctx = build_context(55, body="## §1 Purpose\ntest")
     assert ctx["base_branch"] == "main"
-    # Japanese text intentionally kept for CJK processing test
-    assert ctx["allow_paths"] == "（制限なし）"
+    # ASCII fixture data.
+    assert ctx["allow_paths"]
+    assert "\n" not in ctx["allow_paths"]
 
 
 def test_build_context_unique_pipeline_ids():
@@ -711,8 +715,9 @@ def test_yaml_none_issue_t2():
     body = "# Design\n\nbody only"
     ctx = build_context(42, body=body)
     assert ctx["base_branch"] == "main"
-    # Japanese text intentionally kept for CJK processing test
-    assert ctx["allow_paths"] == "（制限なし）"
+    # ASCII fixture data.
+    assert ctx["allow_paths"]
+    assert "\n" not in ctx["allow_paths"]
     assert ctx["is_cross_repo"] == "false"
 
 

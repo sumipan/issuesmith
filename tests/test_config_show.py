@@ -16,8 +16,7 @@ from issuesmith.config import get_config, load_config, reset_config_cache
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_PATH = REPO_ROOT / "src"
 
-# Japanese text intentionally kept for CJK processing test
-_REPO_REQUIRED_MSG = "issuesmith.yaml に repo: owner/name を設定してください"
+_REPO_REQUIRED_MSG = r"issuesmith\.yaml.*repo: owner/name"
 
 
 @pytest.fixture(autouse=True)

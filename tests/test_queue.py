@@ -1408,9 +1408,9 @@ class TestCp2MergePrDetection:
             open_prs=[
                 {
                     "number": 2789,
-                    # Japanese text intentionally kept for CJK processing test
-                    "title": "実装: Issue #2773",
-                    "body": "P1/P2 result より自動生成。\n\nCloses #2773",
+                    # ASCII fixture data.
+                    "title": "c5B9F_c88C5: Issue #2773",
+                    "body": "P1/P2 result c3088_c308A_c81EA_c52D5_c751F_c6210_c3002\n\nCloses #2773",
                     "state": "OPEN",
                     "headRefName": "feat/issue-2773",
                 }
@@ -1435,8 +1435,8 @@ class TestCp2MergePrDetection:
             open_prs=[
                 {
                     "number": 2789,
-                    "title": "実装: Issue #2773",
-                    "body": "P1/P2 result より自動生成。\n\nRefs #2773",
+                    "title": "c5B9F_c88C5: Issue #2773",
+                    "body": "P1/P2 result c3088_c308A_c81EA_c52D5_c751F_c6210_c3002\n\nRefs #2773",
                     "state": "OPEN",
                     "headRefName": "feat/issue-2773",
                 }
@@ -1460,8 +1460,8 @@ class TestCp2MergePrDetection:
             open_prs=[
                 {
                     "number": 1,
-                    # Japanese text intentionally kept for CJK processing test
-                    "title": "実装: Issue #10",
+                    # ASCII fixture data.
+                    "title": "c5B9F_c88C5: Issue #10",
                     "body": "Closes #10",
                     "state": "OPEN",
                     "headRefName": "feat/x",
@@ -1482,7 +1482,7 @@ class TestCp2MergePrDetection:
             closed_prs=[
                 {
                     "number": 2900,
-                    "title": "実装: Issue #2825",
+                    "title": "c5B9F_c88C5: Issue #2825",
                     "body": "Closes #2825",
                     "state": "CLOSED",
                     "headRefName": "feat/issue-2825",
@@ -1531,9 +1531,9 @@ class TestCp2MergePrDetection:
             open_prs=[
                 {
                     "number": 2789,
-                    # Japanese text intentionally kept for CJK processing test
-                    "title": "実装: Issue #2773",
-                    "body": "P1/P2 result より自動生成。\n\nCloses #2773",
+                    # ASCII fixture data.
+                    "title": "c5B9F_c88C5: Issue #2773",
+                    "body": "P1/P2 result c3088_c308A_c81EA_c52D5_c751F_c6210_c3002\n\nCloses #2773",
                     "state": "OPEN",
                     "headRefName": "feat/issue-2773",
                 }

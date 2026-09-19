@@ -34,14 +34,13 @@ from issuesmith.steps.base import StepContext
 
 # --- Real API strings (trimmed to fields the step reads; values unchanged) ---
 
-# Japanese text intentionally kept for CJK processing test
 PR_LIST_SUCCESS_JSON = json.dumps(
     [
         {
             "number": 3183,
             "state": "open",
-            "title": "実装: Issue #3173",
-            "body": "P1/P2 result より自動生成。\n\nRefs #3173",
+            "title": "Implement: Issue #3173",
+            "body": "Auto-generated from P1/P2 result.\n\nRefs #3173",
             "draft": False,
             "head": {
                 "ref": "feat/issue-3173-eb3c5291-diary",
@@ -49,12 +48,10 @@ PR_LIST_SUCCESS_JSON = json.dumps(
             },
         }
     ],
-    ensure_ascii=False,
 )
 
 PR_LIST_ABSENT_JSON = "[]"
 
-# Japanese text intentionally kept for CJK processing test
 PR_DETAIL_OPEN_JSON = json.dumps(
     {
         "number": 3183,
@@ -62,18 +59,16 @@ PR_DETAIL_OPEN_JSON = json.dumps(
         "merged": False,
         "mergeable": None,
         "mergeable_state": "unknown",
-        "title": "実装: Issue #3173",
+        "title": "Implement: Issue #3173",
         "draft": False,
-        "body": "P1/P2 result より自動生成。\n\nRefs #3173",
+        "body": "Auto-generated from P1/P2 result.\n\nRefs #3173",
         "head": {
             "ref": "feat/issue-3173-eb3c5291-diary",
             "label": "sumipan:feat/issue-3173-eb3c5291-diary",
         },
     },
-    ensure_ascii=False,
 )
 
-# Japanese text intentionally kept for CJK processing test
 PR_DETAIL_MERGED_JSON = json.dumps(
     {
         "number": 3181,
@@ -81,15 +76,14 @@ PR_DETAIL_MERGED_JSON = json.dumps(
         "merged": True,
         "mergeable": None,
         "mergeable_state": "unknown",
-        "title": "実装: Issue #3128",
+        "title": "Implement: Issue #3128",
         "draft": False,
-        "body": "P1/P2 result より自動生成。\n\nRefs #3128",
+        "body": "Auto-generated from P1/P2 result.\n\nRefs #3128",
         "head": {
             "ref": "feat/issue-3128-52c4f66e",
             "label": "sumipan:feat/issue-3128-52c4f66e",
         },
     },
-    ensure_ascii=False,
 )
 
 GQL_CLEAN_JSON = json.dumps(

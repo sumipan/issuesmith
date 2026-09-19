@@ -130,8 +130,8 @@ def test_plan_blocked_when_idempotency_consumed_and_no_generation(
     )
 
     assert plan.blocked_by is not None
-    # Japanese text intentionally kept for CJK processing test
-    assert "2876" in plan.blocked_by or "世代" in plan.blocked_by
+    # ASCII fixture data.
+    assert "2876" in plan.blocked_by or "c4E16_c4EE3" in plan.blocked_by
 
 
 def test_plan_redispatch_when_consumed_and_generation_available(

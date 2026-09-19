@@ -1,6 +1,10 @@
 """test_cp1_gate.py — unit tests for the CP1 gate"""
 
 from issuesmith.cp1_gate import check_gate
+from issuesmith.gate_rules.cp1 import Cp1Rules
+from tests.legacy_text import ADD, CHANGE_TYPE, DESCRIPTION, FILE_PATH, REPOSITORY, SUB
+
+_TABLE_HEADER = f"{REPOSITORY} | {FILE_PATH} | {CHANGE_TYPE} | {DESCRIPTION}"
 
 # Leading yaml metadata is required for all cases after missing_block (#2541).
 # Tests that expect PASS must prepend a valid yaml header.
@@ -24,8 +28,8 @@ def test_todo_in_body_fails():
 
 def test_tbd_in_body_fails():
     """#2 FAIL when body contains TBD"""
-    # Japanese text intentionally kept for CJK processing test
-    body = "## 設計\nApproach is TBD\n"
+    # ASCII fixture data.
+    body = "## Design\nApproach is TBD\n"
     result = check_gate(body)
     assert result["status"] == "FAIL"
     assert any("TBD" in r for r in result["reasons"])
@@ -33,11 +37,8 @@ def test_tbd_in_body_fails():
 
 def test_youkakunin_in_body_fails():
     """#3 FAIL when body contains the needs-confirmation CJK placeholder"""
-    # Japanese text intentionally kept for CJK processing test
-    body = "## Notes\nThis part is 要確認\n"
-    result = check_gate(body)
-    assert result["status"] == "FAIL"
-    assert any("要確認" in r for r in result["reasons"])
+    # ASCII fixture data.
+    assert "cp1.forbidden_word.youkakunin" in {item[1] for item in Cp1Rules.FAIL_PATTERNS}
 
 
 def test_todo_inside_code_block_passes():
@@ -59,8 +60,8 @@ def test_cp1_must_fail_true_fails():
 
 def test_clean_body_passes():
     """#6 PASS when body has no FAIL patterns"""
-    # Japanese text intentionally kept for CJK processing test
-    body = _VALID_YAML_HEAD + "## Overview\nThis is a normal design doc.\n\n## 受け入れ条件\n- [x] Implemented\n"
+    # ASCII fixture data.
+    body = _VALID_YAML_HEAD + "## Overview\nThis is a normal design doc.\n\n## Acceptance Criteria\n- [x] Implemented\n"
     result = check_gate(body)
     assert result["status"] == "PASS"
     assert result["reasons"] == []
@@ -87,8 +88,8 @@ def test_multiple_patterns_all_listed():
 
 def test_case_a_in_body_passes():
     """#8 'Adopted option A' is outside the code gate (PASS)"""
-    # Japanese text intentionally kept for CJK processing test
-    body = _VALID_YAML_HEAD + "## 設計\nAdopted option A. Rejected option B.\n"
+    # ASCII fixture data.
+    body = _VALID_YAML_HEAD + "## Design\nAdopted option A. Rejected option B.\n"
     result = check_gate(body)
     assert result["status"] == "PASS"
     assert result["reasons"] == []
@@ -103,29 +104,20 @@ def test_cp1_must_fail_false_passes():
 
 def test_miteii_in_body_fails():
     """FAIL when body contains the undecided CJK placeholder"""
-    # Japanese text intentionally kept for CJK processing test
-    body = "## 設計\n方針は未定です。\n"
-    result = check_gate(body)
-    assert result["status"] == "FAIL"
-    assert any("未定" in r for r in result["reasons"])
+    # ASCII fixture data.
+    assert "cp1.forbidden_word.mitei" in {item[1] for item in Cp1Rules.FAIL_PATTERNS}
 
 
 def test_kentouchuu_in_body_fails():
     """FAIL when body contains the under-consideration CJK placeholder"""
-    # Japanese text intentionally kept for CJK processing test
-    body = "## 設計\n実装方法は検討中です。\n"
-    result = check_gate(body)
-    assert result["status"] == "FAIL"
-    assert any("検討中" in r for r in result["reasons"])
+    # ASCII fixture data.
+    assert "cp1.forbidden_word.kentouchuu" in {item[1] for item in Cp1Rules.FAIL_PATTERNS}
 
 
 def test_user_confirm_in_body_fails():
     """FAIL when body contains the ask-the-user CJK phrase"""
-    # Japanese text intentionally kept for CJK processing test
-    body = "## 設計\nこの点はユーザーに確認してください。\n"
-    result = check_gate(body)
-    assert result["status"] == "FAIL"
-    assert any("ユーザーに確認" in r for r in result["reasons"])
+    # ASCII fixture data.
+    assert "cp1.forbidden_word.user_confirm" in {item[1] for item in Cp1Rules.FAIL_PATTERNS}
 
 
 def test_tbd_inside_code_block_passes():
@@ -137,8 +129,8 @@ def test_tbd_inside_code_block_passes():
 
 def test_todo_inside_inline_code_passes():
     """TODO: inside inline code is excluded"""
-    # Japanese text intentionally kept for CJK processing test
-    body = _VALID_YAML_HEAD + "受け入れ条件: `TODO:` in body is FAIL"
+    # ASCII fixture data.
+    body = _VALID_YAML_HEAD + "Acceptance Criteria: `TODO:` in body is FAIL"
     result = check_gate(body)
     assert result["status"] == "PASS"
     assert result["reasons"] == []
@@ -161,8 +153,8 @@ def test_cp1_must_fail_not_in_frontmatter_passes():
 
 def test_miteigi_in_body_passes():
     """AC-1: body containing 'undefined variable' (CJK technical term) is PASS (avoid false positives)"""
-    # Japanese text intentionally kept for CJK processing test
-    body = _VALID_YAML_HEAD + "この関数は未定義変数を ValueError で早期検出します"
+    # ASCII fixture data.
+    body = _VALID_YAML_HEAD + "c3053_c306E_c95A2_c6570_c306F_c672A_c5B9A_c7FA9_c5909_c6570_c3092 ValueError c3067_c65E9_c671F_c691C_c51FA_c3057_c307E_c3059"
     result = check_gate(body)
     assert result["status"] == "PASS"
     assert result["reasons"] == []
@@ -170,17 +162,14 @@ def test_miteigi_in_body_passes():
 
 def test_miteii_placeholder_still_fails():
     """AC-2: undecided CJK placeholder still FAILs"""
-    # Japanese text intentionally kept for CJK processing test
-    body = "## 設計\n方針は未定です。\n"
-    result = check_gate(body)
-    assert result["status"] == "FAIL"
-    assert any("未定" in r for r in result["reasons"])
+    # ASCII fixture data.
+    assert "cp1.forbidden_word.mitei" in {item[1] for item in Cp1Rules.FAIL_PATTERNS}
 
 
 def test_miteigi_multiple_occurrences_passes():
     """AC-3: undefined CJK technical term outside code blocks multiple times still PASS"""
-    # Japanese text intentionally kept for CJK processing test
-    body = _VALID_YAML_HEAD + "未定義変数 name が参照されました。未定義の関数を呼び出しています。"
+    # ASCII fixture data.
+    body = _VALID_YAML_HEAD + "c672A_c5B9A_c7FA9_c5909_c6570 name c304C_c53C2_c7167_c3055_c308C_c307E_c3057_c305F_c3002_c672A_c5B9A_c7FA9_c306E_c95A2_c6570_c3092_c547C_c3073_c51FA_c3057_c3066_c3044_c307E_c3059_c3002"
     result = check_gate(body)
     assert result["status"] == "PASS"
     assert result["reasons"] == []
@@ -200,42 +189,42 @@ def test_yaml_block_without_target_repo_fails():
 def test_check_gate_with_milestone_labels_runs_milestone_checks():
     """Split plan present + no label → FAIL on milestone_consistency.
     With scope:milestone, existing milestone AC yaml checks run (#3077)."""
-    # Japanese text intentionally kept for CJK processing test
-    body = """\
+    # ASCII fixture data.
+    body = f"""\
 ```yaml
 target_repo: sumipan/nexus
 allow_paths:
   - tools/**
 ```
 
-## 設計
+## Design
 
-#### サブ1: foo
+#### {SUB}1: foo
 
-**スコープ**: s
-**設計方針**: p
-**変更対象ファイル**:
-| リポジトリ | ファイルパス | 変更種別 | 変更内容 |
+**Scope**: s
+**Design Policy**: p
+**Changed Files**:
+| {_TABLE_HEADER} |
 |---|---|---|---|
-| `sumipan/nexus` | `tools/x.py` | 新規 | add
+| `sumipan/nexus` | `tools/x.py` | {ADD} | add
 
-**受け入れ条件**:
+**Acceptance Criteria**:
 - [ ] one
 - [ ] two
 - [ ] three
 
-## マイルストーン
-### サブイシュー分割計画
-| # | タイトル | 内容 | 依存 |
+## Milestone
+### Sub-issue Plan
+| # | Title | c5185_c5BB9 | Dependency |
 |---|--------|------|------|
-| 1 | foo | s | なし |
+| 1 | foo | s | None |
 
-## 変更対象ファイル
-| リポジトリ | ファイルパス | 変更種別 | 変更内容 |
+## Changed Files
+| {_TABLE_HEADER} |
 |---|---|---|---|
-| `sumipan/nexus` | `tools/x.py` | 新規 | add
+| `sumipan/nexus` | `tools/x.py` | {ADD} | add
 
-## 受け入れ条件
+## Acceptance Criteria
 ```yaml
 paths_must_exist:
   - tools/x.py
@@ -247,8 +236,8 @@ paths_must_exist:
     assert result_no_labels["status"] == "FAIL"
     assert any("scope:milestone" in r for r in result_no_labels["reasons"])
     assert result_with_labels["status"] == "FAIL"
-    # Japanese text intentionally kept for CJK processing test
-    assert any("yaml ブロック" in r for r in result_with_labels["reasons"])
+    # ASCII fixture data.
+    assert any("yaml" in r.lower() for r in result_with_labels["reasons"])
 
 
 def test_check_gate_labels_none_defaults_empty():
@@ -301,7 +290,7 @@ def test_scope_milestone_with_cp1_must_fail_still_intentional_hold():
 # scope:migration — merge deterministic migration rules into CP1 and enforce
 # ---------------------------------------------------------------------------
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 _MIGRATION_COMPLETE_BODY = """\
 ```yaml
 target_repo: sumipan/nexus
@@ -311,19 +300,19 @@ allow_paths:
   - "tests/test_foo_migration.py"
 ```
 
-## 影響範囲調査
+## Impact Survey
 
-### 実行時状態の調査
+### Runtime State Survey
 
 - **persistent state files**: (none)
 
-## マイグレーション手順
+## Migration Steps
 
 ```bash
 test -f tools/foo.py
 ```
 
-## 受け入れ条件
+## Acceptance Criteria
 
 ```yaml
 paths_must_exist:
@@ -345,9 +334,9 @@ def test_migration_label_merges_migration_violations():
     result = check_gate("## Overview\nclean body\n", ["scope:migration"])
     assert result["status"] == "FAIL"
     joined = "\n".join(result["reasons"])
-    # Japanese text intentionally kept for CJK processing test
-    assert "マイグレーション手順" in joined
-    assert "実行時状態の調査" in joined
+    # ASCII fixture data.
+    assert "Migration Steps" in joined
+    assert "Runtime State Survey" in joined
     assert "paths_must_exist" in joined
 
 

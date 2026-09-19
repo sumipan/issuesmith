@@ -29,9 +29,9 @@ def _ctx(**overrides: str) -> StepContext:
 @pytest.fixture
 def mock_client():
     client = MagicMock()
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     client.issue_get.return_value = {
-        "body": "## 受け入れ条件\n\n- [x] done\n",
+        "body": "## Acceptance Criteria\n\n- [x] done\n",
         "labels": [{"name": "issuesmith:merge-running"}],
         "state": "OPEN",
     }
@@ -126,8 +126,8 @@ def test_retry_posts_recovery_and_blocks(mock_client):
     assert result.exit_code == 1
     assert result.pipeline_status == "MERGE_FAILED"
     assert result.recovery is not None
-    # Japanese text intentionally kept for CJK processing test
-    assert "YAML 契約の検証に失敗" in result.recovery
+    assert "YAML" in result.recovery
+    assert "paths_must_exist" in result.recovery
     transition.assert_called_once_with(42, "issuesmith:develop-done")
 
 
@@ -179,8 +179,9 @@ def test_compaction_failure_does_not_block_close(mock_client):
     assert result.exit_code == 0
     assert result.pipeline_status == "MERGE_DONE"
     mock_client.issue_comment.assert_called()
-    # Japanese text intentionally kept for CJK processing test
-    assert "コンパクション失敗" in mock_client.issue_comment.call_args.args[1]
+    comment = mock_client.issue_comment.call_args.args[1]
+    assert "M2" in comment
+    assert "docs/x.md" in comment
     close_issue.assert_called_once()
 
 

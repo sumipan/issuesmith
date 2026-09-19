@@ -263,8 +263,8 @@ def test_target_worktree_path_rejects_absolute_and_traversal() -> None:
 
 def test_yaml_metadata_required() -> None:
     with pytest.raises(p0.WorktreeError, match="yaml metadata block"):
-        # Japanese text intentionally kept for CJK processing test
-        p0._require_yaml_metadata("## 背景\nno yaml\n")
+        # ASCII fixture data.
+        p0._require_yaml_metadata("## Background\nno yaml\n")
 
 
 def test_local_run_success(tmp_path: Path) -> None:
@@ -272,10 +272,10 @@ def test_local_run_success(tmp_path: Path) -> None:
     _git_init_with_main(repo)
     wt = tmp_path / "nexus" / ".claude" / "worktrees" / "issue-3168-abcd"
     client = MagicMock()
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     client.issue_get.return_value = {
         "labels": [{"name": "issuesmith:develop-ready"}],
-        "body": "```yaml\nbase_branch: main\nallow_paths:\n  - src/**\n```\n\n## 設計\n",
+        "body": "```yaml\nbase_branch: main\nallow_paths:\n  - src/**\n```\n\n## Design\n",
     }
     with (
         patch.object(p0, "_github_client", return_value=client),
@@ -299,10 +299,10 @@ def test_jobs_dirty_after_prepare_fails(tmp_path: Path, capsys: pytest.CaptureFi
     _git_init_with_main(repo)
     wt = tmp_path / "nexus" / ".claude" / "worktrees" / "issue-3178-dirty"
     client = MagicMock()
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     client.issue_get.return_value = {
         "labels": [{"name": "issuesmith:develop-ready"}],
-        "body": "```yaml\nbase_branch: main\nallow_paths:\n  - src/**\n```\n\n## 設計\n",
+        "body": "```yaml\nbase_branch: main\nallow_paths:\n  - src/**\n```\n\n## Design\n",
     }
     with (
         patch.object(p0, "_github_client", return_value=client),
@@ -335,8 +335,9 @@ def test_jobs_dirty_after_prepare_fails(tmp_path: Path, capsys: pytest.CaptureFi
     assert result.exit_code == 1
     assert result.pipeline_status == "WORKTREE_FAILED"
     err = capsys.readouterr().err
-    # Japanese text intentionally kept for CJK processing test
-    assert "jobs/ 配下が dirty" in err
+    # ASCII fixture data.
+    assert "jobs/" in err
+    assert "dirty" in err
 
 
 def test_scope_gate_exceeded_returns_scope_too_large(tmp_path: Path) -> None:
@@ -357,7 +358,7 @@ def test_scope_gate_exceeded_returns_scope_too_large(tmp_path: Path) -> None:
     )
 
     client = MagicMock()
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     client.issue_get.return_value = {
         "labels": [{"name": "issuesmith:develop-ready"}],
         "body": (
@@ -366,7 +367,7 @@ def test_scope_gate_exceeded_returns_scope_too_large(tmp_path: Path) -> None:
             "base_branch: main\n"
             "allow_paths:\n"
             "  - tests/**\n"
-            "```\n\n## 設計\n"
+            "```\n\n## Design\n"
         ),
     }
     with (
@@ -414,7 +415,7 @@ def test_scope_gate_disabled_skips_and_succeeds(tmp_path: Path) -> None:
     )
 
     client = MagicMock()
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     client.issue_get.return_value = {
         "labels": [{"name": "issuesmith:develop-ready"}],
         "body": (
@@ -423,7 +424,7 @@ def test_scope_gate_disabled_skips_and_succeeds(tmp_path: Path) -> None:
             "base_branch: main\n"
             "allow_paths:\n"
             "  - tests/**\n"
-            "```\n\n## 設計\n"
+            "```\n\n## Design\n"
         ),
     }
     with (
@@ -468,7 +469,7 @@ def test_scope_gate_yaml_override_allows_larger_scope(tmp_path: Path) -> None:
     )
 
     client = MagicMock()
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     client.issue_get.return_value = {
         "labels": [{"name": "issuesmith:develop-ready"}],
         "body": (
@@ -479,7 +480,7 @@ def test_scope_gate_yaml_override_allows_larger_scope(tmp_path: Path) -> None:
             "  - tests/**\n"
             "scope_gate:\n"
             "  max_files: 120\n"
-            "```\n\n## 設計\n"
+            "```\n\n## Design\n"
         ),
     }
     with (

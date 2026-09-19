@@ -78,8 +78,8 @@ def test_pyproject_uses_src_layout() -> None:
 
 def test_gate_alias_matches_gate_preflight(tmp_path: Path) -> None:
     body = tmp_path / "body.md"
-    # Japanese text intentionally kept for CJK processing test
-    body.write_text("## 受け入れ条件\n\n```yaml\npaths_must_exist: []\n```\n", encoding="utf-8")
+    # ASCII fixture data.
+    body.write_text("## Acceptance Criteria\n\n```yaml\npaths_must_exist: []\n```\n", encoding="utf-8")
 
     old = _run_module("gate-preflight", "--gate", "cp1", "--body-file", str(body))
     new = _run_module("gate", "cp1", "--body-file", str(body))

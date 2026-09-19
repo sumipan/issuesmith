@@ -358,10 +358,10 @@ def test_phase_preconditions_block_unsatisfied_deps(phase, monkeypatch):
         def pr_list(self, *a, **k):
             return []
 
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     body = (
         _BODY_QUEUE
-        + "\n## 依存（先行）\n\n"
+        + "\n## Dependencies\n\n"
         + "| # | Issue |\n"
         + "| --- | --- |\n"
         + "| 1 | #2999 |\n"

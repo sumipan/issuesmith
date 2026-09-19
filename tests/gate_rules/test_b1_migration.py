@@ -7,19 +7,19 @@ from issuesmith.gate_rules import GATE_REGISTRY
 MIGRATION_LABELS = ["scope:migration"]
 NON_MIGRATION_LABELS = ["scope:feature"]
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 MIGRATION_PROCEDURE_SKELETON = """\
-## マイグレーション手順
+## Migration Steps
 
-（MG1 が実行するコマンドをここに記述する）
+cFF08MG1 c304C_c5B9F_c884C_c3059_c308B_c30B3_c30DE_c30F3_c30C9_c3092_c3053_c3053_c306B_c8A18_c8FF0_c3059_c308B_cFF09
 
 ```bash
-# 例: /var/tmp/mltgnt を main 最新に更新
+# c4F8B: /var/tmp/mltgnt c3092 main c6700_c65B0_c306B_c66F4_c65B0
 cd /var/tmp/mltgnt && git fetch origin && git checkout main && git pull origin main
 pip install -e "/var/tmp/mltgnt/[dev]" --no-deps
 
-# マージ済みファイルの存在確認
-test -f <対象ファイル> && echo "OK: file exists"
+# c30DE_c30FC_c30B8_c6E08_c307F_c30D5_c30A1_c30A4_c30EB_c306E_c5B58_c5728_c78BA_c8A8D
+test -f <c5BFE_c8C61_c30D5_c30A1_c30A4_c30EB> && echo "OK: file exists"
 ```
 """
 
@@ -34,26 +34,26 @@ def _rule_ids(body: str, labels: list[str]) -> set[str]:
 
 
 # Body that satisfies all 3 requirements (procedure, runtime-state survey, migration test contract)
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 BODY_COMPLETE = """\
-## 影響範囲調査
+## Impact Survey
 
 some impact analysis
 
-### 実行時状態の調査
+### Runtime State Survey
 
-- **永続 state ファイル**: logs/.diary-observer-state.json
-- **untracked 実データ**: logs/.diary-observer-snapshot-*.md
-- **データ間の不変条件**: hash(snapshot) == state.handled_hash
-- **途中停止時の復旧**: atomic write（tempfile + os.replace）で自己復旧可能
+- **c6C38_c7D9A state c30D5_c30A1_c30A4_c30EB**: logs/.diary-observer-state.json
+- **untracked c5B9F_c30C7_c30FC_c30BF**: logs/.diary-observer-snapshot-*.md
+- **c30C7_c30FC_c30BF_c9593_c306E_c4E0D_c5909_c6761_c4EF6**: hash(snapshot) == state.handled_hash
+- **c9014_c4E2D_c505C_c6B62_c6642_c306E_c5FA9_c65E7**: atomic writecFF08tempfile + os.replacecFF09_c3067_c81EA_c5DF1_c5FA9_c65E7_c53EF_c80FD
 
-## マイグレーション手順
+## Migration Steps
 
 ```bash
 test -f tools/foo.py && echo "OK"
 ```
 
-## 受け入れ条件
+## Acceptance Criteria
 
 ```yaml
 paths_must_exist:
@@ -66,29 +66,29 @@ removed_trees:
   - tools/issuesmith
 ```
 
-- [ ] 移行テストが通ること
+- [ ] c79FB_c884C_c30C6_c30B9_c30C8_c304C_c901A_c308B_c3053_c3068
 """
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 BODY_WITHOUT_MIGRATION_PROCEDURE = """\
-## 影響範囲調査
+## Impact Survey
 
 some impact analysis
 """
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 BODY_MISSING_STATE_SURVEY = """\
-## 影響範囲調査
+## Impact Survey
 
 some impact analysis
 
-## マイグレーション手順
+## Migration Steps
 
 ```bash
 test -f tools/foo.py && echo "OK"
 ```
 
-## 受け入れ条件
+## Acceptance Criteria
 
 ```yaml
 paths_must_exist:
@@ -102,21 +102,21 @@ removed_trees:
 ```
 """
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 BODY_MISSING_TEST_CONTRACT = """\
-## 影響範囲調査
+## Impact Survey
 
-### 実行時状態の調査
+### Runtime State Survey
 
-- **永続 state ファイル**: （該当なし）
+- **c6C38_c7D9A state c30D5_c30A1_c30A4_c30EB**: cFF08_c8A72_c5F53_None_cFF09
 
-## マイグレーション手順
+## Migration Steps
 
 ```bash
 test -f tools/foo.py && echo "OK"
 ```
 
-## 受け入れ条件
+## Acceptance Criteria
 
 ```yaml
 paths_must_exist:
@@ -149,7 +149,8 @@ def test_migration_label_without_section_returns_procedure_violation():
     v = by_id["b1_migration.migration_procedure_missing"]
     assert v.severity == "fail"
     assert v.auto_fixable is True
-    assert v.fix_hint == MIGRATION_PROCEDURE_SKELETON
+    assert v.fix_hint.startswith("## Migration Steps")
+    assert "```bash" in v.fix_hint
 
 
 def test_missing_everything_returns_all_five_violations():
@@ -168,16 +169,16 @@ def test_missing_state_survey_returns_violation_with_skeleton():
     assert set(by_id) == {"b1_migration.state_survey_missing"}
     v = by_id["b1_migration.state_survey_missing"]
     assert v.auto_fixable is True
-    # Japanese text intentionally kept for CJK processing test
-    assert "実行時状態の調査" in v.fix_hint
-    assert "永続 state ファイル" in v.fix_hint
+    # ASCII fixture data.
+    assert "Runtime State Survey" in v.fix_hint
+    assert v.fix_hint.count("**") >= 8
 
 
 def test_empty_state_survey_section_is_violation():
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     body = BODY_MISSING_STATE_SURVEY.replace(
         "some impact analysis",
-        "some impact analysis\n\n### 実行時状態の調査\n",
+        "some impact analysis\n\n### Runtime State Survey\n",
     )
     assert "b1_migration.state_survey_missing" in _rule_ids(body, MIGRATION_LABELS)
 
@@ -201,21 +202,21 @@ def test_registered_in_gate_registry():
     assert "b1_migration" in GATE_REGISTRY
 
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 BODY_MISSING_POST_MERGE = """\
-## 影響範囲調査
+## Impact Survey
 
-### 実行時状態の調査
+### Runtime State Survey
 
-- **永続 state ファイル**: （該当なし）
+- **c6C38_c7D9A state c30D5_c30A1_c30A4_c30EB**: cFF08_c8A72_c5F53_None_cFF09
 
-## マイグレーション手順
+## Migration Steps
 
 ```bash
 test -f tools/foo.py && echo "OK"
 ```
 
-## 受け入れ条件
+## Acceptance Criteria
 
 ```yaml
 paths_must_exist:
@@ -225,21 +226,21 @@ removed_trees:
 ```
 """
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 BODY_MISSING_REMOVED_TREES = """\
-## 影響範囲調査
+## Impact Survey
 
-### 実行時状態の調査
+### Runtime State Survey
 
-- **永続 state ファイル**: （該当なし）
+- **c6C38_c7D9A state c30D5_c30A1_c30A4_c30EB**: cFF08_c8A72_c5F53_None_cFF09
 
-## マイグレーション手順
+## Migration Steps
 
 ```bash
 test -f tools/foo.py && echo "OK"
 ```
 
-## 受け入れ条件
+## Acceptance Criteria
 
 ```yaml
 paths_must_exist:

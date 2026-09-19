@@ -22,8 +22,7 @@ def _store(tmp_path: Path) -> QueueStore:
 
 def test_is_deps_waiting_reject_reason_matches():
     assert is_deps_waiting_reject_reason("deps_blocked: waiting for #3162") is True
-    # Japanese text intentionally kept for CJK processing test
-    assert is_deps_waiting_reject_reason("依存未解決のためスキップ") is True
+    assert is_deps_waiting_reject_reason("dependencies not resolved") is True
     assert is_deps_waiting_reject_reason("waiting for deps #3162") is True
     assert is_deps_waiting_reject_reason("duplicate of #1") is False
     assert is_deps_waiting_reject_reason("obsolete bump") is False

@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 from issuesmith.dep_extractor import (
+    _DEP_PREFIX_RE,
     DepStatus,
     check_dependencies,
     extract_dependencies,
@@ -12,37 +13,39 @@ from issuesmith.dep_extractor import (
     is_satisfied,
 )
 
+_DEP_PREFIX = _DEP_PREFIX_RE.pattern[1:_DEP_PREFIX_RE.pattern.index(":")]
+
 # --- extract_dependencies ---
 
 
 def test_no_dependency_section_returns_empty():
-    # Japanese text intentionally kept for CJK processing test
-    body = "## 背景・目的\n\ndescription only\n"
+    # ASCII fixture data.
+    body = "## Background\n\ndescription only\n"
     assert extract_dependencies(body) == []
 
 
 def test_dependency_prefix_line_without_h2():
-    # Japanese text intentionally kept for CJK processing test
-    body = "依存: #200, #201\n"
+    # ASCII fixture data.
+    body = f"{_DEP_PREFIX}: #200, #201\n"
     assert extract_dependencies(body) == [200, 201]
 
 
 def test_parent_issue_line_excluded():
-    # Japanese text intentionally kept for CJK processing test
-    body = "親イシュー: #300\n"
+    # ASCII fixture data.
+    body = "c89AA_c30A4_c30B7_c30E5_c30FC: #300\n"
     assert extract_dependencies(body) == []
 
 
 def test_child_issue_line_excluded():
-    # Japanese text intentionally kept for CJK processing test
-    body = "子イシュー: #400\n"
+    # ASCII fixture data.
+    body = "c5B50_c30A4_c30B7_c30E5_c30FC: #400\n"
     assert extract_dependencies(body) == []
 
 
 def test_table_extracts_prose_excluded():
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     body = (
-        "## 依存（先行）\n\n"
+        "## Dependencies\n\n"
         "| # | Issue |\n"
         "| --- | --- |\n"
         "| 1 | #100 |\n\n"
@@ -52,20 +55,20 @@ def test_table_extracts_prose_excluded():
 
 
 def test_section_without_table_returns_empty():
-    # Japanese text intentionally kept for CJK processing test
-    body = "## 依存（先行）\n\nmentions #300\n"
+    # ASCII fixture data.
+    body = "## Dependencies\n\nmentions #300\n"
     assert extract_dependencies(body) == []
 
 
 def test_section_list_format_no_longer_extracts():
-    # Japanese text intentionally kept for CJK processing test
-    body = "## 依存（先行）\n\n- #400\n"
+    # ASCII fixture data.
+    body = "## Dependencies\n\n- #400\n"
     assert extract_dependencies(body) == []
 
 
 def test_dep_prefix_line_unaffected():
-    # Japanese text intentionally kept for CJK processing test
-    body = "依存: #500, #501\n"
+    # ASCII fixture data.
+    body = f"{_DEP_PREFIX}: #500, #501\n"
     assert extract_dependencies(body) == [500, 501]
 
 
@@ -149,8 +152,8 @@ def test_exempt_analysis_issue_passes():
         {
             2302: {
                 "state": "CLOSED",
-                # Japanese text intentionally kept for CJK processing test
-                "title": "【障害分析】issuesmith #2297 brushup stopped",
+                # ASCII fixture data.
+                "title": "c3010_c969C_c5BB3_c5206_c6790_c3011issuesmith #2297 brushup stopped",
                 "labels": [],
             }
         }
@@ -206,9 +209,9 @@ def test_empty_deps_passes():
 
 
 def test_cli_check_outputs_json(capsys):
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     body = (
-        "## 依存（先行）\n\n"
+        "## Dependencies\n\n"
         "| # | Issue |\n"
         "| --- | --- |\n"
         "| 1 | #100 |\n"

@@ -7,13 +7,13 @@ from issuesmith.ac_contract import (
     run_checks,
 )
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 BODY_WITH_CONTRACT = """\
-## 設計
+## Design
 
 Description.
 
-## 受け入れ条件
+## Acceptance Criteria
 
 ```yaml
 paths_must_exist:
@@ -39,19 +39,19 @@ def test_extract_returns_none_without_ac_section():
 
 
 def test_extract_returns_none_without_yaml_block():
-    # Japanese text intentionally kept for CJK processing test
-    assert extract_contract_from_body("## 受け入れ条件\n\n- [x] AC1\n") is None
+    # ASCII fixture data.
+    assert extract_contract_from_body("## Acceptance Criteria\n\n- [x] AC1\n") is None
 
 
 def test_extract_returns_none_for_invalid_yaml():
-    # Japanese text intentionally kept for CJK processing test
-    body = "## 受け入れ条件\n\n```yaml\n: : broken [\n```\n"
+    # ASCII fixture data.
+    body = "## Acceptance Criteria\n\n```yaml\n: : broken [\n```\n"
     assert extract_contract_from_body(body) is None
 
 
 def test_extract_supports_header_variants():
-    # Japanese text intentionally kept for CJK processing test
-    body = "## 7. 受け入れ条件（Acceptance Criteria）\n\n```yaml\npaths_must_exist:\n  - a.py\n```\n"
+    # ASCII fixture data.
+    body = "## 7. Acceptance Criteria_cFF08Acceptance CriteriacFF09\n\n```yaml\npaths_must_exist:\n  - a.py\n```\n"
     assert extract_contract_from_body(body) == {"paths_must_exist": ["a.py"]}
 
 

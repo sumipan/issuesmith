@@ -6,6 +6,18 @@ import pytest
 
 from issuesmith.config import reset_config_cache
 from issuesmith.milestone import validate_children
+from tests.legacy_text import (
+    CHANGE_TYPE,
+    CONTENT,
+    DEPENDENCY,
+    DESCRIPTION,
+    FILE_PATH,
+    MODIFY,
+    NONE,
+    REPOSITORY,
+    TARGET_REPOSITORY,
+    TITLE,
+)
 
 
 def _yaml_block(target_repo: str, allow_paths: list[str]) -> str:
@@ -21,14 +33,14 @@ allow_paths:
 
 
 def _change_table(rows: list[tuple[str, str]]) -> str:
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     lines = [
-        "**変更対象ファイル**:",
-        "| リポジトリ | ファイルパス | 変更種別 | 変更内容 |",
+        "**Changed Files**:",
+        f"| {REPOSITORY} | {FILE_PATH} | {CHANGE_TYPE} | {DESCRIPTION} |",
         "|---|---|---|---|",
     ]
     for repo, path in rows:
-        lines.append(f"| `{repo}` | `{path}` | 修正 | change |")
+        lines.append(f"| `{repo}` | `{path}` | {MODIFY} | change |")
     return "\n".join(lines)
 
 
@@ -38,25 +50,25 @@ def _parent_with_plan(
     parent_repo: str = "sumipan/nexus",
     with_repo_column: bool = True,
 ) -> str:
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     if with_repo_column:
-        header = "| # | タイトル | 内容 | 依存 | 対象リポジトリ |"
+        header = f"| # | {TITLE} | {CONTENT} | {DEPENDENCY} | {TARGET_REPOSITORY} |"
         sep = "|---|--------|------|------|----------------|"
         body_rows = [
-            f"| {i} | {title} | scope | なし | `{repo}` |"
+            f"| {i} | {title} | scope | {NONE} | `{repo}` |"
             for i, (title, repo) in enumerate(plan_rows, start=1)
         ]
     else:
-        header = "| # | タイトル | 内容 | 依存 |"
+        header = f"| # | {TITLE} | {CONTENT} | {DEPENDENCY} |"
         sep = "|---|--------|------|------|"
         body_rows = [
-            f"| {i} | {title} | scope | なし |"
+            f"| {i} | {title} | scope | {NONE} |"
             for i, (title, _repo) in enumerate(plan_rows, start=1)
         ]
-    plan = "\n".join(["### サブイシュー分割計画", header, sep, *body_rows])
+    plan = "\n".join(["### Sub-issue Plan", header, sep, *body_rows])
     return (
         _yaml_block(parent_repo, ["src/**", "companion/**"])
-        + "\n\n## マイルストーン\n\n"
+        + "\n\n## Milestone\n\n"
         + plan
         + "\n"
     )

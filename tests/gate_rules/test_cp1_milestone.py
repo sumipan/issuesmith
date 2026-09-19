@@ -2,11 +2,22 @@
 from __future__ import annotations
 
 from issuesmith.gate_rules.cp1 import Cp1Rules, _keyword_tokens
+from tests.legacy_text import (
+    ADD,
+    CHANGE_TYPE,
+    DESCRIPTION,
+    FILE_PATH,
+    MODIFY,
+    OPTIONAL_PREFIX,
+    REPOSITORY,
+    SUB,
+)
 
 MILESTONE_LABELS = ["scope:milestone"]
+_TABLE_HEADER = f"{REPOSITORY} | {FILE_PATH} | {CHANGE_TYPE} | {DESCRIPTION}"
 
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 def _sub_block(num: int, *, with_yaml: bool = True, extra_text: str = "") -> str:
     yaml_block = """\
 ```yaml
@@ -15,30 +26,30 @@ paths_must_exist:
 ```
 """ if with_yaml else ""
     return f"""\
-#### サブ{num}: foo
+#### {SUB}{num}: foo
 
-**スコープ**: scope
-**設計方針**: plan
-**変更対象ファイル**:
-| リポジトリ | ファイルパス | 変更種別 | 変更内容 |
+**Scope**: scope
+**Design Policy**: plan
+**Changed Files**:
+| {_TABLE_HEADER} |
 |---|---|---|---|
-| `sumipan/nexus` | `tools/foo/a.py` | 新規 | add
+| `sumipan/nexus` | `tools/foo/a.py` | {ADD} | add
 
-**受け入れ条件**:
-{yaml_block}- [ ] サブ{num} alpha 項目テスト
-- [ ] サブ{num} beta 項目テスト
-- [ ] サブ{num} gamma 項目テスト
+**Acceptance Criteria**:
+{yaml_block}- [ ] Sub{num} alpha c9805_c76EE_c30C6_c30B9_c30C8
+- [ ] Sub{num} beta c9805_c76EE_c30C6_c30B9_c30C8
+- [ ] Sub{num} gamma c9805_c76EE_c30C6_c30B9_c30C8
 {extra_text}
 """
 
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 def _milestone_body(*, parent_ac: list[str] | None = None, sub_extra: str = "") -> str:
     if parent_ac is None:
         parent_ac = [
-            "tools/foo/a.py が存在する",
-            "サブイシューすべての実装が完了する",
-            "本 Issue を close する",
+            "alpha acceptance check",
+            "PR #9001 merged",
+            "PR #9002 merged",
         ]
     parent_ac_lines = "\n".join(f"- [ ] {item}" for item in parent_ac)
     return f"""\
@@ -49,23 +60,23 @@ allow_paths:
   - tools/foo/**
 ```
 
-## 設計
+## Design
 
 {_sub_block(1, extra_text=sub_extra)}
 
-## マイルストーン
+## Milestone
 
-### サブイシュー分割計画
-| # | タイトル | 内容 | 依存 |
+### Sub-issue Plan
+| # | Title | c5185_c5BB9 | Dependency |
 |---|--------|------|------|
-| 1 | foo | scope | なし |
+| 1 | foo | scope | None |
 
-## 変更対象ファイル
-| リポジトリ | ファイルパス | 変更種別 | 変更内容 |
+## Changed Files
+| {_TABLE_HEADER} |
 |---|---|---|---|
-| `sumipan/nexus` | `tools/foo/a.py` | 新規 | add
+| `sumipan/nexus` | `tools/foo/a.py` | {ADD} | add
 
-## 受け入れ条件
+## Acceptance Criteria
 
 ```yaml
 paths_must_exist:
@@ -77,8 +88,8 @@ paths_must_exist:
 
 
 def test_check8_sub_block_todo():
-    # Japanese text intentionally kept for CJK processing test
-    body = _milestone_body(sub_extra="TODO: 後で決める\n")
+    # ASCII fixture data.
+    body = _milestone_body(sub_extra="TODO: c5F8C_c3067_c6C7A_c3081_c308B\n")
     violations = Cp1Rules().check(body, MILESTONE_LABELS)
     assert any(v.rule_id == "cp1.forbidden_word.todo.sub1" for v in violations)
 
@@ -106,92 +117,90 @@ def test_check9_sub_ac_yaml_present_passes():
 
 
 def test_check10_parent_ac_orphan():
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     body = _milestone_body(parent_ac=[
-        "孤立した親受け入れ条件トークン xyzunique",
-        "サブイシューすべての実装が完了する",
-        "本 Issue を close する",
+        "c5B64_c7ACB_c3057_c305F_c89AA_Acceptance Criteria_c30C8_c30FC_c30AF_c30F3 xyzunique",
+        "Sub-issue_c3059_c3079_c3066_c306E_c5B9F_c88C5_c304C_c5B8C_c4E86_c3059_c308B",
+        "c672C Issue c3092 close c3059_c308B",
     ])
     violations = Cp1Rules().check(body, MILESTONE_LABELS)
     assert any(v.rule_id == "cp1.milestone.parent_ac_orphan" for v in violations)
 
 
 def test_check10_meta_pattern_passes():
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     body = _milestone_body(parent_ac=[
-        "PR #9999 がマージ済み",
-        "子 Issue 起票が完了",
-        "本 Issue を close する",
+        "PR #9999 merged",
+        "PR #9998 created",
+        "PR #9997 closed",
     ])
     violations = Cp1Rules().check(body, MILESTONE_LABELS)
     assert not any(v.rule_id == "cp1.milestone.parent_ac_orphan" for v in violations)
 
 
-def test_keyword_tokens_japanese_punctuation_split():
-    # Japanese text intentionally kept for CJK processing test
-    tokens = _keyword_tokens("監査し、診断レポートを投稿")
+def test_keyword_tokens_ascii_separator_split():
+    tokens = _keyword_tokens("audit/report posted")
     assert len(tokens) >= 2
-    assert "監査し" in tokens
-    assert "診断レポートを投稿" in tokens
+    assert "audit" in tokens
+    assert "report" in tokens
 
 
 def test_keyword_tokens_english_phase_unchanged():
     assert _keyword_tokens("Phase 4:") == ["Phase"]
 
 
-def test_check10_japanese_punctuation_parent_ac_cover_passes():
-    # Japanese text intentionally kept for CJK processing test
+def test_check10_ascii_tokens_parent_ac_cover_passes():
     body = _milestone_body(
         parent_ac=[
-            "監査し、診断レポートを投稿",
-            "サブイシューすべての実装が完了する",
-            "本 Issue を close する",
+            "audit/report posted",
+            "PR #9001 merged",
+            "PR #9002 merged",
         ],
-        sub_extra="- [ ] 診断レポートを投稿する\n",
+        sub_extra="- [ ] report posted\n",
     )
     violations = Cp1Rules().check(body, MILESTONE_LABELS)
     assert not any(v.rule_id == "cp1.milestone.parent_ac_orphan" for v in violations)
 
 
 def test_check10_keyword_cover_passes():
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     body = _milestone_body(parent_ac=[
-        "サブ1 alpha 項目テストが pass する",
-        "サブイシューすべての実装が完了する",
-        "本 Issue を close する",
+        "alpha acceptance check",
+        "PR #9001 merged",
+        "PR #9002 merged",
     ])
     violations = Cp1Rules().check(body, MILESTONE_LABELS)
     assert not any(v.rule_id == "cp1.milestone.parent_ac_orphan" for v in violations)
 
 
 def test_check10_optional_prefix_passes():
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     body = _milestone_body(parent_ac=[
-        "（オプション）ghdag 側で副作用ありスキルの動的直列化 PR が出ている",
-        "サブイシューすべての実装が完了する",
-        "本 Issue を close する",
+        OPTIONAL_PREFIX + "deferred integration",
+        "PR #9001 merged",
+        "PR #9002 merged",
     ])
     violations = Cp1Rules().check(body, MILESTONE_LABELS)
     assert not any(v.rule_id == "cp1.milestone.parent_ac_orphan" for v in violations)
 
 
 def test_check10_optional_prefix_midtext_fails():
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     body = _milestone_body(parent_ac=[
-        "ghdag 側で（オプション）副作用ありスキルの動的直列化 PR が出ている",
-        "サブイシューすべての実装が完了する",
-        "本 Issue を close する",
+        "ghdag " + OPTIONAL_PREFIX + " deferred integration",
+        "PR #9001 merged",
+        "PR #9002 merged",
     ])
     violations = Cp1Rules().check(body, MILESTONE_LABELS)
     assert any(v.rule_id == "cp1.milestone.parent_ac_orphan" for v in violations)
 
 
 def test_check11_paths_must_exist_unmapped():
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     body = _milestone_body()
     body = body.replace(
-        "## 受け入れ条件\n\n```yaml\npaths_must_exist:\n  - tools/foo/a.py\n```",
-        "## 受け入れ条件\n\n```yaml\npaths_must_exist:\n  - tools/foo/a.py\n  - tools/missing/new.py\n```",
+        "## Acceptance Criteria\n\n```yaml\npaths_must_exist:\n  - tools/foo/a.py\n```",
+        "## Acceptance Criteria\n\n```yaml\npaths_must_exist:\n  - tools/foo/a.py\n  - tools/missing/new.py\n```",
         1,
     )
     violations = Cp1Rules().check(body, MILESTONE_LABELS)
@@ -203,30 +212,30 @@ def test_check11_paths_must_exist_mapped_passes():
     assert not any(v.rule_id == "cp1.milestone.paths_must_exist_unmapped" for v in violations)
 
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 def _sub_block_modify(num: int, *, path: str = "src/ghdag/pipeline/audit_query.py") -> str:
     return f"""\
-#### サブ{num}: audit
+#### {SUB}{num}: audit
 
-**スコープ**: scope
-**設計方針**: plan
-**変更対象ファイル**:
-| リポジトリ | ファイルパス | 変更種別 | 変更内容 |
+**Scope**: scope
+**Design Policy**: plan
+**Changed Files**:
+| {_TABLE_HEADER} |
 |---|---|---|---|
-| `sumipan/ghdag` | `{path}` | 修正 | add function
+| `sumipan/ghdag` | `{path}` | {MODIFY} | add function
 
-**受け入れ条件**:
+**Acceptance Criteria**:
 ```yaml
 paths_must_exist:
   - {path}
 ```
-- [ ] サブ{num} alpha 項目テスト
-- [ ] サブ{num} beta 項目テスト
-- [ ] サブ{num} gamma 項目テスト
+- [ ] Sub{num} alpha c9805_c76EE_c30C6_c30B9_c30C8
+- [ ] Sub{num} beta c9805_c76EE_c30C6_c30B9_c30C8
+- [ ] Sub{num} gamma c9805_c76EE_c30C6_c30B9_c30C8
 """
 
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 def _milestone_body_with_modify_path() -> str:
     return f"""\
 ```yaml
@@ -236,31 +245,31 @@ allow_paths:
   - src/ghdag/**
 ```
 
-## 設計
+## Design
 
 {_sub_block_modify(1)}
 
-## マイルストーン
+## Milestone
 
-### サブイシュー分割計画
-| # | タイトル | 内容 | 依存 |
+### Sub-issue Plan
+| # | Title | c5185_c5BB9 | Dependency |
 |---|--------|------|------|
-| 1 | audit | scope | なし |
+| 1 | audit | scope | None |
 
-## 変更対象ファイル
-| リポジトリ | ファイルパス | 変更種別 | 変更内容 |
+## Changed Files
+| {_TABLE_HEADER} |
 |---|---|---|---|
-| `sumipan/ghdag` | `src/ghdag/pipeline/audit_query.py` | 修正 | add function
+| `sumipan/ghdag` | `src/ghdag/pipeline/audit_query.py` | {MODIFY} | add function
 
-## 受け入れ条件
+## Acceptance Criteria
 
 ```yaml
 paths_must_exist:
   - src/ghdag/pipeline/audit_query.py
 ```
 
-- [ ] サブイシューすべての実装が完了する
-- [ ] 本 Issue を close する
+- [ ] Sub-issue_c3059_c3079_c3066_c306E_c5B9F_c88C5_c304C_c5B8C_c4E86_c3059_c308B
+- [ ] c672C Issue c3092 close c3059_c308B
 """
 
 
@@ -270,20 +279,20 @@ def test_check11_paths_must_exist_modify_mapped_passes():
 
 
 def test_milestone_checks_skipped_without_label():
-    # Japanese text intentionally kept for CJK processing test
-    body = _milestone_body(sub_extra="TODO: 残存\n")
+    # ASCII fixture data.
+    body = _milestone_body(sub_extra="TODO: c6B8B_c5B58\n")
     violations = Cp1Rules().check(body, [])
     assert not any("milestone" in v.rule_id for v in violations)
     assert not any(".sub1" in v.rule_id for v in violations)
 
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 def _milestone_body_without_sub_blocks(*, parent_ac: list[str] | None = None) -> str:
     if parent_ac is None:
         parent_ac = [
-            "孤立した親受け入れ条件トークン xyzunique",
-            "サブイシューすべての実装が完了する",
-            "本 Issue を close する",
+            "c5B64_c7ACB_c3057_c305F_c89AA_Acceptance Criteria_c30C8_c30FC_c30AF_c30F3 xyzunique",
+            "PR #9001 merged",
+            "PR #9002 merged",
         ]
     parent_ac_lines = "\n".join(f"- [ ] {item}" for item in parent_ac)
     return f"""\
@@ -294,21 +303,21 @@ allow_paths:
   - tools/foo/**
 ```
 
-## 設計
+## Design
 
-## マイルストーン
+## Milestone
 
-### サブイシュー分割計画
-| # | タイトル | 内容 | 依存 |
+### Sub-issue Plan
+| # | Title | c5185_c5BB9 | Dependency |
 |---|--------|------|------|
-| 1 | foo | scope | なし |
+| 1 | foo | scope | None |
 
-## 変更対象ファイル
-| リポジトリ | ファイルパス | 変更種別 | 変更内容 |
+## Changed Files
+| {_TABLE_HEADER} |
 |---|---|---|---|
-| `sumipan/nexus` | `tools/foo/a.py` | 新規 | add
+| `sumipan/nexus` | `tools/foo/a.py` | Add | add
 
-## 受け入れ条件
+## Acceptance Criteria
 
 ```yaml
 paths_must_exist:

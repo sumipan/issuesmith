@@ -4,9 +4,9 @@ index 0000000..39eb25d
 --- /dev/null
 +++ b/tests/test_ghdag_version.py
 @@ -0,0 +1,45 @@
-+"""tests/test_ghdag_version.py — ghdag v0.43.0 互換性テスト。
++"""tests/test_ghdag_version.py — ghdag v0.43.0 c4E92_c63DB_c6027_c30C6_c30B9_c30C8_c3002
 +
-+Issue #1697: mltgnt が ghdag v0.43.0 の API に追従していることを検証する。
++Issue #1697: mltgnt c304C ghdag v0.43.0 c306E API c306B_c8FFD_c5F93_c3057_c3066_c3044_c308B_c3053_c3068_c3092_c691C_c8A3C_c3059_c308B_c3002
 +"""
 +from __future__ import annotations
 +
@@ -15,37 +15,37 @@ index 0000000..39eb25d
 +
 +
 +def test_ghdag_version_is_at_least_0_43_0():
-+    """ghdag のインストール済みバージョンが 0.43.0 以上であることを確認する。"""
++    """ghdag c306E_c30A4_c30F3_c30B9_c30C8_c30FC_c30EB_c6E08_c307F_c30D0_c30FC_c30B8_c30E7_c30F3_c304C 0.43.0 c4EE5_c4E0A_c3067_c3042_c308B_c3053_c3068_c3092_c78BA_c8A8D_c3059_c308B_c3002"""
 +    version_str = importlib.metadata.version("ghdag")
 +    parts = [int(x) for x in version_str.split(".")[:3]]
 +    assert parts >= [0, 43, 0], (
-+        f"ghdag {version_str} は v0.43.0 より古い。pyproject.toml の依存ピンを更新してください。"
++        f"ghdag {version_str} c306F v0.43.0 c3088_c308A_c53E4_c3044_c3002pyproject.toml c306E_Dependency_c30D4_c30F3_c3092_c66F4_c65B0_c3057_c3066_c304F_c3060_c3055_c3044_c3002"
 +    )
 +
 +
 +def test_ghdag_llm_pipeline_api_submit_accepts_metadata():
-+    """LLMPipelineAPI.submit() が metadata 引数を受け付ける (v0.21.0 新機能)。"""
++    """LLMPipelineAPI.submit() c304C metadata c5F15_c6570_c3092_c53D7_c3051_c4ED8_c3051_c308B (v0.21.0 c65B0_c6A5F_c80FD)c3002"""
 +    from ghdag.pipeline import LLMPipelineAPI
 +
 +    sig = inspect.signature(LLMPipelineAPI.submit)
 +    assert "metadata" in sig.parameters, (
-+        "LLMPipelineAPI.submit() に metadata パラメータがない。ghdag v0.21.0 以上が必要です。"
++        "LLMPipelineAPI.submit() c306B metadata c30D1_c30E9_c30E1_c30FC_c30BF_c304C_c306A_c3044_c3002ghdag v0.21.0 c4EE5_c4E0A_c304C_c5FC5_c8981_c3067_c3059_c3002"
 +    )
 +
 +
 +def test_ghdag_dag_hooks_has_on_task_start():
-+    """DagHooks プロトコルに on_task_start が含まれる (v0.21.0 新機能)。"""
++    """DagHooks c30D7_c30ED_c30C8_c30B3_c30EB_c306B on_task_start c304C_c542B_c307E_c308C_c308B (v0.21.0 c65B0_c6A5F_c80FD)c3002"""
 +    from ghdag.dag.hooks import DagHooks
 +
 +    assert hasattr(DagHooks, "on_task_start"), (
-+        "DagHooks に on_task_start が存在しない。ghdag v0.21.0 以上が必要です。"
++        "DagHooks c306B on_task_start c304C_c5B58_c5728_c3057_c306A_c3044_c3002ghdag v0.21.0 c4EE5_c4E0A_c304C_c5FC5_c8981_c3067_c3059_c3002"
 +    )
 +
 +
 +def test_ghdag_dag_hooks_has_check_promote_target():
-+    """DagHooks プロトコルに check_promote_target が含まれる (v0.21.0 新機能)。"""
++    """DagHooks c30D7_c30ED_c30C8_c30B3_c30EB_c306B check_promote_target c304C_c542B_c307E_c308C_c308B (v0.21.0 c65B0_c6A5F_c80FD)c3002"""
 +    from ghdag.dag.hooks import DagHooks
 +
 +    assert hasattr(DagHooks, "check_promote_target"), (
-+        "DagHooks に check_promote_target が存在しない。ghdag v0.21.0 以上が必要です。"
++        "DagHooks c306B check_promote_target c304C_c5B58_c5728_c3057_c306A_c3044_c3002ghdag v0.21.0 c4EE5_c4E0A_c304C_c5FC5_c8981_c3067_c3059_c3002"
 +    )

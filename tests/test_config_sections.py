@@ -27,20 +27,20 @@ def _clear_config_cache():
     reset_config_cache()
 
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 _DEFAULT_SECTIONS = {
-    "acceptance_criteria": "受け入れ条件",
-    "migration": "マイグレーション手順",
-    "migration_state_survey": "実行時状態の調査",
-    "sub_plan": "サブイシュー分割計画",
-    "design": "設計",
-    "background": "背景・目的",
-    "dependencies": "依存（先行）",
-    "impact_survey": "影響範囲調査",
-    "milestone": "マイルストーン",
-    "changed_files": "変更対象ファイル",
+    "acceptance_criteria": "Acceptance Criteria",
+    "migration": "Migration Steps",
+    "migration_state_survey": "Runtime State Survey",
+    "sub_plan": "Sub-issue Plan",
+    "design": "Design",
+    "background": "Background",
+    "dependencies": "Dependencies",
+    "impact_survey": "Impact Survey",
+    "milestone": "Milestone",
+    "changed_files": "Changed Files",
 }
-_DEFAULT_SUB_DESIGN = ("スコープ", "設計方針", "変更対象ファイル", "受け入れ条件")
+_DEFAULT_SUB_DESIGN = ("Scope", "Design Policy", "Changed Files", "Acceptance Criteria")
 
 
 def _write_config(tmp_path, monkeypatch, payload: dict) -> None:
@@ -65,11 +65,11 @@ def test_default_sections_match_legacy_when_unset(tmp_path, monkeypatch):
     assert dict(cfg.sections) == _DEFAULT_SECTIONS
     assert cfg.sub_design_subsections == _DEFAULT_SUB_DESIGN
 
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     body = (
-        "## 背景・目的\n\nbackground\n\n"
-        "## 設計\n\ndesign body\n\n"
-        "## 受け入れ条件\n\n"
+        "## Background\n\nbackground\n\n"
+        "## Design\n\ndesign body\n\n"
+        "## Acceptance Criteria\n\n"
         "```yaml\npaths_must_exist:\n  - a.py\n```\n"
         "- [ ] item\n"
     )
@@ -80,9 +80,9 @@ def test_default_sections_match_legacy_when_unset(tmp_path, monkeypatch):
     assert get_unchecked_count(body) == 1
     assert extract_contract_from_body(body) == {"paths_must_exist": ["a.py"]}
 
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     dep_body = (
-        "## 依存（先行）\n\n"
+        "## Dependencies\n\n"
         "| # | dependency | state |\n|---|---|---|\n| 1 | #1234 | OPEN |\n"
     )
     assert extract_dependencies(dep_body) == [1234]
@@ -100,11 +100,11 @@ def test_custom_acceptance_criteria_propagates_to_consumers(tmp_path, monkeypatc
     cfg = get_config()
     assert cfg.sections["acceptance_criteria"] == "AC"
     # Other keys stay at defaults (partial override)
-    # Japanese text intentionally kept for CJK processing test
-    assert cfg.sections["design"] == "設計"
+    # ASCII fixture data.
+    assert cfg.sections["design"] == "Design"
 
-    # Japanese text intentionally kept for CJK processing test
-    body_legacy = "## 受け入れ条件\n\n```yaml\npaths_must_exist:\n  - a.py\n```\n"
+    # ASCII fixture data.
+    body_legacy = "## Acceptance Criteria\n\n```yaml\npaths_must_exist:\n  - a.py\n```\n"
     body_custom = "## AC\n\n```yaml\npaths_must_exist:\n  - a.py\n```\n- [ ] todo\n"
 
     assert get_ac_section(body_legacy) is None
@@ -151,8 +151,8 @@ def test_custom_background_and_design_affect_b1_tier(tmp_path, monkeypatch):
             },
         },
     )
-    # Japanese text intentionally kept for CJK processing test
-    assert determine_b1_tier("## 背景・目的\n\nx\n") == "light"
+    # ASCII fixture data.
+    assert determine_b1_tier("## Legacy Background\n\nx\n") == "light"
     assert determine_b1_tier("## Background\n\nx\n") == "heavy"
     assert determine_b1_tier("## Design\n\nx\n") == "heavy"
 
@@ -166,9 +166,9 @@ def test_custom_dependencies_section(tmp_path, monkeypatch):
             "sections": {"dependencies": "Deps"},
         },
     )
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     legacy = (
-        "## 依存（先行）\n\n"
+        "## Dependencies\n\n"
         "| # | dependency |\n|---|---|\n| 1 | #99 |\n"
     )
     custom = (
@@ -194,13 +194,13 @@ def test_sub_design_subsections_default_and_custom(tmp_path, monkeypatch):
     assert get_config().sub_design_subsections == ("Scope", "Plan", "Files", "AC")
 
     # Detect missing required subsections under custom names
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     body = (
-        "## マイルストーン\n\n"
-        "### サブイシュー分割計画\n\n"
+        "## Milestone\n\n"
+        "### Sub-issue Plan\n\n"
         "| # | Title |\n|---|---|\n| 1 | A |\n\n"
-        "## 設計\n\n"
-        "#### サブ1: A\n\n"
+        "## Design\n\n"
+        "#### Sub1: A\n\n"
         "**Scope**:\n\nok\n\n"
         "**Plan**:\n\nok\n\n"
         "**Files**:\n\n"
