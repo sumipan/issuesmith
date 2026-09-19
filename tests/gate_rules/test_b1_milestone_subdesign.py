@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import issuesmith.gate_rules.b1_milestone_subdesign  # noqa: F401
 from issuesmith.gate_rules import GATE_REGISTRY
+from tests.legacy_text import CHANGE_TYPE, DESCRIPTION, FILE_PATH, REPOSITORY, SUB, VAGUE_SUCCESS
 
 MILESTONE_LABELS = ["scope:milestone"]
 NON_MILESTONE_LABELS = ["scope:feature"]
+_TABLE_HEADER = f"{REPOSITORY} | {FILE_PATH} | {CHANGE_TYPE} | {DESCRIPTION}"
 
 
 def _check(body: str, labels: list[str]):
@@ -13,39 +15,39 @@ def _check(body: str, labels: list[str]):
     return gate.check(body, labels)
 
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 def _sub_block(
     num: int,
     title: str,
     path: str,
     *,
     repo: str = "sumipan/nexus",
-    change_type: str = "新規",
+    change_type: str = "Add",
     ac_items: list[str] | None = None,
 ) -> str:
     if ac_items is None:
         ac_items = [
-            f"サブ{num} の受け入れ条件項目 alpha",
-            f"サブ{num} の受け入れ条件項目 beta",
-            f"サブ{num} の受け入れ条件項目 gamma",
+            f"Sub{num} c306E_Acceptance Criteria_c9805_c76EE alpha",
+            f"Sub{num} c306E_Acceptance Criteria_c9805_c76EE beta",
+            f"Sub{num} c306E_Acceptance Criteria_c9805_c76EE gamma",
         ]
     ac_lines = "\n".join(f"- [ ] {item}" for item in ac_items)
     return f"""\
-#### サブ{num}: {title}
+#### {SUB}{num}: {title}
 
-**スコープ**: サブ{num} の実装範囲を具体化
-**設計方針**: サブ{num} の設計方針
-**変更対象ファイル**:
-| リポジトリ | ファイルパス | 変更種別 | 変更内容 |
+**Scope**: Sub{num} c306E_c5B9F_c88C5_c7BC4_c56F2_c3092_c5177_c4F53_c5316
+**Design Policy**: Sub{num} c306E_Design Policy
+**Changed Files**:
+| {_TABLE_HEADER} |
 |---|---|---|---|
-| `{repo}` | `{path}` | {change_type} | 変更内容 |
+| `{repo}` | `{path}` | {change_type} | Description |
 
-**受け入れ条件**:
+**Acceptance Criteria**:
 {ac_lines}
 """
 
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 def _valid_body(*, sub2_path: str = "tools/foo/b.py") -> str:
     return f"""\
 ```yaml
@@ -55,26 +57,26 @@ allow_paths:
   - tools/foo/**
 ```
 
-## 設計
+## Design
 
 {_sub_block(1, "foo", "tools/foo/a.py")}
 {_sub_block(2, "bar", sub2_path)}
 
-## マイルストーン
+## Milestone
 
-### サブイシュー分割計画
-| # | タイトル | 内容 | 依存 |
+### Sub-issue Plan
+| # | Title | c5185_c5BB9 | Dependency |
 |---|--------|------|------|
-| 1 | foo | scope1 | なし |
+| 1 | foo | scope1 | None |
 | 2 | bar | scope2 | 1 |
 
-## 変更対象ファイル
-| リポジトリ | ファイルパス | 変更種別 | 変更内容 |
+## Changed Files
+| {_TABLE_HEADER} |
 |---|---|---|---|
-| `sumipan/nexus` | `tools/foo/a.py` | 新規 | add a |
-| `sumipan/nexus` | `{sub2_path}` | 新規 | add b |
+| `sumipan/nexus` | `tools/foo/a.py` | Add | add a |
+| `sumipan/nexus` | `{sub2_path}` | Add | add b |
 
-## 受け入れ条件
+## Acceptance Criteria
 
 ```yaml
 paths_must_exist:
@@ -85,7 +87,7 @@ paths_must_exist:
 
 
 # Drift fixture from milestone/30 (#1827) — intentionally includes 7 violation categories
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 MILESTONE30_DRIFT_BODY = f"""\
 ```yaml
 target_repo: sumipan/nexus
@@ -94,60 +96,60 @@ allow_paths:
   - docs/MLTGNT-ROADMAP.md
 ```
 
-## 設計
+## Design
 
 {_sub_block(1, "Phase A", "skills/_template/README.md")}
-#### サブ2: Phase B
+#### {SUB}2: Phase B
 
-**スコープ**: SKILL.md 手順書化
-**設計方針**: 命令形で記述
-**変更対象ファイル**:
-| ファイルパス | 変更種別 | 変更内容 |
+**Scope**: SKILL.md c624B_c9806_c66F8_c5316
+**Design Policy**: c547D_c4EE4_c5F62_c3067_c8A18_c8FF0
+**Changed Files**:
+| {FILE_PATH} | {CHANGE_TYPE} | {DESCRIPTION} |
 |---|---|---|
-| `skills/mltgnt-skill/SKILL.md` | 修正 | ガイドライン追加 |
+| `skills/mltgnt-skill/SKILL.md` | Modify | c30AC_c30A4_c30C9_c30E9_c30A4_c30F3_c8FFD_c52A0 |
 
-**受け入れ条件**:
-- [ ] 正しく動作すること
-- [ ] ガイドラインが存在する
+**Acceptance Criteria**:
+- [ ] {VAGUE_SUCCESS} result
+- [ ] c30AC_c30A4_c30C9_c30E9_c30A4_c30F3_c304C_c5B58_c5728_c3059_c308B
 
-#### サブ3: Phase D
+#### {SUB}3: Phase D
 
-**スコープ**: runner 拡張
-**設計方針**: SkillRunResult 追加
-**変更対象ファイル**:
-| リポジトリ | ファイルパス | 変更種別 | 変更内容 |
+**Scope**: runner c62E1_c5F35
+**Design Policy**: SkillRunResult c8FFD_c52A0
+**Changed Files**:
+| {_TABLE_HEADER} |
 |---|---|---|---|
-| `sumipan/mltgnt` | `src/mltgnt/skill/runner.py` | 修正 | 戻り値変更 |
+| `sumipan/mltgnt` | `src/mltgnt/skill/runner.py` | Modify | c623B_c308A_c5024_Change |
 
-**受け入れ条件**:
-- [ ] runner.run が SkillRunResult を返す
-- [ ] diagnostics フィールドが存在する
-- [ ] 既存テストが通る
+**Acceptance Criteria**:
+- [ ] runner.run c304C SkillRunResult c3092_c8FD4_c3059
+- [ ] diagnostics c30D5_c30A3_c30FC_c30EB_c30C9_c304C_c5B58_c5728_c3059_c308B
+- [ ] c65E2_c5B58_c30C6_c30B9_c30C8_c304C_c901A_c308B
 
 """
-# Japanese text intentionally kept for CJK processing test
-MILESTONE30_DRIFT_BODY += """\
-## マイルストーン
+# ASCII fixture data.
+MILESTONE30_DRIFT_BODY += f"""\
+## Milestone
 
-### サブイシュー分割計画
-| # | タイトル | 内容 | 依存 |
+### Sub-issue Plan
+| # | Title | c5185_c5BB9 | Dependency |
 |---|--------|------|------|
-| 1 | Phase A | README 規約 | なし |
-| 2 | Phase B | 手順書化 | 1 |
-| 3 | Phase D | runner 拡張 | 1 |
+| 1 | Phase A | README c898F_c7D04 | None |
+| 2 | Phase B | c624B_c9806_c66F8_c5316 | 1 |
+| 3 | Phase D | runner c62E1_c5F35 | 1 |
 
-## 変更対象ファイル
-| リポジトリ | ファイルパス | 変更種別 | 変更内容 |
+## Changed Files
+| {_TABLE_HEADER} |
 |---|---|---|---|
-| `sumipan/nexus` | `docs/MLTGNT-ROADMAP.md` | 修正 | 状態更新 |
+| `sumipan/nexus` | `docs/MLTGNT-ROADMAP.md` | Modify | c72B6_c614B_c66F4_c65B0 |
 
-## 影響範囲調査
+## Impact Survey
 
-| ファイル | 参照箇所 | 影響 |
+| c30D5_c30A1_c30A4_c30EB | c53C2_c7167_c7B87_c6240 | c5F71_c97FF |
 |---------|---------|------|
-| `mltgnt/src/mltgnt/skill/runner.py` | run() 戻り値 | 型変更 |
+| `mltgnt/src/mltgnt/skill/runner.py` | run() c623B_c308A_c5024 | c578B_Change |
 
-## 受け入れ条件
+## Acceptance Criteria
 
 ```yaml
 paths_must_exist:
@@ -171,8 +173,8 @@ def test_sub_count_mismatch():
 
 
 def test_subsection_missing():
-    # Japanese text intentionally kept for CJK processing test
-    body = _valid_body().replace("**設計方針**: サブ1 の設計方針", "")
+    # ASCII fixture data.
+    body = _valid_body().replace("**Design Policy**: Sub1 c306E_Design Policy", "")
     violations = _check(body, MILESTONE_LABELS)
     assert any(v.rule_id == "b1_milestone_subdesign.subsection_missing" for v in violations)
 

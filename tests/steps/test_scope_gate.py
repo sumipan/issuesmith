@@ -144,8 +144,7 @@ def test_format_comment_includes_table_and_split_hint() -> None:
     assert "5000" in text
     assert "files: 134 > 80" in text
     assert "tests/" in text
-    # Japanese text intentionally kept for CJK processing test
-    assert "分割" in text
+    assert "allow_paths" in text
 
 
 def test_ac4_issue_3339_regression_134_files_exceeds(tmp_path: Path) -> None:

@@ -8,9 +8,9 @@ from issuesmith.m2_gate import (
     synthesize_contract_failures,
 )
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 BODY_ALL_CHECKED = """\
-## 受け入れ条件
+## Acceptance Criteria
 
 - [x] done
 
@@ -24,7 +24,7 @@ paths_must_not_exist:
 """
 
 BODY_NEXUS_ONLY = """\
-## 受け入れ条件
+## Acceptance Criteria
 
 - [x] done
 
@@ -35,7 +35,7 @@ paths_must_exist:
 """
 
 BODY_TARGET_ONLY = """\
-## 受け入れ条件
+## Acceptance Criteria
 
 - [x] done
 
@@ -46,7 +46,7 @@ paths_must_exist:
 """
 
 BODY_MUST_NOT_EXIST = """\
-## 受け入れ条件
+## Acceptance Criteria
 
 - [x] done
 

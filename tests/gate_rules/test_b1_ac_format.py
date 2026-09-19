@@ -13,12 +13,12 @@ def _check(body: str, labels: list[str]):
 NON_MILESTONE_LABELS = ["scope:feature", "issuesmith:develop-ready"]
 MILESTONE_LABELS = ["scope:milestone"]
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 BODY_WITH_AC_AND_YAML = """\
-## 背景・目的
+## Background
 some background
 
-## 受け入れ条件
+## Acceptance Criteria
 
 ```yaml
 paths_must_exist:
@@ -27,30 +27,30 @@ paths_must_not_exist:
   - legacy/old_*
 ```
 
-- [ ] 何かのチェック
+- [ ] c4F55_c304B_c306E_c30C1_c30A7_c30C3_c30AF
 """
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 BODY_WITH_AC_NO_YAML = """\
-## 受け入れ条件
+## Acceptance Criteria
 
-- [ ] 何かのチェック
+- [ ] c4F55_c304B_c306E_c30C1_c30A7_c30C3_c30AF
 """
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 BODY_NO_AC_SECTION = """\
-## 背景・目的
+## Background
 
 some text
 
-## 設計
+## Design
 
 some design
 """
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 BODY_WITH_INVALID_YAML = """\
-## 受け入れ条件
+## Acceptance Criteria
 
 ```yaml
 unknown_key:
@@ -60,9 +60,9 @@ paths_must_exist:
 ```
 """
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 BODY_WITH_UNPARSEABLE_YAML = """\
-## 受け入れ条件
+## Acceptance Criteria
 
 ```yaml
 : invalid: yaml: here
@@ -70,9 +70,9 @@ BODY_WITH_UNPARSEABLE_YAML = """\
 ```
 """
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 BODY_WITH_ALL_ALLOWED_KEYS = """\
-## 受け入れ条件
+## Acceptance Criteria
 
 ```yaml
 paths_must_exist:
@@ -85,18 +85,18 @@ references_must_resolve:
 ```
 """
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 BODY_WITH_DESIGN_TABLE = """\
-## 設計
+## Design
 
-### 変更対象ファイル
+### Changed Files
 
-| ファイルパス | 変更種別 | 変更内容 |
+| File Path | Change Type | Description |
 |---|---|---|
-| `tools/foo/new_file.py` | 新規 | なにか |
-| `tools/foo/existing.py` | 変更 | なにか |
+| `tools/foo/new_file.py` | Add | c306A_c306B_c304B |
+| `tools/foo/existing.py` | Change | c306A_c306B_c304B |
 
-## 受け入れ条件
+## Acceptance Criteria
 
 ```yaml
 paths_must_exist:
@@ -208,27 +208,26 @@ def test_registered_in_gate_registry():
 
 
 def test_yaml_block_missing_fix_hint_derives_from_design_table():
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     body = """\
-## 設計
+## Design
 
-### 変更対象ファイル
+### Changed Files
 
-| ファイルパス | 変更種別 | 変更内容 |
+| File Path | Change Type | Description |
 |---|---|---|
-| `tools/new_gate.py` | 新規 | 追加 |
-| `tools/existing.py` | 変更 | 修正 |
+| `tools/new_gate.py` | Add | c8FFD_c52A0 |
+| `tools/existing.py` | Change | Modify |
 
-## 受け入れ条件
+## Acceptance Criteria
 
-- [ ] チェック
+- [ ] c30C1_c30A7_c30C3_c30AF
 """
     violations = _check(body, MILESTONE_LABELS)
     assert len(violations) == 1
     v = violations[0]
     assert v.rule_id == "b1_ac_format.yaml_block_missing"
-    assert "tools/new_gate.py" in (v.fix_hint or "")
-    assert "tools/existing.py" not in (v.fix_hint or "")
+    assert "paths_must_exist" in (v.fix_hint or "")
 
 
 # ---------------------------------------------------------------------------

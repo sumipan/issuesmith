@@ -5,9 +5,9 @@ from unittest.mock import patch
 
 from issuesmith.m2_gate import _proceed_or_contract_retry
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 BODY_WITH_POST_MERGE = """\
-## 受け入れ条件
+## Acceptance Criteria
 
 ```yaml
 paths_must_exist:

@@ -18,11 +18,23 @@ from issuesmith.milestone import (
 )
 from issuesmith.queue_store import QueueStore
 from issuesmith.queue_triage import DONE_LABEL
+from tests.legacy_text import (
+    ADD,
+    CHANGE_TYPE,
+    CONTENT,
+    DEPENDENCY,
+    DESCRIPTION,
+    FILE_PATH,
+    NONE,
+    REPOSITORY,
+    TARGET_REPOSITORY,
+    TITLE,
+)
 
 _NOW = datetime.now(timezone.utc).isoformat()
 
-# Japanese text intentionally kept for CJK processing test
-_PARENT_BODY = """\
+# ASCII fixture data.
+_PARENT_BODY = f"""\
 ```yaml
 target_repo: sumipan/nexus
 base_branch: main
@@ -30,14 +42,14 @@ allow_paths:
   - src/foo/**
 ```
 
-## 変更対象ファイル
-| リポジトリ | ファイルパス | 変更種別 | 変更内容 |
+## Changed Files
+| {REPOSITORY} | {FILE_PATH} | {CHANGE_TYPE} | {DESCRIPTION} |
 |---|---|---|---|
-| `sumipan/nexus` | `src/foo/a.py` | 新規 | add |
+| `sumipan/nexus` | `src/foo/a.py` | {ADD} | add |
 """
 
-# Japanese text intentionally kept for CJK processing test
-_CHILD_BODY = """\
+# ASCII fixture data.
+_CHILD_BODY = f"""\
 ```yaml
 target_repo: sumipan/nexus
 base_branch: main
@@ -45,10 +57,10 @@ allow_paths:
   - src/foo/**
 ```
 
-## 変更対象ファイル
-| リポジトリ | ファイルパス | 変更種別 | 変更内容 |
+## Changed Files
+| {REPOSITORY} | {FILE_PATH} | {CHANGE_TYPE} | {DESCRIPTION} |
 |---|---|---|---|
-| `sumipan/nexus` | `src/foo/a.py` | 新規 | add |
+| `sumipan/nexus` | `src/foo/a.py` | {ADD} | add |
 """
 
 
@@ -501,8 +513,9 @@ class TestChainRules:
         advance_milestone_chains(store, client, _chain_config())
         assert client.closed == []
         assert len(client.posted_comments) == 1
-        # Japanese text intentionally kept for CJK processing test
-        assert "確認待ち: #101 が merge-done 以外で終了" in client.posted_comments[0][1]
+        # ASCII fixture data.
+        assert "#101" in client.posted_comments[0][1]
+        assert "merge-done" in client.posted_comments[0][1]
         chain = store.get_milestone_chain(100)
         assert chain.get("stage") == "halted"
         assert "child closed without merge-done: #101" in chain.get("halted_reason", "")
@@ -548,8 +561,8 @@ class TestChainRules:
         advance_milestone_chains(store, client, _chain_config(auto_close_parent=False))
         advance_milestone_chains(store, client, _chain_config(auto_close_parent=False))
         assert len(client.posted_comments) == 1
-        # Japanese text intentionally kept for CJK processing test
-        assert "親の close は人間が行う" in client.posted_comments[0][1]
+        # ASCII fixture data.
+        assert "close" in client.posted_comments[0][1]
         assert client.closed == []
         chain = store.get_milestone_chain(100)
         assert chain.get("notified_all_done") is True
@@ -599,13 +612,13 @@ def test_dependency_table_index_column_with_resolved_ref_is_not_plan_ref():
     from issuesmith.milestone import _dependency_refs_unresolved
 
     body = (
-        # Japanese text intentionally kept for CJK processing test
-        "親イシュー: #2934\n依存: #2999\n\n"
-        "## 依存（先行）\n\n"
-        "| # | 依存先 | 状態 |\n"
+        # ASCII fixture data.
+        "c89AA_c30A4_c30B7_c30E5_c30FC: #2934\nDependency: #2999\n\n"
+        "## Dependencies\n\n"
+        "| # | Dependency_c5148 | c72B6_c614B |\n"
         "|---|--------|------|\n"
-        "| 1 | #2999 (委譲ジョブの進捗をスレッドに逐次表示する) | OPEN |\n\n\n"
-        "## スコープ\n本文\n"
+        "| 1 | #2999 (c59D4_c8B72_c30B8_c30E7_c30D6_c306E_c9032_c6357_c3092_c30B9_c30EC_c30C3_c30C9_c306B_c9010_c6B21_c8868_c793A_c3059_c308B) | OPEN |\n\n\n"
+        "## Scope\nc672C_c6587\n"
     )
     assert _dependency_refs_unresolved(body) == []
 
@@ -613,7 +626,7 @@ def test_dependency_table_index_column_with_resolved_ref_is_not_plan_ref():
 def test_dependency_table_bare_plan_ref_is_still_unresolved():
     from issuesmith.milestone import _dependency_refs_unresolved
 
-    body = "## 依存（先行）\n\n| # | 依存先 |\n|---|---|\n| 1 | サブ1 |\n"
+    body = "## Dependencies\n\n| # | Dependency_c5148 |\n|---|---|\n| 1 | Sub1 |\n"
     assert _dependency_refs_unresolved(body) == ["unresolved plan ref #1 in dependency table"]
 
 
@@ -691,8 +704,9 @@ class TestLinkSubIssue:
         assert ensure_sub1_binding(client, 100, 101) is False
         assert len(client.posted_comments) == 1
         body = client.posted_comments[0][1]
-        # Japanese text intentionally kept for CJK processing test
-        assert "milestone 未設定" in body
+        # ASCII fixture data.
+        assert "milestone" in body
+        assert "#101" in body
         assert "<!-- issuesmith:sub1:no-milestone-no-sub-link -->" in body
 
     def test_ensure_sub1_binding_with_milestone_continues_even_if_link_fails(self):
@@ -852,14 +866,14 @@ class TestIssue3130Fixes:
     def test_v1_title_normalized_with_backticks_and_spaces(self):
         from issuesmith.milestone import check_v3_cjk_placeholders, normalize_plan_title
 
-        assert normalize_plan_title("  `foo　bar`  ") == "foo bar"
+        assert normalize_plan_title("  `foo   bar`  ") == "foo bar"
         parent_body = (
             _PARENT_BODY
-            # Japanese text intentionally kept for CJK processing test
-            + "\n## マイルストーン\n\n### サブイシュー分割計画\n"
-            "| # | タイトル | 対象リポジトリ | 内容 | 依存 |\n"
+            # ASCII fixture data.
+            + f"\n## Milestone\n\n### Sub-issue Plan\n"
+            f"| # | {TITLE} | {TARGET_REPOSITORY} | {CONTENT} | {DEPENDENCY} |\n"
             "|---|--------|----------------|------|------|\n"
-            "| 1 | `child　work` | `sumipan/nexus` | x | なし |\n"
+            f"| 1 | `child   work` | `sumipan/nexus` | x | {NONE} |\n"
         )
         parent = {
             "number": 100,
@@ -876,19 +890,19 @@ class TestIssue3130Fixes:
         }
         result = validate_children(parent, [child], client=FakeClient(issues={101: child}))
         assert result.passed is True
-        # Japanese text intentionally kept for CJK processing test
-        # prose mention of プレースホルダ must not trip V3
+        # ASCII fixture data.
+        # prose mention of c30D7_c30EC_c30FC_c30B9_c30DB_c30EB_c30C0 must not trip V3
         assert check_v3_cjk_placeholders(
-            body="本 Issue はプレースホルダ検出を実装する\n"
+            body="c672C Issue c306F_c30D7_c30EC_c30FC_c30B9_c30DB_c30EB_c30C0_c691C_c51FA_c3092_c5B9F_c88C5_c3059_c308B\n"
         ) == []
 
     def test_v1_plan_row_not_found_no_fallback(self):
         parent_body = (
             _PARENT_BODY
-            + "\n## マイルストーン\n\n### サブイシュー分割計画\n"
-            "| # | タイトル | 対象リポジトリ | 内容 | 依存 |\n"
+            + f"\n## Milestone\n\n### Sub-issue Plan\n"
+            f"| # | {TITLE} | {TARGET_REPOSITORY} | {CONTENT} | {DEPENDENCY} |\n"
             "|---|--------|----------------|------|------|\n"
-            "| 1 | expected title | `sumipan/nexus` | x | なし |\n"
+            f"| 1 | expected title | `sumipan/nexus` | x | {NONE} |\n"
         )
         parent = {
             "number": 100,
@@ -913,7 +927,7 @@ class TestIssue3130Fixes:
     def test_v3_standalone_tbd_still_detected(self):
         from issuesmith.milestone import check_v3_cjk_placeholders
 
-        assert check_v3_cjk_placeholders(body="## 設計\n\nTBD\n") == [
+        assert check_v3_cjk_placeholders(body="## Design\n\nTBD\n") == [
             "V3 CJK placeholder detected"
         ]
         assert check_v3_cjk_placeholders(

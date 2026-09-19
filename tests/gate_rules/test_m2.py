@@ -3,45 +3,45 @@
 from issuesmith.gate_rules import GATE_REGISTRY
 from issuesmith.gate_rules.m2 import M2Rules
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 BODY_WITH_UNCHECKED = """\
-## 受け入れ条件
+## Acceptance Criteria
 
-- [x] 完了した項目
-- [ ] 未完了の項目
+- [x] c5B8C_c4E86_c3057_c305F_c9805_c76EE
+- [ ] c672A_c5B8C_c4E86_c306E_c9805_c76EE
 """
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 BODY_ALL_CHECKED = """\
-## 受け入れ条件
+## Acceptance Criteria
 
-- [x] 完了した項目
-- [x] これも完了
+- [x] c5B8C_c4E86_c3057_c305F_c9805_c76EE
+- [x] c3053_c308C_c3082_c5B8C_c4E86
 """
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 BODY_NO_AC_SECTION = """\
-## 背景
+## Background
 
-無関係なコンテンツ。
+c7121_c95A2_c4FC2_c306A_c30B3_c30F3_c30C6_c30F3_c30C4_c3002
 
-- [ ] これはセクション外のチェックボックス
+- [ ] c3053_c308C_c306F_c30BB_c30AF_c30B7_c30E7_c30F3_c5916_c306E_c30C1_c30A7_c30C3_c30AF_c30DC_c30C3_c30AF_c30B9
 """
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 BODY_AC_SECTION_NO_CHECKBOXES = """\
-## 受け入れ条件
+## Acceptance Criteria
 
-受け入れ条件を自由記述で記載する。チェックボックスなし。
+Acceptance Criteria_c3092_c81EA_c7531_c8A18_c8FF0_c3067_c8A18_c8F09_c3059_c308B_c3002_c30C1_c30A7_c30C3_c30AF_c30DC_c30C3_c30AF_c30B9_None_c3002
 """
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 BODY_MULTIPLE_UNCHECKED = """\
-## 受け入れ条件
+## Acceptance Criteria
 
-- [ ] 未完了 1
-- [ ] 未完了 2
-- [ ] 未完了 3
+- [ ] c672A_c5B8C_c4E86 1
+- [ ] c672A_c5B8C_c4E86 2
+- [ ] c672A_c5B8C_c4E86 3
 """
 
 

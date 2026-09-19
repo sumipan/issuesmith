@@ -99,10 +99,7 @@ def test_missing_repo_raises(tmp_path, monkeypatch):
         "issuesmith.config._package_fallback_yaml",
         lambda: tmp_path / "missing-issuesmith.yaml",
     )
-    # Japanese text intentionally kept for CJK processing test
-    with pytest.raises(
-        ValueError, match="issuesmith.yaml に repo: owner/name を設定してください"
-    ):
+    with pytest.raises(ValueError, match=r"issuesmith\.yaml.*repo: owner/name"):
         load_config()
 
 

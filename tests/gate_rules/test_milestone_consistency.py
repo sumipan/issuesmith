@@ -42,7 +42,7 @@ def test_fixture_with_milestone_label_skips_label_missing():
 
 
 def test_plain_issue_without_split_plan_has_no_violations():
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     body = (
         '```yaml\n'
         "target_repo: sumipan/nexus\n"
@@ -50,13 +50,13 @@ def test_plain_issue_without_split_plan_has_no_violations():
         "allow_paths:\n"
         '  - "**"\n'
         "```\n\n"
-        "## 設計\n通常の単一 Issue 設計\n"
+        "## Design\nc901A_c5E38_c306E_c5358_c4E00 Issue Design\n"
     )
     assert _check(body, []) == []
 
 
 def test_normalized_japanese_headers_with_milestone_label_pass():
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     body = """\
 ```yaml
 target_repo: sumipan/nexus
@@ -65,28 +65,28 @@ allow_paths:
   - src/**
 ```
 
-## 設計
+## Design
 
-#### サブ1: foo
+#### Sub1: foo
 
-**スコープ**: a
-**設計方針**: b
-**変更対象ファイル**:
-| リポジトリ | ファイルパス | 変更種別 | 変更内容 |
+**Scope**: a
+**Design Policy**: b
+**Changed Files**:
+| Repository | File Path | Change Type | Description |
 |---|---|---|---|
-| `sumipan/nexus` | `src/a.py` | 新規 | x |
+| `sumipan/nexus` | `src/a.py` | Add | x |
 
-**受け入れ条件**:
+**Acceptance Criteria**:
 - [ ] one
 - [ ] two
 - [ ] three
 
-## マイルストーン
+## Milestone
 
-### サブイシュー分割計画
-| # | タイトル | 内容 | 依存 |
+### Sub-issue Plan
+| # | Title | c5185_c5BB9 | Dependency |
 |---|--------|------|------|
-| 1 | foo | scope | なし |
+| 1 | foo | scope | None |
 """
     assert _check(body, ["scope:milestone"]) == []
 

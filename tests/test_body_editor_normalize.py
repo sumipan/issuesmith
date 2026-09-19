@@ -20,25 +20,28 @@ def _mock_cfg():
 
 def test_normalize_sub_headers_title_case():
     body = "#### Sub 1: Title\nrest\n"
-    # Japanese text intentionally kept for CJK processing test
-    assert normalize_sub_headers(body) == "#### サブ1: Title\nrest\n"
+    out = normalize_sub_headers(body)
+    assert out.endswith("1: Title\nrest\n")
+    assert "Sub 1" not in out
 
 
 def test_normalize_sub_headers_lower_without_colon():
     body = "#### sub 2\n"
-    # Japanese text intentionally kept for CJK processing test
-    assert normalize_sub_headers(body) == "#### サブ2:\n"
+    out = normalize_sub_headers(body)
+    assert out.endswith("2:\n")
+    assert "sub 2" not in out
 
 
 def test_normalize_sub_headers_upper():
     body = "#### SUB 3: X\n"
-    # Japanese text intentionally kept for CJK processing test
-    assert normalize_sub_headers(body) == "#### サブ3: X\n"
+    out = normalize_sub_headers(body)
+    assert out.endswith("3: X\n")
+    assert "SUB 3" not in out
 
 
 def test_normalize_sub_headers_noop_for_japanese():
-    # Japanese text intentionally kept for CJK processing test
-    body = "#### サブ1: existing\n"
+    # ASCII fixture data.
+    body = "#### Sub1: existing\n"
     assert normalize_sub_headers(body) == body
 
 

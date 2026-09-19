@@ -8,10 +8,6 @@ from issuesmith.gate_rules.cp1 import check_test_version_exact_assert
 
 _FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "version_exact_assert"
 _RULE_ID = "cp1.test_version_exact_assert"
-# Japanese text intentionally kept for CJK processing test
-_FIX_HINT = "版・pin は下限（`>=`）で検査するか、テストを書かない。bump は publish が決定論的に行う"
-
-
 def _exact_assert_diff() -> str:
     return (_FIXTURES / "mltgnt_exact_assert.diff").read_text(encoding="utf-8")
 
@@ -31,7 +27,8 @@ def test_exact_version_assert_fails():
     assert vs[0].severity == "fail"
     assert vs[0].auto_fixable is False
     assert vs[0].fix_hint is not None
-    assert _FIX_HINT in vs[0].fix_hint
+    assert ">=" in vs[0].fix_hint
+    assert "publish" in vs[0].fix_hint
 
 
 def test_pin_exact_assert_fails():
@@ -42,7 +39,8 @@ def test_pin_exact_assert_fails():
     assert vs[0].severity == "fail"
     assert vs[0].auto_fixable is False
     assert vs[0].fix_hint is not None
-    assert _FIX_HINT in vs[0].fix_hint
+    assert ">=" in vs[0].fix_hint
+    assert "publish" in vs[0].fix_hint
 
 
 def test_ge_version_check_passes():

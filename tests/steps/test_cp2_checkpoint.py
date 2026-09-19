@@ -20,6 +20,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from tests.legacy_text import ACCEPTANCE_CRITERIA
 
 from issuesmith.engine import _extract_status_values
 from issuesmith.ops.dispatch import _context_to_step
@@ -98,7 +99,7 @@ PR_GET_FORBIDDEN_JSON = json.dumps(
     ensure_ascii=False,
 )
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 _ISSUE_BODY_WITH_ALLOW = (
     "```yaml\n"
     "target_repo: sumipan/issuesmith\n"
@@ -106,7 +107,7 @@ _ISSUE_BODY_WITH_ALLOW = (
     "  - src/**\n"
     "  - tests/**\n"
     "```\n\n"
-    "## 受け入れ条件\n- [x] ok\n"
+    "## Acceptance Criteria\n- [x] ok\n"
 )
 
 # Engine-specific stdout samples: marker decoration differs; extraction must not.
@@ -234,11 +235,11 @@ def test_pr_diff_lines_absent_uses_real_empty_list_string() -> None:
 
 
 def test_unchecked_ac_count_only_inside_section() -> None:
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     body = (
-        "## 概要\n- [ ] ignore\n"
-        "## 受け入れ条件\n- [x] done\n- [ ] todo\n- [ ] other\n"
-        "## やらないこと\n- [ ] ignore2\n"
+        "## c6982_c8981\n- [ ] ignore\n"
+        f"## {ACCEPTANCE_CRITERIA}\n- [x] done\n- [ ] todo\n- [ ] other\n"
+        "## Out of Scope\n- [ ] ignore2\n"
     )
     assert cp2._unchecked_ac_count(body) == 2
 
@@ -282,9 +283,9 @@ def test_run_success_skips_fail_handler() -> None:
 def test_run_fail_comments_and_transitions_to_develop_done() -> None:
     client = MagicMock()
     client.api_request.return_value = []
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     client.issue_get.side_effect = [
-        {"body": "## 受け入れ条件\n- [ ] left\n"},
+        {"body": "## Acceptance Criteria\n- [ ] left\n"},
         {"labels": [{"name": "issuesmith:develop-running"}]},
     ]
 

@@ -16,6 +16,22 @@ import json
 from unittest.mock import MagicMock, patch
 
 import pytest
+from tests.legacy_text import (
+    ACCEPTANCE_CRITERIA,
+    CHANGE_TYPE,
+    CHANGED_FILES,
+    CONTENT,
+    DEPENDENCY,
+    DESCRIPTION,
+    DESIGN,
+    FILE_PATH,
+    MODIFY,
+    NONE,
+    REPOSITORY,
+    SUB,
+    TARGET_REPOSITORY,
+    TITLE,
+)
 
 from issuesmith.config import reset_config_cache
 from issuesmith.engine import RoleSelection, _extract_status_values
@@ -27,6 +43,8 @@ from issuesmith.milestone import (
 )
 from issuesmith.steps import sub1_create as sub1
 from issuesmith.steps.base import StepContext
+
+_CHANGE_TABLE_HEADER = f"{REPOSITORY} | {FILE_PATH} | {CHANGE_TYPE} | {DESCRIPTION}"
 
 # --- Real API strings (values unchanged from live capture) ---
 
@@ -78,7 +96,7 @@ def _yaml(target_repo: str, allow_paths: list[str]) -> str:
     )
 
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 def _parent_body(
     *,
     child_repo: str = "sumipan/nexus",
@@ -87,33 +105,33 @@ def _parent_body(
 ) -> str:
     if with_repo_column:
         plan = (
-            "### サブイシュー分割計画\n"
-            "| # | タイトル | 対象リポジトリ | 内容 | 依存 |\n"
+            "### Sub-issue Plan\n"
+            f"| # | {TITLE} | {TARGET_REPOSITORY} | {CONTENT} | {DEPENDENCY} |\n"
             "|---|--------|----------------|------|------|\n"
-            f"| 1 | {title} | `{child_repo}` | do work | なし |\n"
+            f"| 1 | {title} | `{child_repo}` | do work | {NONE} |\n"
         )
     else:
         plan = (
-            "### サブイシュー分割計画\n"
-            "| # | タイトル | 内容 | 依存 |\n"
+            "### Sub-issue Plan\n"
+            f"| # | {TITLE} | {CONTENT} | {DEPENDENCY} |\n"
             "|---|--------|------|------|\n"
-            f"| 1 | {title} | do work | なし |\n"
+            f"| 1 | {title} | do work | {NONE} |\n"
         )
     return (
         _yaml("sumipan/nexus", ["src/**"])
-        + "\n## 設計\n\n設計本文です。\n\n"
-        "#### サブ1: child\n\n"
-        "**スコープ**: do work\n\n"
-        "**設計方針**: design detail\n\n"
-        "**変更対象ファイル**:\n"
-        "| リポジトリ | ファイルパス | 変更種別 | 変更内容 |\n"
+        + f"\n## {DESIGN}\n\nParent design body.\n\n"
+        f"#### {SUB}1: child\n\n"
+        "**Scope**: do work\n\n"
+        "**Design Policy**: design detail\n\n"
+        f"**{CHANGED_FILES}**:\n"
+        f"| {_CHANGE_TABLE_HEADER} |\n"
         "|---|---|---|---|\n"
-        f"| `{child_repo}` | `src/a.py` | 修正 | x |\n\n"
+        f"| `{child_repo}` | `src/a.py` | {MODIFY} | x |\n\n"
         "```yaml\n"
         "paths_must_exist: []\n"
         "```\n\n"
-        "## 受け入れ条件\n\n- [x] ok\n\n"
-        "## マイルストーン\n\n"
+        f"## {ACCEPTANCE_CRITERIA}\n\n- [x] ok\n\n"
+        "## Milestone\n\n"
         + plan
     )
 
@@ -169,13 +187,13 @@ def test_v1_v2_v3_helpers_used_by_validate_children_and_sub1() -> None:
         "milestone": {"number": 1},
         "labels": [{"name": "scope:milestone"}],
     }
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     child_body = (
         _yaml("sumipan/nexus", ["src/**"])
-        + "\n**変更対象ファイル**:\n"
-        "| リポジトリ | ファイルパス | 変更種別 | 変更内容 |\n"
+        + "\n**Changed Files**:\n"
+            f"| {_CHANGE_TABLE_HEADER} |\n"
         "|---|---|---|---|\n"
-        "| `sumipan/nexus` | `src/a.py` | 修正 | x |\n"
+            f"| `sumipan/nexus` | `src/a.py` | {MODIFY} | x |\n"
     )
     child = {
         "number": 101,
@@ -203,12 +221,12 @@ def test_v1_v2_v3_helpers_used_by_validate_children_and_sub1() -> None:
         assert result.passed is True
         assert v1.called and v2.called and v3.called
 
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     failures = sub1._prevalidate_child_body(
         body=child_body,
         row_repo="sumipan/nexus",
         parent_issue_number=100,
-        resolved_dep="なし",
+        resolved_dep=NONE,
         client=client,
         supported=frozenset({"sumipan/nexus"}),
     )
@@ -226,7 +244,7 @@ def test_v1_v2_v3_helpers_used_by_validate_children_and_sub1() -> None:
             body=child_body,
             row_repo="sumipan/nexus",
             parent_issue_number=100,
-            resolved_dep="なし",
+            resolved_dep=NONE,
             client=client,
             supported=frozenset({"sumipan/nexus"}),
         )
@@ -234,13 +252,13 @@ def test_v1_v2_v3_helpers_used_by_validate_children_and_sub1() -> None:
 
 
 def test_parse_plan_table_by_header_names_not_column_order() -> None:
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     body = (
-        "## マイルストーン\n\n"
-        "### サブイシュー分割計画\n"
-        "| 依存 | 内容 | タイトル | # | 対象リポジトリ |\n"
+        "## Milestone\n\n"
+        "### Sub-issue Plan\n"
+        f"| {DEPENDENCY} | {CONTENT} | {TITLE} | # | {TARGET_REPOSITORY} |\n"
         "|------|------|----------|---|----------------|\n"
-        "| なし | scope | my title | 2 | `sumipan/ghdag` |\n"
+        f"| {NONE} | scope | my title | 2 | `sumipan/ghdag` |\n"
     )
     rows, has_repo = sub1._parse_split_plan(body, parent_target_repo="sumipan/nexus")
     assert has_repo is True
@@ -249,17 +267,17 @@ def test_parse_plan_table_by_header_names_not_column_order() -> None:
     assert rows[0].title == "my title"
     assert rows[0].repo == "sumipan/ghdag"
     assert rows[0].scope == "scope"
-    assert rows[0].dep_raw == "なし"
+    assert rows[0].dep_raw == NONE
 
 
 def test_four_column_plan_falls_back_to_parent_target_repo() -> None:
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     body = (
-        "## マイルストーン\n\n"
-        "### サブイシュー分割計画\n"
-        "| # | タイトル | 内容 | 依存 |\n"
+        "## Milestone\n\n"
+        "### Sub-issue Plan\n"
+        f"| # | {TITLE} | {CONTENT} | {DEPENDENCY} |\n"
         "|---|--------|------|------|\n"
-        "| 1 | t | c | なし |\n"
+        f"| 1 | t | c | {NONE} |\n"
     )
     rows, has_repo = sub1._parse_split_plan(body, parent_target_repo="sumipan/nexus")
     assert has_repo is False
@@ -318,13 +336,13 @@ def test_run_creates_child_and_returns_sub_created() -> None:
         cfg.return_value.supported_repos = frozenset(
             {"sumipan/nexus", "sumipan/issuesmith", "sumipan/ghdag"}
         )
-        # Japanese text intentionally kept for CJK processing test
+        # ASCII fixture data.
         cfg.return_value.sections = {
-            "sub_plan": "サブイシュー分割計画",
-            "milestone": "マイルストーン",
-            "design": "設計",
-            "changed_files": "変更対象ファイル",
-            "dependencies": "依存（先行）",
+            "sub_plan": "Sub-issue Plan",
+            "milestone": "Milestone",
+            "design": "Design",
+            "changed_files": "Changed Files",
+            "dependencies": "Dependencies",
         }
         result = sub1.run(_ctx())
 
@@ -388,13 +406,13 @@ def test_run_auto_creates_milestone_when_unset() -> None:
     ):
         ctm_cfg.return_value.timezone = "Asia/Tokyo"
         cfg.return_value.supported_repos = frozenset({"sumipan/nexus"})
-        # Japanese text intentionally kept for CJK processing test
+        # ASCII fixture data.
         cfg.return_value.sections = {
-            "sub_plan": "サブイシュー分割計画",
-            "milestone": "マイルストーン",
-            "design": "設計",
-            "changed_files": "変更対象ファイル",
-            "dependencies": "依存（先行）",
+            "sub_plan": "Sub-issue Plan",
+            "milestone": "Milestone",
+            "design": "Design",
+            "changed_files": "Changed Files",
+            "dependencies": "Dependencies",
         }
         result = sub1.run(_ctx())
 
@@ -402,23 +420,22 @@ def test_run_auto_creates_milestone_when_unset() -> None:
     assert result.pipeline_status == "SUB_CREATED"
     assert client.milestone_create.called
     comment_bodies = [c.args[1] for c in client.issue_comment.call_args_list]
-    # Japanese text intentionally kept for CJK processing test
-    assert any("milestone を自動作成" in b for b in comment_bodies)
+    assert any("milestone" in b and "#42" in b for b in comment_bodies)
 
 
 def test_run_all_rows_fail_validation_exits_nonzero() -> None:
     # 5-col plan with empty target-repo column → row validation failure
-    # Japanese text intentionally kept for CJK processing test
+    # ASCII fixture data.
     body = (
         _yaml("sumipan/nexus", ["src/**"])
-        + "\n## 設計\n\n設計本文です。\n\n"
-        "#### サブ1: x\n\n**スコープ**: x\n\n"
-        "## 受け入れ条件\n\n- [x] ok\n\n"
-        "## マイルストーン\n\n"
-        "### サブイシュー分割計画\n"
-        "| # | タイトル | 対象リポジトリ | 内容 | 依存 |\n"
+        + "\n## Design\n\nDesign_c672C_c6587_c3067_c3059_c3002\n\n"
+        f"#### {SUB}1: x\n\n**Scope**: x\n\n"
+        "## Acceptance Criteria\n\n- [x] ok\n\n"
+        "## Milestone\n\n"
+        "### Sub-issue Plan\n"
+        f"| # | {TITLE} | {TARGET_REPOSITORY} | {CONTENT} | {DEPENDENCY} |\n"
         "|---|--------|----------------|------|------|\n"
-        "| 1 | bad row |  | do | なし |\n"
+        f"| 1 | bad row |  | do | {NONE} |\n"
     )
     client = MagicMock()
     client.issue_get.return_value = {
@@ -438,13 +455,13 @@ def test_run_all_rows_fail_validation_exits_nonzero() -> None:
         patch.object(sub1, "get_config") as cfg,
     ):
         cfg.return_value.supported_repos = frozenset({"sumipan/nexus"})
-        # Japanese text intentionally kept for CJK processing test
+        # ASCII fixture data.
         cfg.return_value.sections = {
-            "sub_plan": "サブイシュー分割計画",
-            "milestone": "マイルストーン",
-            "design": "設計",
-            "changed_files": "変更対象ファイル",
-            "dependencies": "依存（先行）",
+            "sub_plan": "Sub-issue Plan",
+            "milestone": "Milestone",
+            "design": "Design",
+            "changed_files": "Changed Files",
+            "dependencies": "Dependencies",
         }
         result = sub1.run(_ctx())
 

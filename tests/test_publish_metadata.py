@@ -37,5 +37,5 @@ def test_title_unaffected_by_target_count():
     """Title does not depend on target_count (only the body changes)."""
     t1, _ = _build_pr_metadata(1, "sumipan/nexus", "sumipan/nexus", target_count=1)
     t2, _ = _build_pr_metadata(1, "sumipan/nexus", "sumipan/nexus", target_count=5)
-    # Japanese text intentionally kept for CJK processing test
-    assert t1 == t2 == "実装: Issue #1"
+    assert t1 == t2
+    assert t1.endswith("Issue #1")

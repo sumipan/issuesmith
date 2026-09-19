@@ -1,4 +1,4 @@
-"""tests/test_redispatch_sub.py — redispatch --phase sub。"""
+"""tests/test_redispatch_sub.py — redispatch --phase subc3002"""
 from __future__ import annotations
 
 from unittest.mock import MagicMock

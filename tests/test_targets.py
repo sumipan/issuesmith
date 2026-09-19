@@ -8,8 +8,8 @@ ISSUE_REPO = "sumipan/nexus"
 
 
 def _ac_body(*, paths_must_exist=None, targets=None) -> str:
-    # Japanese text intentionally kept for CJK processing test
-    lines = ["## 受け入れ条件", "", "```yaml"]
+    # ASCII fixture data.
+    lines = ["## Acceptance Criteria", "", "```yaml"]
     if targets is not None:
         lines.append("targets:")
         for t in targets:

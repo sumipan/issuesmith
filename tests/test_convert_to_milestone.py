@@ -1,4 +1,4 @@
-"""tests/test_convert_to_milestone.py — convert-to-milestone CLI。"""
+"""tests/test_convert_to_milestone.py — convert-to-milestone CLIc3002"""
 from __future__ import annotations
 
 import json

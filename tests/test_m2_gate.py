@@ -20,37 +20,37 @@ Unrelated content.
 - [ ] Checkbox outside any AC section
 """
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 BODY_ALL_CHECKED = """\
-## 受け入れ条件
+## Acceptance Criteria
 
 - [x] Completed item
 - [x] Also completed
 """
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 BODY_ONE_UNCHECKED = """\
-## 受け入れ条件
+## Acceptance Criteria
 
 - [x] Completed item
 - [ ] Unchecked item
 """
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 BODY_ALL_UNCHECKED = """\
-## 受け入れ条件
+## Acceptance Criteria
 
 - [ ] Unchecked 1
 - [ ] Unchecked 2
 """
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 BODY_UNCHECKED_ONLY_IN_SECTION = """\
 ## Other
 
 - [ ] Outside section (not counted)
 
-## 受け入れ条件
+## Acceptance Criteria
 
 - [ ] Inside section 1
 
@@ -59,7 +59,7 @@ BODY_UNCHECKED_ONLY_IN_SECTION = """\
 - [ ] Other section (not counted)
 """
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 BODY_WITH_YAML_PREAMBLE = """\
 ```yaml
 base_branch: main
@@ -70,7 +70,7 @@ allow_paths: ["**"]
 
 Description.
 
-## 受け入れ条件
+## Acceptance Criteria
 
 - [ ] AC1
 - [x] AC2
@@ -159,9 +159,9 @@ class TestCheckGate:
         }
 
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 BODY_CONTRACT_PASS = """\
-## 受け入れ条件
+## Acceptance Criteria
 
 ```yaml
 paths_must_exist:
@@ -171,9 +171,9 @@ paths_must_exist:
 - [x] AC1
 """
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 BODY_CONTRACT_FAIL = """\
-## 受け入れ条件
+## Acceptance Criteria
 
 ```yaml
 paths_must_exist:
@@ -217,9 +217,9 @@ class TestCheckGateContract:
         assert result["contract_failures"] == []
 
 
-# Japanese text intentionally kept for CJK processing test
+# ASCII fixture data.
 BODY_CROSS_REPO_CONTRACT = """\
-## 受け入れ条件
+## Acceptance Criteria
 
 ```yaml
 paths_must_exist:
