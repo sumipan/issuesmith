@@ -10,7 +10,7 @@ _TABLE_HEADER = f"{REPOSITORY} | {FILE_PATH} | {CHANGE_TYPE} | {DESCRIPTION}"
 # Tests that expect PASS must prepend a valid yaml header.
 _VALID_YAML_HEAD = (
     '```yaml\n'
-    'target_repo: sumipan/nexus\n'
+    'target_repo: sumipan/issuesmith\n'
     'base_branch: main\n'
     'allow_paths:\n'
     '  - "**"\n'
@@ -348,3 +348,30 @@ def test_migration_label_complete_body_passes():
 def test_no_migration_label_skips_migration_rules():
     result = check_gate(_VALID_YAML_HEAD + "## Overview\nclean body\n", [])
     assert result["status"] == "PASS"
+
+
+# ---------------------------------------------------------------------------
+# scope_breadth (#3427) — CP1 must FAIL when allow_paths scope is exceeded
+# ---------------------------------------------------------------------------
+
+def test_scope_breadth_exceeded_causes_check_gate_fail():
+    """check_gate returns FAIL when ScopeBreadthRules detects an oversized allow_paths."""
+    import unittest.mock as mock
+    from issuesmith.steps.scope_gate import ScopeMeasure
+
+    exceeded = ScopeMeasure(
+        files=100, lines=100, by_dir={"src/": 100}, skipped_binary=0, skipped_jsonl=0
+    )
+    body = (
+        "```yaml\n"
+        "target_repo: sumipan/nexus\n"
+        "base_branch: main\n"
+        "allow_paths:\n"
+        '  - "src/**"\n'
+        "```\n\n"
+        "## Overview\nnormal content\n"
+    )
+    with mock.patch("issuesmith.gate_rules.scope_breadth.measure_scope", return_value=exceeded):
+        result = check_gate(body, [])
+    assert result["status"] == "FAIL"
+    assert any("scope_breadth.too_large" in r or "scope too large" in r for r in result["reasons"])
