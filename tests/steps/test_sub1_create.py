@@ -720,7 +720,6 @@ def test_run_guarded_body_template_expansion_does_not_raise_on_execution_constra
         for v in variables:
             k, _, val = v.partition("=")
             var_dict[k] = val
-        tmpl = string.Template(template_content)
         # get_identifiers() is Python 3.11+; use pattern regex for 3.10 compat
         identifiers = {
             m.group("named") or m.group("braced")
