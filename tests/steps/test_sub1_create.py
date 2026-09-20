@@ -721,7 +721,13 @@ def test_run_guarded_body_template_expansion_does_not_raise_on_execution_constra
             k, _, val = v.partition("=")
             var_dict[k] = val
         tmpl = string.Template(template_content)
-        missing = sorted(set(tmpl.get_identifiers()) - set(var_dict))
+        # get_identifiers() is Python 3.11+; use pattern regex for 3.10 compat
+        identifiers = {
+            m.group("named") or m.group("braced")
+            for m in string.Template.pattern.finditer(template_content)
+            if m.group("named") or m.group("braced")
+        }
+        missing = sorted(identifiers - set(var_dict))
         assert missing == [], f"Undefined variables: {missing}"
         return 0
 
