@@ -635,7 +635,7 @@ def test_run_guarded_body_timeout_warns_and_continues(capsys) -> None:
         patch.object(sub1, "get_config") as cfg,
     ):
         _cfg_mock(cfg)
-        result = sub1.run(_ctx())
+        sub1.run(_ctx())
 
     captured = capsys.readouterr()
     assert "WARN" in captured.err
