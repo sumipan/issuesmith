@@ -13,6 +13,8 @@ Issue create fixtures were captured 2026-09-13 from live GitHub REST via
 from __future__ import annotations
 
 import json
+import subprocess
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -325,6 +327,7 @@ def test_run_creates_child_and_returns_sub_created() -> None:
 
     with (
         patch.object(sub1, "_github_client", return_value=client),
+        patch.object(sub1, "_resolve_template", return_value=None),
         patch.object(sub1, "ensure_sub1_binding", return_value=True),
         patch.object(
             sub1,
@@ -395,6 +398,7 @@ def test_run_auto_creates_milestone_when_unset() -> None:
 
     with (
         patch.object(sub1, "_github_client", return_value=client),
+        patch.object(sub1, "_resolve_template", return_value=None),
         patch.object(sub1, "ensure_sub1_binding", return_value=True),
         patch.object(
             sub1,
@@ -523,3 +527,141 @@ def test_run_guarded_body_does_not_pass_invalid_tier(tmp_path) -> None:
     assert rc == 0
     assert calls["resolve"] == ("implementation", None)
     assert "model=m" in calls["run_guarded"][1]
+
+
+def _parent_issue_dict(body: str) -> dict:
+    return {
+        "number": 3166,
+        "body": body,
+        "labels": [{"name": "scope:milestone"}],
+        "milestone": {"number": 7},
+        "comments": [
+            {"body": "PIPELINE_STATUS: BRUSHUP_DONE", "createdAt": "2026-01-01T00:00:00Z"},
+            {"body": "CP1_STATUS: PASS", "createdAt": "2026-01-01T01:00:00Z"},
+        ],
+    }
+
+
+def _cfg_mock(cfg: MagicMock) -> None:
+    cfg.return_value.supported_repos = frozenset({"sumipan/nexus"})
+    cfg.return_value.sections = {
+        "sub_plan": "Sub-issue Plan",
+        "milestone": "Milestone",
+        "design": "Design",
+        "changed_files": "Changed Files",
+        "dependencies": "Dependencies",
+    }
+    cfg.return_value.paths.template_dir = Path("/tmp/tmpl")
+
+
+# AC-1: ValueError in _run_guarded_body → early fail with SUB1_BODY_INIT_ERROR
+def test_run_guarded_body_value_error_exits_nonzero(capsys) -> None:
+    """AC-1: ValueError (config bug) causes immediate non-zero exit with SUB1_BODY_INIT_ERROR."""
+    parent_body = _parent_body()
+    client = MagicMock()
+    client.issue_get.return_value = _parent_issue_dict(parent_body)
+    client.list_sub_issues = MagicMock(return_value=[])
+
+    with (
+        patch.object(sub1, "_github_client", return_value=client),
+        patch.object(sub1, "_resolve_template", return_value="sub-ready.md"),
+        patch.object(sub1, "resolve", side_effect=ValueError("tier must be one of: heavy, light")),
+        patch.object(sub1, "get_config") as cfg,
+    ):
+        _cfg_mock(cfg)
+        with pytest.raises(SystemExit) as exc_info:
+            sub1.run(_ctx())
+
+    assert exc_info.value.code != 0
+    captured = capsys.readouterr()
+    assert "SUB1_BODY_INIT_ERROR" in captured.err
+
+
+# AC-2: TimeoutExpired in _run_guarded_body → WARN + fallback body, processing continues
+def test_run_guarded_body_timeout_warns_and_continues(capsys) -> None:
+    """AC-2: TimeoutExpired is caught as WARN; fallback body used; loop continues for remaining rows.
+
+    Uses 2 plan rows with 1 existing so that skip_count (1) < table_row_count (2) and the
+    all-skip check does not fire, confirming that TimeoutExpired does NOT cause early exit.
+    """
+    # 2-row plan: "existing row" (already has issue #8000) + "new row" (template fails)
+    two_row_body = (
+        _yaml("sumipan/nexus", ["src/**"])
+        + f"\n## {DESIGN}\n\nParent design.\n\n"
+        f"#### {SUB}1: existing row\n\n**Scope**: x\n\n"
+        f"#### {SUB}2: new row\n\n**Scope**: y\n\n"
+        f"**{CHANGED_FILES}**:\n"
+        f"| {_CHANGE_TABLE_HEADER} |\n"
+        "|---|---|---|---|\n"
+        "| `sumipan/nexus` | `src/a.py` | Modify | x |\n\n"
+        "```yaml\npaths_must_exist: []\n```\n\n"
+        f"## {ACCEPTANCE_CRITERIA}\n\n- [x] ok\n\n"
+        "## Milestone\n\n"
+        "### Sub-issue Plan\n"
+        f"| # | {TITLE} | {TARGET_REPOSITORY} | {CONTENT} | {DEPENDENCY} |\n"
+        "|---|--------|----------------|------|------|\n"
+        f"| 1 | existing row | `sumipan/nexus` | do | {NONE} |\n"
+        f"| 2 | new row | `sumipan/nexus` | do | {NONE} |\n"
+    )
+    client = MagicMock()
+    client.issue_get.side_effect = [
+        _parent_issue_dict(two_row_body),
+        # ensure_sub1_binding for existing row
+        {"number": 3166, "milestone": {"number": 7}},
+        # ensure_sub1_binding for new row + validate_children
+        {"number": 3166, "milestone": {"number": 7}},
+        {
+            "number": 9001,
+            "title": "new row",
+            "body": "",
+            "milestone": {"number": 7},
+            "labels": [{"name": "issuesmith:draft-done"}],
+        },
+    ]
+    # Row 1 ("existing row") is already in the chain
+    client.list_sub_issues = MagicMock(return_value=[{"number": 8000, "title": "existing row"}])
+    client.issue_create.return_value = 9001
+
+    with (
+        patch.object(sub1, "_github_client", return_value=client),
+        patch.object(sub1, "_resolve_template", return_value="sub-ready.md"),
+        patch.object(
+            sub1,
+            "_run_guarded_body",
+            side_effect=subprocess.TimeoutExpired(cmd="claude", timeout=30),
+        ),
+        patch.object(sub1, "ensure_sub1_binding", return_value=True),
+        patch.object(sub1, "validate_children", return_value=MagicMock(passed=True, results=[])),
+        patch.object(sub1, "get_config") as cfg,
+    ):
+        _cfg_mock(cfg)
+        sub1.run(_ctx())
+
+    captured = capsys.readouterr()
+    assert "WARN" in captured.err
+    assert client.issue_create.called
+
+
+# AC-3: All rows fail with CalledProcessError → non-zero exit
+def test_run_all_rows_guarded_body_fail_exits_nonzero(capsys) -> None:
+    """AC-3: All rows fail with CalledProcessError → skip_count == total_rows → non-zero exit."""
+    parent_body = _parent_body()
+    client = MagicMock()
+    client.issue_get.return_value = _parent_issue_dict(parent_body)
+    client.list_sub_issues = MagicMock(return_value=[])
+
+    with (
+        patch.object(sub1, "_github_client", return_value=client),
+        patch.object(sub1, "_resolve_template", return_value="sub-ready.md"),
+        patch.object(
+            sub1,
+            "_run_guarded_body",
+            side_effect=subprocess.CalledProcessError(returncode=1, cmd="claude"),
+        ),
+        patch.object(sub1, "get_config") as cfg,
+    ):
+        _cfg_mock(cfg)
+        with pytest.raises(SystemExit) as exc_info:
+            sub1.run(_ctx())
+
+    assert exc_info.value.code != 0

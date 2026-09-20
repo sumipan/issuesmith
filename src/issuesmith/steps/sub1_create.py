@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
@@ -700,6 +701,7 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
     state = Sub1State()
     table_row_count = len(plan_rows)
     template_name = _resolve_template(step)
+    skip_count = 0
 
     for row in plan_rows:
         if has_repo_col and not row.repo:
@@ -750,8 +752,15 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
                     generated = tmp_path.read_text(encoding="utf-8")
                     if generated.strip():
                         body = generated
-            except Exception as exc:
+            except (ValueError, KeyError) as exc:
+                print(
+                    f"PIPELINE_STATUS: SUB1_BODY_INIT_ERROR\n{exc}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as exc:
                 print(f"WARN: run-guarded body skipped: {exc}", file=sys.stderr)
+                skip_count += 1
             finally:
                 tmp_path.unlink(missing_ok=True)
 
@@ -832,6 +841,10 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
                 "labels": [{"name": lab} for lab in create_labels],
             }
         )
+
+    if template_name and skip_count == table_row_count and table_row_count >= 1:
+        print("PIPELINE_STATUS: SUB1_BODY_INIT_ERROR", file=sys.stderr)
+        sys.exit(1)
 
     if state.validation_failures and not state.created_children and not any(
         s.startswith("既存:") for s in state.created_issues
