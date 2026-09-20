@@ -28,6 +28,7 @@ class StepContext:
     p1_result_filename: str = ""
     p2_result_filename: str = ""
     p3_result_filename: str = ""
+    execution_constraints: str = ""
 
 
 @dataclass

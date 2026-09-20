@@ -579,6 +579,7 @@ def _run_guarded_body(
         f"sub_body_path={body_path}",
         f"target_repo={ctx.target_repo}",
         f"model={selection.model}",
+        f"execution_constraints={ctx.execution_constraints}",
     ]
     return run_guarded(
         "implementation",
