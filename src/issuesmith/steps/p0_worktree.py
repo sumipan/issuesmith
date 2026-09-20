@@ -514,12 +514,6 @@ def _ensure_base_included(
         )
         return None
 
-    subprocess.run(
-        ["git", "-C", str(worktree_dir), "rebase", "--abort"],
-        capture_output=True,
-        check=False,
-    )
-
     conflict_proc = subprocess.run(
         ["git", "-C", str(worktree_dir), "diff", "--name-only", "--diff-filter=U"],
         capture_output=True,
@@ -527,6 +521,12 @@ def _ensure_base_included(
         check=False,
     )
     conflict_files = (conflict_proc.stdout or "").strip() or "(取得失敗)"
+
+    subprocess.run(
+        ["git", "-C", str(worktree_dir), "rebase", "--abort"],
+        capture_output=True,
+        check=False,
+    )
 
     comment = _STALE_BASE_COMMENT_TEMPLATE.format(
         base_branch=base_branch,
