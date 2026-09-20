@@ -7,7 +7,6 @@ import unittest.mock as mock
 from issuesmith.gate_rules.scope_breadth import ScopeBreadthRules
 from issuesmith.steps.scope_gate import ScopeMeasure
 
-
 _NEXUS_BODY = (
     "```yaml\n"
     "target_repo: sumipan/nexus\n"
