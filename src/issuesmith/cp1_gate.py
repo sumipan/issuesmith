@@ -14,6 +14,7 @@ from ghdag.forge import get_forge
 from issuesmith.gate_rules.b1_migration import B1MigrationRules
 from issuesmith.gate_rules.cp1 import Cp1Rules
 from issuesmith.gate_rules.milestone_consistency import MilestoneConsistencyRules
+from issuesmith.gate_rules.scope_breadth import ScopeBreadthRules
 
 
 def check_gate(body: str, labels: list[str] | None = None) -> dict:
@@ -33,6 +34,7 @@ def check_gate(body: str, labels: list[str] | None = None) -> dict:
     label_list = labels or []
     violations = Cp1Rules().check(body, label_list)
     violations = violations + MilestoneConsistencyRules().check(body, label_list)
+    violations = violations + ScopeBreadthRules().check(body, label_list)
     if "scope:migration" in label_list:
         violations = violations + B1MigrationRules().check(body, label_list)
     reasons = [v.message for v in violations]
