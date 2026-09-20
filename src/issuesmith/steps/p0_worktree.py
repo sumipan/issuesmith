@@ -461,6 +461,85 @@ def _prepare_local(ctx: StepContext, repo_root: Path) -> None:
     prepare_worktree(repo_root, Path(ctx.worktree_path.strip()), ctx.branch.strip(), local_base)
 
 
+_STALE_BASE_COMMENT_TEMPLATE = """\
+## P0 停止: base_branch 同期失敗（rebase 競合）
+
+`origin/{base_branch}` との rebase で競合が発生しました。
+手動で競合を解消してから再 dispatch してください。
+
+**競合ファイル:**
+```
+{conflict_files}
+```
+
+PIPELINE_STATUS: STALE_BASE"""
+
+
+def _ensure_base_included(
+    worktree_dir: Path,
+    base_branch: str,
+    client: ForgePort,
+    issue_number: int,
+) -> "StepResult | None":
+    """Check that origin/<base_branch> HEAD is an ancestor of HEAD; rebase if not."""
+    rev_parse = subprocess.run(
+        ["git", "-C", str(worktree_dir), "rev-parse", f"origin/{base_branch}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if rev_parse.returncode != 0:
+        return None
+
+    base_sha = rev_parse.stdout.strip()
+
+    ancestor = subprocess.run(
+        ["git", "-C", str(worktree_dir), "merge-base", "--is-ancestor", base_sha, "HEAD"],
+        capture_output=True,
+        check=False,
+    )
+    if ancestor.returncode == 0:
+        return None
+
+    rebase = subprocess.run(
+        ["git", "-C", str(worktree_dir), "rebase", f"origin/{base_branch}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if rebase.returncode == 0:
+        print(
+            f"P0_REBASE: auto-synced with origin/{base_branch}",
+            file=sys.stderr,
+        )
+        return None
+
+    subprocess.run(
+        ["git", "-C", str(worktree_dir), "rebase", "--abort"],
+        capture_output=True,
+        check=False,
+    )
+
+    conflict_proc = subprocess.run(
+        ["git", "-C", str(worktree_dir), "diff", "--name-only", "--diff-filter=U"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    conflict_files = (conflict_proc.stdout or "").strip() or "(取得失敗)"
+
+    comment = _STALE_BASE_COMMENT_TEMPLATE.format(
+        base_branch=base_branch,
+        conflict_files=conflict_files,
+    )
+    try:
+        client.issue_comment(issue_number, comment)
+    except Exception as exc:  # noqa: BLE001
+        print(f"P0 stale_base comment failed: {exc}", file=sys.stderr)
+
+    return StepResult(exit_code=1, pipeline_status="STALE_BASE")
+
+
 def _assert_jobs_clean(worktree_dir: Path) -> None:
     """Fail if ``jobs/`` under the worktree is dirty (daemon auto-commit risk, #3178)."""
     proc = subprocess.run(
@@ -516,6 +595,10 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
         else:
             _prepare_local(ctx, repo_root)
             worktree_dir = Path(ctx.worktree_path.strip())
+
+        stale = _ensure_base_included(worktree_dir, ctx.base_branch.strip(), client, issue_number)
+        if stale is not None:
+            return stale
 
         _assert_jobs_clean(worktree_dir)
 

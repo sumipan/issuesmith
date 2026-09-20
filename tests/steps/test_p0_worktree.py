@@ -543,3 +543,189 @@ def test_cross_repo_clone_failure_uses_real_fail_string(
         )
     assert result.exit_code == 1
     assert result.pipeline_status == "WORKTREE_FAILED"
+
+
+# ---------------------------------------------------------------------------
+# AC-1..5: _ensure_base_included (#3408)
+# ---------------------------------------------------------------------------
+
+
+def _make_repo_with_diverged_branch(tmp_path: Path) -> tuple[Path, str]:
+    """Return (repo, stale_branch) where stale_branch does NOT include a later commit on main."""
+    repo = tmp_path / "repo"
+    _git_init_with_main(repo)
+
+    # Create stale branch from original main commit
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", "-b", "feat/stale"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", "main"],
+        check=True,
+        capture_output=True,
+    )
+
+    # Advance main with a new commit
+    (repo / "file2").write_text("y\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "file2"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-m", "advance main"],
+        check=True,
+        capture_output=True,
+    )
+
+    # Make origin point to repo itself so origin/main resolves
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin", str(repo)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "fetch", "origin", "main"],
+        check=True,
+        capture_output=True,
+    )
+
+    return repo, "feat/stale"
+
+
+def test_ensure_base_included_already_included_returns_none(tmp_path: Path) -> None:
+    """AC-4: branch already includes origin/base → no rebase, returns None."""
+    repo = tmp_path / "repo"
+    _git_init_with_main(repo)
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin", str(repo)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "fetch", "origin", "main"],
+        check=True,
+        capture_output=True,
+    )
+
+    client = MagicMock()
+    result = p0._ensure_base_included(repo, "main", client, 3408)
+    assert result is None
+    client.issue_comment.assert_not_called()
+
+
+def test_ensure_base_included_rebase_success_returns_none(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AC-1 + AC-2: stale branch → rebase succeeds → None + auto-synced message on stderr."""
+    repo, stale_branch = _make_repo_with_diverged_branch(tmp_path)
+
+    # Switch to the stale branch in the repo
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", stale_branch],
+        check=True,
+        capture_output=True,
+    )
+
+    client = MagicMock()
+    result = p0._ensure_base_included(repo, "main", client, 3408)
+    assert result is None
+    err = capsys.readouterr().err
+    assert "P0_REBASE: auto-synced" in err
+    client.issue_comment.assert_not_called()
+
+
+def test_ensure_base_included_rebase_conflict_returns_stale_base(
+    tmp_path: Path,
+) -> None:
+    """AC-1 + AC-3: stale branch with conflict → abort + comment + STALE_BASE."""
+    repo, stale_branch = _make_repo_with_diverged_branch(tmp_path)
+
+    # Create a conflict: both main and stale branch modify the same file
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", stale_branch],
+        check=True,
+        capture_output=True,
+    )
+    (repo / "README").write_text("conflict\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "README"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-m", "stale conflict"],
+        check=True,
+        capture_output=True,
+    )
+
+    # Make origin/main have a conflicting change too
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", "main"],
+        check=True,
+        capture_output=True,
+    )
+    (repo / "README").write_text("main conflict\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "README"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-m", "main conflict"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "fetch", "origin", "main"],
+        check=True,
+        capture_output=True,
+    )
+
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", stale_branch],
+        check=True,
+        capture_output=True,
+    )
+
+    client = MagicMock()
+    result = p0._ensure_base_included(repo, "main", client, 3408)
+    assert result is not None
+    assert result.exit_code == 1
+    assert result.pipeline_status == "STALE_BASE"
+    client.issue_comment.assert_called_once()
+    comment = client.issue_comment.call_args.args[1]
+    assert "STALE_BASE" in comment
+    assert "rebase" in comment.lower() or "競合" in comment
+
+
+def test_ensure_base_included_rev_parse_fails_returns_none(tmp_path: Path) -> None:
+    """AC-5: rev-parse origin/<base> fails → skip check, return None."""
+    repo = tmp_path / "repo"
+    _git_init_with_main(repo)
+    # No remote configured → origin/main does not exist
+
+    client = MagicMock()
+    result = p0._ensure_base_included(repo, "main", client, 3408)
+    assert result is None
+    client.issue_comment.assert_not_called()
+
+
+def test_run_calls_ensure_base_included_and_stops_on_stale_base(tmp_path: Path) -> None:
+    """AC-1/3: run() stops with STALE_BASE when _ensure_base_included returns a StepResult."""
+    repo = tmp_path / "nexus"
+    _git_init_with_main(repo)
+    wt = tmp_path / "nexus" / ".claude" / "worktrees" / "issue-3408-stale"
+    client = MagicMock()
+    client.issue_get.return_value = {
+        "labels": [{"name": "issuesmith:develop-ready"}],
+        "body": "```yaml\nbase_branch: main\nallow_paths:\n  - src/**\n```\n\n## Design\n",
+    }
+
+    stale_result = p0.StepResult(exit_code=1, pipeline_status="STALE_BASE")
+    with (
+        patch.object(p0, "_github_client", return_value=client),
+        patch.object(p0, "_repo_root", return_value=repo),
+        patch.object(p0, "_ensure_base_included", return_value=stale_result) as mock_ebi,
+    ):
+        result = p0.run(
+            _ctx(
+                worktree_path=str(wt),
+                branch="feat/issue-3408-stale",
+                is_cross_repo="false",
+            )
+        )
+
+    assert result.exit_code == 1
+    assert result.pipeline_status == "STALE_BASE"
+    mock_ebi.assert_called_once()
