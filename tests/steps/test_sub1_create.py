@@ -665,3 +665,80 @@ def test_run_all_rows_guarded_body_fail_exits_nonzero(capsys) -> None:
             sub1.run(_ctx())
 
     assert exc_info.value.code != 0
+
+
+def test_run_guarded_body_passes_execution_constraints_in_variables() -> None:
+    """AC-4: _run_guarded_body includes execution_constraints in variables passed to run_guarded."""
+    captured: dict[str, object] = {}
+
+    def fake_resolve(role, tier=None):
+        return MagicMock(model="m")
+
+    def fake_run_guarded(role, template, variables, **kw):
+        captured["variables"] = variables
+        return 0
+
+    ctx = MagicMock(
+        issue_number="3445",
+        target_repo="sumipan/issuesmith",
+        execution_constraints="(non-interactive)",
+    )
+    row = MagicMock(row_num=1, title="t", repo="sumipan/issuesmith")
+    with (
+        patch.object(sub1, "resolve", side_effect=fake_resolve),
+        patch.object(sub1, "run_guarded", side_effect=fake_run_guarded),
+    ):
+        rc = sub1._run_guarded_body(
+            ctx, row=row, body_path=Path("/tmp/b.md"), template_name="sub-ready.md"
+        )
+
+    assert rc == 0
+    assert any("execution_constraints=(non-interactive)" in v for v in captured["variables"])
+
+
+def test_run_guarded_body_template_expansion_does_not_raise_on_execution_constraints(
+    tmp_path,
+) -> None:
+    """AC-5: template with ${execution_constraints} expands without raising undefined-variable error."""
+    import string
+
+    template_content = (
+        "issue_number=${issue_number}\n"
+        "execution_constraints=${execution_constraints}\n"
+    )
+    tmpl_file = tmp_path / "sub-ready.md"
+    tmpl_file.write_text(template_content, encoding="utf-8")
+
+    captured: dict[str, object] = {}
+
+    def fake_resolve(role, tier=None):
+        return MagicMock(model="m")
+
+    def fake_run_guarded(role, template, variables, **kw):
+        captured["variables"] = variables
+        var_dict = {}
+        for v in variables:
+            k, _, val = v.partition("=")
+            var_dict[k] = val
+        tmpl = string.Template(template_content)
+        missing = sorted(set(tmpl.get_identifiers()) - set(var_dict))
+        assert missing == [], f"Undefined variables: {missing}"
+        return 0
+
+    ctx = MagicMock(
+        issue_number="3445",
+        target_repo="sumipan/issuesmith",
+        execution_constraints="",
+    )
+    row = MagicMock(row_num=1, title="t", repo="sumipan/issuesmith")
+    with (
+        patch.object(sub1, "resolve", side_effect=fake_resolve),
+        patch.object(sub1, "run_guarded", side_effect=fake_run_guarded),
+        patch.object(sub1, "get_config") as cfg,
+    ):
+        cfg.return_value.paths.template_dir = tmp_path
+        rc = sub1._run_guarded_body(
+            ctx, row=row, body_path=tmp_path / "b.md", template_name="sub-ready.md"
+        )
+
+    assert rc == 0

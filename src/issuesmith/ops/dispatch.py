@@ -114,6 +114,7 @@ def _context_to_step(context: dict[str, str]) -> StepContext:
         p1_result_filename=context.get("p1_result_filename", ""),
         p2_result_filename=context.get("p2_result_filename", ""),
         p3_result_filename=context.get("p3_result_filename", ""),
+        execution_constraints=context.get("execution_constraints", ""),
     )
 
 
