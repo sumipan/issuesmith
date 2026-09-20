@@ -686,7 +686,7 @@ def test_ensure_base_included_rebase_conflict_returns_stale_base(
     client.issue_comment.assert_called_once()
     comment = client.issue_comment.call_args.args[1]
     assert "STALE_BASE" in comment
-    assert "rebase" in comment.lower() or "競合" in comment
+    assert "rebase" in comment.lower() or "conflict" in comment.lower()
 
 
 def test_ensure_base_included_rev_parse_fails_returns_none(tmp_path: Path) -> None:
