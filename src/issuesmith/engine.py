@@ -1020,6 +1020,13 @@ def run_guarded(
     tier: str | None = None,
     emit_status: str | None = None,
 ) -> int:
+    for status in success_statuses:
+        if status.endswith("_SKIPPED"):
+            raise ValueError(
+                f"success_statuses must not contain *_SKIPPED patterns: {status!r}; "
+                "a skipped step is not a success — handle it with skip_verify_statuses "
+                "in run_verified or a dedicated failure_status"
+            )
     if emit_status:
         rc, _stdout = _run_emit_order(
             role, template_path, variables, failure_status, cwd, tier
