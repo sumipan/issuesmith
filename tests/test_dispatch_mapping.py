@@ -5,7 +5,6 @@ and old compat path.
 """
 from __future__ import annotations
 
-import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,7 +12,6 @@ import pytest
 from issuesmith.engine import RetryReason, RetrySignal
 from issuesmith.ops.dispatch import map_step_result
 from issuesmith.steps.base import Andon, StepResult, Verdict
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -116,7 +114,7 @@ class TestRetryMapping:
 class TestAndonMapping:
     def test_andon_exits_one(self):
         with patch("issuesmith.ops.dispatch.get_forge") as mock_forge, \
-             patch("issuesmith.ops.dispatch._raise_andon") as mock_raise:
+             patch("issuesmith.ops.dispatch._raise_andon"):
             mock_forge.return_value = MagicMock()
             rc = map_step_result(
                 StepResult(status="andon", andon=Andon(kind="broken")),

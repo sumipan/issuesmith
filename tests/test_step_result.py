@@ -10,7 +10,6 @@ import pytest
 from issuesmith.engine import RetryReason, RetrySignal
 from issuesmith.steps.base import Andon, StepResult, Verdict
 
-
 # ---------------------------------------------------------------------------
 # New API construction
 # ---------------------------------------------------------------------------
