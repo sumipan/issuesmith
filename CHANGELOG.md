@@ -4,7 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## Unreleased
+## 0.42.0 - 2026-09-21
+
+### Changed
+
+- `engine._execute` no longer sleeps up to `ISSUESMITH_ENGINE_WAIT_MAX_SEC` while every allowed engine is
+  paused; it raises `RetrySignal(reason=QUOTA_PAUSED, after=resume_at)` immediately and `ops.dispatch`
+  registers a ghdag `QuotaGate` defer and applies the `<namespace>:waiting` label (exit 0, no
+  `DEP_FAILED`). Merged as PR #63 for sumipan/nexus#3485 without a version bump, so v0.41.0 did not
+  include it; this release exists to publish it.
 
 ### Added
 
