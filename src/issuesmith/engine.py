@@ -709,12 +709,80 @@ def _execute(
                 switched = True
                 break
         if not switched:
-            # All engines paused: raise immediately (no wait loop).
+            # All engines paused: wait-and-poll if enough time budget remains.
+            remaining = total_deadline - time.monotonic()
             all_engines = [selection.engine] + [e for e, _ in fallback_candidates]
-            after = _earliest_paused_resume_at(all_engines, quota_snap, brake_snap)
-            raise RetrySignal(
-                reason=RetryReason.QUOTA_PAUSED, after=after, role=role
+            if remaining <= _LLM_RESERVE_SEC:
+                after = _earliest_paused_resume_at(all_engines, quota_snap, brake_snap)
+                raise RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=after, role=role)
+
+            wait_max = float(_wait_max_sec())
+            poll_sec = float(_wait_poll_sec())
+            wait_started = time.monotonic()
+            last_log_at = wait_started
+            engines_str = ",".join(all_engines)
+
+            print(
+                f"[issuesmith-engine] waiting: role={role} engines={engines_str} "
+                f"elapsed=0s remaining={int(remaining)}s",
+                file=sys.stderr,
             )
+
+            # If the earliest resume_at is already past, refetch immediately once.
+            earliest_ra = _earliest_paused_resume_at(all_engines, quota_snap, brake_snap)
+            if earliest_ra is not None and earliest_ra <= datetime.now(timezone.utc):
+                quota_snap, brake_snap = _dual_gate_snapshots(quota_gate, brake_gate)
+                for alt_engine, alt_model in (
+                    [(selection.engine, selection.model)] + fallback_candidates
+                ):
+                    if not _engine_paused(alt_engine, quota_snap, brake_snap):
+                        if alt_engine != selection.engine:
+                            selection = RoleSelection(engine=alt_engine, model=alt_model)
+                            fallback_candidates = []
+                        switched = True
+                        break
+
+            while not switched:
+                wait_elapsed = time.monotonic() - wait_started
+                remaining = total_deadline - time.monotonic()
+
+                if wait_elapsed >= wait_max or remaining <= _LLM_RESERVE_SEC:
+                    after = _earliest_paused_resume_at(all_engines, quota_snap, brake_snap)
+                    raise RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=after, role=role)
+
+                max_sleep = min(
+                    poll_sec,
+                    wait_max - wait_elapsed,
+                    remaining - _LLM_RESERVE_SEC,
+                )
+                if max_sleep <= 0:
+                    after = _earliest_paused_resume_at(all_engines, quota_snap, brake_snap)
+                    raise RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=after, role=role)
+
+                time.sleep(max_sleep)
+
+                now_mono = time.monotonic()
+                wait_elapsed = now_mono - wait_started
+                remaining = total_deadline - now_mono
+                if now_mono - last_log_at >= _WAIT_LOG_INTERVAL_SEC:
+                    print(
+                        f"[issuesmith-engine] waiting: role={role} engines={engines_str} "
+                        f"elapsed={int(wait_elapsed)}s remaining={int(remaining)}s",
+                        file=sys.stderr,
+                    )
+                    last_log_at = now_mono
+
+                quota_snap, brake_snap = _dual_gate_snapshots(quota_gate, brake_gate)
+
+                for alt_engine, alt_model in (
+                    [(selection.engine, selection.model)] + fallback_candidates
+                ):
+                    if not _engine_paused(alt_engine, quota_snap, brake_snap):
+                        if alt_engine != selection.engine:
+                            selection = RoleSelection(engine=alt_engine, model=alt_model)
+                            fallback_candidates = []
+                        switched = True
+                        break
 
     # call_managed は global quota gate しか参照しないため、budget gate で paused の
     # engine を内部 fallback で起動しないよう候補を事前に絞る。

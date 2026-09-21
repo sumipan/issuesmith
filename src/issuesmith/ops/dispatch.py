@@ -194,7 +194,7 @@ def _handle_retry_signal(sig: RetrySignal, step_id: str, issue_number: int | Non
         defer_fn(step_id, after=sig.after)
     else:
         print(
-            f"[issuesmith-dispatch] WARNING: QuotaGate.defer not available; "
+            "[issuesmith-dispatch] WARNING: QuotaGate.defer not available; "
             "step will not auto-resume until ghdag adds defer support",
             file=sys.stderr,
         )

@@ -19,7 +19,6 @@ from ghdag.quota import EngineQuotaState, QuotaSnapshot
 
 from issuesmith.engine import RetryReason, RetrySignal, RoleSelection, _execute
 
-
 # ---- helpers ----
 
 def _paused(resume_at, *, reason="quota"):
