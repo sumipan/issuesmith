@@ -90,6 +90,7 @@ def _cmd_labels(argv: list[str]) -> int:
         fix = "--fix" in rest
         as_json = "--json" in rest
         from ghdag.forge import get_forge
+
         from issuesmith.ops.labels import reconcile
         client = get_forge()
         reconcile(client, fix=fix, as_json=as_json)

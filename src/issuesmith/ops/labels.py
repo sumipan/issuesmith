@@ -10,7 +10,6 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-
 # ---------------------------------------------------------------------------
 # Data types
 # ---------------------------------------------------------------------------
@@ -125,8 +124,8 @@ def apply(client: Any, issue: dict[str, Any], desired: set[str]) -> None:
         lbl["name"] if isinstance(lbl, dict) else str(lbl)
         for lbl in issue.get("labels", [])
     }
-    managed_current = {l for l in current if _is_managed_label(l, ns)}
-    managed_desired = {l for l in desired if _is_managed_label(l, ns)}
+    managed_current = {lbl for lbl in current if _is_managed_label(lbl, ns)}
+    managed_desired = {lbl for lbl in desired if _is_managed_label(lbl, ns)}
 
     to_add = sorted(managed_desired - managed_current)
     to_remove = sorted(managed_current - managed_desired)
@@ -218,7 +217,7 @@ def reconcile(
         andons = andon_by_issue.get(num, [])
         desired = project(num, queue_state=qs, exec_records=exec_recs, andon_inbox=andons)
 
-        managed_current = {l for l in current_labels if _is_managed_label(l, ns)}
+        managed_current = {lbl for lbl in current_labels if _is_managed_label(lbl, ns)}
         to_add = sorted(desired - managed_current)
         to_remove = sorted(managed_current - desired)
 

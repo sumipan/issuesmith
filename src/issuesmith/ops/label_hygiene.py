@@ -37,7 +37,6 @@ def compute_stale_labels(labels: set[str]) -> list[str]:
     """
     from issuesmith.config import get_config
     from issuesmith.ops.labels import (
-        ExecRecord,
         _exec_records_from_labels,
         _is_managed_label,
         project,
@@ -46,7 +45,7 @@ def compute_stale_labels(labels: set[str]) -> list[str]:
     ns = get_config().label_namespace
     exec_recs = _exec_records_from_labels(labels, ns)
     desired = project(0, queue_state=None, exec_records=exec_recs, andon_inbox=[])
-    managed_current = {l for l in labels if _is_managed_label(l, ns)}
+    managed_current = {lbl for lbl in labels if _is_managed_label(lbl, ns)}
     return sorted(managed_current - desired)
 
 

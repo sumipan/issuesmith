@@ -4,35 +4,33 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from issuesmith.ops.labels import ExecRecord, apply, project, reconcile
 
 NS = "issuesmith"
 
 
 def _mk_issue(number, label_names):
-    return {"number": number, "labels": [{"name": l} for l in label_names], "state": "OPEN"}
+    return {"number": number, "labels": [{"name": name} for name in label_names], "state": "OPEN"}
 
 
 def _phase_labels(label_set):
     result = set()
-    for l in label_set:
-        if not l.startswith(f"{NS}:"):
+    for lbl in label_set:
+        if not lbl.startswith(f"{NS}:"):
             continue
-        suffix = l[len(NS) + 1:]
+        suffix = lbl[len(NS) + 1:]
         if suffix == "queued":
-            result.add(l)
+            result.add(lbl)
             continue
         for phase in ("draft", "develop", "merge", "sub"):
             for status in ("ready", "running", "done"):
                 if suffix == f"{phase}-{status}":
-                    result.add(l)
+                    result.add(lbl)
     return result
 
 
 def _attn_labels(label_set):
-    return {l for l in label_set if f"{NS}:andon-" in l or l == f"{NS}:waiting"}
+    return {lbl for lbl in label_set if f"{NS}:andon-" in lbl or lbl == f"{NS}:waiting"}
 
 
 # ---------------------------------------------------------------------------
