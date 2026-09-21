@@ -15,6 +15,7 @@ from issuesmith.gate_rules.b1_migration import B1MigrationRules
 from issuesmith.gate_rules.cp1 import Cp1Rules
 from issuesmith.gate_rules.milestone_consistency import MilestoneConsistencyRules
 from issuesmith.gate_rules.scope_breadth import ScopeBreadthRules
+from issuesmith.gate_rules.scope_coupling import ScopeCouplingRules
 
 
 def check_gate(body: str, labels: list[str] | None = None) -> dict:
@@ -33,25 +34,34 @@ def check_gate(body: str, labels: list[str] | None = None) -> dict:
     （#3487）。絞り込みが起きたときは autofix_note / autofix_new_allow_paths に
     書き換え内容が入る（Issue body の実際の永続化は main() が forge 経由で行う）。
 
+    ScopeCouplingRules は allow_paths に不足しているファイルを検出し、auto-widen で
+    追加する (#3520)。coupling の autofix が breadth の autofix より優先される。
+
     Returns:
         {"status": "PASS"|"FAIL", "reasons": list[str], "intentional_hold": bool,
          "autofix_note": str | None, "autofix_new_allow_paths": list[str] | None}
     """
     label_list = labels or []
     scope_rule = ScopeBreadthRules()
+    coupling_rule = ScopeCouplingRules()
     violations = Cp1Rules().check(body, label_list)
     violations = violations + MilestoneConsistencyRules().check(body, label_list)
     violations = violations + scope_rule.check(body, label_list)
+    violations = violations + coupling_rule.check(body, label_list)
     if "scope:migration" in label_list:
         violations = violations + B1MigrationRules().check(body, label_list)
     reasons = [v.message for v in violations]
     intentional_hold = any(v.rule_id == "cp1.intentional_hold" for v in violations)
+    autofix_note = coupling_rule.autofix_note or scope_rule.autofix_note
+    autofix_new_allow_paths = (
+        coupling_rule.autofix_new_allow_paths or scope_rule.autofix_new_allow_paths
+    )
     return {
         "status": "FAIL" if violations else "PASS",
         "reasons": reasons,
         "intentional_hold": intentional_hold,
-        "autofix_note": scope_rule.autofix_note,
-        "autofix_new_allow_paths": scope_rule.autofix_new_allow_paths,
+        "autofix_note": autofix_note,
+        "autofix_new_allow_paths": autofix_new_allow_paths,
     }
 
 

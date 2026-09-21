@@ -9,6 +9,7 @@ import pytest
 import yaml
 
 from issuesmith.config import (
+    ScopeCouplingConfig,
     get_config,
     load_config,
     reset_config_cache,
@@ -200,3 +201,54 @@ def test_brake_state_omitted_equals_quota_state(tmp_path, monkeypatch):
     cfg = load_config()
     assert cfg.paths.brake_state == cfg.paths.quota_state
     assert cfg.paths.quota_state == (tmp_path / "data/quota.json").resolve()
+
+
+def test_scope_coupling_defaults_when_section_absent(tmp_path, monkeypatch):
+    """Without scope_coupling section, defaults to empty ignore_symbols."""
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(yaml.safe_dump({"repo": "example/repo"}), encoding="utf-8")
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+
+    cfg = load_config()
+
+    assert isinstance(cfg.scope_coupling, ScopeCouplingConfig)
+    assert cfg.scope_coupling.ignore_symbols == ()
+
+
+def test_scope_coupling_ignore_symbols_loaded_from_yaml(tmp_path, monkeypatch):
+    """scope_coupling.ignore_symbols from YAML is a tuple of strings."""
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({
+            "repo": "example/repo",
+            "scope_coupling": {"ignore_symbols": ["run_guarded", "my_func"]},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+
+    cfg = load_config()
+
+    assert isinstance(cfg.scope_coupling, ScopeCouplingConfig)
+    assert "run_guarded" in cfg.scope_coupling.ignore_symbols
+    assert "my_func" in cfg.scope_coupling.ignore_symbols
+
+
+def test_scope_coupling_empty_ignore_symbols_list(tmp_path, monkeypatch):
+    """scope_coupling.ignore_symbols: [] results in empty tuple."""
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({
+            "repo": "example/repo",
+            "scope_coupling": {"ignore_symbols": []},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+
+    cfg = load_config()
+
+    assert cfg.scope_coupling.ignore_symbols == ()

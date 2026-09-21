@@ -200,6 +200,13 @@ class ScopeGateConfig:
 
 
 @dataclass(frozen=True)
+class ScopeCouplingConfig:
+    """CP1/B1 scope coupling gate (#3520)."""
+
+    ignore_symbols: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class IssuesmithConfig:
     repo: str
     label_namespace: str
@@ -217,6 +224,7 @@ class IssuesmithConfig:
     steps: Mapping[str, StepConfig] = field(default_factory=lambda: dict(_DEFAULT_STEPS))
     forbidden_pr_paths: tuple[str, ...] = _DEFAULT_FORBIDDEN_PR_PATHS
     scope_gate: ScopeGateConfig = field(default_factory=ScopeGateConfig)
+    scope_coupling: ScopeCouplingConfig = field(default_factory=ScopeCouplingConfig)
 
 
 _cached: IssuesmithConfig | None = None
@@ -470,6 +478,19 @@ def _build_scope_gate(raw: Mapping[str, Any] | None) -> ScopeGateConfig:
     )
 
 
+def _build_scope_coupling(raw: Mapping[str, Any] | None) -> ScopeCouplingConfig:
+    if not raw:
+        return ScopeCouplingConfig()
+    ignore_raw = raw.get("ignore_symbols")
+    if ignore_raw is None:
+        ignore_symbols: tuple[str, ...] = ()
+    elif isinstance(ignore_raw, list):
+        ignore_symbols = tuple(str(s) for s in ignore_raw if s is not None)
+    else:
+        ignore_symbols = ()
+    return ScopeCouplingConfig(ignore_symbols=ignore_symbols)
+
+
 def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     repo_raw = data.get("repo")
     if not repo_raw or not str(repo_raw).strip():
@@ -494,6 +515,9 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     scope_gate_raw = (
         data.get("scope_gate") if isinstance(data.get("scope_gate"), dict) else None
     )
+    scope_coupling_raw = (
+        data.get("scope_coupling") if isinstance(data.get("scope_coupling"), dict) else None
+    )
     return IssuesmithConfig(
         repo=repo,
         label_namespace=label_namespace,
@@ -513,4 +537,5 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         steps=_build_steps(steps_raw),
         forbidden_pr_paths=_build_forbidden_pr_paths(data.get("forbidden_pr_paths")),
         scope_gate=_build_scope_gate(scope_gate_raw),
+        scope_coupling=_build_scope_coupling(scope_coupling_raw),
     )
