@@ -6,6 +6,8 @@ from pathlib import Path
 
 from issuesmith.steps.p0_worktree import (
     prepare_worktree as _prepare_worktree,
+)
+from issuesmith.steps.p0_worktree import (
     resolve_base_ref,
 )
 

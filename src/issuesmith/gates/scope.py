@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from issuesmith.config import IssuesmithConfig, ScopeGateConfig
+from issuesmith.config import ScopeGateConfig
 from issuesmith.gates import Verdict
-from issuesmith.steps.scope_gate import ScopeMeasure, evaluate, measure_scope
+from issuesmith.steps.scope_gate import evaluate, measure_scope
 
 
 def check_scope(

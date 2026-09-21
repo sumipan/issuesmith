@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 import issuesmith.gates as gates_mod
 from issuesmith.gates import Verdict, check_deps, check_m2, check_pr_scope, check_scope
-
 
 # ---------------------------------------------------------------------------
 # Verdict dataclass
@@ -95,7 +94,7 @@ def test_check_scope_returns_verdict_failed_when_exceeded(tmp_path: Path) -> Non
 
 
 def test_check_pr_scope_returns_verdict_passed_when_in_scope() -> None:
-    with patch("issuesmith.gates.pr_scope.check_pr_diff_scope", return_value=[]) as mock_check:
+    with patch("issuesmith.gates.pr_scope.check_pr_diff_scope", return_value=[]):
         result = check_pr_scope(["src/foo.py"], ["src/**"])
     assert isinstance(result, Verdict)
     assert result.passed is True
