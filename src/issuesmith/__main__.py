@@ -5,7 +5,6 @@ import sys
 
 from issuesmith.cli import main
 
-
 _ANDON_USAGE = """\
 usage: issuesmith andon <subcommand> ...
 
@@ -17,7 +16,7 @@ subcommands:
 
 
 def _cmd_andon(argv: list[str]) -> int:
-    from issuesmith.andon import answer, from_comment, list_open, to_comment
+    from issuesmith.andon import answer, list_open, to_comment
 
     if not argv:
         print(_ANDON_USAGE, end="", file=sys.stderr)
@@ -29,8 +28,8 @@ def _cmd_andon(argv: list[str]) -> int:
     sub, *rest = argv
 
     if sub == "list":
-        from ghdag.github_client import GitHubClient
-        client = GitHubClient()
+        from ghdag.forge import get_forge
+        client = get_forge()
         andons = list_open(client)
         if not andons:
             print("no open andons")
@@ -43,8 +42,8 @@ def _cmd_andon(argv: list[str]) -> int:
             print("andon show: <andon-id> required", file=sys.stderr)
             return 2
         andon_id = rest[0]
-        from ghdag.github_client import GitHubClient
-        client = GitHubClient()
+        from ghdag.forge import get_forge
+        client = get_forge()
         andons = list_open(client)
         matched = [a for a in andons if a.id == andon_id]
         if not matched:
@@ -59,8 +58,8 @@ def _cmd_andon(argv: list[str]) -> int:
             print("andon answer: <andon-id> <action> required", file=sys.stderr)
             return 2
         andon_id, action = rest[0], rest[1]
-        from ghdag.github_client import GitHubClient
-        client = GitHubClient()
+        from ghdag.forge import get_forge
+        client = get_forge()
         answer(client, andon_id, action)
         print(f"answered {andon_id} with: {action}")
         return 0

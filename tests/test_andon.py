@@ -2,23 +2,19 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
-from typing import Any
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-import yaml
 
 from issuesmith.andon import (
     Andon,
     AndonSink,
     answer,
+    from_comment,
     list_open,
     raise_andon,
     to_comment,
-    from_comment,
 )
-
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -189,7 +185,6 @@ def test_raise_andon_adds_label():
 
 def test_raise_andon_label_uses_config_namespace(monkeypatch):
     import issuesmith.config as cfg_module
-    from issuesmith.config import IssuesmithConfig
     # Build a minimal config with a custom namespace
     real_cfg = cfg_module.get_config()
     # monkeypatch get_config to return custom label_namespace
@@ -356,7 +351,9 @@ def test_andon_sink_protocol():
 # ---------------------------------------------------------------------------
 
 def test_cli_andon_no_subcommand(capsys):
-    import subprocess, sys, os
+    import os
+    import subprocess
+    import sys
     from pathlib import Path
 
     repo_root = Path(__file__).resolve().parents[1]
