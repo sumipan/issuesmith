@@ -129,7 +129,7 @@ def test_check_m2_returns_verdict_passed_on_proceed() -> None:
     gate_result = {"action": "proceed", "unchecked_count": 0, "has_section": True,
                    "has_migration_label": False, "contract_failures": []}
     with patch("issuesmith.gates.m2.check_gate", return_value=gate_result):
-        result = check_m2("## 受け入れ条件\n- [x] done\n", [])
+        result = check_m2("## Acceptance Criteria\n- [x] done\n", [])
     assert isinstance(result, Verdict)
     assert result.passed is True
 
@@ -138,7 +138,7 @@ def test_check_m2_returns_verdict_failed_on_retry_with_unchecked() -> None:
     gate_result = {"action": "retry", "unchecked_count": 2, "has_section": True,
                    "has_migration_label": False, "contract_failures": []}
     with patch("issuesmith.gates.m2.check_gate", return_value=gate_result):
-        result = check_m2("## 受け入れ条件\n- [ ] todo\n", [])
+        result = check_m2("## Acceptance Criteria\n- [ ] todo\n", [])
     assert isinstance(result, Verdict)
     assert result.passed is False
     assert any("2" in r for r in result.reasons)
@@ -148,7 +148,7 @@ def test_check_m2_returns_verdict_failed_on_retry_with_contract_failures() -> No
     gate_result = {"action": "retry", "unchecked_count": 0, "has_section": True,
                    "has_migration_label": False, "contract_failures": ["path missing: src/x.py"]}
     with patch("issuesmith.gates.m2.check_gate", return_value=gate_result):
-        result = check_m2("body", [])
+        result = check_m2("body text", [])
     assert isinstance(result, Verdict)
     assert result.passed is False
     assert "path missing: src/x.py" in result.reasons
@@ -158,7 +158,7 @@ def test_check_m2_returns_verdict_failed_on_migrate() -> None:
     gate_result = {"action": "migrate", "unchecked_count": 1, "has_section": True,
                    "has_migration_label": True, "contract_failures": []}
     with patch("issuesmith.gates.m2.check_gate", return_value=gate_result):
-        result = check_m2("body", ["scope:migration"])
+        result = check_m2("body text", ["scope:migration"])
     assert isinstance(result, Verdict)
     assert result.passed is False
 
@@ -232,7 +232,7 @@ def test_all_gate_functions_return_verdict_type() -> None:
     ):
         scope_v = check_scope(Path("."), ["src/**"], cfg)
         pr_v = check_pr_scope([], [])
-        m2_v = check_m2("body", [])
+        m2_v = check_m2("body text", [])
         dep_v = check_deps([])
 
     for v in (scope_v, pr_v, m2_v, dep_v):
