@@ -311,7 +311,6 @@ class TestAC4IgnoreShortAndConfigSymbols:
         assert not run_calls, "grep should not be called for 3-char key 'run'"
 
     def test_ignore_symbols_from_config_excludes_key(self, tmp_path, monkeypatch):
-        from issuesmith.config import load_config
 
         cfg_path = tmp_path / "issuesmith.yaml"
         cfg_path.write_text(
@@ -332,7 +331,7 @@ class TestAC4IgnoreShortAndConfigSymbols:
                 "issuesmith.gate_rules.scope_coupling._git_grep",
                 return_value=["src/issuesmith/steps/cp2_checkpoint.py"],
             ) as mock_grep:
-                violations = ScopeCouplingRules().check(_AC1_BODY, [])
+                ScopeCouplingRules().check(_AC1_BODY, [])
 
         rg_calls = [c for c in mock_grep.call_args_list if c.args[1] == "run_guarded"]
         assert not rg_calls, "run_guarded should be excluded by ignore_symbols"
@@ -343,6 +342,7 @@ class TestAC5RegistryAndGateIntegration:
 
     def test_gate_registry_contains_scope_coupling(self):
         from ghdag.workflow.gates import GATE_REGISTRY
+
         import issuesmith.gate_rules  # noqa: F401 -- ensures registration
 
         assert "scope_coupling" in GATE_REGISTRY
