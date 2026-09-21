@@ -14,6 +14,7 @@ tracked workflow definition.
 from __future__ import annotations
 
 import argparse
+import enum
 import os
 import re
 import shutil
@@ -38,6 +39,39 @@ from ghdag.quota import QuotaGate
 from ruamel.yaml import YAML
 
 from issuesmith.config import get_config
+
+
+class RetryReason(str, enum.Enum):
+    """Reason carried by RetrySignal to classify the deferred retry cause."""
+    QUOTA_PAUSED = "QUOTA_PAUSED"
+    BRAKE_PAUSED = "BRAKE_PAUSED"
+    ENGINE_ENVIRONMENT_ERROR = "ENGINE_ENVIRONMENT_ERROR"
+    RATE_LIMITED = "RATE_LIMITED"
+
+
+class RetrySignal(RuntimeError):
+    """Raised by _execute() when the step must be deferred for retry.
+
+    Replaces the old 6h wait loop: engine detects a paused / rate-limited state
+    and immediately signals dispatch.py to register a QuotaGate defer and
+    apply the <ns>:waiting label (exit 0, no DEP_FAILED).
+    """
+
+    def __init__(
+        self,
+        *,
+        reason: RetryReason,
+        after: datetime | None = None,
+        role: str = "",
+    ) -> None:
+        self.reason = reason
+        self.after = after
+        if reason == RetryReason.QUOTA_PAUSED and role:
+            msg = f"All engines paused for role {role}"
+        else:
+            msg = f"retry deferred: {reason.value}"
+        super().__init__(msg)
+
 
 _cfg = get_config()
 REPO_ROOT = _cfg.root
@@ -601,6 +635,19 @@ def _paused_resume_ats(engine_name: str, *snapshots: Any) -> list[Any]:
     return values
 
 
+def _earliest_paused_resume_at(
+    all_engines: list[str], *snapshots: Any
+) -> datetime | None:
+    """Return the earliest resume_at among all paused engines across snapshots."""
+    resume_ats: list[datetime] = []
+    for eng in all_engines:
+        for snap in snapshots:
+            state = snap.engines.get(eng)
+            if state is not None and state.status == "paused" and state.resume_at is not None:
+                resume_ats.append(state.resume_at)
+    return min(resume_ats) if resume_ats else None
+
+
 def _execute(
     role: str,
     content: str,
@@ -648,7 +695,8 @@ def _execute(
         brake_gate = QuotaGate(state_path=BRAKE_STATE_PATH)
 
     quota_snap, brake_snap = _dual_gate_snapshots(quota_gate, brake_gate)
-    if _engine_paused(selection.engine, quota_snap, brake_snap) and fallback_candidates:
+    if _engine_paused(selection.engine, quota_snap, brake_snap):
+        switched = False
         for alt_engine, alt_model in fallback_candidates:
             if not _engine_paused(alt_engine, quota_snap, brake_snap):
                 print(
@@ -658,89 +706,12 @@ def _execute(
                 )
                 selection = RoleSelection(engine=alt_engine, model=alt_model)
                 fallback_candidates = []
+                switched = True
                 break
-        else:
+        if not switched:
             all_engines = [selection.engine] + [e for e, _ in fallback_candidates]
-            wait_deadline = min(
-                started_mono + float(_wait_max_sec()),
-                total_deadline - _LLM_RESERVE_SEC,
-            )
-            if wait_deadline <= started_mono:
-                raise RuntimeError(f"All engines paused for role {role}")
-
-            poll_sec = float(_wait_poll_sec())
-            last_log_mono: float | None = None
-            immediate_refetch_done = False
-
-            while True:
-                now_mono = time.monotonic()
-                if now_mono >= wait_deadline:
-                    raise RuntimeError(f"All engines paused for role {role}")
-
-                remaining_wait = wait_deadline - now_mono
-                paused_names = [
-                    eng
-                    for eng in all_engines
-                    if _engine_paused(eng, quota_snap, brake_snap)
-                ]
-                if last_log_mono is None or (
-                    now_mono - last_log_mono
-                ) >= _WAIT_LOG_INTERVAL_SEC:
-                    elapsed = now_mono - started_mono
-                    print(
-                        f"[issuesmith-engine] waiting role={role} "
-                        f"paused=[{','.join(paused_names)}] "
-                        f"elapsed={elapsed:.0f}s remaining={remaining_wait:.0f}s",
-                        file=sys.stderr,
-                    )
-                    last_log_mono = now_mono
-
-                positive_deltas: list[float] = []
-                any_due_resume = False
-                for eng in all_engines:
-                    if not _engine_paused(eng, quota_snap, brake_snap):
-                        continue
-                    for resume_at in _paused_resume_ats(eng, quota_snap, brake_snap):
-                        if resume_at is None:
-                            continue
-                        delta = (
-                            resume_at - datetime.now(timezone.utc)
-                        ).total_seconds()
-                        if delta > 0:
-                            positive_deltas.append(delta)
-                        else:
-                            any_due_resume = True
-
-                if any_due_resume and not immediate_refetch_done:
-                    sleep_sec = 0.0
-                    immediate_refetch_done = True
-                else:
-                    sleep_sec = min(poll_sec, remaining_wait)
-                    if positive_deltas:
-                        sleep_sec = min(sleep_sec, min(positive_deltas))
-                    if not any_due_resume:
-                        immediate_refetch_done = False
-
-                if sleep_sec > 0:
-                    time.sleep(sleep_sec)
-
-                quota_snap, brake_snap = _dual_gate_snapshots(quota_gate, brake_gate)
-                if not _engine_paused(selection.engine, quota_snap, brake_snap):
-                    break
-                switched = False
-                for alt_engine, alt_model in fallback_candidates:
-                    if not _engine_paused(alt_engine, quota_snap, brake_snap):
-                        print(
-                            f"[issuesmith-engine] {selection.engine} is paused, "
-                            f"switching to {alt_engine}",
-                            file=sys.stderr,
-                        )
-                        selection = RoleSelection(engine=alt_engine, model=alt_model)
-                        fallback_candidates = []
-                        switched = True
-                        break
-                if switched:
-                    break
+            after = _earliest_paused_resume_at(all_engines, quota_snap, brake_snap)
+            raise RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=after, role=role)
 
     # call_managed は global quota gate しか参照しないため、budget gate で paused の
     # engine を内部 fallback で起動しないよう候補を事前に絞る。
@@ -752,7 +723,7 @@ def _execute(
 
     remaining_timeout = total_deadline - time.monotonic()
     if remaining_timeout < 1.0:
-        raise RuntimeError(f"All engines paused for role {role}")
+        raise RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=None, role=role)
     timeout_sec = remaining_timeout
 
     print(
@@ -789,7 +760,6 @@ def _execute(
             result.returncode != 0
             and result.failure_class is None
             and _is_rate_limited(result.body)
-            and fallback_candidates
         ):
             quota_gate.report(
                 engine=result.engine_used,
@@ -798,13 +768,14 @@ def _execute(
                 reason="rate_limit_detected",
             )
             alt = None
-            rate_quota_snap, rate_brake_snap = _dual_gate_snapshots(
-                quota_gate, brake_gate
-            )
-            for alt_engine, alt_model in fallback_candidates:
-                if not _engine_paused(alt_engine, rate_quota_snap, rate_brake_snap):
-                    alt = (alt_engine, alt_model)
-                    break
+            if fallback_candidates:
+                rate_quota_snap, rate_brake_snap = _dual_gate_snapshots(
+                    quota_gate, brake_gate
+                )
+                for alt_engine, alt_model in fallback_candidates:
+                    if not _engine_paused(alt_engine, rate_quota_snap, rate_brake_snap):
+                        alt = (alt_engine, alt_model)
+                        break
             if alt is not None:
                 alt_engine, alt_model = alt
                 print(
@@ -821,6 +792,31 @@ def _execute(
                     fallback_candidates=[],
                     additional_tags=additional_tags,
                     quota_gate=quota_gate,
+                )
+            else:
+                raise RetrySignal(reason=RetryReason.RATE_LIMITED, after=None)
+
+        if result.failure_class == FailureClass.ENGINE_ENVIRONMENT_ERROR.value:
+            if fallback_candidates:
+                alt_engine, alt_model = fallback_candidates[0]
+                print(
+                    f"[issuesmith-engine] environment error, retrying with {alt_engine}",
+                    file=sys.stderr,
+                )
+                result = call_managed(
+                    content,
+                    engine=alt_engine,
+                    model=alt_model,
+                    timeout=int(timeout_sec),
+                    cwd=working_directory,
+                    capabilities=_ISSUESMITH_CAPABILITIES,
+                    fallback_candidates=[],
+                    additional_tags=additional_tags,
+                    quota_gate=quota_gate,
+                )
+            else:
+                raise RetrySignal(
+                    reason=RetryReason.ENGINE_ENVIRONMENT_ERROR, after=None
                 )
     finally:
         _llm_managed.call = original_call
