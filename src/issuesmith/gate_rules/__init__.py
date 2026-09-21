@@ -7,6 +7,7 @@ import issuesmith.gate_rules.cp1  # noqa: E402,F401
 import issuesmith.gate_rules.m2  # noqa: E402,F401
 import issuesmith.gate_rules.milestone_consistency  # noqa: E402,F401
 import issuesmith.gate_rules.scope_breadth  # noqa: E402,F401
+import issuesmith.gate_rules.scope_coupling  # noqa: E402,F401
 
 # R3 — runtime stop ↔ preflight parity (nexus docs/ISSUESMITH.md ワークフロー設計規約).
 # Every pipeline_status that stops a step at runtime must name the gate rule that
