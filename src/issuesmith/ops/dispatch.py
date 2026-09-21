@@ -32,9 +32,11 @@ from pathlib import Path
 from ghdag.forge import get_forge
 from ghdag.quota import QuotaGate
 
+from issuesmith.andon import Andon as _FullAndon
+from issuesmith.andon import raise_andon as _raise_andon
 from issuesmith.config import StepConfig, get_config
 from issuesmith.engine import RetrySignal
-from issuesmith.steps.base import StepContext
+from issuesmith.steps.base import Andon, StepContext, StepResult, Verdict
 
 _cfg = get_config()
 REPO_ROOT = _cfg.root
@@ -142,11 +144,7 @@ def _try_python_step(step_id: str, context: dict[str, str]) -> int | None:
         file=sys.stderr,
     )
     result = _call_step_run(mod, _context_to_step(context), step)
-    if result.recovery:
-        get_forge().issue_comment(int(context["issue_number"]), result.recovery)
-    if result.pipeline_status:
-        print(f"PIPELINE_STATUS: {result.pipeline_status}")
-    return result.exit_code
+    return map_step_result(result, step_id=step_id, context=context)
 
 
 def _run_bash_step(step_id: str, context: dict[str, str]) -> int:
@@ -163,6 +161,70 @@ def _run_bash_step(step_id: str, context: dict[str, str]) -> int:
             os.unlink(path)
         except OSError:
             pass
+
+
+def map_step_result(
+    result: StepResult,
+    *,
+    step_id: str,
+    context: dict[str, str],
+    verdicts: list[Verdict] | None = None,
+) -> int:
+    """Map a StepResult to an exit code, printing PIPELINE_STATUS markers as side effects.
+
+    done  → exit 0 + print PIPELINE_STATUS for each marker
+    retry → raise RetrySignal (caught by main(), exits 0 after deferring)
+    andon → call raise_andon + exit 1
+
+    If result.irreversible and any verdict in verdicts is not passed, the
+    result is overridden to andon(broken) regardless of the original status.
+    """
+    irreversible = getattr(result, "irreversible", False)
+    status = getattr(result, "status", "done")
+    markers = getattr(result, "markers", [])
+    retry = getattr(result, "retry", None)
+    andon = getattr(result, "andon", None)
+    exit_code = getattr(result, "exit_code", None)
+    pipeline_status = getattr(result, "pipeline_status", None)
+    recovery = getattr(result, "recovery", None)
+
+    # Gate check for irreversible steps
+    if irreversible and verdicts and not all(v.passed for v in verdicts):
+        andon = Andon(kind="broken")
+        status = "andon"
+
+    if status == "retry":
+        assert retry is not None, "StepResult(status='retry') must set retry="
+        raise retry
+
+    if status == "andon":
+        if andon is not None:
+            issue_num = int(context.get("issue_number") or "0")
+            workflow = context.get("workflow_name", "unknown")
+            summary = getattr(andon, "summary", "") or f"step {step_id} raised andon {andon.kind}"
+            full_andon = _FullAndon(
+                id=f"{workflow}:{issue_num}:{step_id}:0",
+                kind=andon.kind,
+                issue=issue_num,
+                step=step_id,
+                summary=summary,
+            )
+            _raise_andon(get_forge(), full_andon)
+        return 1
+
+    # status == "done": old-style compat or new markers path
+    if exit_code is not None:
+        # Old API: honour exit_code / pipeline_status directly
+        if recovery:
+            issue_num = int(context.get("issue_number") or "0")
+            get_forge().issue_comment(issue_num, recovery)
+        if pipeline_status:
+            print(f"PIPELINE_STATUS: {pipeline_status}")
+        return exit_code
+
+    for marker in markers:
+        print(f"PIPELINE_STATUS: {marker}")
+    return 0
 
 
 def _waiting_label() -> str:

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from issuesmith.engine import RetrySignal
 
 
 @dataclass(frozen=True)
@@ -32,16 +36,50 @@ class StepContext:
 
 
 @dataclass
+class Andon:
+    """Lightweight Andon spec returned from step implementations.
+
+    Dispatch constructs the full issuesmith.andon.Andon from context fields.
+    """
+    kind: str  # "decision" | "blocked" | "broken"
+    summary: str = ""
+
+
+@dataclass
+class Verdict:
+    """Gate verdict for irreversible step pre-checks."""
+    passed: bool
+    reason: str = ""
+
+
+@dataclass
 class StepResult:
-    exit_code: int
-    pipeline_status: str  # MERGE_DONE | MIGRATION_REQUIRED | MERGE_FAILED | CP2_*
+    # New primary contract (3-value status)
+    status: Literal["done", "retry", "andon"] = "done"
+    markers: list[str] = field(default_factory=list)
+    retry: RetrySignal | None = None
+    andon: Andon | None = None
+    artifacts: dict = field(default_factory=dict)
+    irreversible: bool = False
+
+    # 1-release compat: old-style fields (removed next release)
+    exit_code: int | None = None
+    pipeline_status: str | None = None
     recovery: str | None = None
 
     def __post_init__(self) -> None:
+        # Compat: old exit_code=0 / pipeline_status → new markers
+        if self.exit_code == 0 and self.pipeline_status and not self.markers:
+            self.markers = [self.pipeline_status]
+
         # R3 (nexus docs/ISSUESMITH.md ワークフロー設計規約): a step may only stop with a
         # status that the preflight parity table knows. Enforced at construction so a new
         # runtime-only stop cannot be added without declaring how (or why not) it is
         # caught before dispatch.
         from issuesmith.gate_rules import assert_preflight_parity
 
-        assert_preflight_parity(self.pipeline_status)
+        for marker in self.markers:
+            assert_preflight_parity(marker)
+        # Old-style exit_code=1 case: check pipeline_status directly
+        if self.exit_code is not None and self.exit_code != 0 and self.pipeline_status:
+            assert_preflight_parity(self.pipeline_status)
