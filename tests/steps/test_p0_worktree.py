@@ -20,6 +20,7 @@ Git clone/fetch stderr fixtures were captured 2026-09-13 (CLAUDE.md §10):
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -370,6 +371,7 @@ def test_scope_gate_exceeded_returns_scope_too_large(tmp_path: Path) -> None:
             "```\n\n## Design\n"
         ),
     }
+    metrics_path = tmp_path / "metrics.jsonl"
     with (
         patch.object(p0, "_github_client", return_value=client),
         patch.object(p0, "_repo_root", return_value=repo),
@@ -380,6 +382,8 @@ def test_scope_gate_exceeded_returns_scope_too_large(tmp_path: Path) -> None:
 
         cfg = MagicMock()
         cfg.scope_gate = ScopeGateConfig()
+        cfg.root = repo
+        cfg.paths.metrics = metrics_path
         cfg_mock.return_value = cfg
         # get_config is imported into p0 module as get_config
         result = p0.run(
@@ -396,6 +400,15 @@ def test_scope_gate_exceeded_returns_scope_too_large(tmp_path: Path) -> None:
     client.issue_comment.assert_called_once()
     comment = client.issue_comment.call_args.args[1]
     assert "81" in comment
+    # AC-6 (#3487): target_repo resolves via resolve_scope_root (root=cfg.root,
+    # non-None) so P0 tripping here is flagged as a preflight/P0 gate
+    # contradiction, and the trip is recorded to metrics.
+    assert "scope_breadth" in comment
+    metric_lines = metrics_path.read_text(encoding="utf-8").splitlines()
+    assert len(metric_lines) == 1
+    metric = json.loads(metric_lines[0])
+    assert metric["event"] == "scope_gate.p0_trip"
+    assert metric["issue_number"] == 3168
 
 
 def test_scope_gate_disabled_skips_and_succeeds(tmp_path: Path) -> None:

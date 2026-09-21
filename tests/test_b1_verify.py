@@ -9,6 +9,8 @@ _VALID_BODY = (
     'base_branch: main\n'
     'allow_paths:\n'
     '  - "**"\n'
+    'scope_gate:\n'
+    '  enabled: false\n'
     '```\n\n'
     "## Overview\nclean body\n"
 )

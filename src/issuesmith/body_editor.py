@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 
+import yaml
 from ghdag.markdown.body_editor import (
     count_heading,
     filter_section_by_paths,
@@ -26,9 +27,34 @@ __all__ = [
     "get_subsections",
     "normalize_sub_headers",
     "relocate_sub_plan",
+    "replace_allow_paths",
     "split_h2_sections",
     "upsert_section",
 ]
+
+_LEADING_YAML_BLOCK_RE = re.compile(r"^```yaml\n(.*?)\n```", re.DOTALL | re.MULTILINE)
+
+
+def replace_allow_paths(body: str, new_paths: list[str]) -> str | None:
+    """Rewrite ``allow_paths`` inside the leading ```yaml metadata block (#3487).
+
+    Regenerates the whole block from the parsed mapping (``yaml.safe_dump``)
+    rather than splicing lines, so quoting/list-style differences in the
+    original never produce a malformed block. ``None`` when the body has no
+    leading yaml block or that block has no ``allow_paths`` key — callers must
+    not persist a body in that case (nothing to safely replace).
+    """
+    match = _LEADING_YAML_BLOCK_RE.search(body)
+    if not match:
+        return None
+    data = yaml.safe_load(match.group(1))
+    if not isinstance(data, dict) or "allow_paths" not in data:
+        return None
+    data["allow_paths"] = list(new_paths)
+    new_raw = yaml.safe_dump(
+        data, allow_unicode=True, sort_keys=False, default_flow_style=False
+    ).rstrip("\n")
+    return body[: match.start(1)] + new_raw + body[match.end(1) :]
 
 _SUB_HEADER_EN_RE = re.compile(
     r"^(####\s+)Sub[ \t]+(\d+)[ \t]*:?",
