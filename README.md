@@ -119,6 +119,7 @@ src/issuesmith/
   cli.py              Unified CLI dispatcher
   config.py           issuesmith.yaml resolution
   context_hook.py     Issue YAML metadata + ghdag context
+  contract.py         Canonical parsers for Issue-body contract sections (one per section)
   engine.py           LLM role switcher / metrics
   queue.py            Queue dispatch loop
   queue_store.py      Persistent queue state
@@ -134,6 +135,9 @@ src/issuesmith/
   gate_rules/         Named gate rule modules
   ops/                dispatch, publish, doctor, smoke, version-bump, ...
 ```
+
+Workflow design conventions (one parser per contract section, runtime stop ↔ preflight parity)
+are enforced by `tests/test_workflow_conventions.py`; see nexus `docs/ISSUESMITH.md` for the rules.
 
 Orchestration (polling, DAG, label transitions) remains in **ghdag** `WorkflowDispatcher`. This package supplies the Issue-domain tools and gates that templates invoke.
 

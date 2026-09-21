@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 from ghdag.workflow.gates import GATE_REGISTRY, Violation
@@ -18,26 +17,21 @@ from issuesmith.steps.scope_gate import (
 
 
 def _resolve_root(metadata: dict) -> Path | None:
-    proc = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        return None
-    nexus_root = Path(proc.stdout.strip())
+    """Measurement root: nexus root, or ``paths.external_dir/<repo>`` for cross-repo.
 
+    Same layout as context_hook.target_clone_path (``.claude/external/<repo>``),
+    so CP1 measures the tree P0 will measure (#3487: the old
+    ``external/<owner>/<repo>`` guess never existed and the gate passed silently).
+    """
     target_repo = (metadata.get("target_repo") or "").strip()
+    cfg = get_config()
     if not target_repo or target_repo == "sumipan/nexus":
-        return nexus_root
-
+        return cfg.root
     parts = target_repo.split("/", 1)
     if len(parts) != 2:
         return None
-    owner, repo = parts
-    external = nexus_root / ".claude" / "external" / owner / repo
-    if not external.exists():
+    external = cfg.paths.external_dir / parts[1]
+    if not (external / ".git").exists():
         return None
     return external
 
@@ -72,7 +66,23 @@ class ScopeBreadthRules:
 
         root = _resolve_root(metadata)
         if root is None:
-            return []
+            target_repo = (metadata.get("target_repo") or "").strip()
+            return [
+                Violation(
+                    rule_id="scope_breadth.root_unavailable",
+                    severity="fail",
+                    message=(
+                        f"allow_paths scope cannot be measured: no clone for {target_repo!r}"
+                        f" under {get_config().paths.external_dir}"
+                    ),
+                    location=None,
+                    auto_fixable=False,
+                    fix_hint=(
+                        "clone the target repo into .claude/external/<repo> "
+                        "(same layout P0 uses) and re-run the gate"
+                    ),
+                )
+            ]
 
         measure = measure_scope(root, allow_paths)
         verdict = evaluate(measure, cfg, override)
