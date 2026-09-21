@@ -8,6 +8,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `issuesmith.contract`: single canonical parser for the change table (bold label and heading forms)
+  used by the B1 gate, milestone helpers and SUB1 alike; `CONTRACT_EXTRACTORS` names the functions
+  that may only be defined there (#3487)
+- `gate_rules.PREFLIGHT_PARITY` + `tests/test_workflow_conventions.py`: deterministic detector for
+  the workflow design conventions (R1 one parser per contract section, R3 every runtime stop status
+  has a preflight rule or an explicit runtime-only reason) (#3487)
+- `b1_milestone_subdesign.change_paths_unreadable`: B1 fails when a `#### サブN` change table yields
+  no path for its repo — the exact condition under which SUB1 cannot build a child (#3487)
+- `scope_breadth.root_unavailable`: CP1 fails closed when the cross-repo clone is missing (#3487)
+- `tests/contract/`: fixture parity tests feeding the same body to gate and step (#3487)
+
+### Fixed
+
+- SUB1 never inherits the parent's `allow_paths`; a row whose change table is unreadable fails
+  instead of creating a child with the parent's `tests/**` (nexus #3483 tripped P0 with 91 files) (#3487)
+- `scope_breadth` measured `.claude/external/<owner>/<repo>` (never exists) and passed silently;
+  now uses `paths.external_dir/<repo>`, the layout `context_hook` actually clones into (#3487)
+
 - `tests/test_no_cjk.py`: CI gate enforcing zero CJK characters in the fully-migrated test files
   (`steps/test_m1_merge.py`, `test_body_editor_shim.py`, `gate_rules/test_cp1_gate.py`) (#3385)
 - `tests/gate_rules/test_cp1_gate.py`: ASCII-only duplicate of core CP1 gate tests, no Japanese

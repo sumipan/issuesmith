@@ -747,3 +747,38 @@ def test_run_guarded_body_template_expansion_does_not_raise_on_execution_constra
         )
 
     assert rc == 0
+
+
+def test_run_row_with_unreadable_change_table_creates_no_child() -> None:
+    """#3487: no parent allow_paths inheritance — the row fails instead."""
+    body = _parent_body(child_repo="sumipan/nexus").replace("| `sumipan/nexus` | `src/a.py` |", "| `sumipan/other` | `src/a.py` |")
+    client = MagicMock()
+    client.issue_get.return_value = {
+        "number": 3166,
+        "body": body,
+        "labels": [{"name": "scope:milestone"}],
+        "milestone": {"number": 1},
+        "comments": [
+            {"body": "PIPELINE_STATUS: BRUSHUP_DONE", "createdAt": "2026-01-01T00:00:00Z"},
+            {"body": "CP1_STATUS: PASS", "createdAt": "2026-01-01T01:00:00Z"},
+        ],
+    }
+    client.list_sub_issues = MagicMock(return_value=[])
+    with (
+        patch.object(sub1, "_github_client", return_value=client),
+        patch.object(sub1, "get_config") as cfg,
+    ):
+        cfg.return_value.supported_repos = frozenset({"sumipan/nexus"})
+        cfg.return_value.sections = {
+            "sub_plan": "Sub-issue Plan",
+            "milestone": "Milestone",
+            "design": "Design",
+            "changed_files": "Changed Files",
+            "dependencies": "Dependencies",
+        }
+        result = sub1.run(_ctx())
+    assert result.exit_code == 1
+    assert result.pipeline_status == "IMPL_FAILED"
+    client.issue_create.assert_not_called()
+    posted = " ".join(str(c) for c in client.issue_comment.call_args_list)
+    assert "sumipan/nexus" in posted

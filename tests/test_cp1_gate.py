@@ -1,10 +1,21 @@
 """test_cp1_gate.py — unit tests for the CP1 gate"""
 
+import pytest
+
 from issuesmith.cp1_gate import check_gate
 from issuesmith.gate_rules.cp1 import Cp1Rules
 from tests.legacy_text import ADD, CHANGE_TYPE, DESCRIPTION, FILE_PATH, REPOSITORY, SUB
 
 _TABLE_HEADER = f"{REPOSITORY} | {FILE_PATH} | {CHANGE_TYPE} | {DESCRIPTION}"
+
+
+@pytest.fixture(autouse=True)
+def _scope_root(tmp_path):
+    """scope_breadth is fail-closed (#3487); give it an empty measurable root."""
+    from unittest.mock import patch
+
+    with patch("issuesmith.gate_rules.scope_breadth._resolve_root", return_value=tmp_path):
+        yield
 
 # Leading yaml metadata is required for all cases after missing_block (#2541).
 # Tests that expect PASS must prepend a valid yaml header.

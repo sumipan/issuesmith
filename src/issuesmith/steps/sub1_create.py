@@ -22,8 +22,8 @@ from issuesmith.body_editor import (
 )
 from issuesmith.config import StepConfig, get_config
 from issuesmith.context_hook import parse_issue_metadata
+from issuesmith.contract import change_paths_for_repo, sub_block
 from issuesmith.engine import resolve, run_guarded
-from issuesmith.gate_rules.b1_milestone_subdesign import parse_table_rows
 from issuesmith.gate_rules.cp1 import Cp1Rules
 from issuesmith.milestone import (
     _list_chain_children,
@@ -246,50 +246,28 @@ def _resolve_dependencies(
 
 
 def _allow_paths_for_row(parent_body: str, row: PlanRow) -> list[str]:
-    """Extract allow_paths for ROW_REPO from #### サブN change table (or parent)."""
+    """allow_paths for ROW_REPO from the #### サブN change table.
+
+    Uses the canonical extractor (issuesmith.contract, R1) — the same call the
+    B1 gate rule ``b1_milestone_subdesign.change_paths_unreadable`` runs.
+    Returns [] when the table yields no path for ROW_REPO. Callers MUST treat
+    [] as a row failure; the parent's allow_paths are never inherited (#3487:
+    a nexus parent's ``tests/**`` leaked into an issuesmith child and tripped
+    the P0 scope gate).
+    """
+    # Same サブN header regex the B1 gate uses (issuesmith.contract.SUB_HEADER_RE),
+    # so gate and step cannot disagree on which text is "サブN".
+    sub_body = sub_block(parent_body, row.row_num)
+    if not sub_body:
+        return []
     paths: list[str] = []
-    sub_secs = get_subsections(parent_body, "設計", "#### サブ")
-    prefix = f"#### サブ{row.row_num}:"
-    sub_body = ""
-    for heading, content in sub_secs:
-        if heading.startswith(prefix):
-            sub_body = content
-            break
-    section = get_section(sub_body, "変更対象ファイル") if sub_body else None
-    if section:
-        rows = parse_table_rows(section)
-        if len(rows) > 1:
-            header = [c.lower() for c in rows[0]]
-            try:
-                repo_i = next(i for i, c in enumerate(header) if "リポジトリ" in c)
-            except StopIteration:
-                repo_i = 0
-            try:
-                path_i = next(
-                    i for i, c in enumerate(header) if "ファイルパス" in c or "パス" in c
-                )
-            except StopIteration:
-                path_i = 1
-            for cells in rows[1:]:
-                if len(cells) <= max(repo_i, path_i):
-                    continue
-                repo = cells[repo_i].strip().strip("`")
-                if repo != row.repo:
-                    continue
-                path = cells[path_i].strip().strip("`")
-                path = re.sub(r"\([^)]*\)", "", path).strip()
-                if path.startswith("/var/tmp/"):
-                    print(f"WARN: skip invalid allow_path {path!r}", file=sys.stderr)
-                    continue
-                if path.startswith(_NIKKI_PREFIX):
-                    continue
-                if path:
-                    paths.append(path)
-    if not paths:
-        parent_meta = _safe_metadata(parent_body)
-        allow = parent_meta.get("allow_paths")
-        if isinstance(allow, list):
-            paths = [str(p) for p in allow if isinstance(p, str)]
+    for path in change_paths_for_repo(sub_body, row.repo):
+        if path.startswith("/var/tmp/"):
+            print(f"WARN: skip invalid allow_path {path!r}", file=sys.stderr)
+            continue
+        if path.startswith(_NIKKI_PREFIX):
+            continue
+        paths.append(path)
     return paths
 
 
@@ -350,9 +328,11 @@ def _build_child_body(
     resolved_dep: str,
     client: ForgePort,
     parent_labels: list[str],
+    allow_paths: list[str] | None = None,
 ) -> str:
     parent_meta = _safe_metadata(parent_body)
-    allow_paths = _allow_paths_for_row(parent_body, row)
+    if allow_paths is None:
+        allow_paths = _allow_paths_for_row(parent_body, row)
     yaml_lines = [f"target_repo: {row.repo}"]
     base = parent_meta.get("base_branch")
     if isinstance(base, str) and base.strip():
@@ -465,25 +445,8 @@ def _filter_parent_section(parent_body: str, row_num: int, heading: str) -> str:
     return "\n".join(result) if result else ""
 
 
-def _change_paths_for_repo(body: str, target_repo: str) -> list[str]:
-    paths: list[str] = []
-    match = _CHANGE_SECTION_RE.search(body)
-    if not match:
-        # bold-header style used by validate_children helpers
-        from issuesmith.milestone import _extract_change_paths
-
-        return _extract_change_paths(body, repo=target_repo)
-    rows = parse_table_rows(match.group(1))
-    for row in rows[1:]:
-        if len(row) < 2:
-            continue
-        repo = row[0].strip().strip("`").replace("`", "")
-        path = row[1].strip().strip("`").replace("`", "")
-        if repo != target_repo:
-            continue
-        if path:
-            paths.append(path)
-    return paths
+# Canonical extractor (R1); kept name for local callers.
+_change_paths_for_repo = change_paths_for_repo
 
 
 def _prevalidate_child_body(
@@ -730,6 +693,13 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
             client=client,
             state=state,
         )
+        row_allow_paths = _allow_paths_for_row(parent_body, row)
+        if not row_allow_paths:
+            state.validation_failures.append(
+                f"サブ{row.row_num}: 変更対象ファイル表から {row.repo} のパスを"
+                "抽出できないため子を作成しない（親の allow_paths は継承しない）"
+            )
+            continue
         body = _build_child_body(
             parent_body=parent_body,
             parent_number=issue_number,
@@ -737,6 +707,7 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
             resolved_dep=resolved_dep,
             client=client,
             parent_labels=labels,
+            allow_paths=row_allow_paths,
         )
 
         if template_name:

@@ -36,3 +36,12 @@ class StepResult:
     exit_code: int
     pipeline_status: str  # MERGE_DONE | MIGRATION_REQUIRED | MERGE_FAILED | CP2_*
     recovery: str | None = None
+
+    def __post_init__(self) -> None:
+        # R3 (nexus docs/ISSUESMITH.md ワークフロー設計規約): a step may only stop with a
+        # status that the preflight parity table knows. Enforced at construction so a new
+        # runtime-only stop cannot be added without declaring how (or why not) it is
+        # caught before dispatch.
+        from issuesmith.gate_rules import assert_preflight_parity
+
+        assert_preflight_parity(self.pipeline_status)

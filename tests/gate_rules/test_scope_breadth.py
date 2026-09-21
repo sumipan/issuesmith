@@ -91,8 +91,8 @@ def test_scope_gate_enabled_false_returns_no_violation():
     mock_m.assert_not_called()
 
 
-def test_missing_measurement_root_returns_no_violation():
-    """cross-repo target with no external dir yields 0 violations (fail-open)."""
+def test_missing_measurement_root_is_a_violation():
+    """cross-repo target with no clone must fail closed (#3487), never pass silently."""
     body = (
         "```yaml\n"
         "target_repo: sumipan/nonexistent-repo\n"
@@ -103,4 +103,23 @@ def test_missing_measurement_root_returns_no_violation():
         "## Overview\ncontent\n"
     )
     violations = ScopeBreadthRules().check(body, [])
-    assert violations == []
+    assert [v.rule_id for v in violations] == ["scope_breadth.root_unavailable"]
+    assert violations[0].severity == "fail"
+
+
+def test_cross_repo_root_uses_external_dir_repo_layout(tmp_path):
+    """Root is paths.external_dir/<repo> — the layout context_hook clones into."""
+    import unittest.mock as mock
+
+    from issuesmith.gate_rules import scope_breadth as sb
+
+    external = tmp_path / ".claude" / "external"
+    (external / "issuesmith" / ".git").mkdir(parents=True)
+    cfg = mock.MagicMock()
+    cfg.root = tmp_path
+    cfg.paths.external_dir = external
+    with mock.patch.object(sb, "get_config", return_value=cfg):
+        root = sb._resolve_root({"target_repo": "sumipan/issuesmith"})
+        nexus_root = sb._resolve_root({"target_repo": "sumipan/nexus"})
+    assert root == external / "issuesmith"
+    assert nexus_root == tmp_path

@@ -6,39 +6,19 @@ from ghdag.workflow.gates import GATE_REGISTRY, Violation
 
 from issuesmith.config import get_config
 from issuesmith.context_hook import parse_issue_metadata
+from issuesmith.contract import (  # noqa: F401 — re-exported for legacy importers
+    SUB_HEADER_RE,
+    _normalize_path,
+    change_paths_for_repo,
+    extract_change_table_rows,
+    get_section,
+    parse_table_rows,
+)
 
 _VAGUE_AC_WORDS = ("正しく動作", "適切に", "問題なく", "きちんと", "ちゃんと", "必要に応じて")
-_SUB_HEADER_RE = re.compile(r"^####\s+サブ(\d+):", re.MULTILINE)
-_TABLE_ROW_RE = re.compile(r"^\|")
-_TABLE_SEP_RE = re.compile(r"^\|[\s\-:|]+\|$")
+_SUB_HEADER_RE = SUB_HEADER_RE
 _BACKTICK_PATH_RE = re.compile(r"`([^`]+)`")
 _FILE_REF_RE = re.compile(r"`([^`]+\.[a-zA-Z0-9]+)`|(?:^|[\s(/])([\w./-]+\.[a-zA-Z0-9]+)")
-
-
-_SECTION_END = r"(?=^##(?!#)|\Z)"
-
-
-def get_section(body: str, heading: str) -> str | None:
-    match = re.search(
-        rf"^##\s+{re.escape(heading)}\s*\n(.*?){_SECTION_END}",
-        body,
-        re.MULTILINE | re.DOTALL,
-    )
-    return match.group(1) if match else None
-
-
-def parse_table_rows(section: str) -> list[list[str]]:
-    rows: list[list[str]] = []
-    for line in section.splitlines():
-        stripped = line.strip()
-        if not _TABLE_ROW_RE.match(stripped):
-            continue
-        if _TABLE_SEP_RE.match(stripped):
-            continue
-        cells = [cell.strip() for cell in stripped.split("|")[1:-1]]
-        if cells:
-            rows.append(cells)
-    return rows
 
 
 def extract_sub_blocks(body: str) -> list[tuple[int, str]]:
@@ -78,53 +58,9 @@ def _count_sub_plan_rows(body: str) -> int | None:
     return data_rows
 
 
-def _normalize_path(path: str) -> str:
-    path = path.strip().strip("`").strip()
-    return path
-
-
-def _extract_paths_from_table_section(section: str) -> list[tuple[str, str, str]]:
-    """Parse change-target table rows from a section (with or without bold header)."""
-    changed = get_config().sections["changed_files"]
-    table_match = re.search(
-        rf"\*\*{re.escape(changed)}\*\*:?\s*\n(.*?)(?=\*\*|\Z)",
-        section,
-        re.DOTALL,
-    )
-    target = table_match.group(1) if table_match else section
-    rows = parse_table_rows(target)
-    if len(rows) <= 1:
-        return []
-    header = [c.lower() for c in rows[0]]
-    try:
-        repo_idx = next(i for i, c in enumerate(header) if "リポジトリ" in c)
-        path_idx = next(i for i, c in enumerate(header) if "ファイルパス" in c or "パス" in c)
-        type_idx = next(i for i, c in enumerate(header) if "変更種別" in c or "種別" in c)
-    except StopIteration:
-        if len(rows[0]) >= 2 and "ファイル" not in rows[0][0]:
-            result: list[tuple[str, str, str]] = []
-            for row in rows:
-                if len(row) >= 2 and "ファイル" not in row[0]:
-                    path = _normalize_path(row[0] if "`" in row[0] else row[1])
-                    change_type = row[1] if "`" in row[0] else (row[2] if len(row) > 2 else "")
-                    if path and "/" in path:
-                        result.append(("", path, change_type))
-            return result
-        return []
-    result: list[tuple[str, str, str]] = []
-    for row in rows[1:]:
-        if len(row) <= max(repo_idx, path_idx, type_idx):
-            continue
-        repo = row[repo_idx].strip().strip("`")
-        path = _normalize_path(row[path_idx])
-        change_type = row[type_idx].strip()
-        if path:
-            result.append((repo, path, change_type))
-    return result
-
-
-def _extract_paths_from_change_table(section: str) -> list[tuple[str, str, str]]:
-    return _extract_paths_from_table_section(section)
+# Canonical extractors live in issuesmith.contract (R1). Aliases keep old names importable.
+_extract_paths_from_table_section = extract_change_table_rows
+_extract_paths_from_change_table = extract_change_table_rows
 
 
 def _extract_parent_change_paths(body: str) -> set[str]:
@@ -186,6 +122,7 @@ class B1MilestoneSubdesignRules:
             violations.extend(self._check_required_subsections(sub_num, block))
             violations.extend(self._check_table_schema(sub_num, block))
             violations.extend(self._check_repo_column(body, sub_num, block))
+            violations.extend(self._check_change_paths_readable(body, sub_num, block))
             violations.extend(self._check_sub_ac(sub_num, block))
         violations.extend(self._check_file_union(body, sub_blocks))
         violations.extend(self._check_impact_scope(body, sub_blocks))
@@ -305,6 +242,45 @@ class B1MilestoneSubdesignRules:
                     auto_fixable=True,
                     fix_hint=f"target_repo: {repo}",
                 ))
+        return violations
+
+    def _check_change_paths_readable(
+        self, body: str, sub_num: int, block: str
+    ) -> list[Violation]:
+        """R3 parity for SUB1: the child allow_paths are derived from this table.
+
+        SUB1 (steps/sub1_create.py) calls change_paths_for_repo(block, row_repo)
+        and fails the row when it returns []. This gate runs the same call at B1
+        so an unreadable table is caught before any child Issue exists.
+        """
+        table_repos = sorted(
+            {repo for repo, _, _ in extract_change_table_rows(block) if repo}
+        )
+        if table_repos:
+            repos = table_repos
+        else:
+            allowed = sorted(_allowed_repos(body))
+            repos = allowed[:1] or [""]
+        violations: list[Violation] = []
+        for repo in repos:
+            if change_paths_for_repo(block, repo or None):
+                continue
+            changed = get_config().sections["changed_files"]
+            violations.append(Violation(
+                rule_id="b1_milestone_subdesign.change_paths_unreadable",
+                severity="fail",
+                message=(
+                    f"サブ{sub_num} の{changed}表から `{repo or '(repo なし)'}` の"
+                    " ファイルパスを抽出できません（SUB1 は同じ抽出で子の allow_paths を作るため、"
+                    "このままでは子を作れません）"
+                ),
+                location=f"#### サブ{sub_num}",
+                auto_fixable=False,
+                fix_hint=(
+                    f"**{changed}**: の直後に | リポジトリ | ファイルパス | 変更種別 | 変更内容 |"
+                    " の 4 列表を置き、リポジトリ列に owner/repo、ファイルパス列に / を含むパスを書く"
+                ),
+            ))
         return violations
 
     def _check_sub_ac(self, sub_num: int, block: str) -> list[Violation]:

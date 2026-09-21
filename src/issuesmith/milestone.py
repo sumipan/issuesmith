@@ -12,6 +12,7 @@ from typing import Any
 from ghdag.forge import ForgePort, get_forge
 
 from issuesmith.config import IssuesmithConfig, MilestoneChainConfig, get_config
+from issuesmith.contract import change_paths_for_repo, parse_table_rows
 from issuesmith.dep_extractor import check_dependencies, extract_dependencies
 from issuesmith.queue_store import QueueSnapshot, QueueStore
 from issuesmith.queue_triage import (
@@ -53,11 +54,6 @@ _PLAN_REF_RE = re.compile(r"^\|\s*(\d+)\s*\|")
 # 解決済み Issue 参照（3 桁以上）。plan ref（サブ N の連番）と区別する。
 _RESOLVED_ISSUE_REF_RE = re.compile(r"#(\d{3,})\b")
 _TERMINAL_NEGATIVE_OUTCOMES = frozenset({"rejected", "dequeued", "skipped"})
-
-
-def _change_table_header_re() -> re.Pattern[str]:
-    changed = get_config().sections["changed_files"]
-    return re.compile(rf"\*\*{re.escape(changed)}\*\*")
 
 
 @dataclass
@@ -118,53 +114,9 @@ def _has_cp1_intentional_hold(comments: list[dict[str, Any]]) -> bool:
     return False
 
 
-def _parse_table_rows(section: str) -> list[list[str]]:
-    rows: list[list[str]] = []
-    for line in section.splitlines():
-        stripped = line.strip()
-        if not _TABLE_ROW_RE.match(stripped):
-            continue
-        if _TABLE_SEPARATOR_RE.match(stripped):
-            continue
-        cells = [cell.strip() for cell in stripped.split("|")[1:-1]]
-        if cells:
-            rows.append(cells)
-    return rows
-
-
-def _extract_change_paths(body: str, *, repo: str | None = None) -> list[str]:
-    """Extract change-table paths. When ``repo`` is set, keep only matching リポジトリ rows."""
-    paths: list[str] = []
-    for match in _change_table_header_re().finditer(body):
-        start = match.end()
-        section = body[start : start + 4000]
-        rows = _parse_table_rows(section)
-        if len(rows) <= 1:
-            continue
-        header = [cell.lower() for cell in rows[0]]
-        try:
-            path_idx = next(
-                i for i, cell in enumerate(header) if "ファイルパス" in cell or "パス" in cell
-            )
-        except StopIteration:
-            path_idx = 1 if len(rows[0]) > 1 else 0
-        try:
-            repo_idx = next(i for i, cell in enumerate(header) if "リポジトリ" in cell)
-        except StopIteration:
-            repo_idx = None
-        for row in rows[1:]:
-            if len(row) <= path_idx:
-                continue
-            if repo is not None and repo_idx is not None:
-                if len(row) <= repo_idx:
-                    continue
-                row_repo = row[repo_idx].strip().strip("`")
-                if row_repo != repo:
-                    continue
-            path = row[path_idx].strip().strip("`")
-            if path and "/" in path:
-                paths.append(path)
-    return paths
+# Canonical extractors live in issuesmith.contract (R1).
+_parse_table_rows = parse_table_rows
+_extract_change_paths = change_paths_for_repo
 
 
 def _plan_section(body: str) -> str | None:
