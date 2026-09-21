@@ -30,8 +30,10 @@ import tempfile
 from pathlib import Path
 
 from ghdag.forge import get_forge
+from ghdag.quota import QuotaGate
 
 from issuesmith.config import StepConfig, get_config
+from issuesmith.engine import RetrySignal
 from issuesmith.steps.base import StepContext
 
 _cfg = get_config()
@@ -163,6 +165,48 @@ def _run_bash_step(step_id: str, context: dict[str, str]) -> int:
             pass
 
 
+def _waiting_label() -> str:
+    return f"{get_config().label_namespace}:waiting"
+
+
+def _forge_remove_waiting(issue_number: int) -> None:
+    """Remove <ns>:waiting label (no-op if absent; called at start of each step run)."""
+    try:
+        get_forge().remove_label(issue_number, _waiting_label())
+    except Exception:
+        pass
+
+
+def _forge_add_waiting(issue_number: int) -> None:
+    try:
+        get_forge().issue_update(issue_number, labels_add=[_waiting_label()])
+    except Exception as exc:
+        print(
+            f"[issuesmith-dispatch] WARNING: failed to add waiting label: {exc}",
+            file=sys.stderr,
+        )
+
+
+def _handle_retry_signal(sig: RetrySignal, step_id: str, issue_number: int | None) -> None:
+    quota_gate = QuotaGate(state_path=get_config().paths.quota_state)
+    defer_fn = getattr(quota_gate, "defer", None)
+    if defer_fn is not None:
+        defer_fn(step_id, after=sig.after)
+    else:
+        print(
+            f"[issuesmith-dispatch] WARNING: QuotaGate.defer not available; "
+            "step will not auto-resume until ghdag adds defer support",
+            file=sys.stderr,
+        )
+    if issue_number is not None:
+        _forge_add_waiting(issue_number)
+    print(
+        f"[issuesmith-dispatch] deferred step={step_id} "
+        f"reason={sig.reason.value} after={sig.after}",
+        file=sys.stderr,
+    )
+
+
 def main(argv: list[str]) -> int:
     if not argv:
         print(__doc__, file=sys.stderr)
@@ -174,15 +218,31 @@ def main(argv: list[str]) -> int:
         print(f"[issuesmith-dispatch] ERROR: {exc}", file=sys.stderr)
         return 2
 
-    rc = _try_python_step(step_id, context)
-    if rc is not None:
-        return rc
+    issue_number: int | None = None
+    raw_issue = context.get("issue_number", "")
+    if raw_issue:
+        try:
+            issue_number = int(raw_issue)
+        except ValueError:
+            pass
+
+    # Remove waiting label at the start of every run (clears it after a resume).
+    if issue_number is not None:
+        _forge_remove_waiting(issue_number)
 
     try:
-        return _run_bash_step(step_id, context)
-    except (KeyError, FileNotFoundError) as exc:
-        print(f"[issuesmith-dispatch] ERROR: {exc}", file=sys.stderr)
-        return 2
+        rc = _try_python_step(step_id, context)
+        if rc is not None:
+            return rc
+
+        try:
+            return _run_bash_step(step_id, context)
+        except (KeyError, FileNotFoundError) as exc:
+            print(f"[issuesmith-dispatch] ERROR: {exc}", file=sys.stderr)
+            return 2
+    except RetrySignal as sig:
+        _handle_retry_signal(sig, step_id, issue_number)
+        return 0
 
 
 if __name__ == "__main__":
