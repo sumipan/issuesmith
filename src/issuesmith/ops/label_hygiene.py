@@ -28,54 +28,25 @@ import json
 import sys
 from typing import Any
 
-# stale ラベル → そのラベルが stale であると断定できる「後フェーズの根拠」プレフィクス群。
-# 根拠ラベルが 1 つでも現存すれば stale ラベルを除去する。
-_STALE_RULES: dict[str, tuple[str, ...]] = {
-    "issuesmith:draft-ready": (
-        "issuesmith:draft-running",
-        "issuesmith:draft-done",
-        "issuesmith:develop-",
-        "issuesmith:merge-",
-        "issuesmith:migrate-",
-    ),
-    "issuesmith:draft-running": (
-        "issuesmith:develop-",
-        "issuesmith:merge-",
-        "issuesmith:migrate-",
-    ),
-    "issuesmith:draft-done": (
-        "issuesmith:develop-",
-        "issuesmith:merge-",
-        "issuesmith:migrate-",
-    ),
-    "issuesmith:develop-ready": (
-        "issuesmith:develop-running",
-        "issuesmith:develop-done",
-        "issuesmith:merge-",
-        "issuesmith:migrate-",
-    ),
-    "issuesmith:develop-done": (
-        "issuesmith:merge-running",
-        "issuesmith:merge-done",
-        "issuesmith:migrate-",
-    ),
-    "issuesmith:merge-ready": (
-        "issuesmith:merge-running",
-        "issuesmith:merge-done",
-    ),
-}
-
 
 def compute_stale_labels(labels: set[str]) -> list[str]:
-    """現存ラベル集合から、除去すべき stale ラベルの一覧を返す（決定論・副作用なし）。"""
-    stale: list[str] = []
-    for label, evidence_prefixes in _STALE_RULES.items():
-        if label not in labels:
-            continue
-        others = labels - {label}
-        if any(o.startswith(p) for o in others for p in evidence_prefixes):
-            stale.append(label)
-    return sorted(stale)
+    """現存ラベル集合から、除去すべき stale ラベルの一覧を返す（決定論・副作用なし）。
+
+    共存表は project() の排他制約に委譲する (#3484)。
+    管理対象ラベルのうち desired に含まれないものが stale。
+    """
+    from issuesmith.config import get_config
+    from issuesmith.ops.labels import (
+        _exec_records_from_labels,
+        _is_managed_label,
+        project,
+    )
+
+    ns = get_config().label_namespace
+    exec_recs = _exec_records_from_labels(labels, ns)
+    desired = project(0, queue_state=None, exec_records=exec_recs, andon_inbox=[])
+    managed_current = {lbl for lbl in labels if _is_managed_label(lbl, ns)}
+    return sorted(managed_current - desired)
 
 
 def _make_client() -> Any:

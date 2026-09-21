@@ -14,6 +14,13 @@ subcommands:
   answer <andon-id> <action>  post answer, remove label, call resume hook
 """
 
+_LABELS_USAGE = """\
+usage: issuesmith labels <subcommand> ...
+
+subcommands:
+  reconcile [--fix] [--json]   report (or fix) managed-label divergences across all open Issues
+"""
+
 
 def _cmd_andon(argv: list[str]) -> int:
     from issuesmith.andon import answer, list_open, to_comment
@@ -69,8 +76,35 @@ def _cmd_andon(argv: list[str]) -> int:
     return 2
 
 
+def _cmd_labels(argv: list[str]) -> int:
+    if not argv:
+        print(_LABELS_USAGE, end="", file=sys.stderr)
+        return 1
+    if argv[0] in {"-h", "--help"}:
+        print(_LABELS_USAGE, end="")
+        return 0
+
+    sub, *rest = argv
+
+    if sub == "reconcile":
+        fix = "--fix" in rest
+        as_json = "--json" in rest
+        from ghdag.forge import get_forge
+
+        from issuesmith.ops.labels import reconcile
+        client = get_forge()
+        reconcile(client, fix=fix, as_json=as_json)
+        return 0
+
+    print(f"labels: unknown subcommand: {sub}", file=sys.stderr)
+    print(_LABELS_USAGE, end="", file=sys.stderr)
+    return 2
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     if args and args[0] == "andon":
         raise SystemExit(_cmd_andon(args[1:]))
+    if args and args[0] == "labels":
+        raise SystemExit(_cmd_labels(args[1:]))
     main()
