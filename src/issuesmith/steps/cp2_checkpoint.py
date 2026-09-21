@@ -14,7 +14,7 @@ from ghdag.workflow.state_machine import _load_workflow_config, transition
 from issuesmith.config import StepConfig, get_config
 from issuesmith.context_hook import parse_issue_metadata
 from issuesmith.cp2_tier import determine_cp2_tier
-from issuesmith.engine import resolve, run_guarded
+from issuesmith.engine import RetrySignal, resolve, run_guarded
 from issuesmith.pr_scope import check_pr_diff_scope, filenames_from_pr_files
 from issuesmith.steps.base import StepContext, StepResult
 
@@ -287,7 +287,9 @@ def _run_guarded_design(ctx: StepContext, tier: str, template_name: str) -> int:
         "design",
         template,
         variables,
-        success_statuses=["CP2_PASS", "CP2_SKIPPED"],
+        # R2: a skipped review is not a success. CP2_SKIPPED now falls through to
+        # failure_status via the run_guarded marker check (v0.43.0 rejects it here).
+        success_statuses=["CP2_PASS"],
         failure_status="CP2_FAILED",
         tier=tier,
     )
@@ -388,9 +390,14 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
 
     try:
         rc = _run_guarded_design(ctx, tier, _resolve_template(step))
+    except RetrySignal:
+        # Transient (engine paused): let ops.dispatch defer the step instead of
+        # turning it into a CP2_FAILED decision andon.
+        raise
     except Exception as exc:
         # Mirror bash REJECTED short-circuit: no develop-done rollback on refuse.
         print(f"REJECTED:{exc}", file=sys.stderr)
+        print(f"REASON: {type(exc).__name__}: {exc}")
         return StepResult(exit_code=1, pipeline_status="CP2_FAILED")
 
     if rc == 0:

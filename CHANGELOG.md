@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.43.1 - 2026-09-21
+
+### Fixed
+
+- `steps.cp2_checkpoint`: `success_statuses` no longer lists `CP2_SKIPPED`. Since 0.43.0 (#3505)
+  `engine.run_guarded` raises `ValueError` for `*_SKIPPED` success markers, so every CP2 failed in
+  its deterministic prefix before the review started and raised an empty `decision` andon
+  (sumipan/nexus#3506, 2026-09-21). `CP2_SKIPPED` now falls through to `CP2_FAILED` (R2).
+- `steps.cp2_checkpoint.run` re-raises `engine.RetrySignal` so a paused engine is deferred by
+  `ops.dispatch` instead of being reported as a review failure; other exceptions print a
+  `REASON:` line before `CP2_FAILED`.
+
 ## 0.42.0 - 2026-09-21
 
 ### Changed
