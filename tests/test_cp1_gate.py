@@ -14,7 +14,9 @@ def _scope_root(tmp_path):
     """scope_breadth is fail-closed (#3487); give it an empty measurable root."""
     from unittest.mock import patch
 
-    with patch("issuesmith.gate_rules.scope_breadth._resolve_root", return_value=tmp_path):
+    with patch(
+        "issuesmith.gate_rules.scope_breadth.resolve_scope_root", return_value=tmp_path
+    ):
         yield
 
 # Leading yaml metadata is required for all cases after missing_block (#2541).

@@ -18,6 +18,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   no path for its repo — the exact condition under which SUB1 cannot build a child (#3487)
 - `scope_breadth.root_unavailable`: CP1 fails closed when the cross-repo clone is missing (#3487)
 - `tests/contract/`: fixture parity tests feeding the same body to gate and step (#3487)
+- `steps.scope_gate.resolve_scope_root`: single root resolver shared by CP1 (`gate_rules.scope_breadth`),
+  `gate-preflight`, and P0 (`steps.p0_worktree`) — replaces the private `_resolve_root` copy that
+  diverged from what P0 measured (#3487)
+- CP1 / `b1_verify` narrow oversized `allow_paths` deterministically to the union of the change table
+  and the AC `paths_must_exist` list and continue, instead of failing, when the narrower set is itself
+  within threshold; the rewritten allow_paths are persisted to the Issue body and a comment records the
+  before/after (#3487)
+- `scope_gate.record_p0_trip_metric` + P0 comment wording: a P0 trip after CP1 passed is flagged as a
+  gate contradiction (workflow defect) and recorded as `scope_gate.p0_trip` in `jobs/metrics.jsonl` (#3487)
 
 ### Fixed
 

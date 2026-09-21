@@ -155,14 +155,24 @@ Orchestration (polling, DAG, label transitions) remains in **ghdag** `WorkflowDi
 | `ISSUESMITH_ENGINE_WAIT_MAX_SEC` | env | Max seconds to wait for an engine to leave pause (default `21600`). Wait also stops early to leave ≥300s for the LLM within `ISSUESMITH_TIMEOUT_SEC` |
 | `issuesmith.yaml` | file | Repo / paths / engines / supported_repos / scope_gate (see Quick Start) |
 
-Optional `scope_gate` keys in `issuesmith.yaml` (P0 allow_paths size check, #3349):
+Optional `scope_gate` keys in `issuesmith.yaml` (allow_paths size check, #3349):
 
 | Key | Default | Description |
 |---|---|---|
-| `enabled` | `true` | When `false`, skip measurement and always proceed to P1 |
+| `enabled` | `true` | When `false`, skip measurement and always proceed |
 | `max_files` | `80` | Max tracked files matching `allow_paths` |
 | `max_lines` | `20000` | Max text lines (excludes `*.jsonl` and binaries) |
 | `hard_max_files` | `200` | Ceiling for Issue YAML `scope_gate.max_files` overrides (CP1 enforces) |
+
+**CP1 narrows automatically, P0 is a safety net (#3487).** `steps.scope_gate.resolve_scope_root`
+is the single root resolver both CP1 (`gate_rules.scope_breadth`) and P0 (`steps.p0_worktree`) call,
+so both measure the same tree. When CP1 finds allow_paths over threshold, it deterministically
+narrows to the union of the change table and the AC `paths_must_exist` list, posts a comment with
+the before/after, and continues — it never falls back to the parent's allow_paths and never passes
+silently when the root can't be measured (`scope_breadth.root_unavailable` fails closed). P0 runs
+the same check again after the worktree exists; because CP1 is declared as the preflight-parity rule
+for `SCOPE_TOO_LARGE` (`gate_rules.PREFLIGHT_PARITY`), a trip at P0 means CP1 already should have
+caught it — the comment says so explicitly and `scope_gate.p0_trip` is recorded to `jobs/metrics.jsonl`.
 
 Optional `milestone_chain` keys in `issuesmith.yaml`:
 

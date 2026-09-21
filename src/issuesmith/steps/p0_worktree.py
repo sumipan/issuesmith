@@ -351,12 +351,23 @@ def _handle_scope_gate(
 
     override = scope_gate_mod.override_from_metadata(metadata, cfg)
     allow_paths = _allow_paths_for_scope(ctx, body)
+    # worktree_dir is already the tree P0 prepared for this Issue; measure it
+    # directly rather than re-deriving a root. resolve_scope_root is called
+    # anyway (#3487 AC-1) so CP1 and P0 are provably looking at the same
+    # layout — a freshly branched worktree has the same tracked files as the
+    # base clone resolve_scope_root points at, so a mismatch here would mean
+    # the two roots have actually diverged.
+    expected_root = scope_gate_mod.resolve_scope_root(metadata, get_config())
     measure = scope_gate_mod.measure_scope(worktree_dir, allow_paths)
     verdict = scope_gate_mod.evaluate(measure, cfg, override=override)
     if not verdict.exceeded:
         return None
 
-    comment = scope_gate_mod.format_comment(verdict)
+    # gate_rules.PREFLIGHT_PARITY declares scope_breadth.too_large as the CP1
+    # rule that should have caught this before dispatch (#3487). Tripping here
+    # despite CP1 already having a resolvable root is a workflow defect.
+    preflight_contradiction = expected_root is not None
+    comment = scope_gate_mod.format_comment(verdict, preflight_contradiction=preflight_contradiction)
     try:
         client.issue_comment(issue_number, comment)
     except Exception as exc:  # noqa: BLE001
@@ -365,6 +376,7 @@ def _handle_scope_gate(
         _transition(issue_number, "issuesmith:scope-too-large")
     except Exception as exc:  # noqa: BLE001
         print(f"P0 scope_gate transition failed: {exc}", file=sys.stderr)
+    scope_gate_mod.record_p0_trip_metric(get_config(), issue_number)
     print(
         f"WORKTREE_ERROR: scope too large ({verdict.reason})",
         file=sys.stderr,

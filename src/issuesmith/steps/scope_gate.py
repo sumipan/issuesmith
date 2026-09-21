@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import fnmatch
+import json
 import subprocess
+import time
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
-from issuesmith.config import ScopeGateConfig
+from issuesmith.config import IssuesmithConfig, ScopeGateConfig
 
 
 @dataclass(frozen=True)
@@ -25,6 +27,54 @@ class ScopeVerdict:
     exceeded: bool
     reason: str
     measure: ScopeMeasure
+
+
+def resolve_scope_root(metadata: dict, cfg: IssuesmithConfig) -> Path | None:
+    """Measurement root for ``metadata['target_repo']``: nexus root, or
+    ``paths.external_dir/<repo>`` for cross-repo (#3487).
+
+    Single source of truth for "where does allow_paths get measured", shared by
+    the CP1 breadth gate (``gate_rules.scope_breadth``), ``gate-preflight``, and
+    this P0 step. Same directory layout ``context_hook.target_clone_path`` builds
+    and ``steps.p0_worktree`` clones into, so every caller measures the same tree.
+    Returns ``None`` when the target is cross-repo and no clone exists yet —
+    callers must fail closed, never substitute a default.
+    """
+    target_repo = (metadata.get("target_repo") or "").strip()
+    # Issues are only ever filed in nexus (AGENTS.md SS13); "home" is nexus
+    # itself regardless of which repo this issuesmith checkout's own
+    # cfg.repo names (dev/test runs of this package are self-hosted under
+    # sumipan/issuesmith, which is unrelated to where Issues live).
+    if not target_repo or target_repo == "sumipan/nexus":
+        return cfg.root
+    parts = target_repo.split("/", 1)
+    if len(parts) != 2:
+        return None
+    external = cfg.paths.external_dir / parts[1]
+    if not (external / ".git").exists():
+        return None
+    return external
+
+
+def record_p0_trip_metric(cfg: IssuesmithConfig, issue_number: int) -> None:
+    """Best-effort JSONL append: P0 stopped on a scope this CP1 should have caught.
+
+    scope_breadth.too_large is the declared preflight-parity rule for
+    SCOPE_TOO_LARGE (gate_rules.PREFLIGHT_PARITY). Reaching P0 anyway is a
+    workflow defect, not a user error — record it as ``scope_gate.p0_trip`` so
+    the gate contradiction is visible without reading Issue comments one by one.
+    Never raises: a metrics write failure must not fail the pipeline step.
+    """
+    record = {
+        "event": "scope_gate.p0_trip",
+        "issue_number": issue_number,
+        "timestamp": time.time(),
+    }
+    try:
+        with open(cfg.paths.metrics, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception:  # noqa: BLE001 — metrics are best-effort, never fail the step
+        pass
 
 
 def _top_dir(path: str) -> str:
@@ -138,12 +188,30 @@ def evaluate(
     return ScopeVerdict(exceeded=False, reason="", measure=measure)
 
 
-def format_comment(verdict: ScopeVerdict) -> str:
-    """Markdown Issue comment for SCOPE_TOO_LARGE."""
+def format_comment(verdict: ScopeVerdict, *, preflight_contradiction: bool = False) -> str:
+    """Markdown Issue comment for SCOPE_TOO_LARGE.
+
+    ``preflight_contradiction=True`` (#3487): P0 is a safety net, not the
+    primary enforcement point — CP1 (scope_breadth) is declared in
+    gate_rules.PREFLIGHT_PARITY as the gate that should have caught this before
+    dispatch. Tripping here means the gate contradicted itself, which is a
+    workflow defect the operator should treat as a bug report, not a normal
+    "split this Issue" ask.
+    """
     m = verdict.measure
     rows = "\n".join(f"| `{d}` | {n} |" for d, n in m.by_dir.items()) or "| (none) | 0 |"
+    contradiction_note = (
+        (
+            "\n**事前ゲート通過後の超過＝ゲート矛盾**: この Issue は CP1 (`scope_breadth`) "
+            "を通過して P0 まで進みました。P0 は安全網であり、本来ここで超過は発火しません。"
+            "CP1 側の自動絞り込みロジックにワークフロー欠陥がある可能性があります。\n"
+        )
+        if preflight_contradiction
+        else ""
+    )
     return (
         "## P0 中断: allow_paths のスコープが大きすぎます\n"
+        f"{contradiction_note}"
         "\n"
         f"**理由**: `{verdict.reason}`\n"
         "\n"

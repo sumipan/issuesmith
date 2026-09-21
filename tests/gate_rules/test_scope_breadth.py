@@ -108,18 +108,23 @@ def test_missing_measurement_root_is_a_violation():
 
 
 def test_cross_repo_root_uses_external_dir_repo_layout(tmp_path):
-    """Root is paths.external_dir/<repo> — the layout context_hook clones into."""
+    """Root is paths.external_dir/<repo> — the layout context_hook clones into.
+
+    scope_breadth delegates root resolution to steps.scope_gate.resolve_scope_root
+    (#3487 AC-1), the same function p0_worktree and gate-preflight use — see
+    tests/test_scope_gate_root.py for the function's own coverage.
+    """
     import unittest.mock as mock
 
-    from issuesmith.gate_rules import scope_breadth as sb
+    from issuesmith.steps.scope_gate import resolve_scope_root
 
     external = tmp_path / ".claude" / "external"
     (external / "issuesmith" / ".git").mkdir(parents=True)
     cfg = mock.MagicMock()
+    cfg.repo = "sumipan/nexus"
     cfg.root = tmp_path
     cfg.paths.external_dir = external
-    with mock.patch.object(sb, "get_config", return_value=cfg):
-        root = sb._resolve_root({"target_repo": "sumipan/issuesmith"})
-        nexus_root = sb._resolve_root({"target_repo": "sumipan/nexus"})
+    root = resolve_scope_root({"target_repo": "sumipan/issuesmith"}, cfg)
+    nexus_root = resolve_scope_root({"target_repo": "sumipan/nexus"}, cfg)
     assert root == external / "issuesmith"
     assert nexus_root == tmp_path
