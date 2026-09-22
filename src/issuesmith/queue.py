@@ -461,18 +461,6 @@ def _recover_untracked_in_flight(
     return recovered
 
 
-def _halt_resolved(snap: QueueSnapshot, client: ForgePort) -> bool:
-    reason = snap.halt_reason or ""
-    if "is still OPEN" in reason:
-        return len(snap.in_flight) == 0
-    if "without terminal label" in reason:
-        match = re.search(r"#(\d+)", reason)
-        if not match:
-            return False
-        issue_number = int(match.group(1))
-        return _issue_is_terminal(client, issue_number)
-    return False
-
 
 def _required_engines_paused(
     quota_path: Path | None = None,
@@ -1225,11 +1213,26 @@ def dispatch_one(
         snap = store.snapshot()
 
         if snap.halt:
-            if _halt_resolved(snap, client):
-                store.clear_halt()
-                snap = store.snapshot()
-            else:
-                return DispatchResult(False, reason=f"halted: {snap.halt_reason}")
+            # Legacy halts (no observe event) may self-resolve when the triggering
+            # condition clears (e.g. in_flight drains after last_issue was OPEN).
+            if snap.halt_event is None:
+                _reason = snap.halt_reason or ""
+                _resolved = False
+                if "is still OPEN" in _reason:
+                    _resolved = len(snap.in_flight) == 0
+                elif "without terminal label" in _reason:
+                    _m = re.search(r"#(\d+)", _reason)
+                    if _m:
+                        _resolved = _issue_is_terminal(client, int(_m.group(1)))
+                if _resolved:
+                    store.clear_halt()
+                    snap = store.snapshot()
+
+            if snap.halt:
+                halt_scope = snap.halt_scope
+                if halt_scope == "all":
+                    return DispatchResult(False, reason=f"halted: {snap.halt_reason}")
+                # Non-"all" scopes are checked per-request in the dispatch loop below.
 
         if snap.last_issue is not None:
             try:
@@ -1246,23 +1249,11 @@ def dispatch_one(
             if not terminal_ok and milestone_last_issue_terminal_ok(last_labels):
                 terminal_ok = True
             if not terminal_ok:
-                if (
-                    last_state == "OPEN"
-                    and _pipeline_idle_enough_v2(snap, idle_minutes, now)
-                ):
-                    store.set_halt(
-                        True,
-                        f"last_issue #{snap.last_issue} is still OPEN while pipeline idle for >= {idle_minutes} minutes",
-                    )
-                    snap = store.snapshot()
-                    return DispatchResult(
-                        False,
-                        reason=f"halted: {snap.halt_reason}",
-                    )
                 if last_state == "CLOSED":
                     store.set_halt(
                         True,
-                        f"last_issue #{snap.last_issue} is CLOSED without terminal label (labels: {sorted(last_labels)})",
+                        f"last_issue #{snap.last_issue} is CLOSED without terminal label"
+                        f" (labels: {sorted(last_labels)})",
                     )
                     snap = store.snapshot()
                     return DispatchResult(False, reason="previous issue not terminal")
@@ -1289,6 +1280,14 @@ def dispatch_one(
                 continue
             if not _source_in_window(req.source, req.actor_kind, now, start, end):
                 continue
+            if snap.halt:
+                halt_scope = snap.halt_scope
+                if halt_scope.startswith("phase:") and req.phase == halt_scope[len("phase:"):]:
+                    continue
+                elif halt_scope.startswith("repo:"):
+                    meta = snap.request_meta.get(rid) or {}
+                    if meta.get("target_repo", "") == halt_scope[len("repo:"):]:
+                        continue
             engine = _resolve_engine(req.phase)
             role = _phase_role_map()[req.phase]
             paused_for_role = _required_engines_paused(role=role)
@@ -1845,7 +1844,7 @@ def _cmd_migrate(args: argparse.Namespace) -> int:
             if night.get("last_issue") is not None:
                 store.set_last_issue(night.get("last_issue"))
             if night.get("halt") is True:
-                store.set_halt(True, night.get("halt_reason"))
+                store.set_halt(True, night.get("halt_reason"), event="night_seed")
 
     created = ensure_seeds_enqueued(store, seed_path=seed_path)
     snap = store.snapshot()

@@ -25,6 +25,7 @@ commands:
   recover  redispatch  convert-to-milestone
   milestone  status / resume (sub_issues_summary progress + child table)
   config show
+  observe [--apply] [--json]
   apply  ingest-review  (moved to tools/stash/; exit 2)
 """
 
@@ -261,6 +262,44 @@ def _cmd_config(argv: list[str]) -> int:
     return _cmd_config_show(argv[1:])
 
 
+def _cmd_observe(argv: list[str]) -> int:
+    import argparse
+    import json as _json
+
+    parser = argparse.ArgumentParser(prog="issuesmith observe")
+    parser.add_argument("--apply", action="store_true", help="Execute policy actions")
+    parser.add_argument("--json", action="store_true", dest="as_json", help="JSON output")
+    args = parser.parse_args(argv)
+
+    from ghdag.forge import get_forge
+    from issuesmith.config import get_config
+    from issuesmith.observe import observe
+    from issuesmith.queue_store import QueueStore
+
+    cfg = get_config()
+    store = QueueStore()
+    snapshot = store.snapshot()
+    client = get_forge()
+
+    events = observe(snapshot, client, cfg)
+
+    if args.as_json:
+        import dataclasses
+        print(_json.dumps([dataclasses.asdict(e) for e in events], ensure_ascii=False))
+    else:
+        for evt in events:
+            print(f"  {evt.kind}: {evt}")
+
+    if args.apply:
+        from issuesmith.observe.policy import evaluate, execute
+        actions = evaluate(events, cfg.observe)
+        execute(actions, store, sinks=[])
+        if not args.as_json:
+            print(f"applied {len(actions)} action(s)")
+
+    return 0
+
+
 def _cmd_stash_moved(_argv: list[str]) -> int:
     print(_STASH_MOVED_MSG, file=sys.stderr)
     return 2
@@ -294,6 +333,7 @@ _HANDLERS = {
     "convert-to-milestone": _cmd_convert_to_milestone,
     "milestone": _cmd_milestone,
     "config": _cmd_config,
+    "observe": _cmd_observe,
     "apply": _cmd_stash_moved,
     "ingest-review": _cmd_stash_moved,
 }
