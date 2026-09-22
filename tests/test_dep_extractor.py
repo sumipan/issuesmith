@@ -109,7 +109,7 @@ def test_open_dependency_blocks():
     assert len(result.blocking_deps) == 1
     assert result.blocking_deps[0].issue == 500
     assert result.blocking_deps[0].state == "OPEN"
-    assert result.blocking_deps[0].has_merge_done is False
+    assert result.blocking_deps[0].has_terminal_label is False
 
 
 def test_rescue_path_merged_pr_passes():

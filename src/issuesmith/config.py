@@ -208,6 +208,9 @@ class ScopeCouplingConfig:
     ignore_symbols: tuple[str, ...] = ()
 
 
+_DEFAULT_TERMINAL_LABELS: tuple[str, ...] = ("issuesmith:merge-done", "bump:done")
+
+
 @dataclass(frozen=True)
 class IssuesmithConfig:
     repo: str
@@ -227,6 +230,7 @@ class IssuesmithConfig:
     forbidden_pr_paths: tuple[str, ...] = _DEFAULT_FORBIDDEN_PR_PATHS
     scope_gate: ScopeGateConfig = field(default_factory=ScopeGateConfig)
     scope_coupling: ScopeCouplingConfig = field(default_factory=ScopeCouplingConfig)
+    terminal_labels: tuple[str, ...] = _DEFAULT_TERMINAL_LABELS
 
 
 _cached: IssuesmithConfig | None = None
@@ -488,6 +492,14 @@ def _build_scope_gate(raw: Mapping[str, Any] | None) -> ScopeGateConfig:
     )
 
 
+def _build_terminal_labels(raw: Any) -> tuple[str, ...]:
+    if raw is None:
+        return _DEFAULT_TERMINAL_LABELS
+    if not isinstance(raw, list):
+        raise ValueError("terminal_labels must be a list of strings")
+    return tuple(str(x) for x in raw)
+
+
 def _build_scope_coupling(raw: Mapping[str, Any] | None) -> ScopeCouplingConfig:
     if not raw:
         return ScopeCouplingConfig()
@@ -548,4 +560,5 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         forbidden_pr_paths=_build_forbidden_pr_paths(data.get("forbidden_pr_paths")),
         scope_gate=_build_scope_gate(scope_gate_raw),
         scope_coupling=_build_scope_coupling(scope_coupling_raw),
+        terminal_labels=_build_terminal_labels(data.get("terminal_labels")),
     )
