@@ -230,7 +230,8 @@ class TestAC3AutoWiden:
             "target_repo: sumipan/issuesmith\n"
             "base_branch: main\n"
             "allow_paths:\n"
-            + "".join(f"  - src/issuesmith/file{i}.py\n" for i in range(80))
+            "  - src/issuesmith/engine.py\n"
+            + "".join(f"  - src/issuesmith/file{i}.py\n" for i in range(79))
             + "```\n\n"
             "## Design\n\n"
             "`run_guarded` is changed.\n"
@@ -249,6 +250,8 @@ class TestAC3AutoWiden:
         assert violations
         assert all(not v.auto_fixable for v in violations)
         assert rule.autofix_new_allow_paths is None
+        # sumipan/nexus#3527 AC-3: the contradiction with scope_breadth is visible in the message
+        assert all("scope_breadth max_files=80" in v.message for v in violations)
 
     def test_widen_exactly_at_max_files_succeeds(self):
         """Merged count == max_files (80): 79 allow_paths + 1 missing = 80."""
@@ -469,3 +472,78 @@ def test_disabled_gate_returns_no_violations_and_does_not_scan(monkeypatch):
     assert rule.check(body, []) == []
     assert rule.autofix_note is None
     grep.assert_not_called()
+
+
+
+# ---------------------------------------------------------------------------
+# sumipan/nexus#3527 — required vs reference keys, scope_mode: internal
+# ---------------------------------------------------------------------------
+
+_3431_BODY = (
+    "```yaml\n"
+    "target_repo: sumipan/ghdag\n"
+    "base_branch: main\n"
+    "allow_paths:\n"
+    "  - src/ghdag/workflow/dispatcher.py\n"
+    "  - src/ghdag/workflow/loader.py\n"
+    "{scope_mode}"
+    "```\n\n"
+    "## Design\n\n"
+    "`WorkflowDispatcher` reloads definitions; `load_workflows` is called per poll.\n"
+    "The `dispatcher` module keeps its public interface.\n"
+)
+
+
+def _make_grep_mock_3431():
+    """load_workflows is defined in loader.py (changed) and used by 3 callers; the
+    'dispatcher' basename matches 40 files by string only."""
+    callers = [f"src/ghdag/cli/commands/{n}.py" for n in ("watch", "run", "status")]
+    noise = [f"src/ghdag/x/mod{i}.py" for i in range(40)]
+
+    def fake_grep(root, pattern, pathspec):
+        if pattern == "def load_workflows":
+            return ["src/ghdag/workflow/loader.py"]
+        if pattern == "class WorkflowDispatcher":
+            return ["src/ghdag/workflow/dispatcher.py"]
+        if pattern.startswith("def ") or pattern.startswith("class "):
+            return []
+        if pattern == "load_workflows" and pathspec == "src":
+            return ["src/ghdag/workflow/loader.py", *callers]
+        if pattern == "WorkflowDispatcher" and pathspec == "src":
+            return ["src/ghdag/workflow/dispatcher.py"]
+        if pattern == "dispatcher" and pathspec == "src":
+            return noise
+        return []
+
+    return fake_grep
+
+
+class TestScopeModeInternal:
+    def test_internal_mode_returns_no_violations(self):
+        """AC-1: scope_mode: internal declares the public interface unchanged."""
+        rule = ScopeCouplingRules()
+        body = _3431_BODY.format(scope_mode="scope_mode: internal\n")
+        with mock.patch("issuesmith.gate_rules.scope_coupling.resolve_scope_root", return_value=_FAKE_ROOT):
+            with mock.patch("issuesmith.gate_rules.scope_coupling._git_grep", side_effect=_make_grep_mock_3431()):
+                assert rule.check(body, []) == []
+
+    def test_required_only_from_changed_symbols_reference_in_hint(self):
+        """AC-2: only callers of public symbols defined in changed files are required; string-only
+        matches (the 'dispatcher' basename) are listed for reference and never widen allow_paths."""
+        rule = ScopeCouplingRules()
+        body = _3431_BODY.format(scope_mode="")
+        with mock.patch("issuesmith.gate_rules.scope_coupling.resolve_scope_root", return_value=_FAKE_ROOT):
+            with mock.patch("issuesmith.gate_rules.scope_coupling._git_grep", side_effect=_make_grep_mock_3431()):
+                violations = rule.check(body, [])
+        assert len(violations) == 1
+        v = violations[0]
+        assert v.rule_id == "scope_coupling.callers_outside_allow_paths"
+        for n in ("watch", "run", "status"):
+            assert f"src/ghdag/cli/commands/{n}.py" in v.message
+        assert "src/ghdag/x/mod0.py" not in v.message
+        assert "reference (string match only" in v.fix_hint
+        assert "src/ghdag/x/mod0.py" in v.fix_hint
+        assert v.auto_fixable is True
+        assert rule.autofix_new_allow_paths is not None
+        assert len(rule.autofix_new_allow_paths) == 2 + 3
+        assert not any("x/mod" in p for p in rule.autofix_new_allow_paths)

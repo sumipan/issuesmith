@@ -164,6 +164,12 @@ Optional `scope_gate` keys in `issuesmith.yaml` (allow_paths size check, #3349):
 | `max_lines` | `20000` | Max text lines (excludes `*.jsonl` and binaries) |
 | `hard_max_files` | `200` | Ceiling for Issue YAML `scope_gate.max_files` overrides (CP1 enforces) |
 
+Issue YAML may also declare `scope_mode: internal` (sumipan/nexus#3527): the change keeps the
+public interface of the listed files, so the `scope_coupling` gate does not require callers or
+tests outside `allow_paths` to follow. Without it, `scope_coupling` requires only callers of
+public symbols defined in the changed files and basenames of deleted / moved files; files that
+match by string only are listed for reference and never widen `allow_paths`.
+
 **CP1 narrows automatically, P0 is a safety net (#3487).** `steps.scope_gate.resolve_scope_root`
 is the single root resolver both CP1 (`gate_rules.scope_breadth`) and P0 (`steps.p0_worktree`) call,
 so both measure the same tree. When CP1 finds allow_paths over threshold, it deterministically
