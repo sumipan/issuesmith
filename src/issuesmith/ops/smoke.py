@@ -12,7 +12,7 @@ dispatcher と同じ手順で:
 
 Usage:
     python3 scripts/issuesmith-smoke.py 901 903 906
-    # 引数なしで実行すると open な reset / develop-ready / merge-ready ラベル付き Issue を自動収集
+    # 引数なしで実行すると open な reset / ready ラベル付き Issue を自動収集
 """
 from __future__ import annotations
 
@@ -39,10 +39,13 @@ def _fetch_issue_body(issue_number: int) -> str:
 
 def _open_issuesmith_issues() -> list[int]:
     """Return up to 5 open Issues labeled issuesmith:* (fallback sample set)."""
+    from issuesmith.queue_triage import READY_LABEL
     client = get_forge()
+    ns = _cfg.label_namespace
+    sample_labels = [f"{ns}:reset"] + [v for v in READY_LABEL.values()]
     seen: set[int] = set()
     numbers: list[int] = []
-    for label in ("issuesmith:reset", "issuesmith:develop-ready", "issuesmith:merge-ready"):
+    for label in sample_labels:
         if len(numbers) >= 5:
             break
         for issue in client.list_issues(label, "open"):
@@ -156,32 +159,26 @@ def _check_no_deprecated_state_machine_references() -> list[str]:
     return errors
 
 
-def _check_issuesmith_yml_state_machine() -> list[str]:
-    """issuesmith.yml に state machine 宣言が揃っているか検査。"""
+def _check_issuesmith_yml_state_machine(workflow_name: str = "issuesmith") -> list[str]:
+    """Verify that the workflow YAML has required state machine declarations."""
+    from issuesmith.queue_triage import DONE_LABEL, RUNNING_LABEL
     errors: list[str] = []
     yml = yaml.safe_load(WORKFLOW_YAML.read_text(encoding="utf-8"))
-    if yml.get("label_namespace") != "issuesmith":
-        errors.append("issuesmith.yml: label_namespace: issuesmith が未定義")
-    if yml.get("reset_label") != "issuesmith:reset":
-        errors.append('issuesmith.yml: reset_label: "issuesmith:reset" が未定義')
+    ns = yml.get("label_namespace") or ""
+    if ns != workflow_name:
+        errors.append(f"{workflow_name}.yml: label_namespace: {workflow_name} が未定義")
+    reset_lbl = f"{ns}:reset"
+    if yml.get("reset_label") != reset_lbl:
+        errors.append(f'{workflow_name}.yml: reset_label: "{reset_lbl}" が未定義')
     transitions = yml.get("transitions") or {}
-    required_edges = {
-        ("issuesmith:draft-running", "issuesmith:draft-done"),
-        ("issuesmith:draft-running", "issuesmith:develop-ready"),
-        ("issuesmith:draft-done", "issuesmith:develop-ready"),
-        ("issuesmith:develop-running", "issuesmith:develop-done"),
-        ("issuesmith:develop-running", "issuesmith:merge-ready"),
-        ("issuesmith:develop-running", "issuesmith:draft-done"),
-        ("issuesmith:develop-done", "issuesmith:merge-ready"),
-        ("issuesmith:merge-running", "issuesmith:merge-done"),
-        ("issuesmith:merge-running", "issuesmith:migrate-ready"),
-        ("issuesmith:migrate-running", "issuesmith:merge-ready"),
-        ("issuesmith:migrate-running", "issuesmith:reset"),
-        ("issuesmith:sub-running", "issuesmith:sub-done"),
-    }
+    required_edges: list[tuple[str, str]] = []
+    for pname, running in RUNNING_LABEL.items():
+        done = DONE_LABEL.get(pname, "")
+        if done:
+            required_edges.append((running, done))
     for src, dst in required_edges:
         if dst not in (transitions.get(src) or []):
-            errors.append(f"issuesmith.yml: transitions に {src} → {dst} が無い")
+            errors.append(f"{workflow_name}.yml: transitions に {src} → {dst} が無い")
     return errors
 
 
@@ -221,14 +218,23 @@ def _check_raw_add_label_in_templates() -> list[str]:
 
 
 def main(argv: list[str]) -> int:
-    if argv:
-        issues = [int(a) for a in argv]
+    import argparse
+    parser = argparse.ArgumentParser(description="issuesmith pipeline smoke test")
+    parser.add_argument("issues", nargs="*", type=int)
+    parser.add_argument("--workflow", default="issuesmith", help="workflow name")
+    args = parser.parse_args(argv)
+    workflow_name = args.workflow
+    if args.issues:
+        issues = args.issues
     else:
         issues = _open_issuesmith_issues()
         if not issues:
-            print("ERROR: 検査対象の Issue が無い。引数で Issue 番号を渡すか、"
-                  "issuesmith:reset/develop-ready/merge-ready ラベル付きの open Issue を用意",
-                  file=sys.stderr)
+            ns = _cfg.label_namespace
+            print(
+                f"ERROR: 検査対象の Issue が無い。引数で Issue 番号を渡すか、"
+                f"{ns}:reset / ready ラベル付きの open Issue を用意",
+                file=sys.stderr,
+            )
             return 2
 
     all_errors: list[str] = []
@@ -242,8 +248,8 @@ def main(argv: list[str]) -> int:
     else:
         print("  OK  workflows/ scripts/ に旧ラベル遷移 CLI 参照なし")
 
-    print("\n=== issuesmith.yml state machine 宣言 ===")
-    yml_sm_errors = _check_issuesmith_yml_state_machine()
+    print(f"\n=== {workflow_name}.yml state machine 宣言 ===")
+    yml_sm_errors = _check_issuesmith_yml_state_machine(workflow_name)
     if yml_sm_errors:
         all_errors.extend(yml_sm_errors)
         for e in yml_sm_errors:

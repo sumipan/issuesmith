@@ -18,7 +18,7 @@ from issuesmith.ac_contract import extract_contract_from_body, run_checks
 from issuesmith.config import StepConfig, get_config
 from issuesmith.engine import run_guarded
 from issuesmith.m2_gate import check_gate, synthesize_contract_failures
-from issuesmith.ops.label_hygiene import run as run_label_hygiene
+from issuesmith.ops.labels import run_hygiene as run_label_hygiene
 from issuesmith.steps.base import StepContext, StepResult
 
 

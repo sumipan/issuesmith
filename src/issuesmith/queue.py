@@ -161,8 +161,8 @@ def _iter_issuesmith_exec_records() -> list[tuple[str, int | None]]:
 def _issue_has_incomplete_exec(issue_number: int) -> bool:
     """True when any issuesmith exec UUID for ``issue_number`` lacks a DONE marker.
 
-    Used by design-slot in_flight release so a brief ``draft-done`` window
-    (before ``develop-ready`` / watcher impl dispatch) does not drop tracking
+    Used by design-slot in_flight release so a brief post-design-phase window
+    (before the impl watcher dispatch) does not drop tracking
     while brushup or impl DAG rows are still pending (#3092).
     """
     for uuid, issue in _iter_issuesmith_exec_records():
@@ -296,8 +296,9 @@ def _issue_is_terminal(client: ForgePort, issue_number: int) -> bool:
         return False
     labels = label_names(issue)
     state = str(issue.get("state", "")).upper()
+    merge_done = DONE_LABEL.get("merge", "")
     return state == "CLOSED" and (
-        "issuesmith:merge-done" in labels or bool(labels & TERMINAL_WITHOUT_MERGE)
+        (bool(merge_done) and merge_done in labels) or bool(labels & TERMINAL_WITHOUT_MERGE)
     )
 
 
@@ -331,9 +332,9 @@ def _allow_paths_conflict(
             issue = entry.get("issue")
             return int(issue) if isinstance(issue, int) else None
         entry_paths = _normalize_allow_paths(raw_paths)
-        for p1 in candidate_paths:
-            for p2 in entry_paths:
-                if fnmatch.fnmatch(p1, p2) or fnmatch.fnmatch(p2, p1):
+        for cpath in candidate_paths:
+            for epath in entry_paths:
+                if fnmatch.fnmatch(cpath, epath) or fnmatch.fnmatch(epath, cpath):
                     issue = entry.get("issue")
                     return int(issue) if isinstance(issue, int) else None
     return None
@@ -347,10 +348,10 @@ def _conflict_overlap_path(
     if not raw_paths:
         return "(legacy in_flight)"
     entry_paths = _normalize_allow_paths(raw_paths)
-    for p1 in candidate_paths:
-        for p2 in entry_paths:
-            if fnmatch.fnmatch(p1, p2) or fnmatch.fnmatch(p2, p1):
-                return p2 if fnmatch.fnmatch(p1, p2) else p1
+    for cpath in candidate_paths:
+        for epath in entry_paths:
+            if fnmatch.fnmatch(cpath, epath) or fnmatch.fnmatch(epath, cpath):
+                return epath if fnmatch.fnmatch(cpath, epath) else cpath
     return entry_paths[0] if entry_paths else "?"
 
 
@@ -358,8 +359,9 @@ def _in_flight_should_release(client: ForgePort, entry: dict[str, Any]) -> bool:
     """True when an in_flight entry should be dropped.
 
     Terminal issues always release. Design-slot entries also release after
-    ``draft-done`` once develop has not yet started (absorbs former milestone C0),
-    but only when the issue has no incomplete issuesmith exec records (#3092).
+    the design phase completes once the impl phase has not yet started
+    (absorbs former milestone C0), but only when the issue has no incomplete
+    issuesmith exec records (#3092).
     """
     issue_num = entry.get("issue")
     if not isinstance(issue_num, int):
@@ -370,12 +372,13 @@ def _in_flight_should_release(client: ForgePort, entry: dict[str, Any]) -> bool:
         return False
     labels = label_names(issue)
     state = str(issue.get("state", "")).upper()
+    _merge_done = DONE_LABEL.get("merge", "")
     if state == "CLOSED" and (
-        "issuesmith:merge-done" in labels or bool(labels & TERMINAL_WITHOUT_MERGE)
+        (bool(_merge_done) and _merge_done in labels) or bool(labels & TERMINAL_WITHOUT_MERGE)
     ):
         return True
-    if DONE_LABEL["sub"] in labels and not (
-        labels & {READY_LABEL["sub"], RUNNING_LABEL["sub"]}
+    if DONE_LABEL.get("sub", "") in labels and DONE_LABEL.get("sub", "") and not (
+        labels & {READY_LABEL.get("sub", ""), RUNNING_LABEL.get("sub", "")} - {""}
     ):
         # milestone 親は sub-done で自分の DAG を終え、実装は子 Issue が担う。親は
         # 子が全部マージされるまで CLOSE されないので、ここで解放しないと親と
@@ -399,7 +402,7 @@ def _in_flight_should_release(client: ForgePort, entry: dict[str, Any]) -> bool:
 
 
 def _find_untracked_running(client: ForgePort, snap: QueueSnapshot) -> list[int]:
-    """Return develop-running issue numbers absent from ``snap.in_flight``."""
+    """Return impl-phase running issue numbers absent from ``snap.in_flight``."""
     try:
         issues = client.list_issues(RUNNING_LABEL["develop"], state="open")
     except Exception:
@@ -422,11 +425,11 @@ def _find_untracked_running(client: ForgePort, snap: QueueSnapshot) -> list[int]
 def _recover_untracked_in_flight(
     client: ForgePort, store: QueueStore, snap: QueueSnapshot
 ) -> int:
-    """Re-register develop-running Issues missing from in_flight (#3092 AC-2).
+    """Re-register impl-phase running Issues missing from in_flight (#3092 AC-2).
 
     Watcher dispatches impl DAGs without queue participation; if a design slot
-    was released in the draft-done gap, those Issues vanish from tracking and
-    orphan-gate the whole queue. Recover before ``_dispatch_pipeline_ready``.
+    was released in the post-design-phase gap, those Issues vanish from tracking
+    and orphan-gate the whole queue. Recover before ``_dispatch_pipeline_ready``.
     """
     untracked = _find_untracked_running(client, snap)
     recovered = 0
@@ -696,10 +699,6 @@ def _list_open_issues(client: ForgePort) -> list[dict[str, Any]]:
     return out
 
 
-_BRUSHUP_STEPS = frozenset({"b1", "cp1_gate", "cp1"})
-_IMPL_STEPS = frozenset({"p0", "p1", "p2", "p2r", "p3", "cp2", "m1", "m1r", "m2"})
-
-
 WORKFLOW_NAME = "issuesmith"
 _PHASE_HANDLER: dict[str, str] = {
     "draft": "brushup",
@@ -707,6 +706,38 @@ _PHASE_HANDLER: dict[str, str] = {
     "merge": "merge",
     "sub": "subissue",
 }
+_HANDLER_TO_PHASE: dict[str, str] = {v: k for k, v in _PHASE_HANDLER.items()}
+
+
+def _step_to_handler_map() -> dict[str, str]:
+    """Map step_id to handler_name by reading the workflow YAML."""
+    from issuesmith.config import get_config
+    workflow_path = get_config().paths.workflow
+    if not workflow_path.exists():
+        return {}
+    try:
+        import yaml as _yaml
+        yml = _yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+        result: dict[str, str] = {}
+        for handler_name, handler_cfg in (yml.get("handlers") or {}).items():
+            if not isinstance(handler_cfg, dict):
+                continue
+            for step in (handler_cfg.get("steps") or []):
+                if not isinstance(step, dict):
+                    continue
+                sid = step.get("id")
+                if isinstance(sid, str):
+                    result[sid] = handler_name
+        return result
+    except Exception:
+        return {}
+
+
+def _phase_handler_map() -> dict[str, str]:
+    """Return phase -> handler mapping from config (falls back to _PHASE_HANDLER)."""
+    from issuesmith.config import get_config
+    cfg_map = {p.name: p.handler for p in get_config().phases if p.handler}
+    return cfg_map if cfg_map else dict(_PHASE_HANDLER)
 _MAX_GENERATION_SCAN = 16
 
 
@@ -755,21 +786,33 @@ def _trigger_ghdag_redispatch(issue: int, handler: str, reason: str) -> int:
 
 
 def handler_for_failed_step(failed_step: str, labels: set[str]) -> str:
-    if failed_step in _BRUSHUP_STEPS:
-        return "brushup"
-    if failed_step in {"m1", "m1r", "m2"} and (
-        RUNNING_LABEL["merge"] in labels or READY_LABEL["merge"] in labels
-    ):
+    step_map = _step_to_handler_map()
+    h = step_map.get(failed_step)
+    if h:
+        return h
+    merge_running = RUNNING_LABEL.get("merge", "")
+    merge_ready = READY_LABEL.get("merge", "")
+    if (merge_running and merge_running in labels) or (merge_ready and merge_ready in labels):
         return "merge"
     return "impl"
 
 
 def infer_redispatch_phase(failed_step: str, labels: set[str]) -> str:
-    if failed_step in _BRUSHUP_STEPS or DONE_LABEL["draft"] not in labels and (
-        READY_LABEL["draft"] in labels or RUNNING_LABEL["draft"] in labels
+    step_map = _step_to_handler_map()
+    handler = step_map.get(failed_step)
+    step_phase = _HANDLER_TO_PHASE.get(handler, "") if handler else ""
+    draft_done = DONE_LABEL.get("draft", "")
+    draft_ready = READY_LABEL.get("draft", "")
+    draft_running = RUNNING_LABEL.get("draft", "")
+    if step_phase == "draft" or (
+        draft_done
+        and draft_done not in labels
+        and ((draft_ready and draft_ready in labels) or (draft_running and draft_running in labels))
     ):
         return "draft"
-    if RUNNING_LABEL["merge"] in labels or READY_LABEL["merge"] in labels:
+    merge_running = RUNNING_LABEL.get("merge", "")
+    merge_ready = READY_LABEL.get("merge", "")
+    if (merge_running and merge_running in labels) or (merge_ready and merge_ready in labels):
         return "merge"
     return "develop"
 
@@ -844,17 +887,19 @@ def _phase_preconditions(phase: str, issue: dict[str, Any], client: ForgePort, i
                 return False, f"{lab} present"
         return _deps_ok()
     if phase == "develop":
-        if DONE_LABEL["draft"] not in labels:
-            return False, "draft-done required"
-        for lab in (READY_LABEL["develop"], RUNNING_LABEL["develop"], DONE_LABEL["develop"]):
-            if lab in labels:
+        _prereq = DONE_LABEL.get("draft", "")
+        if _prereq and _prereq not in labels:
+            return False, f"{_prereq} required"
+        for lab in (READY_LABEL.get("develop", ""), RUNNING_LABEL.get("develop", ""), DONE_LABEL.get("develop", "")):
+            if lab and lab in labels:
                 return False, f"{lab} present"
         return _deps_ok()
     if phase == "sub":
-        if DONE_LABEL["draft"] not in labels:
-            return False, "draft-done required"
-        for lab in (READY_LABEL["sub"], RUNNING_LABEL["sub"], DONE_LABEL["sub"]):
-            if lab in labels:
+        _prereq = DONE_LABEL.get("draft", "")
+        if _prereq and _prereq not in labels:
+            return False, f"{_prereq} required"
+        for lab in (READY_LABEL.get("sub", ""), RUNNING_LABEL.get("sub", ""), DONE_LABEL.get("sub", "")):
+            if lab and lab in labels:
                 return False, f"{lab} present"
         return _deps_ok()
     if phase == "merge":
@@ -1189,8 +1234,9 @@ def dispatch_one(
                 return DispatchResult(False, reason=f"last_issue fetch failed: {exc}")
             last_labels = label_names(last)
             last_state = str(last.get("state", "")).upper()
+            _merge_done_lbl = DONE_LABEL.get("merge", "")
             terminal_ok = last_state == "CLOSED" and (
-                "issuesmith:merge-done" in last_labels
+                (bool(_merge_done_lbl) and _merge_done_lbl in last_labels)
                 or bool(last_labels & TERMINAL_WITHOUT_MERGE)
             )
             if not terminal_ok and milestone_last_issue_terminal_ok(last_labels):
@@ -1219,7 +1265,7 @@ def dispatch_one(
                 if _serial_concurrency():
                     return DispatchResult(False, reason="previous issue not terminal")
 
-        # AC-2: re-register develop-running Issues missing from in_flight before
+        # AC-2: re-register impl-phase running Issues missing from in_flight before
         # orphan detection in _dispatch_pipeline_ready can halt the whole queue.
         recovered = _recover_untracked_in_flight(client, store, snap)
         if recovered:
@@ -1290,7 +1336,7 @@ def dispatch_one(
             labels = label_names(issue)
             if label not in labels:
                 client.issue_update(req.issue, labels_add=[label], labels_remove=[])
-            handler = _PHASE_HANDLER.get(req.phase)
+            handler = _phase_handler_map().get(req.phase)
             redispatch_note = ""
             if handler and _handler_key_consumed(handler, req.issue):
                 # ラベルだけでは watcher が冪等キーで skip する。世代を上げて起動する。
@@ -1409,8 +1455,9 @@ def _cmd_status(args: argparse.Namespace) -> int:
             last = client.issue_get(snap.last_issue, fields=["state", "labels"])
             last_labels = label_names(last)
             last_state = str(last.get("state", "")).upper()
+            _merge_done_lbl2 = DONE_LABEL.get("merge", "")
             terminal_ok = last_state == "CLOSED" and (
-                "issuesmith:merge-done" in last_labels
+                (bool(_merge_done_lbl2) and _merge_done_lbl2 in last_labels)
                 or bool(last_labels & TERMINAL_WITHOUT_MERGE)
             )
             if not terminal_ok and milestone_last_issue_terminal_ok(last_labels):
@@ -1804,7 +1851,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_doctor = sub.add_parser(
         "doctor",
-        help="Check for untracked develop-running Issues (queue health)",
+        help="Check for untracked in-flight Issues (queue health)",
     )
     p_doctor.set_defaults(func=_cmd_doctor)
 
