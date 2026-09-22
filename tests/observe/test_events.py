@@ -316,3 +316,21 @@ class TestSystemicStepFailureDetection:
         client = _fake_client()
         events = observe(snap, client, cfg, metrics_path=metrics_path, now=_NOW)
         assert not any(isinstance(e, SystemicStepFailureEvent) for e in events)
+
+
+class TestIssueFromKey:
+    def test_plain_key(self):
+        from issuesmith.observe import _issue_from_key
+
+        assert _issue_from_key("issuesmith:impl:3548") == 3548
+
+    def test_generation_suffix_does_not_shadow_issue(self):
+        from issuesmith.observe import _issue_from_key
+
+        assert _issue_from_key("issuesmith:impl:3548:1") == 3548
+
+    def test_malformed_key_returns_none(self):
+        from issuesmith.observe import _issue_from_key
+
+        assert _issue_from_key("issuesmith:impl") is None
+        assert _issue_from_key("issuesmith:impl:abc") is None

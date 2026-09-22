@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.50.4 - 2026-09-22
+
+### Fixed
+
+- `observe`: `orphan_exec` reads the issue number from the third segment of the idempotency key,
+  so generation-suffixed keys (`issuesmith:impl:3548:1`) no longer report issue `#1`
+  (sumipan/nexus#3523).
+
 ## 0.50.3 - 2026-09-22
 
 ### Fixed
