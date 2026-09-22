@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.51.0 - 2026-09-22
+
+### Changed
+
+- `gate_rules.scope_coupling` requires follow-up only for callers / tests of public symbols
+  defined in the files the Issue changes and for basenames of deleted or moved files
+  (declaration-derived keys). Basenames of `allow_paths` entries and identifiers defined elsewhere
+  are reported for reference in `fix_hint` and never widen `allow_paths`, so the requirement no
+  longer grows with `allow_paths`. When widening would exceed `scope_breadth.max_files`, the
+  message says so (sumipan/nexus#3527).
+- Issue YAML `scope_mode: internal` declares an unchanged public interface; `scope_coupling`
+  returns no violations for it (sumipan/nexus#3527).
+
 ## 0.50.4 - 2026-09-22
 
 ### Fixed

@@ -109,46 +109,66 @@ def _extract_search_keys(
     metadata: dict,
     root: Path,
     extra_ignore: tuple[str, ...],
-) -> set[str]:
-    keys: set[str] = set()
-    target_repo = (metadata.get("target_repo") or "").strip()
+) -> tuple[set[str], set[str]]:
+    """Return ``(required, optional)`` search keys (sumipan/nexus#3527).
 
-    # Basenames of non-test allow_paths entries (test files have no callers to search for)
-    for p in _parse_allow_paths(metadata):
+    required — derived from declarations: basenames of deleted / moved files (change table,
+        ``paths_must_not_exist``) and public symbols named in the body whose definition lives in
+        a file the Issue changes (allow_paths or change table). Their callers / tests must be in
+        allow_paths.
+    optional — string-match only: basenames of allow_paths entries and identifiers defined
+        outside the changed files. Reported in ``fix_hint`` for reference, never a violation and
+        never used to widen allow_paths (this is what made the requirement grow with allow_paths).
+    """
+    required: set[str] = set()
+    optional: set[str] = set()
+    target_repo = (metadata.get("target_repo") or "").strip()
+    allow_paths = _parse_allow_paths(metadata)
+    changed_files: set[str] = {p for p in allow_paths if not p.endswith("**")}
+
+    # Basenames of non-test allow_paths entries: reference only
+    for p in allow_paths:
         if _is_test_path(p):
             continue
         base = _basename_no_ext(p)
         if _is_valid_key(base, extra_ignore):
-            keys.add(base)
+            optional.add(base)
 
     # Basenames of delete/move/rename rows in change table
     for repo, path, change_type in extract_change_table_rows(body):
         if repo and target_repo and repo != target_repo:
             continue
+        changed_files.add(path)
         ct_lower = change_type.lower()
         if any(kw in ct_lower for kw in _DELETE_MOVE_KEYWORDS):
             base = _basename_no_ext(path)
             if _is_valid_key(base, extra_ignore):
-                keys.add(base)
+                required.add(base)
 
-    # Basenames of paths_must_not_exist (these are being deleted)
+    # Basenames of paths_must_not_exist (these are being deleted): declaration → required
     contract = extract_contract_from_body(body) or {}
     for raw in contract.get("paths_must_not_exist") or []:
         path = str(raw).strip()
         if path:
             base = _basename_no_ext(path)
             if _is_valid_key(base, extra_ignore):
-                keys.add(base)
+                required.add(base)
 
-    # Backtick-quoted identifiers that have a def/class in the target repo
+    # Backtick-quoted identifiers with a def/class in the target repo: required only when the
+    # definition is in a file this Issue changes (its public interface may change).
     for m in _BACKTICK_IDENT_RE.finditer(body):
         ident = m.group(1)
         if not _is_valid_key(ident, extra_ignore):
             continue
-        if _git_grep(root, f"def {ident}", "") or _git_grep(root, f"class {ident}", ""):
-            keys.add(ident)
+        defined_in = _git_grep(root, f"def {ident}", "") + _git_grep(root, f"class {ident}", "")
+        if not defined_in:
+            continue
+        if any(_in_allow_paths(f, sorted(changed_files)) for f in defined_in):
+            required.add(ident)
+        else:
+            optional.add(ident)
 
-    return keys
+    return required, optional - required
 
 
 def _yaml_list(paths: list[str]) -> str:
@@ -180,23 +200,36 @@ class ScopeCouplingRules:
         if root is None:
             return []
 
+        # scope_mode: internal — the Issue declares its public interface unchanged, so callers
+        # and tests need no follow-up. P2 verifies the declaration (public symbol set == base).
+        if str(metadata.get("scope_mode") or "").strip().lower() == "internal":
+            return []
+
         cfg = get_config()
         extra_ignore = cfg.scope_coupling.ignore_symbols
 
-        keys = _extract_search_keys(body, metadata, root, extra_ignore)
-        if not keys:
+        required, optional = _extract_search_keys(body, metadata, root, extra_ignore)
+        if not required and not optional:
             return []
 
-        test_hits: set[str] = set()
-        src_hits: set[str] = set()
-        for key in sorted(keys):
-            for f in _git_grep(root, key, "tests"):
-                test_hits.add(f)
-            for f in _git_grep(root, key, "src"):
-                src_hits.add(f)
+        def _hits(keys: set[str]) -> tuple[set[str], set[str]]:
+            tests: set[str] = set()
+            srcs: set[str] = set()
+            for key in sorted(keys):
+                tests.update(_git_grep(root, key, "tests"))
+                srcs.update(_git_grep(root, key, "src"))
+            return tests, srcs
 
-        missing_tests = sorted(f for f in test_hits if not _in_allow_paths(f, allow_paths))
-        missing_srcs = sorted(f for f in src_hits if not _in_allow_paths(f, allow_paths))
+        req_tests, req_srcs = _hits(required)
+        opt_tests, opt_srcs = _hits(optional)
+
+        missing_tests = sorted(f for f in req_tests if not _in_allow_paths(f, allow_paths))
+        missing_srcs = sorted(f for f in req_srcs if not _in_allow_paths(f, allow_paths))
+        reference = sorted(
+            f
+            for f in (opt_tests | opt_srcs)
+            if not _in_allow_paths(f, allow_paths) and f not in missing_tests and f not in missing_srcs
+        )
 
         if not missing_tests and not missing_srcs:
             return []
@@ -213,6 +246,14 @@ class ScopeCouplingRules:
             self.autofix_new_allow_paths = merged
             self.autofix_note = _format_autofix_note(allow_paths, merged, all_missing)
 
+        over_note = ""
+        if not can_widen:
+            over_note = (
+                f" (adding them would exceed scope_breadth max_files={max_files}: "
+                f"{len(merged)} files; split the Issue or declare scope_mode: internal)"
+            )
+        ref_hint = ("\n# reference (string match only, not required):\n" + _yaml_list(reference)) if reference else ""
+
         violations: list[Violation] = []
         if missing_tests:
             violations.append(
@@ -222,10 +263,11 @@ class ScopeCouplingRules:
                     message=(
                         "allow_paths は変更に追従が必要なテストを含んでいません: "
                         + ", ".join(missing_tests)
+                        + over_note
                     ),
                     location=None,
                     auto_fixable=can_widen,
-                    fix_hint=_yaml_list(missing_tests),
+                    fix_hint=_yaml_list(missing_tests) + ref_hint,
                 )
             )
         if missing_srcs:
@@ -236,10 +278,11 @@ class ScopeCouplingRules:
                     message=(
                         "allow_paths は変更に追従が必要な呼び出し元を含んでいません: "
                         + ", ".join(missing_srcs)
+                        + over_note
                     ),
                     location=None,
                     auto_fixable=can_widen,
-                    fix_hint=_yaml_list(missing_srcs),
+                    fix_hint=_yaml_list(missing_srcs) + ref_hint,
                 )
             )
         return violations
