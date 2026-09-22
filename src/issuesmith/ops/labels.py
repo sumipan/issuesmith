@@ -65,8 +65,7 @@ def _is_managed_label(label: str, ns: str) -> bool:
 
 
 def _phase_label(ns: str, queue_state: str | None, exec_records: list[ExecRecord]) -> str | None:
-    if queue_state == "queued":
-        return f"{ns}:queued"
+    """Phase-axis label derived from exec records (``queued`` is a separate additive marker)."""
     if not exec_records:
         return None
     best = max(exec_records, key=lambda r: (_PHASE_PRI.get(r.phase, 0), _STATUS_PRI.get(r.status, 0)))
@@ -103,7 +102,8 @@ def project(
 ) -> set[str]:
     """Compute the desired label set for an issue (pure function, no side effects).
 
-    Returns at most one phase-axis label and at most one attention-axis label.
+    Returns at most one phase-axis label, at most one attention-axis label, and the
+    additive ``queued`` marker while the issue has a pending queue request.
     """
     ns = _ns()
     labels: set[str] = set()
@@ -111,6 +111,11 @@ def project(
     phase = _phase_label(ns, queue_state, exec_records)
     if phase:
         labels.add(phase)
+    if queue_state == "queued":
+        # Additive marker (sumipan/nexus#3601): a queued issue keeps the phase label the queue's
+        # own preconditions read (for example ``draft-done`` before ``develop``), so reconcile
+        # never strips a label that dispatch requires.
+        labels.add(f"{ns}:queued")
 
     attn = _attention_label(ns, andon_inbox)
     if attn:

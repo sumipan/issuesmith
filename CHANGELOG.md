@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.50.3 - 2026-09-22
+
+### Fixed
+
+- `ops.labels.project`: the `queued` marker is additive. A queued issue keeps its phase label
+  (for example `draft-done`, which `queue._phase_preconditions` requires before `develop`), so
+  `labels reconcile --fix` no longer strips a label that dispatch depends on (sumipan/nexus#3601).
+
 ## 0.50.2 - 2026-09-22
 
 ### Fixed

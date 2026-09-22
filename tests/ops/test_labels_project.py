@@ -20,7 +20,7 @@ def _phase_labels(label_set):
             continue
         suffix = lbl[len(NS) + 1:]
         if suffix == "queued":
-            result.add(lbl)
+            # additive marker, not a phase-axis label (sumipan/nexus#3601)
             continue
         for phase in ("draft", "develop", "merge", "sub"):
             for status in ("ready", "running", "done"):
@@ -44,7 +44,8 @@ class TestProjectPhaseAxis:
 
     def test_queued_returns_at_most_one_phase_label(self):
         result = project(1, queue_state="queued", exec_records=[], andon_inbox=[])
-        assert len(_phase_labels(result)) == 1
+        assert len(_phase_labels(result)) == 0
+        assert f"{NS}:queued" in result
 
     def test_exec_running_returns_running_label(self):
         recs = [ExecRecord(phase="develop", status="running")]
@@ -78,11 +79,18 @@ class TestProjectPhaseAxis:
         result = project(1, queue_state=None, exec_records=[], andon_inbox=[])
         assert len(_phase_labels(result)) == 0
 
-    def test_queued_overrides_exec_records(self):
-        # When queue_state="queued", the phase label is <ns>:queued regardless of exec_records
-        recs = [ExecRecord(phase="develop", status="running")]
+    def test_queued_keeps_phase_label(self):
+        # sumipan/nexus#3601: queued is additive; the phase label the queue preconditions read
+        # (draft-done before develop) must survive reconcile.
+        recs = [ExecRecord(phase="draft", status="done")]
         result = project(1, queue_state="queued", exec_records=recs, andon_inbox=[])
         assert f"{NS}:queued" in result
+        assert f"{NS}:draft-done" in result
+        assert len(_phase_labels(result)) == 1
+
+    def test_queued_marker_alone_without_exec_records(self):
+        result = project(1, queue_state="queued", exec_records=[], andon_inbox=[])
+        assert result == {f"{NS}:queued"}
 
     def test_exec_ready_returns_ready_label(self):
         recs = [ExecRecord(phase="merge", status="ready")]
