@@ -37,7 +37,7 @@ from issuesmith.queue_triage import (
     DONE_LABEL,
     READY_LABEL,
     RUNNING_LABEL,
-    TERMINAL_WITHOUT_MERGE,
+    get_terminal_without_merge,
     append_cas_conflict_log,
     append_circuit_open_log,
     apply_deterministic_order_constraints,
@@ -298,7 +298,8 @@ def _issue_is_terminal(client: ForgePort, issue_number: int) -> bool:
     state = str(issue.get("state", "")).upper()
     merge_done = DONE_LABEL.get("merge", "")
     return state == "CLOSED" and (
-        (bool(merge_done) and merge_done in labels) or bool(labels & TERMINAL_WITHOUT_MERGE)
+        (bool(merge_done) and merge_done in labels)
+        or bool(labels & get_terminal_without_merge())
     )
 
 
@@ -374,7 +375,8 @@ def _in_flight_should_release(client: ForgePort, entry: dict[str, Any]) -> bool:
     state = str(issue.get("state", "")).upper()
     _merge_done = DONE_LABEL.get("merge", "")
     if state == "CLOSED" and (
-        (bool(_merge_done) and _merge_done in labels) or bool(labels & TERMINAL_WITHOUT_MERGE)
+        (bool(_merge_done) and _merge_done in labels)
+        or bool(labels & get_terminal_without_merge())
     ):
         return True
     if DONE_LABEL.get("sub", "") in labels and DONE_LABEL.get("sub", "") and not (
@@ -1239,7 +1241,7 @@ def dispatch_one(
             _merge_done_lbl = DONE_LABEL.get("merge", "")
             terminal_ok = last_state == "CLOSED" and (
                 (bool(_merge_done_lbl) and _merge_done_lbl in last_labels)
-                or bool(last_labels & TERMINAL_WITHOUT_MERGE)
+                or bool(last_labels & get_terminal_without_merge())
             )
             if not terminal_ok and milestone_last_issue_terminal_ok(last_labels):
                 terminal_ok = True
@@ -1325,6 +1327,12 @@ def dispatch_one(
             if not ok:
                 continue
 
+            after_issues = list((snap.request_meta.get(rid) or {}).get("after") or [])
+            if after_issues:
+                after_result = check_dependencies(after_issues, client=client)
+                if after_result.decision == "BLOCK":
+                    continue
+
             candidate_repo, candidate_paths = _issue_target_meta(issue)
             conflict = _allow_paths_conflict(
                 candidate_repo, candidate_paths, snap.in_flight
@@ -1392,6 +1400,7 @@ def _cmd_enqueue(args: argparse.Namespace) -> int:
             priority=args.priority,
             requested_by=[args.requested_by],
             force=bool(args.force),
+            after=getattr(args, "after", None) or None,
         )
     except QueueValidationError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -1460,7 +1469,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
             _merge_done_lbl2 = DONE_LABEL.get("merge", "")
             terminal_ok = last_state == "CLOSED" and (
                 (bool(_merge_done_lbl2) and _merge_done_lbl2 in last_labels)
-                or bool(last_labels & TERMINAL_WITHOUT_MERGE)
+                or bool(last_labels & get_terminal_without_merge())
             )
             if not terminal_ok and milestone_last_issue_terminal_ok(last_labels):
                 terminal_ok = True
@@ -1491,6 +1500,20 @@ def _cmd_status(args: argparse.Namespace) -> int:
                     f"    waiting: required engine paused: "
                     f"{', '.join(paused_for_role)} (role={role})"
                 )
+        meta = snap.request_meta.get(rid) or {}
+        after_issues = list(meta.get("after") or [])
+        if after_issues and client is not None:
+            try:
+                after_result = check_dependencies(after_issues, client=client)
+                blocking_after = [s.issue for s in after_result.blocking_deps]
+            except Exception:
+                blocking_after = after_issues
+            if blocking_after:
+                nums = ", ".join(f"#{n}" for n in blocking_after)
+                print(f"    blocked_on: [{nums}]")
+        elif after_issues:
+            nums = ", ".join(f"#{n}" for n in after_issues)
+            print(f"    blocked_on: [{nums}]")
         if client is None:
             continue
         try:
@@ -1564,6 +1587,23 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         nums = ", ".join(f"#{n}" for n in sorted(untracked))
         print(f"untracked running issues: {nums}")
         return 1
+
+    dispatch_blocked = 0
+    for rid in snap.active_order:
+        req = store.effective_request(snap, rid)
+        if req is None:
+            continue
+        after_issues = list((snap.request_meta.get(rid) or {}).get("after") or [])
+        if not after_issues:
+            continue
+        try:
+            after_result = check_dependencies(after_issues, client=client)
+            if after_result.decision == "BLOCK":
+                dispatch_blocked += 1
+        except Exception:
+            pass
+    if dispatch_blocked:
+        print(f"dispatch_blocked: {dispatch_blocked} requests")
     print("doctor ok: no untracked running issues")
     return 0
 
@@ -1842,6 +1882,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_enq.add_argument("--priority", required=True, choices=["high", "normal", "low"])
     p_enq.add_argument("--requested-by", required=True)
     p_enq.add_argument("--force", action="store_true")
+    p_enq.add_argument("--after", type=int, action="append", default=None)
     p_enq.set_defaults(func=_cmd_enqueue)
 
     p_tick = sub.add_parser("tick")

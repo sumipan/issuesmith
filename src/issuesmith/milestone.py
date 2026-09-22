@@ -19,7 +19,7 @@ from issuesmith.queue_triage import (
     DONE_LABEL,
     READY_LABEL,
     RUNNING_LABEL,
-    TERMINAL_WITHOUT_MERGE,
+    get_terminal_without_merge,
     label_names,
     parse_frontmatter_fields,
 )
@@ -109,7 +109,7 @@ def _classify_child_terminal(client: ForgePort, issue_number: int) -> str:
     _merge_done = DONE_LABEL.get("merge", "")
     if _merge_done and _merge_done in labels:
         return "merged"
-    if labels & TERMINAL_WITHOUT_MERGE:
+    if labels & get_terminal_without_merge():
         return "closed_without_merge"
     return "open"
 

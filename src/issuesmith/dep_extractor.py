@@ -35,6 +35,10 @@ class DepStatus:
     title: str
     is_exempt: bool
 
+    @property
+    def has_terminal_label(self) -> bool:
+        return self.has_merge_done
+
 
 @dataclass
 class DepCheckResult:
@@ -99,8 +103,10 @@ def extract_dependencies(body: str) -> list[int]:
     return sorted(deps)
 
 
-def _labels_include_merge_done(labels: list[dict]) -> bool:
-    return any(label.get("name") == _MERGE_DONE_LABEL for label in labels)
+def _has_terminal_label(labels: list[dict], terminal_labels: tuple[str, ...]) -> bool:
+    """Return True if any label in labels matches a terminal_labels entry."""
+    label_names_set = {label.get("name") for label in labels}
+    return bool(label_names_set & set(terminal_labels))
 
 
 def _is_exempt(title: str, labels: list[dict]) -> bool:
@@ -150,12 +156,13 @@ def _find_rescue_pr(client: ForgePort, issue_number: int) -> int | None:
 
 
 def get_dep_status(client: ForgePort, issue_number: int) -> DepStatus:
-    """Return merge-check status for a single dependency issue."""
+    """Return terminal-label status for a single dependency issue."""
     data = client.issue_get(issue_number, fields=["state", "labels", "title"])
     state = data.get("state", "UNKNOWN")
     labels = data.get("labels") or []
     title = data.get("title") or ""
-    has_merge_done = _labels_include_merge_done(labels)
+    terminal_labels = get_config().terminal_labels
+    has_merge_done = _has_terminal_label(labels, terminal_labels)
     is_exempt = _is_exempt(title, labels)
 
     rescue_pr = None

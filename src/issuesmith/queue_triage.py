@@ -48,7 +48,6 @@ DONE_LABEL: dict[str, str] = _build_phase_labels("done")
 _MILESTONE_LABEL = "scope:milestone"
 _SUB_LABEL_PREFIX = "issuesmith:sub-"
 
-
 def _build_terminal_without_merge() -> frozenset[str]:
     from issuesmith.config import get_config
     ns = get_config().label_namespace
@@ -64,6 +63,21 @@ def _build_terminal_without_merge() -> frozenset[str]:
 
 # Closed without the final-phase done label but still a valid pipeline terminal (#2825).
 TERMINAL_WITHOUT_MERGE: frozenset[str] = _build_terminal_without_merge()
+
+
+def get_terminal_without_merge() -> frozenset[str]:
+    """Terminal labels for closed-without-merge-done, plus config-driven ones (#3504).
+
+    Extends the phase-derived base with config terminal_labels so that Issues closed
+    by other workflows (bump:done) count as satisfied dependencies.
+    """
+    try:
+        from issuesmith.config import get_config
+        extra = frozenset(get_config().terminal_labels) - frozenset({"issuesmith:merge-done"})
+    except Exception:
+        extra = frozenset()
+    return _build_terminal_without_merge() | extra
+
 
 _BUMP_RE = re.compile(
     r"^(?P<prefix>.+?):\s*bump\s+(?P<dep>\S+)\s+to\s+v?(?P<ver>\d+\.\d+\.\d+)\s*$",

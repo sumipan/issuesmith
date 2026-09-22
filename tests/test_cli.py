@@ -100,6 +100,24 @@ def test_apply_moved_exits_2() -> None:
     assert "tools/stash/" in proc.stderr
 
 
+def test_queue_enqueue_after_argparse(tmp_path: Path) -> None:
+    """queue enqueue --after parses multiple issue numbers."""
+    from issuesmith.queue import build_parser
+    parser = build_parser()
+    args = parser.parse_args([
+        "enqueue",
+        "--issue", "100",
+        "--phase", "draft",
+        "--source", "skill",
+        "--actor-kind", "human",
+        "--priority", "normal",
+        "--requested-by", "alice",
+        "--after", "200",
+        "--after", "300",
+    ])
+    assert args.after == [200, 300]
+
+
 def test_no_sys_path_in_package() -> None:
     pkg = SRC_PATH / "issuesmith"
     hits: list[str] = []
