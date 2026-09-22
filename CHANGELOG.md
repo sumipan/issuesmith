@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.50.2 - 2026-09-22
+
+### Fixed
+
+- `observe --json` no longer raises `TypeError: Object of type frozenset is not JSON serializable`:
+  `LabelDriftEvent.add` / `.remove` are sorted tuples and the CLI passes a JSON default for sets
+  (sumipan/nexus#3590).
+- `resume --from <step>` accepts `--workflow` (default: stem of `paths.workflow`, e.g. `issuesmith`)
+  and `--handler`, and forwards `--workflow` to `ghdag dag recover`. Hosts with several workflow
+  files previously got `multiple workflows found ... specify --workflow` on every call
+  (sumipan/nexus#3590).
+
 ## 0.50.1 - 2026-09-22
 
 ### Added

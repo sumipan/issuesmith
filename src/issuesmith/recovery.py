@@ -333,7 +333,9 @@ def list_recover_steps(
     return steps
 
 
-def _run_ghdag_recover(issue: int, handler: str, from_step: str | None) -> int:
+def _run_ghdag_recover(
+    issue: int, handler: str, from_step: str | None, workflow: str | None = None
+) -> int:
     cmd = [
         sys.executable,
         "-m",
@@ -345,6 +347,8 @@ def _run_ghdag_recover(issue: int, handler: str, from_step: str | None) -> int:
         "--handler",
         handler,
     ]
+    if workflow:
+        cmd.extend(["--workflow", workflow])
     if from_step:
         cmd.extend(["--from", from_step])
     proc = subprocess.run(cmd, check=False)

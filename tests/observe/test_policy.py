@@ -69,7 +69,7 @@ class TestEvaluate:
 
     def test_label_drift_produces_wait(self):
         cfg_obs = ObserveConfig()
-        event = LabelDriftEvent(issue=400, add=frozenset({"ns:queued"}), remove=frozenset())
+        event = LabelDriftEvent(issue=400, add=("ns:queued",), remove=())
         actions = evaluate([event], cfg_obs)
         wait_actions = [a for a in actions if isinstance(a, WaitAction)]
         assert len(wait_actions) == 1

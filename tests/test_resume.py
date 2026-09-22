@@ -232,7 +232,7 @@ def test_cmd_resume_from_step_delegates_to_resume():
     with patch("issuesmith.resume.resume", return_value=0) as mock_resume:
         rc = _cmd_resume(["123", "--from", "cp2"])
     assert rc == 0
-    mock_resume.assert_called_once_with(123, from_step="cp2", phase=None)
+    mock_resume.assert_called_once_with(123, from_step="cp2", phase=None, workflow=None, handler=None)
 
 
 def test_cmd_resume_phase_delegates_to_resume():
@@ -241,7 +241,7 @@ def test_cmd_resume_phase_delegates_to_resume():
     with patch("issuesmith.resume.resume", return_value=0) as mock_resume:
         rc = _cmd_resume(["123", "--phase", "develop"])
     assert rc == 0
-    mock_resume.assert_called_once_with(123, from_step=None, phase="develop")
+    mock_resume.assert_called_once_with(123, from_step=None, phase="develop", workflow=None, handler=None)
 
 
 def test_cmd_resume_both_flags_exits_2():
