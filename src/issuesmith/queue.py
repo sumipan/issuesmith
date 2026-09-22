@@ -1250,12 +1250,6 @@ def dispatch_one(
                 terminal_ok = True
             if not terminal_ok:
                 if last_state == "CLOSED":
-                    store.set_halt(
-                        True,
-                        f"last_issue #{snap.last_issue} is CLOSED without terminal label"
-                        f" (labels: {sorted(last_labels)})",
-                    )
-                    snap = store.snapshot()
                     return DispatchResult(False, reason="previous issue not terminal")
                 if _serial_concurrency():
                     return DispatchResult(False, reason="previous issue not terminal")
