@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 import pytest
 import yaml
 
-from issuesmith.config import IssuesmithConfig, load_config, reset_config_cache
+from issuesmith.config import load_config, reset_config_cache
 from issuesmith.queue_store import QueueStore
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -203,7 +203,7 @@ class TestEnqueueAfterStore:
             requested_at=_NOW,
             after=[200, 300],
         )
-        r2 = store.enqueue(
+        store.enqueue(
             issue=100,
             phase="draft",
             source="skill2",
@@ -467,7 +467,7 @@ class TestStatusAfterDisplay:
         from issuesmith import queue as qmod
 
         store = _store(tmp_path)
-        result = store.enqueue(
+        store.enqueue(
             issue=50,
             phase="draft",
             source="skill",
@@ -495,7 +495,7 @@ class TestStatusAfterDisplay:
         from issuesmith import queue as qmod
 
         store = _store(tmp_path)
-        result = store.enqueue(
+        store.enqueue(
             issue=50,
             phase="draft",
             source="skill",
@@ -583,7 +583,7 @@ class TestCLIEnqueueAfter:
     """AC-1: CLI parses --after and stores it."""
 
     def test_cli_enqueue_after_saves_meta(self, tmp_path, issuesmith_config):
-        store = _store(tmp_path)
+        _store(tmp_path)
         env = {
             "PYTHONPATH": _pythonpath(),
             "ISSUESMITH_CONFIG": str(issuesmith_config),

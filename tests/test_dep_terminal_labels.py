@@ -141,7 +141,6 @@ class TestIsSatisfiedWithTerminalLabels:
 class TestGetDepStatusWithBumpDone:
     def test_bump_done_issue_recognized_as_terminal(self, monkeypatch):
         # AC-3: get_dep_status uses _has_terminal_label with config.terminal_labels
-        from issuesmith import config as cfgmod
         import issuesmith.dep_extractor as dext
 
         client = MagicMock()
