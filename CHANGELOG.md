@@ -20,8 +20,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   above the 70 floor ghdag uses, so the measured value is the one that must not drop
 - mypy baseline: 35 errors on 33 lines silenced with `# type: ignore[<code>]  # TODO(#3611)`
   (12 `ForgePort.api_request` attr-defined, 3 `Template.get_identifiers`, 14 Optional handling,
-  1 `FailureClass` call-arg, 1 no-redef); 10 stale `type: ignore` comments removed. One
-  `import-untyped` on `cli.py` is tagged `TODO(#3612)` (dead `ops.label_hygiene` import).
+  1 `FailureClass` call-arg, 1 no-redef); 10 stale `type: ignore` comments removed. The dead
+  `ops.label_hygiene` import in `cli.py` is silenced by a `[tool.mypy.overrides]` block tagged
+  `TODO(#3612)` because its error code depends on the environment.
   Reducing the backlog is tracked in sumipan/nexus#3611
 - CI installs ghdag from the pyproject pin instead of a hardcoded `v0.52.0`
 ## 0.52.1 - 2026-09-23
