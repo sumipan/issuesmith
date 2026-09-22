@@ -66,6 +66,7 @@ class RetrySignal(RuntimeError):
     ) -> None:
         self.reason = reason
         self.after = after
+        self.role = role
         if reason == RetryReason.QUOTA_PAUSED and role:
             msg = f"All engines paused for role {role}"
         else:
