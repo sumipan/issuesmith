@@ -35,35 +35,35 @@ DecisionKind = Literal[
 
 LLMDecision = Literal["keep", "reject"]
 
-READY_LABEL = {
-    "draft": "issuesmith:draft-ready",
-    "sub": "issuesmith:sub-ready",
-    "develop": "issuesmith:develop-ready",
-    "merge": "issuesmith:merge-ready",
-}
-RUNNING_LABEL = {
-    "draft": "issuesmith:draft-running",
-    "sub": "issuesmith:sub-running",
-    "develop": "issuesmith:develop-running",
-    "merge": "issuesmith:merge-running",
-}
-DONE_LABEL = {
-    "draft": "issuesmith:draft-done",
-    "sub": "issuesmith:sub-done",
-    "develop": "issuesmith:develop-done",
-    "merge": "issuesmith:merge-done",
-}
+def _build_phase_labels(status: str) -> dict[str, str]:
+    from issuesmith.config import get_config
+    cfg = get_config()
+    return {p.name: f"{cfg.label_namespace}:{p.name}-{status}" for p in cfg.phases}
+
+
+READY_LABEL: dict[str, str] = _build_phase_labels("ready")
+RUNNING_LABEL: dict[str, str] = _build_phase_labels("running")
+DONE_LABEL: dict[str, str] = _build_phase_labels("done")
 
 _MILESTONE_LABEL = "scope:milestone"
 _SUB_LABEL_PREFIX = "issuesmith:sub-"
 
-# Closed without merge-done but still a valid pipeline terminal (#2825).
-TERMINAL_WITHOUT_MERGE = {
-    "issuesmith:sub-ready",
-    "issuesmith:sub-done",
-    "issuesmith:rejected",
-    "issuesmith:superseded",
-}
+
+def _build_terminal_without_merge() -> frozenset[str]:
+    from issuesmith.config import get_config
+    ns = get_config().label_namespace
+    result: set[str] = {f"{ns}:rejected", f"{ns}:superseded"}
+    sub_ready = READY_LABEL.get("sub")
+    sub_done = DONE_LABEL.get("sub")
+    if sub_ready:
+        result.add(sub_ready)
+    if sub_done:
+        result.add(sub_done)
+    return frozenset(result)
+
+
+# Closed without the final-phase done label but still a valid pipeline terminal (#2825).
+TERMINAL_WITHOUT_MERGE: frozenset[str] = _build_terminal_without_merge()
 
 _BUMP_RE = re.compile(
     r"^(?P<prefix>.+?):\s*bump\s+(?P<dep>\S+)\s+to\s+v?(?P<ver>\d+\.\d+\.\d+)\s*$",
@@ -767,13 +767,10 @@ def load_seed_entries(path: Path | None = None) -> list[dict[str, Any]]:
         label = str(item.get("label") or "")
         if not isinstance(issue, int) or issue <= 0:
             continue
-        phase = "draft"
-        if label.endswith("develop-ready"):
-            phase = "develop"
-        elif label.endswith("sub-ready"):
-            phase = "sub"
-        elif label.endswith("merge-ready"):
-            phase = "merge"
+        phase = next(
+            (pname for pname, plabel in READY_LABEL.items() if label == plabel),
+            "draft",
+        )
         entries.append(
             {
                 "issue": issue,

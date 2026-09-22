@@ -25,7 +25,12 @@ class ExecRecord:
 _PHASE_PRI: dict[str, int] = {"sub": 4, "merge": 3, "develop": 2, "draft": 1}
 _STATUS_PRI: dict[str, int] = {"done": 3, "running": 2, "ready": 1}
 
-_MANAGED_PHASES = frozenset({"draft", "develop", "merge", "sub"})
+def _get_managed_phases() -> frozenset[str]:
+    from issuesmith.config import get_config
+    return frozenset(p.name for p in get_config().phases)
+
+
+_MANAGED_PHASES: frozenset[str] = _get_managed_phases()
 _MANAGED_STATUSES = frozenset({"ready", "running", "done"})
 _MANAGED_ANDON_KINDS = frozenset({"decision", "blocked", "broken"})
 
@@ -239,3 +244,37 @@ def reconcile(
             print("  ".join(parts))
 
     return divergences
+
+
+def run_hygiene(
+    issue_number: int,
+    dry_run: bool = False,
+    client: Any = None,
+) -> tuple[int, dict]:
+    """Remove stale phase labels from an issue (replaces ops/label_hygiene.py)."""
+    from ghdag.exceptions import GitHubApiError
+    from ghdag.forge import get_forge as _get_forge
+
+    if client is None:
+        client = _get_forge()
+    try:
+        data = client.issue_get(issue_number, fields=["labels"])
+    except GitHubApiError as exc:
+        if getattr(exc, "status_code", None) == 404:
+            return 1, {"error": "issue not found"}
+        return 3, {"error": str(exc)}
+
+    ns = _ns()
+    labels_set = {lbl["name"] for lbl in (data.get("labels") or [])}
+    exec_recs = _exec_records_from_labels(labels_set, ns)
+    desired = project(0, queue_state=None, exec_records=exec_recs, andon_inbox=[])
+    managed_current = {lbl for lbl in labels_set if _is_managed_label(lbl, ns)}
+    stale = sorted(managed_current - desired)
+
+    if stale and not dry_run:
+        try:
+            client.issue_update(issue_number, labels_remove=stale)
+        except GitHubApiError as exc:
+            return 3, {"error": str(exc), "stale": stale}
+
+    return 0, {"removed": [] if dry_run else stale, "stale": stale, "dry_run": dry_run}

@@ -136,12 +136,14 @@ class PhaseConfig:
     name: str
     role: str
     entry_step: str
+    handler: str = ""
+    preconditions: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
 class StepConfig:
-    module: str  # "issuesmith.steps.m2_finalize"
-    template: str | None = None  # "m2-compact.md" or None
+    module: str
+    template: str | None = None
 
 
 _DEFAULT_PHASES: tuple[PhaseConfig, ...] = (
@@ -412,11 +414,19 @@ def _build_phases(raw: Any) -> tuple[PhaseConfig, ...]:
             raise ValueError(
                 f"phases[{i}] requires non-empty name, role, and entry_step"
             )
+        handler = str(item.get("handler") or "")
+        raw_preconds = item.get("preconditions")
+        if isinstance(raw_preconds, list):
+            preconditions: tuple[str, ...] = tuple(str(x) for x in raw_preconds if x)
+        else:
+            preconditions = ()
         phases.append(
             PhaseConfig(
                 name=str(name),
                 role=str(role),
                 entry_step=str(entry_step),
+                handler=handler,
+                preconditions=preconditions,
             )
         )
     if not phases:

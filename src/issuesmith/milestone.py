@@ -25,20 +25,34 @@ from issuesmith.queue_triage import (
 )
 
 _MILESTONE_LABEL = "scope:milestone"
-_SUB_LABELS = frozenset(
-    {
-        "issuesmith:sub-ready",
-        "issuesmith:sub-running",
-        "issuesmith:sub-done",
-    }
-)
-_MILESTONE_IDLE_OK_LABELS = frozenset(
-    {
-        "issuesmith:draft-done",
-        "issuesmith:sub-done",
-        "issuesmith:sub-running",
-    }
-)
+
+
+def _build_sub_labels() -> frozenset[str]:
+    return frozenset(
+        lab
+        for lab in (
+            READY_LABEL.get("sub"),
+            RUNNING_LABEL.get("sub"),
+            DONE_LABEL.get("sub"),
+        )
+        if lab
+    )
+
+
+def _build_milestone_idle_ok_labels() -> frozenset[str]:
+    return frozenset(
+        lab
+        for lab in (
+            DONE_LABEL.get("draft"),
+            DONE_LABEL.get("sub"),
+            RUNNING_LABEL.get("sub"),
+        )
+        if lab
+    )
+
+
+_SUB_LABELS: frozenset[str] = _build_sub_labels()
+_MILESTONE_IDLE_OK_LABELS: frozenset[str] = _build_milestone_idle_ok_labels()
 _CJK_PLACEHOLDER_RE = re.compile(
     r"(プレースホルダ|プレースホルダー|未記入|TBD|TODO|FIXME|XXX|ＸＸＸ|要記入|ここに)"
 )
@@ -92,7 +106,8 @@ def _classify_child_terminal(client: ForgePort, issue_number: int) -> str:
     state = str(issue.get("state", "")).upper()
     if state != "CLOSED":
         return "open"
-    if "issuesmith:merge-done" in labels:
+    _merge_done = DONE_LABEL.get("merge", "")
+    if _merge_done and _merge_done in labels:
         return "merged"
     if labels & TERMINAL_WITHOUT_MERGE:
         return "closed_without_merge"
@@ -248,7 +263,7 @@ def ensure_sub1_binding(client: ForgePort, parent_number: int, child_number: int
     Attempts ``link_sub_issue``. Returns True when the parent has a milestone
     object and/or the link succeeded. When both are unavailable (the #3059
     failure mode with a failed link), posts an error comment and returns False
-    so SUB1 can stop. Wiring into ``sub-ready.md`` is done in a later sub-issue.
+    so SUB1 can stop. Wiring into the sub-dispatch template is done in a later sub-issue.
     """
     linked = link_sub_issue(client, parent_number, child_number)
     try:
@@ -434,8 +449,9 @@ def validate_children(
             except Exception:
                 failures.append(f"V4 dependency #{dep} not found")
 
-        if DONE_LABEL["draft"] not in labels:
-            failures.append("V5 missing issuesmith:draft-done")
+        _draft_done = DONE_LABEL.get("draft", "")
+        if _draft_done and _draft_done not in labels:
+            failures.append(f"V5 missing {_draft_done}")
         child_milestone = _milestone_number(child)
         if parent_milestone is not None and child_milestone != parent_milestone:
             failures.append(
@@ -634,7 +650,7 @@ def advance_milestone_chains(
         return
 
     snap = store.snapshot()
-    # C0 (draft-done in_flight release) moved to queue.dispatch_one generic path (#2980).
+    # C0 (design-phase in_flight release) moved to queue.dispatch_one generic path (#2980).
     parents = _candidate_parents(store, snap, client)
 
     for parent_num in sorted(parents):
@@ -653,7 +669,7 @@ def advance_milestone_chains(
         if _MILESTONE_LABEL not in labels:
             continue
 
-        # C1: draft-done + CP1 intentional hold → enqueue sub.
+        # C1: design-phase done + CP1 intentional hold → enqueue sub.
         if (
             DONE_LABEL["draft"] in labels
             and not has_sub_labels(labels)
@@ -750,16 +766,18 @@ def advance_milestone_chains(
         without_merge = [num for num, status in statuses if status == "closed_without_merge"]
         if without_merge:
             first = without_merge[0]
+            _md_label = DONE_LABEL.get("merge", "")
+            _end_lbl = _md_label.split(":")[-1] if _md_label else "closed"
             _ensure_parent_comment(
                 client,
                 parent_num,
-                f"確認待ち: #{first} が merge-done 以外で終了",
+                f"確認待ち: #{first} が {_end_lbl} 以外で終了",
                 "<!-- issuesmith:milestone-chain:closed-without-merge -->",
             )
-            _halt_chain(store, parent_num, f"child closed without merge-done: #{first}")
+            _halt_chain(store, parent_num, f"child closed without {_end_lbl}: #{first}")
             continue
 
-        # All children are merge-done.
+        # All children completed the merge phase.
         if chain.get("closed_parent"):
             continue
         child_refs = ", ".join(f"#{num}" for num, _ in statuses)
