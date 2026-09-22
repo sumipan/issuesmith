@@ -22,8 +22,9 @@ commands:
   verify|b1-verify
   queue  deps  tier  comments  gh
   engine  dispatch  publish  labels  doctor  smoke  gen-live  version-bump
+  resume --from <step> | --phase <phase>
   recover  redispatch  convert-to-milestone
-  milestone  status / resume (sub_issues_summary progress + child table)
+  milestone  status / resume-progress (sub_issues_summary progress + child table)
   config show
   observe [--apply] [--json]
   apply  ingest-review  (moved to tools/stash/; exit 2)
@@ -206,6 +207,19 @@ def _cmd_version_bump(argv: list[str]) -> int:
     return int(bump_main(argv))
 
 
+def _cmd_resume(argv: list[str]) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="issuesmith resume")
+    parser.add_argument("issue", type=int)
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--from", dest="from_step")
+    group.add_argument("--phase")
+    args = parser.parse_args(argv)
+    from issuesmith.resume import resume as _cmd_resume_fn
+    return _cmd_resume_fn(args.issue, from_step=args.from_step, phase=args.phase)
+
+
 def _cmd_recover(argv: list[str]) -> int:
     import warnings
     warnings.warn(
@@ -329,6 +343,7 @@ _HANDLERS = {
     "smoke": _cmd_smoke,
     "gen-live": _cmd_gen_live,
     "version-bump": _cmd_version_bump,
+    "resume": _cmd_resume,
     "recover": _cmd_recover,
     "redispatch": _cmd_redispatch,
     "convert-to-milestone": _cmd_convert_to_milestone,

@@ -127,3 +127,15 @@ def test_no_sys_path_in_package() -> None:
             if "sys.path" in line:
                 hits.append(f"{path.relative_to(REPO_ROOT)}:{i}:{line.strip()}")
     assert hits == []
+
+
+def test_resume_in_handlers() -> None:
+    from issuesmith.cli import _HANDLERS
+    assert "resume" in _HANDLERS
+
+
+def test_resume_in_usage() -> None:
+    from issuesmith.cli import _USAGE
+    lines = _USAGE.splitlines()
+    standalone = [ln for ln in lines if "resume" in ln and "milestone" not in ln]
+    assert standalone, "resume not listed as standalone command in _USAGE"

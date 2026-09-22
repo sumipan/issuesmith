@@ -220,3 +220,41 @@ def test_cmd_redispatch_still_works_with_warning():
     assert rc == 0
     store.remove_in_flight.assert_called_once_with(123)
     store.enqueue.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# _cmd_resume CLI routing (AC-1 through AC-4)
+# ---------------------------------------------------------------------------
+
+def test_cmd_resume_from_step_delegates_to_resume():
+    """AC-1: _cmd_resume with --from calls resume(issue, from_step=...)."""
+    from issuesmith.cli import _cmd_resume
+    with patch("issuesmith.resume.resume", return_value=0) as mock_resume:
+        rc = _cmd_resume(["123", "--from", "cp2"])
+    assert rc == 0
+    mock_resume.assert_called_once_with(123, from_step="cp2", phase=None)
+
+
+def test_cmd_resume_phase_delegates_to_resume():
+    """AC-2: _cmd_resume with --phase calls resume(issue, phase=...)."""
+    from issuesmith.cli import _cmd_resume
+    with patch("issuesmith.resume.resume", return_value=0) as mock_resume:
+        rc = _cmd_resume(["123", "--phase", "develop"])
+    assert rc == 0
+    mock_resume.assert_called_once_with(123, from_step=None, phase="develop")
+
+
+def test_cmd_resume_both_flags_exits_2():
+    """AC-3: --from and --phase together is argparse error, exits 2."""
+    from issuesmith.cli import _cmd_resume
+    with pytest.raises(SystemExit) as exc_info:
+        _cmd_resume(["123", "--from", "cp2", "--phase", "develop"])
+    assert exc_info.value.code == 2
+
+
+def test_cmd_resume_no_flags_exits_2():
+    """AC-4: neither --from nor --phase exits 2."""
+    from issuesmith.cli import _cmd_resume
+    with pytest.raises(SystemExit) as exc_info:
+        _cmd_resume(["123"])
+    assert exc_info.value.code == 2
