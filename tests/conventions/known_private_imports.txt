@@ -1,0 +1,24 @@
+# Private cross-module imports known at 2026-09-23 (sumipan/nexus#3571). One `module name` per line.
+# Remove a line when the import is replaced by a public API; never add lines.
+ghdag.workflow.state_machine _load_workflow_config
+issuesmith.config _DEFAULT_FORBIDDEN_PR_PATHS
+issuesmith.config _DEFAULT_PHASES
+issuesmith.contract _normalize_path
+issuesmith.convert_to_milestone _ensure_milestone
+issuesmith.gate_rules.b1_milestone_subdesign _extract_paths_from_change_table
+issuesmith.milestone _list_chain_children
+issuesmith.milestone _parse_table_rows
+issuesmith.milestone _plan_section
+issuesmith.ops.labels _exec_records_from_labels
+issuesmith.ops.labels _is_managed_label
+issuesmith.ops.labels _ns
+issuesmith.ops.publish _push_branch
+issuesmith.recovery _generation_keys_available
+issuesmith.recovery _run_ghdag_recover
+issuesmith.steps.m1_merge _find_pr
+issuesmith.steps.m1_merge _get_merge_state
+issuesmith.steps.m2_finalize _cleanup_branches
+issuesmith.steps.m2_finalize _close_issue_if_open
+issuesmith.steps.m2_finalize _list_worktrees
+issuesmith.steps.m2_finalize _remove_worktree
+issuesmith.targets _normalize_allow_paths

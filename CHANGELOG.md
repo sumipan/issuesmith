@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.52.1 - 2026-09-23
+
+### Added
+
+- `tests/conventions/`: structural tests (OSS_QUALITY chapter 8, sumipan/nexus#3571). CLI table vs
+  usage / docs / deprecation advice, lazily imported handler modules, `__all__` resolution with a
+  shrinking list of private cross-module imports, no nexus workflow vocabulary in verbs / gates /
+  observe / andon / labels / dispatch / engine, every ghdag name used exists in the pinned ghdag, and
+  write / read-back round trips on `LocalForge` (andon raise / list / answer, label apply,
+  `MERGE_DONE` projection vs `labels.project`, queue enqueue / in-flight / complete). Each
+  detector has a reproduction test for the incident it guards against (#3566, #3515, #3507)
+- `doctor` prints `upstream_apis: ok` / `upstream_apis: missing: ...` from
+  `ops.preflight.REQUIRED_UPSTREAM_APIS` (ghdag names reached at runtime through getattr)
+
+### Known violations (strict xfail, remove the entry when fixed)
+
+- `cli.py` `labels` handler imports the removed `issuesmith.ops.label_hygiene` (sumipan/nexus#3612)
+
 ## 0.52.0 - 2026-09-23
 
 ### Changed

@@ -23,11 +23,13 @@ scripts/diary_hooks.py / scripts/dag-runner.py を変更する PR は、マー�
 """
 from __future__ import annotations
 
+import importlib
 import os
 import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any, Callable
 
 import yaml
 
@@ -51,6 +53,43 @@ def _check_pyproject_no_direct_pin() -> tuple[bool, str]:
             "ghdag は mltgnt 経由の推移的依存として取得してください。直接 pin を削除してください。"
         )
     return True, "pyproject.toml: ghdag 直接依存なし（推移的依存として取得）"
+
+
+# ghdag names issuesmith reaches at runtime through getattr(..., None) or late imports, so a
+# missing name would not fail at import time. Kept in sync with
+# tests/conventions/test_required_upstream_apis_exist.py (sumipan/nexus#3571).
+REQUIRED_UPSTREAM_APIS: tuple[tuple[str, str, str | None], ...] = (
+    ("ghdag.quota", "QuotaGate", "defer"),
+    ("ghdag.quota", "QuotaGate", "release_ready"),
+    ("ghdag.core.vocabulary", "DONE_DEFERRED", None),
+    ("ghdag.forge", "get_forge", None),
+)
+
+
+def missing_upstream_apis(
+    required: tuple[tuple[str, str, str | None], ...] = REQUIRED_UPSTREAM_APIS,
+    *,
+    resolver: Callable[[str], Any] = importlib.import_module,
+) -> list[str]:
+    """Return dotted names from *required* that the installed ghdag does not provide."""
+    missing: list[str] = []
+    for module, name, attr in required:
+        dotted = f"{module}.{name}" + (f".{attr}" if attr else "")
+        try:
+            obj = getattr(resolver(module), name)
+        except (ImportError, AttributeError):
+            missing.append(dotted)
+            continue
+        if attr and not hasattr(obj, attr):
+            missing.append(dotted)
+    return missing
+
+
+def _check_upstream_apis() -> tuple[bool, str]:
+    missing = missing_upstream_apis()
+    if missing:
+        return False, f"upstream_apis: missing: {', '.join(missing)} (bump the ghdag pin)"
+    return True, "upstream_apis: ok"
 
 
 def _check_installed_ghdag() -> tuple[bool, str]:
@@ -248,6 +287,7 @@ def main() -> int:
     for fn in (
         _check_pyproject_no_direct_pin,
         _check_installed_ghdag,
+        _check_upstream_apis,
         _check_shell_adapter,
         _check_agent_skill_manifests,
     ):
