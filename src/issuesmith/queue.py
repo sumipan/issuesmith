@@ -738,6 +738,8 @@ def _phase_handler_map() -> dict[str, str]:
     from issuesmith.config import get_config
     cfg_map = {p.name: p.handler for p in get_config().phases if p.handler}
     return cfg_map if cfg_map else dict(_PHASE_HANDLER)
+
+
 _MAX_GENERATION_SCAN = 16
 
 
