@@ -215,9 +215,25 @@ def _cmd_resume(argv: list[str]) -> int:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--from", dest="from_step")
     group.add_argument("--phase")
+    parser.add_argument(
+        "--workflow",
+        default=None,
+        help="ghdag workflow name for --from (default: stem of paths.workflow, e.g. 'issuesmith')",
+    )
+    parser.add_argument(
+        "--handler",
+        default=None,
+        help="ghdag handler name for --from (default: derived from the step)",
+    )
     args = parser.parse_args(argv)
     from issuesmith.resume import resume as _cmd_resume_fn
-    return _cmd_resume_fn(args.issue, from_step=args.from_step, phase=args.phase)
+    return _cmd_resume_fn(
+        args.issue,
+        from_step=args.from_step,
+        phase=args.phase,
+        workflow=args.workflow,
+        handler=args.handler,
+    )
 
 
 def _cmd_recover(argv: list[str]) -> int:
@@ -300,7 +316,7 @@ def _cmd_observe(argv: list[str]) -> int:
 
     if args.as_json:
         import dataclasses
-        print(_json.dumps([dataclasses.asdict(e) for e in events], ensure_ascii=False))
+        print(_json.dumps([dataclasses.asdict(e) for e in events], ensure_ascii=False, default=_json_default))
     else:
         for evt in events:
             print(f"  {evt.kind}: {evt}")

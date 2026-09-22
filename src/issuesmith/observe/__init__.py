@@ -241,8 +241,8 @@ def _detect_label_drift(
         if to_add or to_remove:
             events.append(LabelDriftEvent(
                 issue=issue_num,
-                add=frozenset(to_add),
-                remove=frozenset(to_remove),
+                add=tuple(sorted(to_add)),
+                remove=tuple(sorted(to_remove)),
             ))
 
     return events

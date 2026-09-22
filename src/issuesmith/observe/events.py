@@ -28,8 +28,9 @@ class OrphanExecEvent(ObserveEvent):
 class LabelDriftEvent(ObserveEvent):
     kind: str = "label_drift"
     issue: int = 0
-    add: frozenset[str] = frozenset()
-    remove: frozenset[str] = frozenset()
+    # Sorted tuples (not sets) so the event is JSON-serializable and ordered (#3590).
+    add: tuple[str, ...] = ()
+    remove: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
