@@ -1,0 +1,4 @@
+{"request_id": "f31d6b7a-c64f-4b4e-bffc-ae44e3b530b0", "issue": 1, "phase": "merge", "source": "resume", "actor_kind": "human", "priority": "high", "requested_at": "2026-09-22T10:08:49.311717+09:00", "requested_by": ["resume"]}
+{"request_id": "d45f1e80-e8cd-467b-835c-38f3f3e04a49", "issue": 42, "phase": "sub", "source": "resume", "actor_kind": "human", "priority": "high", "requested_at": "2026-09-22T10:13:31.594819+09:00", "requested_by": ["resume"]}
+{"request_id": "1111f474-5202-4a58-a6bf-d5a1df8b482d", "issue": 9, "phase": "draft", "source": "resume", "actor_kind": "human", "priority": "high", "requested_at": "2026-09-22T10:13:32.114918+09:00", "requested_by": ["resume"]}
+{"request_id": "c6e72fac-be65-4848-98e2-b5f67b07ba55", "issue": 123, "phase": "develop", "source": "recovery", "actor_kind": "human", "priority": "high", "requested_at": "2026-09-22T10:14:55.974584+09:00", "requested_by": ["recovery"]}
