@@ -505,7 +505,7 @@ def _render_template(template_path: str, variables: list[str]) -> str:
     path = Path(template_path)
     template = string.Template(path.read_text(encoding="utf-8"))
     parsed_variables = _parse_variables(variables)
-    missing = sorted(set(template.get_identifiers()) - set(parsed_variables))
+    missing = sorted(set(template.get_identifiers()) - set(parsed_variables))  # type: ignore[attr-defined]  # TODO(#3611)
     if missing:
         raise TemplateVariableError(
             f"テンプレート展開エラー ({template_path}): 未定義変数: {missing}"
@@ -585,7 +585,7 @@ def _record_task_metrics(
     failure_enum: FailureClass | None = None
     if failure_class is not None:
         try:
-            failure_enum = FailureClass(failure_class)
+            failure_enum = FailureClass(failure_class)  # type: ignore[call-arg]  # TODO(#3611)
         except ValueError:
             failure_enum = None
     _metrics_recorder().record(
@@ -742,7 +742,7 @@ def _execute(
 
     started_at = time.time()
     original_call = _llm_managed.call
-    _llm_managed.call = _issuesmith_call  # type: ignore[assignment]
+    _llm_managed.call = _issuesmith_call
     try:
         result = call_managed(
             content,

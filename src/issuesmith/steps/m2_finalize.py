@@ -82,7 +82,7 @@ def _materialize_gate_root(repo_cwd: Path, base_branch: str, issue_number: int, 
     raise GateMaterializationError(
         f"could not materialize origin/{base_branch} (repo={repo_cwd}) "
         f"after {max_retry} attempts: "
-        f"add_rc={add.returncode} add_stderr={add.stderr!r}"
+        f"add_rc={add.returncode} add_stderr={add.stderr!r}"  # type: ignore[union-attr]  # TODO(#3611)
     )
 
 
@@ -411,7 +411,7 @@ def _finalize_merge_done(
             )
         client.issue_update(
             issue_number,
-            labels_remove=removable,
+            labels_remove=removable,  # type: ignore[arg-type]  # TODO(#3611)
             labels_add=["issuesmith:merge-done"],
         )
         print(

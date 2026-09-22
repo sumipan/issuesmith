@@ -65,7 +65,7 @@ def _list_pulls(
     if head:
         path += f"&head={urllib.parse.quote(head, safe='')}"
     try:
-        data = client.api_request(path)
+        data = client.api_request(path)  # type: ignore[attr-defined]  # TODO(#3611)
     except Exception as exc:
         print(f"PR list failed ({exc})", file=sys.stderr)
         return []
@@ -150,7 +150,7 @@ def _is_already_merged(client: ForgePort, repo: str, number: int) -> bool:
     """REST `.merged` (CLAUDE.md §10: true/false rc0; missing → treat as false)."""
     path = f"repos/{repo}/pulls/{number}" if repo else f"pulls/{number}"
     try:
-        detail = client.api_request(path)
+        detail = client.api_request(path)  # type: ignore[attr-defined]  # TODO(#3611)
     except Exception as exc:
         print(f"PR detail failed ({exc})", file=sys.stderr)
         return False
@@ -330,7 +330,7 @@ def _companion_ready(
     """Return (ready, review_decision, ci_ok)."""
     decision = ""
     try:
-        reviews = client.api_request(f"repos/{issue_repo}/pulls/{number}/reviews")
+        reviews = client.api_request(f"repos/{issue_repo}/pulls/{number}/reviews")  # type: ignore[attr-defined]  # TODO(#3611)
         if isinstance(reviews, list):
             for rev in reversed(reviews):
                 if isinstance(rev, dict) and rev.get("state"):

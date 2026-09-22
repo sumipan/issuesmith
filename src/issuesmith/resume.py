@@ -84,7 +84,7 @@ def _resume_phase(issue: int, phase: str) -> int:
         for lab in (labels_data.get("labels") or [])
         if isinstance(lab, dict) and lab.get("name")
     }
-    apply_redispatch_labels(client, issue, phase, current_labels)
+    apply_redispatch_labels(client, issue, phase, current_labels)  # type: ignore[arg-type]  # TODO(#3611)
     store = QueueStore()
     result = store.enqueue(
         issue=issue,

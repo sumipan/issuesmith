@@ -209,19 +209,19 @@ def _check_a3_b4(diff: str) -> BumpDecision | None:
 
     only_added = added - removed
     if only_added:
-        sec, key = sorted(only_added)[0]
+        sec, key = sorted(only_added)[0]  # type: ignore[assignment]  # TODO(#3611)
         return BumpDecision("Y", "A3", f"A3 — entry-point key added ({sec} {key})")
 
     only_removed = removed - added
     if only_removed:
-        sec, key = sorted(only_removed)[0]
+        sec, key = sorted(only_removed)[0]  # type: ignore[assignment]  # TODO(#3611)
         return BumpDecision("Y", "B4", f"B4 — entry-point key removed ({sec} {key})")
 
     # same key both removed and added → value change counts as B4
     changed = added & removed
     if changed:
         # Need to verify values actually differ — if both present, treat as change
-        sec, key = sorted(changed)[0]
+        sec, key = sorted(changed)[0]  # type: ignore[assignment]  # TODO(#3611)
         return BumpDecision("Y", "B4", f"B4 — entry-point key changed ({sec} {key})")
 
     return None

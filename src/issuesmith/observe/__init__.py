@@ -188,9 +188,9 @@ def _detect_label_drift(
 ) -> list[ObserveEvent]:
     from issuesmith.ops.labels import (
         ExecRecord,
-        _exec_records_from_labels,  # type: ignore[attr-defined]
-        _is_managed_label,  # type: ignore[attr-defined]
-        _ns,  # type: ignore[attr-defined]
+        _exec_records_from_labels,
+        _is_managed_label,
+        _ns,
     )
     from issuesmith.ops.labels import (
         project as labels_project,

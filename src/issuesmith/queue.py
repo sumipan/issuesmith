@@ -627,7 +627,7 @@ def _find_merged_prs_closing_issue(client: ForgePort, issue_number: int) -> list
         detail: dict[str, Any] = dict(pr)
         if not _pr_is_merged(detail):
             try:
-                raw = client.api_request(f"pulls/{number}")
+                raw = client.api_request(f"pulls/{number}")  # type: ignore[attr-defined]  # TODO(#3611)
             except Exception:
                 raw = None
             if isinstance(raw, dict) and _pr_is_merged(raw):
@@ -661,10 +661,10 @@ def _list_open_issues(client: ForgePort) -> list[dict[str, Any]]:
     """
     raw: Any = None
     try:
-        raw = client.api_request("issues?state=open&per_page=100", paginate=True)
+        raw = client.api_request("issues?state=open&per_page=100", paginate=True)  # type: ignore[attr-defined]  # TODO(#3611)
     except Exception:
         try:
-            raw = client.api_request("issues?state=open&per_page=100")
+            raw = client.api_request("issues?state=open&per_page=100")  # type: ignore[attr-defined]  # TODO(#3611)
         except Exception:
             return []
     if not isinstance(raw, list):

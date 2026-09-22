@@ -468,13 +468,13 @@ def validate_children(
 
 def _list_milestone_children(client: ForgePort, milestone_number: int) -> list[dict[str, Any]]:
     try:
-        raw = client.api_request(
+        raw = client.api_request(  # type: ignore[attr-defined]  # TODO(#3611)
             f"issues?state=all&milestone={milestone_number}&per_page=100",
             paginate=True,
         )
     except Exception:
         try:
-            raw = client.api_request(f"issues?state=all&milestone={milestone_number}&per_page=100")
+            raw = client.api_request(f"issues?state=all&milestone={milestone_number}&per_page=100")  # type: ignore[attr-defined]  # TODO(#3611)
         except Exception:
             return []
     if not isinstance(raw, list):
@@ -561,13 +561,13 @@ def _enqueue_chain(
 def _list_scope_milestone_parents(client: ForgePort) -> list[dict[str, Any]]:
     """Open issues labeled ``scope:milestone`` (candidate chain parents)."""
     try:
-        raw = client.api_request(
+        raw = client.api_request(  # type: ignore[attr-defined]  # TODO(#3611)
             "issues?state=open&labels=scope:milestone&per_page=100",
             paginate=True,
         )
     except Exception:
         try:
-            raw = client.api_request("issues?state=open&labels=scope:milestone&per_page=100")
+            raw = client.api_request("issues?state=open&labels=scope:milestone&per_page=100")  # type: ignore[attr-defined]  # TODO(#3611)
         except Exception:
             return []
     if not isinstance(raw, list):

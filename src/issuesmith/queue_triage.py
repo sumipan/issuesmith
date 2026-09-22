@@ -530,7 +530,7 @@ def _parse_llm_response(raw: str, expected_ids: set[str]) -> tuple[list[str], li
         parsed.append(
             TriageDecision(
                 request_id=str(rid),
-                decision=decision,  # type: ignore[arg-type]
+                decision=decision,
                 reason=reason.strip(),
                 uncertain_flag=uncertain,
             )
@@ -662,7 +662,7 @@ def triage(
 
     if llm is not None:
         try:
-            result = llm(prompt, engine=engine, model=model, timeout=timeout)
+            result = llm(prompt, engine=engine, model=model, timeout=timeout)  # type: ignore[assignment]  # TODO(#3611)
             raw_output = (
                 getattr(result, "text", None)
                 or getattr(result, "body", None)
@@ -805,7 +805,7 @@ def seed_window(path: Path | None = None) -> tuple[str, str, int]:
     if not isinstance(data, dict):
         return start, end, idle
     window = data.get("window") if isinstance(data.get("window"), dict) else {}
-    start = str(window.get("start", start))
-    end = str(window.get("end", end))
+    start = str(window.get("start", start))  # type: ignore[union-attr]  # TODO(#3611)
+    end = str(window.get("end", end))  # type: ignore[union-attr]  # TODO(#3611)
     idle = int(data.get("idle_minutes", idle))
     return start, end, idle
