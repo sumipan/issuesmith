@@ -217,6 +217,18 @@ _DEFAULT_TERMINAL_LABELS: tuple[str, ...] = ("issuesmith:merge-done", "bump:done
 
 
 @dataclass(frozen=True)
+class ObserveConfig:
+    """Configuration for the observe layer (issuesmith.yaml observe: section)."""
+
+    stall_minutes: int = 120
+    task_timeout_minutes: int = 90
+    systemic_min_issues: int = 2
+    systemic_window_minutes: int = 60
+    forge_max_consecutive_errors: int = 3
+    max_api_calls: int = 20
+
+
+@dataclass(frozen=True)
 class IssuesmithConfig:
     repo: str
     label_namespace: str
@@ -236,6 +248,7 @@ class IssuesmithConfig:
     scope_gate: ScopeGateConfig = field(default_factory=ScopeGateConfig)
     scope_coupling: ScopeCouplingConfig = field(default_factory=ScopeCouplingConfig)
     terminal_labels: tuple[str, ...] = _DEFAULT_TERMINAL_LABELS
+    observe: ObserveConfig = field(default_factory=ObserveConfig)
 
 
 _cached: IssuesmithConfig | None = None
@@ -520,6 +533,22 @@ def _build_scope_coupling(raw: Mapping[str, Any] | None) -> ScopeCouplingConfig:
     return ScopeCouplingConfig(ignore_symbols=ignore_symbols, enabled=enabled)
 
 
+def _build_observe(raw: Mapping[str, Any] | None) -> ObserveConfig:
+    defaults = ObserveConfig()
+    if not raw:
+        return defaults
+    return ObserveConfig(
+        stall_minutes=int(raw.get("stall_minutes", defaults.stall_minutes)),
+        task_timeout_minutes=int(raw.get("task_timeout_minutes", defaults.task_timeout_minutes)),
+        systemic_min_issues=int(raw.get("systemic_min_issues", defaults.systemic_min_issues)),
+        systemic_window_minutes=int(raw.get("systemic_window_minutes", defaults.systemic_window_minutes)),
+        forge_max_consecutive_errors=int(
+            raw.get("forge_max_consecutive_errors", defaults.forge_max_consecutive_errors)
+        ),
+        max_api_calls=int(raw.get("max_api_calls", defaults.max_api_calls)),
+    )
+
+
 def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     repo_raw = data.get("repo")
     if not repo_raw or not str(repo_raw).strip():
@@ -547,6 +576,7 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     scope_coupling_raw = (
         data.get("scope_coupling") if isinstance(data.get("scope_coupling"), dict) else None
     )
+    observe_raw = data.get("observe") if isinstance(data.get("observe"), dict) else None
     return IssuesmithConfig(
         repo=repo,
         label_namespace=label_namespace,
@@ -568,4 +598,5 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         scope_gate=_build_scope_gate(scope_gate_raw),
         scope_coupling=_build_scope_coupling(scope_coupling_raw),
         terminal_labels=_build_terminal_labels(data.get("terminal_labels")),
+        observe=_build_observe(observe_raw),
     )

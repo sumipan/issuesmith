@@ -90,6 +90,8 @@ class QueueSnapshot:
     in_flight: list[dict[str, Any]] = field(default_factory=list)
     request_meta: dict[str, dict[str, Any]] = field(default_factory=dict)
     milestone_chains: dict[str, dict[str, Any]] = field(default_factory=dict)
+    halt_scope: str = "all"
+    halt_event: str | None = None
 
     @property
     def active_requests(self) -> list[QueueRequest]:
@@ -187,6 +189,8 @@ def default_state() -> dict[str, Any]:
         "last_issue": None,
         "halt": False,
         "halt_reason": None,
+        "halt_scope": "all",
+        "halt_event": None,
         "request_meta": {},
         "seeded_keys": [],
         "in_flight": [],
@@ -282,6 +286,8 @@ class QueueStore:
         state.setdefault("last_issue", None)
         state.setdefault("halt", False)
         state.setdefault("halt_reason", None)
+        state.setdefault("halt_scope", "all")
+        state.setdefault("halt_event", None)
         state.setdefault("request_meta", {})
         state.setdefault("seeded_keys", [])
         state.setdefault("in_flight", [])
@@ -356,6 +362,8 @@ class QueueStore:
             in_flight=list(state.get("in_flight") or []),
             request_meta=dict(state.get("request_meta") or {}),
             milestone_chains=dict(state.get("milestone_chains") or {}),
+            halt_scope=str(state.get("halt_scope") or "all"),
+            halt_event=state.get("halt_event") or None,
         )
 
     def enqueue(
@@ -535,11 +543,20 @@ class QueueStore:
             self._save_state_unlocked(state)
             return True
 
-    def set_halt(self, halt: bool, reason: str | None = None) -> None:
+    def set_halt(
+        self,
+        halt: bool,
+        reason: str | None = None,
+        *,
+        scope: str = "all",
+        event: str | None = None,
+    ) -> None:
         with self.lock():
             state = self._load_state_unlocked()
             state["halt"] = halt
             state["halt_reason"] = reason if halt else None
+            state["halt_scope"] = scope if halt else "all"
+            state["halt_event"] = event if halt else None
             self._save_state_unlocked(state)
 
     def clear_halt(self) -> None:

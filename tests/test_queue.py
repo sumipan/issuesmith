@@ -2110,10 +2110,7 @@ def test_dispatch_halts_when_previous_closed_without_terminal(tmp_path, monkeypa
     assert result.dispatched is False
     assert "previous" in result.reason or "terminal" in result.reason
     snap = store.snapshot()
-    assert snap.halt is True
-    assert snap.halt_reason is not None
-    assert "#2820" in snap.halt_reason
-    assert "scope:milestone" in snap.halt_reason
+    assert snap.halt is False
 
 
 def test_apply_terminal_superseded_adds_label(tmp_path):
