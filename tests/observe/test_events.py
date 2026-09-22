@@ -2,23 +2,19 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
-
-import pytest
 
 from issuesmith.config import get_config
 from issuesmith.observe import observe
 from issuesmith.observe.events import (
     IssueStallEvent,
     LabelDriftEvent,
-    ObserveEvent,
     OrphanExecEvent,
     SystemicStepFailureEvent,
 )
 from issuesmith.queue_store import QueueSnapshot, QueueStore
-
 
 _NOW = datetime(2026, 9, 22, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -188,7 +184,6 @@ class TestLabelDriftDetection:
         snap = store.snapshot()
 
         cfg = get_config()
-        ns = cfg.label_namespace
         client = _fake_client({
             300: {"number": 300, "state": "OPEN", "labels": []},
         })

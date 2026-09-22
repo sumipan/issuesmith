@@ -272,6 +272,7 @@ def _cmd_observe(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     from ghdag.forge import get_forge
+
     from issuesmith.config import get_config
     from issuesmith.observe import observe
     from issuesmith.queue_store import QueueStore

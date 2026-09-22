@@ -24,6 +24,7 @@ from issuesmith.observe.events import (
 
 if TYPE_CHECKING:
     from ghdag.forge import ForgePort
+
     from issuesmith.config import IssuesmithConfig
     from issuesmith.queue_store import QueueSnapshot
 
@@ -186,6 +187,8 @@ def _detect_label_drift(
         _exec_records_from_labels,  # type: ignore[attr-defined]
         _is_managed_label,  # type: ignore[attr-defined]
         _ns,  # type: ignore[attr-defined]
+    )
+    from issuesmith.ops.labels import (
         project as labels_project,
     )
 

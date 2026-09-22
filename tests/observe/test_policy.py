@@ -2,18 +2,15 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
-import pytest
-
-from issuesmith.config import ObserveConfig, get_config
+from issuesmith.config import ObserveConfig
 from issuesmith.observe.events import (
     AllEnginesPausedEvent,
     ForgeUnavailableEvent,
-    LabelDriftEvent,
-    ObserveEvent,
-    SystemicStepFailureEvent,
     IssueStallEvent,
+    LabelDriftEvent,
+    SystemicStepFailureEvent,
 )
 from issuesmith.observe.policy import (
     AndonAction,
@@ -160,6 +157,7 @@ class TestObserveConfigOverrides:
 
     def test_config_loaded_from_yaml_observe_section(self, tmp_path):
         import yaml
+
         from issuesmith.config import load_config
 
         yaml_content = {

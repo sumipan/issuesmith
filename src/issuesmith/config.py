@@ -542,7 +542,9 @@ def _build_observe(raw: Mapping[str, Any] | None) -> ObserveConfig:
         task_timeout_minutes=int(raw.get("task_timeout_minutes", defaults.task_timeout_minutes)),
         systemic_min_issues=int(raw.get("systemic_min_issues", defaults.systemic_min_issues)),
         systemic_window_minutes=int(raw.get("systemic_window_minutes", defaults.systemic_window_minutes)),
-        forge_max_consecutive_errors=int(raw.get("forge_max_consecutive_errors", defaults.forge_max_consecutive_errors)),
+        forge_max_consecutive_errors=int(
+            raw.get("forge_max_consecutive_errors", defaults.forge_max_consecutive_errors)
+        ),
         max_api_calls=int(raw.get("max_api_calls", defaults.max_api_calls)),
     )
 

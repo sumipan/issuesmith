@@ -2,22 +2,16 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
-
 from issuesmith.config import get_config
-from issuesmith.observe import observe
 from issuesmith.observe.events import (
-    ForgeUnavailableEvent,
-    OrphanExecEvent,
     SystemicStepFailureEvent,
 )
-from issuesmith.observe.policy import HaltAction, ResumeAction, execute, evaluate
-from issuesmith.queue_store import QueueSnapshot, QueueStore
-
+from issuesmith.observe.policy import ResumeAction, evaluate, execute
+from issuesmith.queue_store import QueueStore
 
 _NOW = datetime(2026, 9, 22, 12, 0, 0, tzinfo=timezone.utc)
 _NOW_ISO = _NOW.isoformat()
@@ -68,7 +62,7 @@ class TestLastIssueHaltRuleRemoved:
         monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **kw: [])
         monkeypatch.setattr(qmod, "_dispatch_pipeline_ready", lambda *a, **kw: True)
 
-        result = qmod.dispatch_one(
+        qmod.dispatch_one(
             now=_NOW,
             client=client,
             store=store,
@@ -128,7 +122,7 @@ class TestHaltResolutionViaObserve:
 
     def test_systemic_step_failure_produces_halt(self, tmp_path):
         store = _store(tmp_path)
-        snap = store.snapshot()
+        store.snapshot()
         event = SystemicStepFailureEvent(step="cp2", failure_class="ValueError", issues=(100, 101))
         cfg_obs = get_config().observe
         actions = evaluate([event], cfg_obs)
@@ -150,7 +144,6 @@ class TestHaltResolutionViaObserve:
 class TestCmdSeedNightHalt:
     def test_night_seed_halt_uses_event_parameter(self, tmp_path):
         """AC-4: cmd_seed night halt uses event='night_seed'."""
-        from issuesmith import queue as qmod
 
         night_state = {"halt": True, "halt_reason": "night window ended"}
         night_path = tmp_path / "night-state.json"
@@ -159,10 +152,10 @@ class TestCmdSeedNightHalt:
         seed_path = tmp_path / "seed.yaml"
         seed_path.write_text("", encoding="utf-8")
 
-        store = _store(tmp_path)
+        _store(tmp_path)
 
         import argparse
-        args = argparse.Namespace(
+        argparse.Namespace(
             queue_path=str(tmp_path / "queue.jsonl"),
             state_path=str(tmp_path / "state.json"),
             lock_path=str(tmp_path / "lock"),

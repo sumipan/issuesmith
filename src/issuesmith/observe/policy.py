@@ -124,7 +124,10 @@ def _evaluate_one(event: ObserveEvent, config: "ObserveConfig") -> list[Action]:
         return [
             HaltAction(
                 scope=scope,
-                reason=f"systemic failure at step {event.step}: {event.failure_class} across {len(event.issues)} issues",
+                reason=(
+                    f"systemic failure at step {event.step}: "
+                    f"{event.failure_class} across {len(event.issues)} issues"
+                ),
                 event_kind="systemic_step_failure",
             ),
             AndonAction(
