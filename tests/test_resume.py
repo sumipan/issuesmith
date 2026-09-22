@@ -1,10 +1,9 @@
 """Tests for issuesmith.resume — central resume entry point (#3509)."""
 from __future__ import annotations
 
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -171,6 +170,7 @@ def _mock_unblocked_plan():
 
 def test_cmd_recover_emits_future_warning():
     import warnings
+
     from issuesmith.recovery import cmd_recover
     with (
         patch("issuesmith.recovery._generation_keys_available", return_value=False),
@@ -185,6 +185,7 @@ def test_cmd_recover_emits_future_warning():
 
 def test_cmd_redispatch_emits_future_warning():
     import warnings
+
     from issuesmith.recovery import cmd_redispatch
     store = _make_store_mock()
     client = MagicMock()

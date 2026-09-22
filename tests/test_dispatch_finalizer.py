@@ -3,10 +3,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from issuesmith.steps.base import Andon, StepResult
-
+from issuesmith.steps.base import StepResult
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -107,8 +104,9 @@ class TestMarkerLabelProjection:
         forge.issue_update.assert_not_called()
 
     def test_custom_namespace_used(self, monkeypatch):
-        import issuesmith.config as cfg_module
         import dataclasses
+
+        import issuesmith.config as cfg_module
         real_cfg = cfg_module.get_config()
         custom = dataclasses.replace(real_cfg, label_namespace="myns")
         monkeypatch.setattr(cfg_module, "_cached", custom)

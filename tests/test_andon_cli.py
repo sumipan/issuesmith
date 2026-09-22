@@ -3,9 +3,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -173,7 +170,6 @@ def test_dispatch_event_not_called_on_answer():
 # ---------------------------------------------------------------------------
 
 def test_cli_recover_emits_future_warning():
-    import warnings
     import os
     import sys
     from pathlib import Path
@@ -193,9 +189,9 @@ def test_cli_recover_emits_future_warning():
 
 
 def test_cli_redispatch_emits_future_warning():
+    import os
     import subprocess
     import sys
-    import os
     from pathlib import Path
     repo_root = Path(__file__).resolve().parents[1]
     src_path = str(repo_root / "src")
