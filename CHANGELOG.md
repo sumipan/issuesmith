@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.50.1 - 2026-09-22
+
+### Added
+
+- `tests/conftest.py`: session-scoped autouse `_no_side_effects` fixture that guards against
+  filesystem writes outside pytest's tmp directory. The fixture redirects module-level path
+  constants (`QUOTA_STATE_PATH`, `BRAKE_STATE_PATH`, `EXEC_PATH`, `DONE_DIR`, `JOBS_DIR`,
+  `DEFAULT_TRIAGE_LOG_PATH`) to `basetemp` and sets `ISSUESMITH_QUEUE_DIR` so `dispatch_one`
+  and triage writes stay within the test sandbox. Any write outside `basetemp` raises
+  `AssertionError("side effect outside tmp: <path>")`. A session finalizer asserts that
+  `jobs/`, `logs/`, and `.pipeline-state/` do not exist at the repo root after the suite.
+- `tests/test_no_side_effects.py`: smoke tests verifying the write-guard harness (AC-1) and
+  that no runtime directories appear at repo root (AC-2).
+
 ## 0.48.1 - 2026-09-22
 
 ### Added
