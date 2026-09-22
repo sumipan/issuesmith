@@ -168,12 +168,16 @@ def _detect_orphan_exec(
 
 
 def _issue_from_key(key: str) -> int | None:
+    """Return the issue number from ``<workflow>:<handler>:<issue>[:<generation>]``.
+
+    Recovery / redispatch append a generation suffix (``issuesmith:impl:3548:1``); the issue
+    number is always the third segment, never the last one (sumipan/nexus#3523).
+    """
     parts = key.split(":")
-    if len(parts) >= 3:
-        last = parts[-1]
-        if last.isdigit():
-            return int(last)
+    if len(parts) >= 3 and parts[2].isdigit():
+        return int(parts[2])
     return None
+
 
 
 def _detect_label_drift(
