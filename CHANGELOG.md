@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.52.0 - 2026-09-23
+
+### Changed
+
+- `dispatch`: a `RetrySignal` now registers the running task with `QuotaGate.defer` (uuid from
+  `GHDAG_TASK_UUID`, role engines from `ROLE_ENGINES`) and prints `PIPELINE_STATUS: DEFERRED`,
+  so ghdag marks the task `DONE_DEFERRED` and `release_ready` re-queues it once an engine is
+  available again (sumipan/nexus#3515). Previously the task exited 0 with no status and stayed
+  waiting until a manual `resume`
+- ghdag pin raised to `v0.68.0` (exports `GHDAG_TASK_UUID` to launched tasks)
+
 ## 0.51.0 - 2026-09-22
 
 ### Changed

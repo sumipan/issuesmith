@@ -29,6 +29,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+from ghdag.core.vocabulary import DONE_DEFERRED
 from ghdag.forge import get_forge
 from ghdag.quota import QuotaGate
 
@@ -287,24 +288,52 @@ def _forge_add_waiting(issue_number: int) -> None:
         )
 
 
-def _handle_retry_signal(sig: RetrySignal, step_id: str, issue_number: int | None) -> None:
-    quota_gate = QuotaGate(state_path=get_config().paths.quota_state)
-    defer_fn = getattr(quota_gate, "defer", None)
-    if defer_fn is not None:
-        defer_fn(step_id, after=sig.after)
+def _handle_retry_signal(
+    sig: RetrySignal,
+    step_id: str,
+    issue_number: int | None,
+    *,
+    quota_gate: QuotaGate | None = None,
+    task_uuid: str | None = None,
+) -> None:
+    """Defer the running task instead of failing it (sumipan/nexus#3515).
+
+    1. Register the task with ``QuotaGate.defer`` so ``release_ready`` re-queues it once one
+       of the role's engines is available again. The task uuid comes from ``GHDAG_TASK_UUID``
+       (ghdag >= 0.68.0 exports it to launched tasks).
+    2. Apply the ``<ns>:waiting`` label.
+    3. Emit ``PIPELINE_STATUS: DEFERRED`` so ghdag marks the task DONE_DEFERRED: not a success
+       (downstream depends do not start) and not a failure (no failure hook / circuit breaker).
+    """
+    from issuesmith.engine import ROLE_ENGINES
+
+    uuid = (task_uuid if task_uuid is not None else os.environ.get("GHDAG_TASK_UUID", "")).strip()
+    role = getattr(sig, "role", "") or ""
+    role_engines = sorted(ROLE_ENGINES.get(role, frozenset())) if role else []
+    engine = role_engines[0] if role_engines else "unknown"
+    gate = quota_gate or QuotaGate(state_path=get_config().paths.quota_state)
+    if uuid:
+        gate.defer(
+            uuid,
+            engine=engine,
+            after=sig.after,
+            role_engines=role_engines or None,
+            reason=f"{step_id}: {sig.reason.value}",
+        )
     else:
         print(
-            "[issuesmith-dispatch] WARNING: QuotaGate.defer not available; "
-            "step will not auto-resume until ghdag adds defer support",
+            "[issuesmith-dispatch] WARNING: GHDAG_TASK_UUID is not set (ghdag >= 0.68.0 exports "
+            "it); the task is marked DEFERRED but nothing will release it automatically",
             file=sys.stderr,
         )
     if issue_number is not None:
         _forge_add_waiting(issue_number)
     print(
-        f"[issuesmith-dispatch] deferred step={step_id} "
-        f"reason={sig.reason.value} after={sig.after}",
+        f"[issuesmith-dispatch] deferred step={step_id} uuid={uuid or '-'} "
+        f"reason={sig.reason.value} after={sig.after} role={role or '-'} engines={role_engines}",
         file=sys.stderr,
     )
+    print(f"PIPELINE_STATUS: {DONE_DEFERRED}")
 
 
 def main(argv: list[str]) -> int:

@@ -310,17 +310,25 @@ class TestDispatchHandlesRetrySignal:
 
         assert rc == 0
 
-    def test_calls_quota_gate_defer(self, dispatch_mocks, monkeypatch):
+    def test_calls_quota_gate_defer(self, dispatch_mocks, monkeypatch, capsys):
         dispatch = dispatch_mocks["dispatch"]
         after = datetime.now(timezone.utc) + timedelta(hours=2)
         sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=after, role="design")
         monkeypatch.setattr(dispatch, "_try_python_step", MagicMock(side_effect=sig))
+        monkeypatch.setenv("GHDAG_TASK_UUID", "uuid-42")
 
         dispatch.main(["test-step", "issue_number=42"])
 
+        from issuesmith.engine import ROLE_ENGINES
+
         dispatch_mocks["quota_gate"].defer.assert_called_once_with(
-            "test-step", after=after
+            "uuid-42",
+            engine=sorted(ROLE_ENGINES["design"])[0],
+            after=after,
+            role_engines=sorted(ROLE_ENGINES["design"]),
+            reason="test-step: QUOTA_PAUSED",
         )
+        assert "PIPELINE_STATUS: DEFERRED" in capsys.readouterr().out
 
     def test_applies_waiting_label(self, dispatch_mocks, monkeypatch):
         dispatch = dispatch_mocks["dispatch"]
