@@ -359,40 +359,29 @@ def cmd_recover(
     as_json: bool = False,
     labels: set[str] | None = None,
 ) -> int:
-    label_set = labels or set()
-    failed_step = from_step or "cp2"
-    plan_obj = plan(issue, failed_step, label_set)
-
-    if as_json:
-        print(plan_to_json(plan_obj))
-        if dry_run:
-            for step in list_recover_steps(issue, failed_step, from_step=from_step):
-                print(step)
-        return 0
-
-    if plan_obj.action != "recover":
-        print(
-            f"recover not applicable: {plan_obj.reason}. try: {plan_obj.command}",
-            file=sys.stderr,
-        )
-        return 1
-
-    steps = list_recover_steps(issue, failed_step, from_step=from_step)
-    if dry_run:
+    import warnings
+    warnings.warn(
+        "issuesmith recover is deprecated; use 'issuesmith resume --from <step>' instead",
+        FutureWarning,
+        stacklevel=2,
+    )
+    if dry_run or as_json:
+        # dry-run / json paths do not perform recovery; keep existing behaviour
+        label_set = labels or set()
+        failed_step = from_step or "cp2"
+        plan_obj = plan(issue, failed_step, label_set)
+        if as_json:
+            print(plan_to_json(plan_obj))
+            if dry_run:
+                for step in list_recover_steps(issue, failed_step, from_step=from_step):
+                    print(step)
+            return 0
+        steps = list_recover_steps(issue, failed_step, from_step=from_step)
         for step in steps:
             print(step)
         return 0
-
-    handler = handler_for_failed_step(failed_step, label_set)
-    if _generation_keys_available():
-        return _run_ghdag_recover(issue, handler, from_step)
-
-    print(
-        "ghdag dag recover is not available (#2876). "
-        f"Re-run manually from frozen orders: {steps}",
-        file=sys.stderr,
-    )
-    return 1
+    from issuesmith.resume import resume
+    return resume(issue, from_step=from_step or "cp2")
 
 
 def cmd_redispatch(
@@ -402,6 +391,12 @@ def cmd_redispatch(
     reason: str = "",
     dry_run: bool = False,
 ) -> int:
+    import warnings
+    warnings.warn(
+        "issuesmith redispatch is deprecated; use 'issuesmith resume --phase <phase>' instead",
+        FutureWarning,
+        stacklevel=2,
+    )
     # stale in_flight があると再 enqueue しても dispatch されないため先に除去する。
     if not dry_run:
         QueueStore().remove_in_flight(issue)

@@ -116,11 +116,18 @@ def _write_metrics(path: Path, event: str, andon_id: str) -> None:
 
 
 def _call_resume_hook(client: Any, andon_id: str, action: str) -> None:
+    """Call resume() directly for 'resume' action; no-op for all other actions (#3509)."""
+    if action != "resume":
+        return
     try:
-        client.dispatch_event(
-            "andon-answered",
-            {"andon_id": andon_id, "action": action},
-        )
+        parts = andon_id.split(":")
+        # format: <workflow>:<issue>:<step>:<gen>
+        if len(parts) < 3:
+            return
+        issue_num = int(parts[1])
+        step = parts[2]
+        from issuesmith.resume import resume
+        resume(issue_num, from_step=step)
     except Exception:
         pass
 

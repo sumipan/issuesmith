@@ -206,12 +206,24 @@ def _cmd_version_bump(argv: list[str]) -> int:
 
 
 def _cmd_recover(argv: list[str]) -> int:
+    import warnings
+    warnings.warn(
+        "issuesmith recover is deprecated; use 'issuesmith resume --from <step>' instead",
+        FutureWarning,
+        stacklevel=2,
+    )
     from issuesmith.recovery import main as recovery_main
 
     return int(recovery_main(["recover", *argv]))
 
 
 def _cmd_redispatch(argv: list[str]) -> int:
+    import warnings
+    warnings.warn(
+        "issuesmith redispatch is deprecated; use 'issuesmith resume --phase <phase>' instead",
+        FutureWarning,
+        stacklevel=2,
+    )
     from issuesmith.recovery import main as recovery_main
 
     return int(recovery_main(["redispatch", *argv]))
