@@ -163,6 +163,42 @@ def _run_bash_step(step_id: str, context: dict[str, str]) -> int:
             pass
 
 
+# Markers that map to a phase-done/phase-running label transition.
+_MARKER_PHASE: dict[str, str] = {
+    "MERGE_DONE": "merge",
+    "IMPL_DONE": "develop",
+    "REPORT_DONE": "draft",
+}
+
+
+def _project_marker_labels(marker: str, context: dict[str, str]) -> None:
+    """Apply phase-done label and remove phase-running label for terminal markers."""
+    phase = _MARKER_PHASE.get(marker)
+    if phase is None:
+        return
+    raw_issue = context.get("issue_number", "")
+    if not raw_issue:
+        return
+    try:
+        issue_num = int(raw_issue)
+    except ValueError:
+        return
+    if not issue_num:
+        return
+    ns = get_config().label_namespace
+    try:
+        get_forge().issue_update(
+            issue_num,
+            labels_add=[f"{ns}:{phase}-done"],
+            labels_remove=[f"{ns}:{phase}-running"],
+        )
+    except Exception as exc:
+        print(
+            f"[issuesmith-dispatch] WARNING: label projection failed for {marker}: {exc}",
+            file=sys.stderr,
+        )
+
+
 def map_step_result(
     result: StepResult,
     *,
@@ -172,7 +208,7 @@ def map_step_result(
 ) -> int:
     """Map a StepResult to an exit code, printing PIPELINE_STATUS markers as side effects.
 
-    done  → exit 0 + print PIPELINE_STATUS for each marker
+    done  → exit 0 + print PIPELINE_STATUS for each marker + project phase labels
     retry → raise RetrySignal (caught by main(), exits 0 after deferring)
     andon → call raise_andon + exit 1
 
@@ -220,10 +256,12 @@ def map_step_result(
             get_forge().issue_comment(issue_num, recovery)
         if pipeline_status:
             print(f"PIPELINE_STATUS: {pipeline_status}")
+            _project_marker_labels(pipeline_status, context)
         return exit_code
 
     for marker in markers:
         print(f"PIPELINE_STATUS: {marker}")
+        _project_marker_labels(marker, context)
     return 0
 
 
@@ -301,7 +339,8 @@ def main(argv: list[str]) -> int:
             return _run_bash_step(step_id, context)
         except (KeyError, FileNotFoundError) as exc:
             print(f"[issuesmith-dispatch] ERROR: {exc}", file=sys.stderr)
-            return 2
+            broken = StepResult(status="andon", andon=Andon(kind="broken", summary=str(exc)))
+            return map_step_result(broken, step_id=step_id, context=context)
     except RetrySignal as sig:
         _handle_retry_signal(sig, step_id, issue_number)
         return 0
