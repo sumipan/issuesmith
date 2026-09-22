@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.48.1 - 2026-09-22
+
+### Added
+
+- `scope_coupling.enabled` (default `true`): set `false` in `issuesmith.yaml` to turn the
+  CP1/B1 scope coupling gate off. The gate demands every caller of a core module and
+  contradicts `scope_breadth` (nexus #3431 / #3504 / #3522); it stays off until redesigned
+  in nexus #3527.
+
 ## 0.43.1 - 2026-09-21
 
 ### Fixed

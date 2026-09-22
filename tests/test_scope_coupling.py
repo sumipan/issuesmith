@@ -448,3 +448,24 @@ class TestEdgeCases:
             ):
                 violations = ScopeCouplingRules().check(body, [])
         assert violations == []
+
+
+def test_disabled_gate_returns_no_violations_and_does_not_scan(monkeypatch):
+    """scope_coupling.enabled=false short-circuits before any repo scan."""
+    from unittest.mock import MagicMock
+
+    from issuesmith.gate_rules import scope_coupling as sc
+
+    cfg = MagicMock()
+    cfg.scope_coupling.enabled = False
+    monkeypatch.setattr(sc, "get_config", lambda: cfg)
+    grep = MagicMock(side_effect=AssertionError("must not scan when disabled"))
+    monkeypatch.setattr(sc, "_git_grep", grep)
+    body = (
+        "```yaml\ntarget_repo: sumipan/nexus\nbase_branch: main\n"
+        "allow_paths:\n  - \"src/a.py\"\n```\n\n## Design\n\nuses `some_symbol_name`\n"
+    )
+    rule = sc.ScopeCouplingRules()
+    assert rule.check(body, []) == []
+    assert rule.autofix_note is None
+    grep.assert_not_called()

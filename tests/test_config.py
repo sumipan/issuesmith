@@ -252,3 +252,19 @@ def test_scope_coupling_empty_ignore_symbols_list(tmp_path, monkeypatch):
     cfg = load_config()
 
     assert cfg.scope_coupling.ignore_symbols == ()
+
+
+def test_scope_coupling_enabled_flag_loaded_from_yaml(tmp_path, monkeypatch):
+    """scope_coupling.enabled: false is honoured; absent means enabled."""
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "example/repo", "scope_coupling": {"enabled": False}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    assert load_config().scope_coupling.enabled is False
+
+    cfg_path.write_text(yaml.safe_dump({"repo": "example/repo"}), encoding="utf-8")
+    reset_config_cache()
+    assert load_config().scope_coupling.enabled is True

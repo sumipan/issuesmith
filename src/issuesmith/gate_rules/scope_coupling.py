@@ -164,6 +164,9 @@ class ScopeCouplingRules:
         self.autofix_note = None
         self.autofix_new_allow_paths = None
 
+        if not get_config().scope_coupling.enabled:
+            return []
+
         try:
             metadata = parse_issue_metadata(body)
         except Exception:

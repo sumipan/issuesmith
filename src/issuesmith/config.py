@@ -203,9 +203,14 @@ class ScopeGateConfig:
 
 @dataclass(frozen=True)
 class ScopeCouplingConfig:
-    """CP1/B1 scope coupling gate (#3520)."""
+    """CP1/B1 scope coupling gate (#3520).
+
+    ``enabled: false`` turns the gate off entirely (nexus #3527: the gate
+    contradicts scope_breadth on core-module changes and is disabled until redesigned).
+    """
 
     ignore_symbols: tuple[str, ...] = ()
+    enabled: bool = True
 
 
 _DEFAULT_TERMINAL_LABELS: tuple[str, ...] = ("issuesmith:merge-done", "bump:done")
@@ -510,7 +515,9 @@ def _build_scope_coupling(raw: Mapping[str, Any] | None) -> ScopeCouplingConfig:
         ignore_symbols = tuple(str(s) for s in ignore_raw if s is not None)
     else:
         ignore_symbols = ()
-    return ScopeCouplingConfig(ignore_symbols=ignore_symbols)
+    enabled_raw = raw.get("enabled")
+    enabled = True if enabled_raw is None else bool(enabled_raw)
+    return ScopeCouplingConfig(ignore_symbols=ignore_symbols, enabled=enabled)
 
 
 def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
