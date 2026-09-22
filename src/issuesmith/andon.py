@@ -116,10 +116,7 @@ def _write_metrics(path: Path, event: str, andon_id: str) -> None:
 
 
 def _call_resume_hook(client: Any, andon_id: str, action: str) -> None:
-    """Call resume() directly for 'resume' action; no-op for all other actions.
-
-    Replaces the old dispatch_event("andon-answered") path which had no receiver (#3509).
-    """
+    """Call resume() directly for 'resume' action; no-op for all other actions (#3509)."""
     if action != "resume":
         return
     try:
