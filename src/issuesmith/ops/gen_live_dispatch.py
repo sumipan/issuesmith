@@ -51,7 +51,7 @@ def shell_steps() -> list[str]:
 
 def body_identifiers(step: str) -> list[str]:
     text = (TEMPLATE_DIR / f"{step}.md").read_text(encoding="utf-8")
-    return sorted(set(string.Template(text).get_identifiers()))
+    return sorted(set(string.Template(text).get_identifiers()))  # type: ignore[attr-defined]  # TODO(#3611)
 
 
 def generate(step: str) -> str:

@@ -85,7 +85,7 @@ def render(step_id: str, context: dict[str, str], template_dir: Path | None = No
         raise FileNotFoundError(f"テンプレートファイルが見つかりません: {template_path}")
     text = template_path.read_text(encoding="utf-8")
     tmpl = string.Template(text)
-    missing = sorted(set(tmpl.get_identifiers()) - set(context))
+    missing = sorted(set(tmpl.get_identifiers()) - set(context))  # type: ignore[attr-defined]  # TODO(#3611)
     if missing:
         raise KeyError(
             f"テンプレート展開エラー ({template_path}): 未定義変数: {missing}, "

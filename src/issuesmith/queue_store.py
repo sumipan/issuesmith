@@ -170,10 +170,10 @@ def request_from_dict(data: dict[str, Any]) -> QueueRequest:
     return QueueRequest(
         request_id=str(data["request_id"]),
         issue=int(data["issue"]),
-        phase=data["phase"],  # type: ignore[arg-type]
+        phase=data["phase"],
         source=str(data["source"]),
-        actor_kind=data["actor_kind"],  # type: ignore[arg-type]
-        priority=data["priority"],  # type: ignore[arg-type]
+        actor_kind=data["actor_kind"],
+        priority=data["priority"],
         requested_at=str(data["requested_at"]),
         requested_by=tuple(str(x) for x in data["requested_by"]),
     )
@@ -454,7 +454,7 @@ class QueueStore:
             req = QueueRequest(
                 request_id=rid,
                 issue=issue,
-                phase=phase,  # type: ignore[arg-type]
+                phase=phase,
                 source=source,
                 actor_kind=actor_kind,  # type: ignore[arg-type]
                 priority=priority,  # type: ignore[arg-type]
@@ -467,7 +467,7 @@ class QueueStore:
             state["active_order"] = order
             state["revision"] = int(state.get("revision", 0)) + 1
             meta = dict(state.get("request_meta") or {})
-            entry: dict = {}
+            entry: dict = {}  # type: ignore[no-redef]  # TODO(#3611)
             if force:
                 entry["force"] = True
             if after:
@@ -496,7 +496,7 @@ class QueueStore:
             phase=req.phase,
             source=req.source,
             actor_kind=req.actor_kind,
-            priority=priority if priority in PRIORITIES else req.priority,  # type: ignore[arg-type]
+            priority=priority if priority in PRIORITIES else req.priority,
             requested_at=req.requested_at,
             requested_by=tuple(by) if isinstance(by, list) else req.requested_by,
         )

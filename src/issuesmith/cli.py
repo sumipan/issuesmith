@@ -178,7 +178,7 @@ def _cmd_labels(argv: list[str]) -> int:
     if not argv or argv[0] != "hygiene":
         print("labels: expected 'hygiene'", file=sys.stderr)
         return 2
-    from issuesmith.ops.label_hygiene import main as hygiene_main
+    from issuesmith.ops.label_hygiene import main as hygiene_main  # type: ignore[import-untyped]  # TODO(#3612)
 
     return int(hygiene_main(argv[1:]))
 

@@ -412,7 +412,7 @@ def cmd_redispatch(
         if isinstance(lab, dict) and lab.get("name")
     }
     failed_step = {p.name: p.entry_step for p in get_config().phases}[phase]
-    plan_obj = plan(issue, failed_step, label_names)
+    plan_obj = plan(issue, failed_step, label_names)  # type: ignore[arg-type]  # TODO(#3611)
 
     if plan_obj.blocked_by:
         print(plan_obj.blocked_by, file=sys.stderr)
@@ -431,7 +431,7 @@ def cmd_redispatch(
         return 0
 
     client = _github_client()
-    changed = apply_redispatch_labels(client, issue, phase, label_names)
+    changed = apply_redispatch_labels(client, issue, phase, label_names)  # type: ignore[arg-type]  # TODO(#3611)
     if not changed and plan_obj.action != "redispatch":
         print("no label changes required", file=sys.stderr)
 

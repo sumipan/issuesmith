@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "issuesmith"
-version = "0.52.1"
+version = "0.53.0"
 description = "GitHub Issue label-driven workflow framework on ghdag"
 readme = "README.md"
 license = "MIT"
@@ -25,6 +25,8 @@ classifiers = [
 ghdag = ["ghdag @ git+https://github.com/sumipan/ghdag.git@v0.68.0"]
 dev = [
   "pytest>=7.0.0",
+  "pytest-cov>=4.0.0",
+  "mypy>=1.10.0",
   "ruff>=0.4.0",
   "ghdag @ git+https://github.com/sumipan/ghdag.git@v0.68.0",
 ]
@@ -37,6 +39,9 @@ Repository = "https://github.com/sumipan/issuesmith"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+issuesmith = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -54,3 +59,16 @@ select = ["E", "F", "I", "W"]
 "tests/**" = ["E501"]
 "src/issuesmith/gate_rules/**" = ["E501"]
 "src/issuesmith/queue.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_ignores = true
+files = ["src/issuesmith"]
+
+[[tool.mypy.overrides]]
+module = ["ghdag", "ghdag.*", "yaml", "yaml.*"]
+ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["issuesmith"]
+omit = ["*/__main__.py"]

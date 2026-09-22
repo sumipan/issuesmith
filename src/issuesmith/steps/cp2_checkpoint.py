@@ -97,7 +97,7 @@ def _open_pr_number(client: ForgePort, repo: str, branch: str) -> int | None:
         )
         return None
     try:
-        listed = client.api_request(path)
+        listed = client.api_request(path)  # type: ignore[attr-defined]  # TODO(#3611)
     except Exception as exc:
         print(f"CP2: PR list failed ({exc})", file=sys.stderr)
         return None
