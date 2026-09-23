@@ -520,3 +520,160 @@ class TestDispatchRetryNotCounted:
                             step_cfg=cfg,
                         )
         # No andon raised — the RetrySignal propagated up
+
+
+# ---------------------------------------------------------------------------
+# AC-2c: worktree gate with None worktree_path → GateBuildError → andon(broken)
+# ---------------------------------------------------------------------------
+
+
+class TestDispatchGateBuildError:
+    """AC-2c: gate build failure → andon(broken) with 'could not be built' summary."""
+
+    def test_gate_build_error_produces_andon_broken(self, capsys):
+        from issuesmith.config import StepConfig
+        from issuesmith.gates import GateBuildError
+        from issuesmith.ops.dispatch import map_step_result
+        from issuesmith.steps.base import StepResult
+
+        cfg = StepConfig(
+            module="issuesmith.steps.test",
+            requires=("lint",),
+            input_kind="worktree",
+        )
+
+        with patch(
+            "issuesmith.ops.dispatch._build_requires_gates",
+            side_effect=GateBuildError("gate 'lint' requires worktree_path but context has none"),
+        ):
+            with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
+                mock_forge.return_value = MagicMock()
+                with patch("issuesmith.ops.dispatch._raise_andon") as mock_andon:
+                    rc = map_step_result(
+                        StepResult(status="done", markers=["IMPL_DONE"]),
+                        step_id="p2",
+                        context=_make_ctx(),
+                        step_cfg=cfg,
+                    )
+        assert rc == 1
+        assert mock_andon.called
+        andon_arg = mock_andon.call_args[0][1]
+        assert andon_arg.kind == "broken"
+        assert "could not be built" in andon_arg.summary
+
+
+# ---------------------------------------------------------------------------
+# AC-3b: repair step recursion guard and requires-skip
+# ---------------------------------------------------------------------------
+
+
+class TestDispatchRepairGuards:
+    """AC-3b: ISSUESMITH_REPAIR_ACTIVE prevents re-entry; repair step skips requires."""
+
+    def test_repair_step_skips_requires_evaluation(self, capsys):
+        from issuesmith.config import StepConfig
+        from issuesmith.ops.dispatch import map_step_result
+        from issuesmith.steps.base import StepResult
+
+        cfg = StepConfig(
+            module="issuesmith.steps.repair",
+            requires=("deps",),
+            input_kind="issue",
+        )
+        with patch("issuesmith.ops.dispatch._build_requires_gates") as mock_build:
+            with patch("issuesmith.ops.dispatch.get_forge"):
+                rc = map_step_result(
+                    StepResult(status="done"),
+                    step_id="repair",
+                    context=_make_ctx(),
+                    step_cfg=cfg,
+                )
+        # _build_requires_gates must NOT be called for repair step
+        mock_build.assert_not_called()
+        assert rc == 0
+
+    def test_dispatch_main_repair_active_produces_andon(self):
+        import os
+
+        from issuesmith.ops.dispatch import main
+
+        with patch.dict(os.environ, {"ISSUESMITH_REPAIR_ACTIVE": "1"}):
+            with patch("issuesmith.ops.dispatch._raise_andon") as mock_andon:
+                with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
+                    mock_forge.return_value = MagicMock()
+                    rc = main(["repair", "issue_number=42", "workflow_name=issuesmith"])
+        assert rc == 1
+        assert mock_andon.called
+        andon_arg = mock_andon.call_args[0][1]
+        assert andon_arg.kind == "broken"
+        assert "re-entered" in andon_arg.summary
+
+    def test_bash_fallback_runs_with_repair_active_env(self, monkeypatch):
+        import os
+
+        from ghdag.workflow.gates import Violation
+
+        from issuesmith.ops.dispatch import _run_repair_step
+
+        monkeypatch.delenv("ISSUESMITH_REPAIR_ACTIVE", raising=False)
+        seen: list[str | None] = []
+
+        def _fake_bash(step_id, ctx):
+            seen.append(os.environ.get("ISSUESMITH_REPAIR_ACTIVE"))
+            return 0
+
+        v = Violation(
+            rule_id="deps.unmerged", severity="fail", message="x",
+            location=None, auto_fixable=False, fix_hint="",
+        )
+        with patch("issuesmith.ops.dispatch._try_python_step", return_value=None):
+            with patch("issuesmith.ops.dispatch._run_bash_step", side_effect=_fake_bash):
+                rc = _run_repair_step([v], "p0", _make_ctx())
+        assert rc is None
+        assert seen == ["1"]
+        assert os.environ.get("ISSUESMITH_REPAIR_ACTIVE") is None
+
+
+# ---------------------------------------------------------------------------
+# AC-3c: _context_to_step passes repair fields
+# ---------------------------------------------------------------------------
+
+
+class TestContextToStep:
+    """AC-3c: repair_violations and repair_step_origin are passed from context to StepContext."""
+
+    def test_context_to_step_passes_repair_fields(self):
+        from issuesmith.ops.dispatch import _context_to_step
+
+        ctx = _context_to_step({
+            "issue_number": "42",
+            "base_branch": "main",
+            "handler_name": "test",
+            "is_cross_repo": "false",
+            "target_clone_path": "",
+            "source": "",
+            "workflow_name": "test",
+            "m1_result_filename": "",
+            "m1r_result_filename": "",
+            "repair_violations": "- deps.unmerged: issue #100 not merged",
+            "repair_step_origin": "p0",
+        })
+        assert ctx.repair_violations == "- deps.unmerged: issue #100 not merged"
+        assert ctx.repair_step_origin == "p0"
+
+    def test_context_to_step_defaults_repair_fields_empty(self):
+        from issuesmith.ops.dispatch import _context_to_step
+
+        ctx = _context_to_step({
+            "issue_number": "42",
+            "base_branch": "main",
+            "handler_name": "test",
+            "is_cross_repo": "false",
+            "target_clone_path": "",
+            "source": "",
+            "workflow_name": "test",
+            "m1_result_filename": "",
+            "m1r_result_filename": "",
+        })
+        assert ctx.repair_violations == ""
+        assert ctx.repair_step_origin == ""

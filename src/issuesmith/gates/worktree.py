@@ -196,9 +196,33 @@ class BaseFreshnessGate:
         return inp
 
 
-# Worktree gate IDs supported by this module.
-# These are discovered by convention in dispatch._build_requires_gates rather than
-# through GATE_REGISTRY to keep the metadata registry in sync with config validation.
-WORKTREE_GATE_IDS: frozenset[str] = frozenset({"lint", "tests", "external_leak", "base_freshness"})
+def _build_lint(worktree_path: Path, allow_paths: list[str], base_branch: str) -> LintGate:
+    return LintGate(worktree_path, allow_paths)
 
-__all__ = ["LintGate", "TestsGate", "ExternalLeakGate", "BaseFreshnessGate"]
+
+def _build_tests(worktree_path: Path, allow_paths: list[str], base_branch: str) -> TestsGate:
+    return TestsGate(worktree_path)
+
+
+def _build_external_leak(
+    worktree_path: Path, allow_paths: list[str], base_branch: str
+) -> ExternalLeakGate:
+    return ExternalLeakGate(worktree_path, allow_paths)
+
+
+def _build_base_freshness(
+    worktree_path: Path, allow_paths: list[str], base_branch: str
+) -> BaseFreshnessGate:
+    return BaseFreshnessGate(worktree_path, base_branch)
+
+
+# Maps gate id → factory(worktree_path, allow_paths, base_branch).
+# Replaces WORKTREE_GATE_IDS: all worktree gates are discoverable and buildable from here.
+WORKTREE_GATES: dict[str, object] = {
+    "lint": _build_lint,
+    "tests": _build_tests,
+    "external_leak": _build_external_leak,
+    "base_freshness": _build_base_freshness,
+}
+
+__all__ = ["LintGate", "TestsGate", "ExternalLeakGate", "BaseFreshnessGate", "WORKTREE_GATES"]

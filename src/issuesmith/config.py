@@ -221,14 +221,6 @@ class ScopeCouplingConfig:
 
 _DEFAULT_TERMINAL_LABELS: tuple[str, ...] = ("issuesmith:merge-done", "bump:done")
 
-# Gate input_kind map — kept in sync with gates.GATE_REGISTRY.
-# Defined here to avoid a circular import (gates → m2_gate → targets → config).
-_KNOWN_GATE_INPUT_KINDS: dict[str, str] = {
-    "m2": "issue",
-    "deps": "issue",
-    "scope": "worktree",
-    "pr_scope": "worktree",
-}
 
 
 @dataclass(frozen=True)
@@ -511,12 +503,14 @@ def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
             if not isinstance(requires_raw, list):
                 raise ConfigError(f"steps.{step_id}.requires must be a list")
             requires = tuple(str(g) for g in requires_raw)
-            unknown = [g for g in requires if g not in _KNOWN_GATE_INPUT_KINDS]
+            # Lazy import to avoid circular import (gates → m2_gate → targets → config).
+            from issuesmith.gates import GATE_REGISTRY as _gate_reg  # noqa: PLC0415
+            unknown = [g for g in requires if g not in _gate_reg]
             if unknown:
-                known = sorted(_KNOWN_GATE_INPUT_KINDS)
+                known = sorted(_gate_reg)
                 raise ConfigError(
-                    f"steps.{step_id}.requires contains unknown gate ids: {unknown}."
-                    f" Known ids: {known}"
+                    f"steps.{step_id}.requires contains unknown gate ids"
+                    f" (missing gate ids: {unknown}). Known ids: {known}"
                 )
         if "input_kind" in conf:
             input_kind = str(conf["input_kind"])
@@ -525,14 +519,30 @@ def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
                     f"steps.{step_id}.input_kind must be one of"
                     f" {sorted(_valid_input_kinds)}, got {input_kind!r}"
                 )
-        # Validate that each required gate's input_kind matches the step's input_kind.
-        for gate_id in requires:
-            gate_input_kind = _KNOWN_GATE_INPUT_KINDS[gate_id]
-            if gate_input_kind != input_kind:
-                raise ConfigError(
-                    f"steps.{step_id}: input_kind={input_kind!r} is incompatible with"
-                    f" gate {gate_id!r} which requires input_kind={gate_input_kind!r}"
-                )
+        # Validate gate/step input_kind compatibility.
+        # Rules:
+        #   - issue gate: usable in "issue" or "worktree" steps (body+labels are always readable)
+        #   - worktree gate: only in "worktree" steps
+        #   - artifact gate: only in "artifact" steps
+        if requires:
+            from issuesmith.gates import GATE_REGISTRY as _gate_reg  # noqa: PLC0415
+            for gate_id in requires:
+                gate_input_kind = _gate_reg[gate_id].input_kind
+                if gate_input_kind == "worktree" and input_kind != "worktree":
+                    raise ConfigError(
+                        f"steps.{step_id}: worktree gate {gate_id!r} can only be used"
+                        f" in worktree steps, but step input_kind={input_kind!r}"
+                    )
+                if gate_input_kind == "artifact" and input_kind != "artifact":
+                    raise ConfigError(
+                        f"steps.{step_id}: artifact gate {gate_id!r} can only be used"
+                        f" in artifact steps, but step input_kind={input_kind!r}"
+                    )
+                if gate_input_kind == "issue" and input_kind == "artifact":
+                    raise ConfigError(
+                        f"steps.{step_id}: issue gate {gate_id!r} cannot be used"
+                        f" in artifact steps"
+                    )
 
         steps[str(step_id)] = StepConfig(
             module=str(module).strip(),
