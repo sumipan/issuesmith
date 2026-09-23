@@ -6,18 +6,33 @@ from typing import Mapping
 
 from issuesmith.config import StepConfig
 
+# Step IDs that are exempt from the "must have requires" check.
+_REPAIR_EXEMPT_IDS: frozenset[str] = frozenset({"repair"})
+
 
 def validate_requires_chain(steps: Mapping[str, StepConfig]) -> list[str]:
     """Return a list of violation messages for steps that are missing requires.
 
     Does not re-validate gate ids or input_kind (config loading does that at
-    parse time). Only checks that every step has a non-empty requires declaration.
+    parse time). Only checks that every non-exempt step has a non-empty requires.
+    repair is exempt: it is launched by the dispatch loop after violation detection,
+    not by a requires declaration.
     """
+    from issuesmith.gates import GATE_REGISTRY
+
     violations: list[str] = []
     for step_id, step in steps.items():
+        if step_id in _REPAIR_EXEMPT_IDS:
+            continue
         if not step.requires:
             violations.append(
                 f"steps.{step_id}: missing requires declaration"
+            )
+            continue
+        missing = [g for g in step.requires if g not in GATE_REGISTRY]
+        if missing:
+            violations.append(
+                f"steps.{step_id}: missing gate ids: {missing}"
             )
     return violations
 

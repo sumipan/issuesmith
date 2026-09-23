@@ -9,6 +9,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `gates.GATE_REGISTRY`: unified registry now includes all `gate_rules/` ids (auto-imported from
+  ghdag's `GATE_REGISTRY`), worktree gates (`lint`, `tests`, `external_leak`, `base_freshness`),
+  and issue adapters (`deps`, `scope`, `pr_scope`). Every entry has a `build(GateBuildContext)`
+  factory; the 4 hand-written tables (`_KNOWN_GATE_INPUT_KINDS`, `WORKTREE_GATE_IDS`,
+  `dispatch._build_worktree_gate`, ghdag direct-lookup) are replaced by this single source.
+- `gates.GateBuildContext`, `gates.GateBuildError`, `gates.GateEntry.build`: new public types.
+- `gates.dep.DepsGate`, `gates.scope.ScopeGate`, `gates.pr_scope.PrScopeGate`:
+  `RequiresGate` adapters wrapping existing check functions.
+- `steps.repair`: new module. `run(ctx, step)` executes one LLM repair cycle via `run_guarded`,
+  reads `ctx.repair_violations` / `ctx.repair_step_origin`, and guards against re-entry via
+  `ISSUESMITH_REPAIR_ACTIVE`.
+- `steps.base.StepContext`: `repair_violations` and `repair_step_origin` fields (default `""`).
+- `ops.dispatch`: `_context_to_step` now passes `repair_violations` / `repair_step_origin` to
+  `StepContext`. `_build_requires_gates` uses `GATE_REGISTRY.build()` instead of hand-written
+  tables; `GateBuildError` → andon(broken). Repair step (`repair`) skips requires re-evaluation.
+  `ISSUESMITH_REPAIR_ACTIVE` guard prevents re-entry from bash templates.
+- `ops.doctor.validate_requires_chain`: also checks that requires ids are in `GATE_REGISTRY`;
+  `repair` step is exempt from the "must have requires" rule.
+- `ops.preflight.main`: runs `_check_requires_chain` and prints `requires_chain: ok / FAIL`.
+- `README.md`: new `## Gates` table listing all 15 registered gate ids and their source.
+- `tests/conventions/test_gate_registry_complete.py`: structural completeness tests for the gate
+  registry (ghdag ids, worktree classes, README table parity).
+- `tests/steps/test_repair.py`: unit tests for `steps.repair.run`.
+
+### Changed
+
+- `config._build_steps`: `_KNOWN_GATE_INPUT_KINDS` removed; gate validation now consults
+  `GATE_REGISTRY`. Input_kind rule relaxed: issue gates can be used in worktree steps
+  (body + labels are always available). Worktree gates remain worktree-only. Error message now
+  says `missing gate ids` instead of `unknown gate ids`.
+- `gates.worktree`: `WORKTREE_GATE_IDS` (frozenset) replaced by `WORKTREE_GATES` (dict of
+  build factories).
+
 - `branch_reuse`: new module with `find_reusable_branch`, `record_base`, and `previous_commits`.
   `find_reusable_branch` scans local branches for a previous-generation branch of the same Issue
   that has uncommitted work and a matching `issuesmithbase` config entry, enabling `context_hook`

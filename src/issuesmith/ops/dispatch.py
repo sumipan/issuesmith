@@ -125,6 +125,8 @@ def _context_to_step(context: dict[str, str]) -> StepContext:
         p2_result_filename=context.get("p2_result_filename", ""),
         p3_result_filename=context.get("p3_result_filename", ""),
         execution_constraints=context.get("execution_constraints", ""),
+        repair_violations=context.get("repair_violations", ""),
+        repair_step_origin=context.get("repair_step_origin", ""),
     )
 
 
@@ -271,8 +273,9 @@ def map_step_result(
         return exit_code
 
     # Evaluate StepConfig.requires before emitting markers (#3626).
+    # Repair step: skip requires evaluation (re-evaluation is done by the caller loop).
     cfg = step_cfg if step_cfg is not None else resolve_step_config(step_id)
-    if cfg.requires:
+    if cfg.requires and step_id != _REPAIR_STEP_ID:
         rc = _check_requires_loop(
             cfg, step_id, context, markers, repair_count=_repair_count
         )
@@ -294,10 +297,9 @@ def _build_requires_gates(
     requires: tuple[str, ...],
     context: dict[str, str],
 ) -> dict[str, object]:
-    """Build gate instances for requires evaluation from context."""
-    from ghdag.workflow.gates import GATE_REGISTRY as _IMPL_REG
+    """Build gate instances for requires evaluation from context via GATE_REGISTRY."""
+    from issuesmith.gates import GATE_REGISTRY, GateBuildContext, GateBuildError
 
-    gates: dict[str, object] = {}
     worktree_path_str = (
         context.get("worktree_path") or context.get("target_worktree_path") or ""
     )
@@ -308,49 +310,28 @@ def _build_requires_gates(
         for p in allow_paths_raw.splitlines()
         if p.strip()
     ]
+    worktree_path = Path(worktree_path_str) if worktree_path_str else None
+    build_ctx = GateBuildContext(
+        worktree_path=worktree_path,
+        allow_paths=allow_paths,
+        base_branch=base_branch,
+    )
 
+    gates: dict[str, object] = {}
     for gate_id in requires:
-        # Issue-kind / artifact gates: resolve from ghdag's implementation registry.
-        impl_cls = _IMPL_REG.get(gate_id)
-        if impl_cls is not None:
-            gates[gate_id] = impl_cls()
-            continue
-        # Worktree gates: discovered by convention from gates.worktree module.
-        if worktree_path_str:
-            gate = _build_worktree_gate(
-                gate_id, Path(worktree_path_str), allow_paths, base_branch
-            )
-            if gate is not None:
-                gates[gate_id] = gate
+        entry = GATE_REGISTRY.get(gate_id)
+        if entry is None:
+            raise GateBuildError(f"gate {gate_id!r} not found in GATE_REGISTRY")
+        try:
+            gates[gate_id] = entry.build(build_ctx)
+        except GateBuildError:
+            raise
+        except Exception as exc:
+            raise GateBuildError(
+                f"gate {gate_id!r} could not be built: {exc}"
+            ) from exc
 
     return gates
-
-
-def _build_worktree_gate(
-    gate_id: str,
-    worktree_path: Path,
-    allow_paths: list[str],
-    base_branch: str,
-) -> object | None:
-    """Instantiate a worktree gate by convention from gate_id."""
-    try:
-        from issuesmith.gates.worktree import (
-            BaseFreshnessGate,
-            ExternalLeakGate,
-            LintGate,
-            TestsGate,
-        )
-    except ImportError:
-        return None
-
-    gate_map: dict[str, object] = {
-        "lint": lambda: LintGate(worktree_path, allow_paths),
-        "tests": lambda: TestsGate(worktree_path),
-        "external_leak": lambda: ExternalLeakGate(worktree_path, allow_paths),
-        "base_freshness": lambda: BaseFreshnessGate(worktree_path, base_branch),
-    }
-    factory = gate_map.get(gate_id)
-    return factory() if factory else None  # type: ignore[operator]
 
 
 def _get_issue_body(context: dict[str, str]) -> str:
@@ -464,7 +445,20 @@ def _check_requires_loop(
         return None
 
     if gates is None:
-        gates = _build_requires_gates(step_cfg.requires, context)
+        from issuesmith.gates import GateBuildError
+        try:
+            gates = _build_requires_gates(step_cfg.requires, context)
+        except GateBuildError as exc:
+            summary = f"gate could not be built in step {step_id}: {exc}"
+            full_andon = _FullAndon(
+                id=f"{context.get('workflow_name', 'unknown')}:{context.get('issue_number', 0)}:{step_id}:0",
+                kind="broken",
+                issue=int(context.get("issue_number") or "0"),
+                step=step_id,
+                summary=summary,
+            )
+            _raise_andon(get_forge(), full_andon)
+            return 1
 
     body = _get_issue_body(context)
     labels = _get_issue_labels(context)
@@ -668,6 +662,13 @@ def main(argv: list[str]) -> int:
     # Remove waiting label at the start of every run (clears it after a resume).
     if issue_number is not None:
         _forge_remove_waiting(issue_number)
+
+    # Repair recursion guard: if ISSUESMITH_REPAIR_ACTIVE is set and we are asked to
+    # run the repair step again, stop immediately with andon(broken).
+    if step_id == _REPAIR_STEP_ID and os.environ.get("ISSUESMITH_REPAIR_ACTIVE"):
+        summary = "repair step re-entered itself (ISSUESMITH_REPAIR_ACTIVE is set)"
+        broken = StepResult(status="andon", andon=Andon(kind="broken", summary=summary))
+        return map_step_result(broken, step_id=step_id, context=context)
 
     try:
         rc = _try_python_step(step_id, context)

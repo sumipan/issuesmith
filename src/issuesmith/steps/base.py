@@ -33,6 +33,8 @@ class StepContext:
     p2_result_filename: str = ""
     p3_result_filename: str = ""
     execution_constraints: str = ""
+    repair_violations: str = ""
+    repair_step_origin: str = ""
 
 
 @dataclass

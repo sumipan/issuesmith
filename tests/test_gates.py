@@ -236,3 +236,103 @@ def test_all_gate_functions_return_verdict_type() -> None:
 
     for v in (scope_v, pr_v, m2_v, dep_v):
         assert isinstance(v, Verdict), f"expected Verdict, got {type(v)}"
+
+
+# ---------------------------------------------------------------------------
+# AC-2b: GATE_REGISTRY.build() returns an object with check(body, labels) (#3671)
+# ---------------------------------------------------------------------------
+
+
+def test_gate_registry_all_entries_build_successfully(tmp_path: Path) -> None:
+    """Every GATE_REGISTRY entry must produce a gate with check() when given a valid context."""
+    import subprocess
+
+    from issuesmith.gates import GATE_REGISTRY, GateBuildContext
+
+    # Create a minimal git repo as worktree_path for worktree gates.
+    git_root = tmp_path / "repo"
+    git_root.mkdir()
+    subprocess.run(["git", "init", "-b", "main", str(git_root)], capture_output=True, check=False)
+    subprocess.run(["git", "-C", str(git_root), "config", "user.email", "t@t.com"],
+                   capture_output=True, check=False)
+    subprocess.run(["git", "-C", str(git_root), "config", "user.name", "T"],
+                   capture_output=True, check=False)
+    subprocess.run(["git", "-C", str(git_root), "commit", "--allow-empty", "-m", "init"],
+                   capture_output=True, check=False)
+
+    ctx_worktree = GateBuildContext(
+        worktree_path=git_root,
+        allow_paths=["src/**"],
+        base_branch="main",
+    )
+    ctx_issue = GateBuildContext(
+        worktree_path=None,
+        allow_paths=[],
+        base_branch="main",
+    )
+
+    for gate_id, entry in GATE_REGISTRY.items():
+        ctx = ctx_worktree if entry.input_kind == "worktree" else ctx_issue
+        gate = entry.build(ctx)
+        assert hasattr(gate, "check"), f"gate {gate_id!r} missing check()"
+        result = gate.check("body text", [])
+        assert isinstance(result, list), f"gate {gate_id!r} check() must return list"
+
+
+def test_worktree_gate_build_fails_without_worktree_path() -> None:
+    """Worktree gates raise GateBuildError when worktree_path is None."""
+    from issuesmith.gates import GATE_REGISTRY, GateBuildContext, GateBuildError
+
+    ctx_no_wt = GateBuildContext(worktree_path=None, allow_paths=[], base_branch="main")
+    for gate_id, entry in GATE_REGISTRY.items():
+        if entry.input_kind == "worktree":
+            with pytest.raises(GateBuildError):
+                entry.build(ctx_no_wt)
+
+
+# ---------------------------------------------------------------------------
+# AC-2d: DepsGate checks merge state via issue body extraction (#3671)
+# ---------------------------------------------------------------------------
+
+
+def test_deps_gate_no_deps_returns_empty() -> None:
+    from issuesmith.gates.dep import DepsGate
+
+    gate = DepsGate()
+    body = "## Background\n\nNo dependencies here."
+    result = gate.check(body, [])
+    assert result == []
+
+
+def test_deps_gate_unmerged_dep_returns_violation() -> None:
+    from unittest.mock import patch
+
+    from issuesmith.gates.dep import DepsGate
+
+    gate = DepsGate()
+    body = "## Dependencies\n\n| # | Issue |\n| --- | --- |\n| 1 | #99 |\n"
+
+    with patch("issuesmith.gates.dep.check_deps") as mock_check:
+        from issuesmith.gates import Verdict as _Verdict
+        mock_check.return_value = _Verdict(passed=False, reasons=["#99 state=OPEN has_merge_done=False"])
+        result = gate.check(body, [])
+
+    assert len(result) == 1
+    assert result[0].rule_id == "deps.unmerged"
+    assert "#99" in result[0].message
+
+
+def test_deps_gate_merged_dep_returns_empty() -> None:
+    from unittest.mock import patch
+
+    from issuesmith.gates.dep import DepsGate
+
+    gate = DepsGate()
+    body = "## Dependencies\n\n| # | Issue |\n| --- | --- |\n| 1 | #99 |\n"
+
+    with patch("issuesmith.gates.dep.check_deps") as mock_check:
+        from issuesmith.gates import Verdict as _Verdict
+        mock_check.return_value = _Verdict(passed=True, reasons=[])
+        result = gate.check(body, [])
+
+    assert result == []

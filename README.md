@@ -213,6 +213,28 @@ Resolution order for the config file: explicit path → `ISSUESMITH_CONFIG` → 
 
 `issuesmith milestone status <parent>` lists each child's `target_repo` (blank when unset).
 
+## Gates
+
+All gate ids usable in `steps.<id>.requires` in `issuesmith.yaml`. Issue gates evaluate the issue body / labels; worktree gates evaluate the checked-out worktree.
+
+| id | input_kind | implementation |
+|---|---|---|
+| `b1_ac_format` | issue | gate_rules/b1_ac_format.py |
+| `b1_migration` | issue | gate_rules/b1_migration.py |
+| `b1_milestone_subdesign` | issue | gate_rules/b1_milestone_subdesign.py |
+| `base_freshness` | worktree | gates/worktree.py (BaseFreshnessGate) |
+| `cp1` | issue | gate_rules/cp1.py |
+| `deps` | issue | gates/dep.py (DepsGate) |
+| `external_leak` | worktree | gates/worktree.py (ExternalLeakGate) |
+| `lint` | worktree | gates/worktree.py (LintGate) |
+| `m2` | issue | gate_rules/m2.py |
+| `milestone_consistency` | issue | gate_rules/milestone_consistency.py |
+| `pr_scope` | worktree | gates/pr_scope.py (PrScopeGate) |
+| `scope` | worktree | gates/scope.py (ScopeGate) |
+| `scope_breadth` | issue | gate_rules/scope_breadth.py |
+| `scope_coupling` | issue | gate_rules/scope_coupling.py |
+| `tests` | worktree | gates/worktree.py (TestsGate) |
+
 ## Error Reference
 
 | Type | Module | When |

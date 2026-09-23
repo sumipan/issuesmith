@@ -192,7 +192,9 @@ def test_worktree_step_with_worktree_gate_is_valid(tmp_path, monkeypatch) -> Non
     assert cfg.steps["wt-step"].input_kind == "worktree"
 
 
-def test_worktree_step_with_issue_gate_raises_config_error(tmp_path, monkeypatch) -> None:
+def test_worktree_step_with_issue_gate_is_valid(tmp_path, monkeypatch) -> None:
+    # Design change (#3671): issue gates can be used in worktree steps
+    # (body + labels are always readable regardless of input_kind).
     _write_config(
         tmp_path,
         monkeypatch,
@@ -207,8 +209,9 @@ def test_worktree_step_with_issue_gate_raises_config_error(tmp_path, monkeypatch
             },
         },
     )
-    with pytest.raises(ConfigError):
-        load_config()
+    cfg = load_config()
+    assert cfg.steps["wt-step"].requires == ("m2",)
+    assert cfg.steps["wt-step"].input_kind == "worktree"
 
 
 # ---------------------------------------------------------------------------
@@ -278,3 +281,128 @@ def test_doctor_requires_chain_violation(tmp_path, monkeypatch, capsys) -> None:
     assert report.startswith("requires_chain:")
     assert "ok" not in report
     assert "no-requires-step" in report
+
+
+# ---------------------------------------------------------------------------
+# AC-1: worktree step can use any combination of gate types (#3671)
+# ---------------------------------------------------------------------------
+
+
+def test_worktree_step_with_mixed_gates_is_valid(tmp_path, monkeypatch) -> None:
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "repo": "example/app",
+            "steps": {
+                "wt-step": {
+                    "module": "issuesmith.steps.my_step",
+                    "requires": [
+                        "cp1", "scope_breadth", "base_freshness",
+                        "lint", "external_leak", "scope_coupling", "milestone_consistency",
+                    ],
+                    "input_kind": "worktree",
+                },
+            },
+        },
+    )
+    cfg = load_config()
+    assert "cp1" in cfg.steps["wt-step"].requires
+    assert "base_freshness" in cfg.steps["wt-step"].requires
+
+
+# ---------------------------------------------------------------------------
+# AC-1b: worktree gate rejected for issue/artifact steps, missing gate id message
+# ---------------------------------------------------------------------------
+
+
+def test_issue_step_with_worktree_gate_raises_config_error(tmp_path, monkeypatch) -> None:
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "repo": "example/app",
+            "steps": {
+                "issue-step": {
+                    "module": "issuesmith.steps.my_step",
+                    "requires": ["lint"],
+                    "input_kind": "issue",
+                },
+            },
+        },
+    )
+    with pytest.raises(ConfigError, match="lint"):
+        load_config()
+
+
+def test_config_error_missing_gate_ids_in_message(tmp_path, monkeypatch) -> None:
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "repo": "example/app",
+            "steps": {
+                "bad-step": {
+                    "module": "issuesmith.steps.my_step",
+                    "requires": ["nonexistent_gate"],
+                    "input_kind": "issue",
+                },
+            },
+        },
+    )
+    with pytest.raises(ConfigError) as exc_info:
+        load_config()
+    msg = str(exc_info.value)
+    assert "missing gate ids" in msg
+    assert "nonexistent_gate" in msg
+
+
+# ---------------------------------------------------------------------------
+# AC-4: doctor — repair step exempt, unknown gate id FAIL
+# ---------------------------------------------------------------------------
+
+
+def test_validate_requires_chain_repair_step_is_exempt() -> None:
+    from issuesmith.ops.doctor import validate_requires_chain
+
+    steps = {
+        "repair": StepConfig(module="issuesmith.steps.repair"),
+    }
+    violations = validate_requires_chain(steps)
+    assert violations == []
+
+
+def test_validate_requires_chain_missing_gate_id_is_violation() -> None:
+    from issuesmith.ops.doctor import validate_requires_chain
+
+    steps = {
+        "some-step": StepConfig(
+            module="issuesmith.steps.foo",
+            requires=("nonexistent_gate_xyz",),
+            input_kind="issue",
+        ),
+    }
+    violations = validate_requires_chain(steps)
+    assert any("nonexistent_gate_xyz" in v for v in violations)
+    assert any("missing gate ids" in v for v in violations)
+
+
+def test_doctor_requires_chain_ok_with_all_registry_ids() -> None:
+    from issuesmith.ops.doctor import requires_chain_report
+
+    steps = {}
+    for gate_id in GATE_REGISTRY:
+        kind = GATE_REGISTRY[gate_id].input_kind
+        if kind == "worktree":
+            step_kind = "worktree"
+        elif kind == "issue":
+            step_kind = "issue"
+        else:
+            step_kind = "artifact"
+        steps[f"step-{gate_id}"] = StepConfig(
+            module="issuesmith.steps.foo",
+            requires=(gate_id,),
+            input_kind=step_kind,
+        )
+    report = requires_chain_report(steps)
+    assert report == "requires_chain: ok"

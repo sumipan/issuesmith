@@ -280,6 +280,24 @@ def check_post_merge(items: list[dict]) -> list[tuple[bool, str]]:
     return results
 
 
+def _check_requires_chain() -> tuple[bool, str]:
+    """Check that all step requires declarations reference known gate ids."""
+    from issuesmith.config import ConfigError
+
+    try:
+        from issuesmith.config import get_config
+        from issuesmith.ops.doctor import requires_chain_report
+        cfg = get_config()
+        report = requires_chain_report(cfg.steps)
+        ok = report == "requires_chain: ok"
+        return ok, report
+    except ConfigError as exc:
+        missing = str(exc)
+        return False, f"requires_chain: FAIL {missing}"
+    except Exception as exc:
+        return False, f"requires_chain: FAIL (error: {exc})"
+
+
 def main() -> int:
     print("=== issuesmith preflight ===")
     failures: list[str] = []
@@ -290,6 +308,7 @@ def main() -> int:
         _check_upstream_apis,
         _check_shell_adapter,
         _check_agent_skill_manifests,
+        _check_requires_chain,
     ):
         ok, msg = fn()
         print(("OK " if ok else "FAIL ") + msg)

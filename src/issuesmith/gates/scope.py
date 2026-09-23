@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from issuesmith.config import ScopeGateConfig
+from ghdag.workflow.gates import Violation
+
+from issuesmith.config import ScopeGateConfig, get_config
 from issuesmith.gates import Verdict
 from issuesmith.steps.scope_gate import evaluate, measure_scope
 
@@ -23,4 +25,26 @@ def check_scope(
     return Verdict(passed=True, reasons=[])
 
 
-__all__ = ["check_scope"]
+class ScopeGate:
+    """RequiresGate adapter: checks allow_paths scope size against config threshold."""
+
+    def __init__(self, worktree_path: Path, allow_paths: list[str]) -> None:
+        self._worktree_path = worktree_path
+        self._allow_paths = allow_paths
+
+    def check(self, body: str, labels: list[str]) -> list[Violation]:
+        cfg = get_config().scope_gate
+        verdict = check_scope(self._worktree_path, self._allow_paths, cfg)
+        if verdict.passed:
+            return []
+        return [Violation(
+            rule_id="scope.violation",
+            severity="fail",
+            message="; ".join(verdict.reasons),
+            location=None,
+            auto_fixable=False,
+            fix_hint="Reduce allow_paths scope",
+        )]
+
+
+__all__ = ["check_scope", "ScopeGate"]
