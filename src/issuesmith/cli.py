@@ -324,7 +324,7 @@ def _cmd_observe(argv: list[str]) -> int:
     if args.apply:
         from issuesmith.observe.policy import evaluate, execute
         actions = evaluate(events, cfg.observe)
-        execute(actions, store, sinks=[])
+        execute(actions, store, sinks=[], client=client)
         if not args.as_json:
             print(f"applied {len(actions)} action(s)")
 

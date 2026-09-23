@@ -195,6 +195,7 @@ def default_state() -> dict[str, Any]:
         "seeded_keys": [],
         "in_flight": [],
         "milestone_chains": {},
+        "observe_andons": [],
     }
 
 
@@ -608,6 +609,19 @@ class QueueStore:
                 if entry.get("issue") != issue
             ]
             self._save_state_unlocked(state)
+
+    def sync_observe_andons(self, active_ids: set[str]) -> set[str]:
+        """Remember which observe andons are currently raised; return the ids new in this call.
+
+        Ids missing from ``active_ids`` are forgotten so a recurring condition is raised again.
+        """
+        with self.lock():
+            state = self._load_state_unlocked()
+            known = set(state.get("observe_andons") or [])
+            new_ids = set(active_ids) - known
+            state["observe_andons"] = sorted(active_ids)
+            self._save_state_unlocked(state)
+            return new_ids
 
     def mark_triaged(self, revision: int) -> None:
         with self.lock():
