@@ -72,3 +72,34 @@ def test_deferred_task_is_released_by_release_ready(gate, capsys):
 def test_retry_signal_keeps_role():
     sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=None, role="design")
     assert sig.role == "design"
+
+
+def test_default_gate_respects_the_brake_state(tmp_path, monkeypatch, capsys):
+    """Without brake_state_path release_ready re-queued a brake-paused task immediately (loop)."""
+    import json
+
+    import yaml
+
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "example/repo", "paths": {"quota_state": "jobs/quota-gate.json",
+                                                           "brake_state": "jobs/issuesmith-brake.json"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    from issuesmith.config import reset_config_cache
+    reset_config_cache()
+    brake = tmp_path / "jobs" / "issuesmith-brake.json"
+    brake.parent.mkdir()
+    brake.write_text(json.dumps({"engines": {e: {"status": "paused"} for e in ("claude", "codex", "cursor")}}))
+
+    sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=None, role="design")
+    dispatch_mod._handle_retry_signal(sig, "cp2", None, task_uuid="task-cp2")
+    assert "PIPELINE_STATUS: DEFERRED" in capsys.readouterr().out
+
+    gate = QuotaGate(state_path=tmp_path / "jobs" / "quota-gate.json", brake_state_path=brake)
+    assert set(_deferred(gate)) == {"task-cp2"}
+    assert gate.release_ready(now=datetime.now(timezone.utc) + timedelta(hours=1)) == []
+    brake.write_text(json.dumps({"engines": {}}))  # brake lifted
+    assert gate.release_ready(now=datetime.now(timezone.utc) + timedelta(hours=1)) == ["task-cp2"]
+    reset_config_cache()

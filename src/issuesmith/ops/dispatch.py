@@ -616,7 +616,12 @@ def _handle_retry_signal(
     role = getattr(sig, "role", "") or ""
     role_engines = sorted(ROLE_ENGINES.get(role, frozenset())) if role else []
     engine = role_engines[0] if role_engines else "unknown"
-    gate = quota_gate or QuotaGate(state_path=get_config().paths.quota_state)
+    if quota_gate is None:
+        # The brake (budget pause) lives in its own state file; without it release_ready sees
+        # every engine as available and re-queues the task on the next tick (defer / run loop).
+        paths = get_config().paths
+        quota_gate = QuotaGate(state_path=paths.quota_state, brake_state_path=paths.brake_state)
+    gate = quota_gate
     if uuid:
         gate.defer(
             uuid,
