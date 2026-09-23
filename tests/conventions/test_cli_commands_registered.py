@@ -89,9 +89,7 @@ def test_detects_documented_command_dropped_from_table():
 # --- every module a CLI handler imports lazily must exist in this source tree ---
 
 # Handler imports that point at removed modules. Shrink; never grow.
-_KNOWN_MISSING_HANDLER_IMPORTS = {
-    "issuesmith.ops.label_hygiene": "sumipan/nexus#3612: cli labels handler imports a module removed in #3508",
-}
+_KNOWN_MISSING_HANDLER_IMPORTS: dict[str, str] = {}
 
 
 def _handler_imports() -> list[str]:
