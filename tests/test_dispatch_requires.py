@@ -608,6 +608,31 @@ class TestDispatchRepairGuards:
         assert andon_arg.kind == "broken"
         assert "re-entered" in andon_arg.summary
 
+    def test_bash_fallback_runs_with_repair_active_env(self, monkeypatch):
+        import os
+
+        from ghdag.workflow.gates import Violation
+
+        from issuesmith.ops.dispatch import _run_repair_step
+
+        monkeypatch.delenv("ISSUESMITH_REPAIR_ACTIVE", raising=False)
+        seen: list[str | None] = []
+
+        def _fake_bash(step_id, ctx):
+            seen.append(os.environ.get("ISSUESMITH_REPAIR_ACTIVE"))
+            return 0
+
+        v = Violation(
+            rule_id="deps.unmerged", severity="fail", message="x",
+            location=None, auto_fixable=False, fix_hint="",
+        )
+        with patch("issuesmith.ops.dispatch._try_python_step", return_value=None):
+            with patch("issuesmith.ops.dispatch._run_bash_step", side_effect=_fake_bash):
+                rc = _run_repair_step([v], "p0", _make_ctx())
+        assert rc is None
+        assert seen == ["1"]
+        assert os.environ.get("ISSUESMITH_REPAIR_ACTIVE") is None
+
 
 # ---------------------------------------------------------------------------
 # AC-3c: _context_to_step passes repair fields

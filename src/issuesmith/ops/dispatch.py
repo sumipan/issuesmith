@@ -408,10 +408,19 @@ def _run_repair_step(
 
     rc = _try_python_step(_REPAIR_STEP_ID, repair_ctx)
     if rc is None:
+        # Bash fallback: mark repair active so a template that calls
+        # `dispatch repair` again stops at the main() guard instead of recursing.
+        old_active = os.environ.get("ISSUESMITH_REPAIR_ACTIVE")
+        os.environ["ISSUESMITH_REPAIR_ACTIVE"] = "1"
         try:
             rc = _run_bash_step(_REPAIR_STEP_ID, repair_ctx)
         except (KeyError, FileNotFoundError):
             return None  # no template → treat as success, re-evaluate
+        finally:
+            if old_active is None:
+                os.environ.pop("ISSUESMITH_REPAIR_ACTIVE", None)
+            else:
+                os.environ["ISSUESMITH_REPAIR_ACTIVE"] = old_active
     return rc if rc != 0 else None
 
 

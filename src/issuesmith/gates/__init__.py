@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Any, Callable, Literal, Protocol
 
 __all__ = [
     "Verdict",
@@ -43,11 +43,10 @@ class GateBuildError(ValueError):
     """Raised by GateEntry.build when the gate cannot be instantiated."""
 
 
-class RequiresGate:
+class RequiresGate(Protocol):
     """Protocol: a gate that can be checked against issue body and labels."""
 
-    def check(self, body: str, labels: list[str]) -> list:
-        raise NotImplementedError
+    def check(self, body: str, labels: list[str]) -> list[Any]: ...
 
 
 @dataclass(frozen=True)
@@ -110,14 +109,15 @@ def _build_registry() -> dict[str, GateEntry]:
 
     import issuesmith.gate_rules  # noqa: F401 — triggers registration side effects
 
+    def _make_rule_build(cls: Any) -> Callable[[GateBuildContext], RequiresGate]:
+        def _build(ctx: GateBuildContext) -> RequiresGate:
+            gate: RequiresGate = cls()
+            return gate
+        return _build
+
     for gate_id, cls in _IMPL_REG.items():
         if gate_id not in registry:
-            _cls = cls
-            _gid = gate_id
-            registry[_gid] = GateEntry(
-                input_kind="issue",
-                build=lambda ctx, c=_cls: c(),
-            )
+            registry[gate_id] = GateEntry(input_kind="issue", build=_make_rule_build(cls))
 
     return registry
 
