@@ -93,6 +93,31 @@ def _exec_records_from_labels(labels: set[str], ns: str) -> list[ExecRecord]:
 # Public API
 # ---------------------------------------------------------------------------
 
+def _precondition_labels(ns: str, exec_records: list[ExecRecord]) -> set[str]:
+    """Return precondition labels that must be kept while dependent phases are active.
+
+    When a phase declares preconditions and is currently running or done, those
+    precondition labels are preserved so that reconcile does not strip them.
+    """
+    from issuesmith.config import get_config as _get_config
+
+    phases_map = {p.name: p for p in _get_config().phases}
+    keep: set[str] = set()
+    for rec in exec_records:
+        if rec.status not in ("running", "done"):
+            continue
+        phase_cfg = phases_map.get(rec.phase)
+        if phase_cfg is None:
+            continue
+        for precond in phase_cfg.preconditions:
+            # Preconditions are stored without namespace prefix; add it here.
+            if ":" in precond:
+                keep.add(precond)
+            else:
+                keep.add(f"{ns}:{precond}")
+    return keep
+
+
 def project(
     issue_number: int,
     *,
@@ -104,6 +129,9 @@ def project(
 
     Returns at most one phase-axis label, at most one attention-axis label, and the
     additive ``queued`` marker while the issue has a pending queue request.
+
+    Precondition labels required by active phases are preserved so that reconcile
+    does not strip labels that downstream phases depend on (#3626).
     """
     ns = _ns()
     labels: set[str] = set()
@@ -120,6 +148,9 @@ def project(
     attn = _attention_label(ns, andon_inbox)
     if attn:
         labels.add(attn)
+
+    # Preserve precondition labels for active phases.
+    labels.update(_precondition_labels(ns, exec_records))
 
     return labels
 

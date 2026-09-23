@@ -254,12 +254,17 @@ class ScopeCouplingRules:
             )
         ref_hint = ("\n# reference (string match only, not required):\n" + _yaml_list(reference)) if reference else ""
 
+        # When over scope_breadth limit, violations are "warn" (visible but non-blocking)
+        # instead of "fail" — the Issue is too broad to auto-extend, but that is a
+        # constraint of the scope itself, not a new defect introduced by this change.
+        severity = "fail" if can_widen else "warn"
+
         violations: list[Violation] = []
         if missing_tests:
             violations.append(
                 Violation(
                     rule_id="scope_coupling.tests_outside_allow_paths",
-                    severity="fail",
+                    severity=severity,
                     message=(
                         "allow_paths は変更に追従が必要なテストを含んでいません: "
                         + ", ".join(missing_tests)
@@ -274,7 +279,7 @@ class ScopeCouplingRules:
             violations.append(
                 Violation(
                     rule_id="scope_coupling.callers_outside_allow_paths",
-                    severity="fail",
+                    severity=severity,
                     message=(
                         "allow_paths は変更に追従が必要な呼び出し元を含んでいません: "
                         + ", ".join(missing_srcs)

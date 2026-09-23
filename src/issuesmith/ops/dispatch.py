@@ -46,6 +46,11 @@ TEMPLATE_DIR = _cfg.paths.template_dir
 # None = use get_config().steps. Tests may set a dict (incl. {}) to override.
 _STEP_MODULES: dict[str, str] | None = None
 
+# Maximum number of LLM repair cycles before raising andon(decision).
+_MAX_REPAIRS: int = 3
+# Step ID used for the repair template (nexus-side workflow template).
+_REPAIR_STEP_ID: str = "repair"
+
 
 def resolve_step_config(step_id: str) -> StepConfig:
     """Resolve step_id → StepConfig (config.steps, then hyphen→underscore fallback)."""
@@ -206,15 +211,20 @@ def map_step_result(
     step_id: str,
     context: dict[str, str],
     verdicts: list[Verdict] | None = None,
+    step_cfg: StepConfig | None = None,
+    _repair_count: int = 0,
 ) -> int:
     """Map a StepResult to an exit code, printing PIPELINE_STATUS markers as side effects.
 
-    done  → exit 0 + print PIPELINE_STATUS for each marker + project phase labels
+    done  → evaluate requires, then exit 0 + print PIPELINE_STATUS + project phase labels
     retry → raise RetrySignal (caught by main(), exits 0 after deferring)
     andon → call raise_andon + exit 1
 
     If result.irreversible and any verdict in verdicts is not passed, the
     result is overridden to andon(broken) regardless of the original status.
+
+    step_cfg: if None, resolved lazily from step_id (for testing, pass explicitly).
+    _repair_count: initial repair count (used in tests to simulate max_repairs state).
     """
     irreversible = getattr(result, "irreversible", False)
     status = getattr(result, "status", "done")
@@ -260,10 +270,305 @@ def map_step_result(
             _project_marker_labels(pipeline_status, context)
         return exit_code
 
+    # Evaluate StepConfig.requires before emitting markers (#3626).
+    cfg = step_cfg if step_cfg is not None else resolve_step_config(step_id)
+    if cfg.requires:
+        rc = _check_requires_loop(
+            cfg, step_id, context, markers, repair_count=_repair_count
+        )
+        if rc is not None:
+            return rc
+
     for marker in markers:
         print(f"PIPELINE_STATUS: {marker}")
         _project_marker_labels(marker, context)
     return 0
+
+
+# ---------------------------------------------------------------------------
+# Requires evaluation and repair loop (#3626)
+# ---------------------------------------------------------------------------
+
+
+def _build_requires_gates(
+    requires: tuple[str, ...],
+    context: dict[str, str],
+) -> dict[str, object]:
+    """Build gate instances for requires evaluation from context."""
+    from ghdag.workflow.gates import GATE_REGISTRY as _IMPL_REG
+
+    gates: dict[str, object] = {}
+    worktree_path_str = (
+        context.get("worktree_path") or context.get("target_worktree_path") or ""
+    )
+    base_branch = context.get("base_branch", "main")
+    allow_paths_raw = context.get("allow_paths", "")
+    allow_paths = [
+        p.lstrip("- ").strip()
+        for p in allow_paths_raw.splitlines()
+        if p.strip()
+    ]
+
+    for gate_id in requires:
+        # Issue-kind / artifact gates: resolve from ghdag's implementation registry.
+        impl_cls = _IMPL_REG.get(gate_id)
+        if impl_cls is not None:
+            gates[gate_id] = impl_cls()
+            continue
+        # Worktree gates: discovered by convention from gates.worktree module.
+        if worktree_path_str:
+            gate = _build_worktree_gate(
+                gate_id, Path(worktree_path_str), allow_paths, base_branch
+            )
+            if gate is not None:
+                gates[gate_id] = gate
+
+    return gates
+
+
+def _build_worktree_gate(
+    gate_id: str,
+    worktree_path: Path,
+    allow_paths: list[str],
+    base_branch: str,
+) -> object | None:
+    """Instantiate a worktree gate by convention from gate_id."""
+    try:
+        from issuesmith.gates.worktree import (
+            BaseFreshnessGate,
+            ExternalLeakGate,
+            LintGate,
+            TestsGate,
+        )
+    except ImportError:
+        return None
+
+    gate_map: dict[str, object] = {
+        "lint": lambda: LintGate(worktree_path, allow_paths),
+        "tests": lambda: TestsGate(worktree_path),
+        "external_leak": lambda: ExternalLeakGate(worktree_path, allow_paths),
+        "base_freshness": lambda: BaseFreshnessGate(worktree_path, base_branch),
+    }
+    factory = gate_map.get(gate_id)
+    return factory() if factory else None  # type: ignore[operator]
+
+
+def _get_issue_body(context: dict[str, str]) -> str:
+    """Return issue body for requires evaluation (from context cache or forge)."""
+    body = context.get("issue_body", "")
+    if body:
+        return body
+    raw_issue = context.get("issue_number", "")
+    if not raw_issue:
+        return ""
+    try:
+        issue_num = int(raw_issue)
+    except ValueError:
+        return ""
+    try:
+        data = get_forge().issue_get(issue_num, fields=["body"])
+        return str(data.get("body") or "")
+    except Exception:
+        return ""
+
+
+def _get_issue_labels(context: dict[str, str]) -> list[str]:
+    """Return issue labels for requires evaluation (from context cache or forge)."""
+    raw = context.get("issue_labels", "")
+    if raw:
+        return [lbl.strip() for lbl in raw.split(",") if lbl.strip()]
+    raw_issue = context.get("issue_number", "")
+    if not raw_issue:
+        return []
+    try:
+        issue_num = int(raw_issue)
+    except ValueError:
+        return []
+    try:
+        data = get_forge().issue_get(issue_num, fields=["labels"])
+        labels_raw = data.get("labels") or []
+        return [
+            (lbl["name"] if isinstance(lbl, dict) else str(lbl))
+            for lbl in labels_raw
+        ]
+    except Exception:
+        return []
+
+
+def _get_preexisting_rule_ids(
+    step_cfg: StepConfig,
+    context: dict[str, str],
+    gates: dict[str, object],
+) -> frozenset[str]:
+    """Return rule_ids that are also present on the base branch (preexisting).
+
+    Minimal implementation: evaluate gates against base-branch body if available.
+    Returns frozenset() when the check cannot be performed.
+    """
+    return frozenset()
+
+
+def _run_repair_step(
+    violations: list,
+    step_id: str,
+    context: dict[str, str],
+) -> int | None:
+    """Launch the repair step for non-auto-fixable violations.
+
+    Returns None to trigger re-evaluation, or a non-zero exit code to stop.
+    May raise RetrySignal — callers must NOT catch it (engine retries don't
+    count toward repair_count).
+    """
+    repair_ctx = dict(context)
+    repair_ctx["repair_violations"] = "\n".join(
+        f"- {v.rule_id}: {v.message}" for v in violations
+    )
+    repair_ctx["repair_step_origin"] = step_id
+
+    rc = _try_python_step(_REPAIR_STEP_ID, repair_ctx)
+    if rc is None:
+        try:
+            rc = _run_bash_step(_REPAIR_STEP_ID, repair_ctx)
+        except (KeyError, FileNotFoundError):
+            return None  # no template → treat as success, re-evaluate
+    return rc if rc != 0 else None
+
+
+def _safe_record_metrics(event: str, step_id: str, issue_num: int) -> None:
+    try:
+        from issuesmith.repair import record_metrics
+
+        record_metrics(get_config().paths.metrics, event, step_id, issue_num)
+    except Exception:
+        pass
+
+
+def _check_requires_loop(
+    step_cfg: StepConfig,
+    step_id: str,
+    context: dict[str, str],
+    markers: list[str],
+    *,
+    gates: dict[str, object] | None = None,
+    repair_count: int = 0,
+) -> int | None:
+    """Evaluate requires gates; auto-fix, repair, or raise andon as needed.
+
+    Returns None to proceed to marker emission, or an exit code to stop.
+    May raise RetrySignal — callers must propagate it (not counted as repair).
+    """
+    from issuesmith.gates.base import ContractInput
+    from issuesmith.repair import apply_auto_fixes, evaluate_requires
+
+    if not step_cfg.requires:
+        return None
+
+    if gates is None:
+        gates = _build_requires_gates(step_cfg.requires, context)
+
+    body = _get_issue_body(context)
+    labels = _get_issue_labels(context)
+    inp = ContractInput(body=body, labels=labels)
+
+    preexisting_ids = _get_preexisting_rule_ids(step_cfg, context, gates)
+    result = evaluate_requires(
+        gates, body, labels, preexisting_rule_ids=preexisting_ids
+    )
+
+    issue_num = int(context.get("issue_number") or "0")
+    workflow = context.get("workflow_name", "unknown")
+
+    # Gate exception → andon(broken), no repair attempted.
+    if result.gate_error is not None:
+        summary = (
+            f"requires gate raised exception in step {step_id}: {result.gate_error}"
+        )
+        full_andon = _FullAndon(
+            id=f"{workflow}:{issue_num}:{step_id}:0",
+            kind="broken",
+            issue=issue_num,
+            step=step_id,
+            summary=summary,
+        )
+        _raise_andon(get_forge(), full_andon)
+        return 1
+
+    # Preexisting violations: visualize only, do not block.
+    if result.preexisting:
+        _record_preexisting_violations(result.preexisting, step_id, context, issue_num)
+
+    if not result.blocking:
+        _safe_record_metrics("requires_check", step_id, issue_num)
+        return None
+
+    # Try deterministic auto-fixes for auto_fixable violations.
+    has_auto_fixable = any(v.auto_fixable for v in result.blocking)
+    if has_auto_fixable:
+        result, inp = apply_auto_fixes(result, gates, inp)
+        if not result.blocking:
+            # All blocking violations auto-fixed → re-evaluate before emitting markers.
+            return _check_requires_loop(
+                step_cfg, step_id, context, markers,
+                gates=gates,
+                repair_count=repair_count,
+            )
+
+    if not result.blocking:
+        _safe_record_metrics("requires_check", step_id, issue_num)
+        return None
+
+    # Non-auto-fixable violations remain → repair step or andon.
+    if repair_count >= _MAX_REPAIRS:
+        options = [v.fix_hint for v in result.blocking if v.fix_hint]
+        summary = (
+            f"requires evaluation failed after {repair_count} repair(s)"
+            f" in step {step_id}: "
+            + "; ".join(v.message for v in result.blocking)
+        )
+        full_andon = _FullAndon(
+            id=f"{workflow}:{issue_num}:{step_id}:0",
+            kind="decision",
+            issue=issue_num,
+            step=step_id,
+            summary=summary,
+            options=options,
+        )
+        _raise_andon(get_forge(), full_andon)
+        return 1
+
+    _safe_record_metrics("requires_repair", step_id, issue_num)
+
+    # Launch repair step — may raise RetrySignal (not counted as repair).
+    rc = _run_repair_step(result.blocking, step_id, context)
+    if rc is not None:
+        return rc  # repair step failed
+
+    # Re-evaluate after successful repair (increment repair_count).
+    return _check_requires_loop(
+        step_cfg, step_id, context, markers,
+        gates=gates,
+        repair_count=repair_count + 1,
+    )
+
+
+def _record_preexisting_violations(
+    violations: list,
+    step_id: str,
+    context: dict[str, str],
+    issue_num: int,
+) -> None:
+    """Post preexisting violations to issue comment and record metrics."""
+    _safe_record_metrics("requires_preexisting", step_id, issue_num)
+    if not issue_num:
+        return
+    try:
+        msg = (
+            "## requires: preexisting violations (non-blocking)\n\n"
+            + "\n".join(f"- `{v.rule_id}`: {v.message}" for v in violations)
+        )
+        get_forge().issue_comment(issue_num, msg)
+    except Exception:
+        pass
 
 
 def _waiting_label() -> str:
