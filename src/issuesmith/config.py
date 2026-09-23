@@ -9,9 +9,13 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 import yaml
+
+
+class ConfigError(ValueError):
+    """Raised when issuesmith configuration is invalid."""
 
 _CONFIG_ENV = "ISSUESMITH_CONFIG"
 _CONFIG_FILENAME = "issuesmith.yaml"
@@ -144,6 +148,8 @@ class PhaseConfig:
 class StepConfig:
     module: str
     template: str | None = None
+    requires: tuple[str, ...] = ()
+    input_kind: Literal["issue", "worktree", "artifact"] = "issue"
 
 
 _DEFAULT_PHASES: tuple[PhaseConfig, ...] = (
@@ -214,6 +220,15 @@ class ScopeCouplingConfig:
 
 
 _DEFAULT_TERMINAL_LABELS: tuple[str, ...] = ("issuesmith:merge-done", "bump:done")
+
+# Gate input_kind map — kept in sync with gates.GATE_REGISTRY.
+# Defined here to avoid a circular import (gates → m2_gate → targets → config).
+_KNOWN_GATE_INPUT_KINDS: dict[str, str] = {
+    "m2": "issue",
+    "deps": "issue",
+    "scope": "worktree",
+    "pr_scope": "worktree",
+}
 
 
 @dataclass(frozen=True)
@@ -478,6 +493,7 @@ def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
     steps = dict(_DEFAULT_STEPS)
     if not raw:
         return steps
+    _valid_input_kinds = {"issue", "worktree", "artifact"}
     for step_id, conf in raw.items():
         if not isinstance(conf, Mapping):
             raise ValueError(f"steps.{step_id} must be a mapping")
@@ -486,7 +502,44 @@ def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
             raise ValueError(f"steps.{step_id} requires non-empty module")
         template_raw = conf.get("template")
         template = None if template_raw is None else str(template_raw)
-        steps[str(step_id)] = StepConfig(module=str(module).strip(), template=template)
+
+        # requires / input_kind are optional (backward compat); validate only when present.
+        requires: tuple[str, ...] = ()
+        input_kind: str = "issue"
+        if "requires" in conf:
+            requires_raw = conf["requires"]
+            if not isinstance(requires_raw, list):
+                raise ConfigError(f"steps.{step_id}.requires must be a list")
+            requires = tuple(str(g) for g in requires_raw)
+            unknown = [g for g in requires if g not in _KNOWN_GATE_INPUT_KINDS]
+            if unknown:
+                known = sorted(_KNOWN_GATE_INPUT_KINDS)
+                raise ConfigError(
+                    f"steps.{step_id}.requires contains unknown gate ids: {unknown}."
+                    f" Known ids: {known}"
+                )
+        if "input_kind" in conf:
+            input_kind = str(conf["input_kind"])
+            if input_kind not in _valid_input_kinds:
+                raise ConfigError(
+                    f"steps.{step_id}.input_kind must be one of"
+                    f" {sorted(_valid_input_kinds)}, got {input_kind!r}"
+                )
+        # Validate that each required gate's input_kind matches the step's input_kind.
+        for gate_id in requires:
+            gate_input_kind = _KNOWN_GATE_INPUT_KINDS[gate_id]
+            if gate_input_kind != input_kind:
+                raise ConfigError(
+                    f"steps.{step_id}: input_kind={input_kind!r} is incompatible with"
+                    f" gate {gate_id!r} which requires input_kind={gate_input_kind!r}"
+                )
+
+        steps[str(step_id)] = StepConfig(
+            module=str(module).strip(),
+            template=template,
+            requires=requires,
+            input_kind=input_kind,  # type: ignore[arg-type]
+        )
     return steps
 
 

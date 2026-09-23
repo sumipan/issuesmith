@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal
 
 __all__ = [
     "Verdict",
+    "GateEntry",
+    "GATE_REGISTRY",
     "check_scope",
     "check_pr_scope",
     "check_m2",
     "check_deps",
 ]
+
+InputKind = Literal["issue", "worktree", "artifact"]
 
 
 @dataclass(frozen=True)
@@ -19,6 +24,23 @@ class Verdict:
 
     passed: bool
     reasons: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class GateEntry:
+    """Registry entry describing a gate's input_kind."""
+
+    input_kind: InputKind
+
+
+# Registry maps gate id → GateEntry. Worktree gates receive (worktree_path, base_ref);
+# issue gates receive issue body / numbers. Artifact gates do not touch GitHub at all.
+GATE_REGISTRY: dict[str, GateEntry] = {
+    "m2": GateEntry(input_kind="issue"),
+    "deps": GateEntry(input_kind="issue"),
+    "scope": GateEntry(input_kind="worktree"),
+    "pr_scope": GateEntry(input_kind="worktree"),
+}
 
 
 # Import after Verdict is defined to avoid circular-import issues.
