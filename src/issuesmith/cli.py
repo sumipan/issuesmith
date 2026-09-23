@@ -174,13 +174,33 @@ def _cmd_publish(argv: list[str]) -> int:
     return int(publish_main(argv))
 
 
-def _cmd_labels(argv: list[str]) -> int:
-    if not argv or argv[0] != "hygiene":
-        print("labels: expected 'hygiene'", file=sys.stderr)
-        return 2
-    from issuesmith.ops.label_hygiene import main as hygiene_main
+_LABELS_USAGE = (
+    "usage: issuesmith labels <subcommand> ...\n\n"
+    "subcommands:\n"
+    "  reconcile [--fix] [--json]   report (or fix) managed-label divergences\n"
+)
 
-    return int(hygiene_main(argv[1:]))
+
+def _cmd_labels(argv: list[str]) -> int:
+    if not argv:
+        print(_LABELS_USAGE, end="", file=sys.stderr)
+        return 1
+    if argv[0] in {"-h", "--help"}:
+        print(_LABELS_USAGE, end="")
+        return 0
+    sub, *rest = argv
+    if sub == "reconcile":
+        fix = "--fix" in rest
+        as_json = "--json" in rest
+        from ghdag.forge import get_forge
+
+        from issuesmith.ops.labels import reconcile
+
+        client = get_forge()
+        reconcile(client, fix=fix, as_json=as_json)
+        return 0
+    print(f"labels: unknown subcommand: {sub}", file=sys.stderr)
+    return 2
 
 
 def _cmd_doctor(_argv: list[str]) -> int:

@@ -93,7 +93,7 @@ Entry points: `issuesmith` / `python3 -m issuesmith`.
 | `engine` | LLM role switcher / runner |
 | `dispatch` | Render and enqueue a workflow template |
 | `publish` | Publish / version-bump orchestration |
-| `labels hygiene` | Label hygiene maintenance |
+| `labels reconcile [--fix] [--json]` | report (or fix) managed-label divergences |
 | `doctor` | Preflight / environment checks |
 | `smoke` | Template smoke against live Issue bodies |
 | `gen-live` | Generate live dispatch payloads |
