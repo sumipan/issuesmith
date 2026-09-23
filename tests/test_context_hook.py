@@ -3,13 +3,24 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
 import textwrap
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from issuesmith.context_hook import build_context, main, validate_issue_metadata
 from tests.legacy_text import DIARY_SIDE_CHANGE, OUT_OF_SCOPE
+
+
+@pytest.fixture(autouse=True)
+def _no_real_branch_search(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prevent find_reusable_branch from reading the real repo's refs in existing tests."""
+    monkeypatch.setattr(
+        "issuesmith.context_hook.find_reusable_branch",
+        lambda *_args, **_kwargs: None,
+    )
 
 
 def _body(target_repo: str = "", base_branch: str = "main", allow_paths: str = "") -> str:
@@ -565,6 +576,7 @@ def test_build_context_output_keys():
         "diary_worktree_path",
         "diary_allow_paths",
         "targets_json",
+        "previous_commits",
     }
     assert set(ctx.keys()) == expected_keys
 
@@ -820,3 +832,169 @@ base_branch: main
     assert ctx["is_cross_repo"] == "true"
     assert ctx["target_repo"] == "sumipan/ghdag"
     assert ctx["target_clone_path"] == ".claude/external/ghdag"
+
+
+# ===========================================================================
+# AC-1, AC-3, AC-3b, AC-3c: branch reuse integration tests
+# ===========================================================================
+
+
+def _git_init_repo_for_hook(path: Path) -> None:
+    subprocess.run(["git", "init", "-b", "main", str(path)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(path), "config", "user.email", "t@t"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(path), "config", "user.name", "t"],
+        check=True,
+        capture_output=True,
+    )
+    (path / "README").write_text("init\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(path), "add", "README"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(path), "commit", "-m", "init"],
+        check=True,
+        capture_output=True,
+    )
+
+
+def _add_branch_with_commit(repo: Path, branch: str, subject: str, filename: str = "f.txt") -> None:
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", "-b", branch],
+        check=True,
+        capture_output=True,
+    )
+    f = repo / filename
+    f.write_text(subject + "\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", str(f)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-m", subject],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", "main"],
+        check=True,
+        capture_output=True,
+    )
+
+
+def _setup_cross_repo_search(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    repo_name: str = "issuesmith",
+) -> Path:
+    """Create a fake external clone at the path build_context will search, return its path."""
+    import issuesmith.branch_reuse as br_mod
+
+    external_root = tmp_path / "ext"
+    repo = external_root / repo_name
+    _git_init_repo_for_hook(repo)
+    monkeypatch.setattr("issuesmith.context_hook._REPO_ROOT", str(tmp_path))
+    monkeypatch.setattr("issuesmith.context_hook._EXTERNAL_REL", "ext")
+    monkeypatch.setattr("issuesmith.context_hook.find_reusable_branch", br_mod.find_reusable_branch)
+    monkeypatch.setattr("issuesmith.context_hook._prev_commits", br_mod.previous_commits)
+    monkeypatch.setattr(
+        "issuesmith.context_hook._fetch_issue_comments_from_api", lambda *_: []
+    )
+    return repo
+
+
+def test_build_context_reuses_pipeline_id_from_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-1: find_reusable_branch returns a branch -> pipeline_id and branch match it."""
+    import issuesmith.branch_reuse as br_mod
+
+    repo = _setup_cross_repo_search(tmp_path, monkeypatch)
+    _add_branch_with_commit(repo, "feat/issue-7-aaaa1111", "add feature X")
+    br_mod.record_base(repo, "feat/issue-7-aaaa1111", "main")
+
+    body = "```yaml\ntarget_repo: sumipan/issuesmith\nbase_branch: main\n```\n\n## Purpose\ntest"
+    ctx = build_context(7, body=body)
+    assert ctx["pipeline_id"] == "issue-7-aaaa1111"
+    assert ctx["branch"] == "feat/issue-7-aaaa1111"
+
+
+def test_build_context_new_uuid_when_no_reusable_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-2: no reusable branch (wrong base) -> new uuid pipeline_id."""
+    import issuesmith.branch_reuse as br_mod
+
+    repo = _setup_cross_repo_search(tmp_path, monkeypatch)
+    _add_branch_with_commit(repo, "feat/issue-7-aaaa1111", "some work")
+    br_mod.record_base(repo, "feat/issue-7-aaaa1111", "develop")
+
+    body = "```yaml\ntarget_repo: sumipan/issuesmith\nbase_branch: main\n```\n\n## Purpose\ntest"
+    ctx = build_context(7, body=body)
+    assert ctx["pipeline_id"] != "issue-7-aaaa1111"
+    assert ctx["pipeline_id"].startswith("issue-7-")
+
+
+def test_build_context_previous_commits_populated_on_reuse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-3: previous_commits is non-empty and contains commit subjects on reuse."""
+    import issuesmith.branch_reuse as br_mod
+
+    repo = _setup_cross_repo_search(tmp_path, monkeypatch)
+    _add_branch_with_commit(repo, "feat/issue-7-aaaa1111", "add feature X")
+    br_mod.record_base(repo, "feat/issue-7-aaaa1111", "main")
+
+    body = "```yaml\ntarget_repo: sumipan/issuesmith\nbase_branch: main\n```\n\n## Purpose\ntest"
+    ctx = build_context(7, body=body)
+    assert ctx["previous_commits"] != ""
+    assert "add feature X" in ctx["previous_commits"]
+    line = ctx["previous_commits"].splitlines()[0]
+    sha, subject = line.split(" ", 1)
+    assert len(sha) == 7
+    assert subject == "add feature X"
+
+
+def test_build_context_previous_commits_empty_on_new_uuid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC-3: previous_commits is empty string when new uuid is generated."""
+    monkeypatch.setattr(
+        "issuesmith.context_hook._fetch_issue_comments_from_api", lambda *_: []
+    )
+    ctx = build_context(42, body="# Title")
+    assert ctx["previous_commits"] == ""
+
+
+def test_build_context_previous_commits_empty_on_comment_restore(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC-3: previous_commits is empty string when pipeline_id is restored from comment."""
+    comments = [{"body": "<!-- pipeline-branch: feat/issue-42-deadbeef -->"}]
+    monkeypatch.setattr(
+        "issuesmith.context_hook._fetch_issue_comments_from_api", lambda *_: comments
+    )
+    ctx = build_context(42, body="# Title")
+    assert ctx["previous_commits"] == ""
+    assert ctx["pipeline_id"] == "issue-42-deadbeef"
+
+
+def test_build_context_comment_takes_priority_over_branch_reuse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-3b: pipeline-branch comment present -> find_reusable_branch not called."""
+    import issuesmith.branch_reuse as br_mod
+
+    called = []
+
+    def spy_find(*args, **kwargs):
+        called.append(args)
+        return br_mod.find_reusable_branch(*args, **kwargs)
+
+    monkeypatch.setattr("issuesmith.context_hook.find_reusable_branch", spy_find)
+    comments = [{"body": "<!-- pipeline-branch: feat/issue-42-deadbeef -->"}]
+    monkeypatch.setattr(
+        "issuesmith.context_hook._fetch_issue_comments_from_api", lambda *_: comments
+    )
+    ctx = build_context(42, body="# Title")
+    assert ctx["pipeline_id"] == "issue-42-deadbeef"
+    assert called == []

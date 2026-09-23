@@ -742,3 +742,110 @@ def test_run_calls_ensure_base_included_and_stops_on_stale_base(tmp_path: Path) 
     assert result.exit_code == 1
     assert result.pipeline_status == "STALE_BASE"
     mock_ebi.assert_called_once()
+
+
+# --- AC-3c: record_base called after worktree preparation ---
+
+
+def test_local_run_records_issuesmithbase(tmp_path: Path) -> None:
+    """AC-3c: after local run succeeds, issuesmithbase is written for the branch."""
+    repo = tmp_path / "nexus"
+    _git_init_with_main(repo)
+    wt = tmp_path / "nexus" / ".claude" / "worktrees" / "issue-3661-base"
+    client = MagicMock()
+    client.issue_get.return_value = {
+        "labels": [{"name": "issuesmith:develop-ready"}],
+        "body": "```yaml\nbase_branch: main\nallow_paths:\n  - src/**\n```\n\n## Design\n",
+    }
+    branch = "feat/issue-3661-base"
+    with (
+        patch.object(p0, "_github_client", return_value=client),
+        patch.object(p0, "_repo_root", return_value=repo),
+    ):
+        result = p0.run(
+            _ctx(
+                worktree_path=str(wt),
+                branch=branch,
+                base_branch="main",
+                is_cross_repo="false",
+            )
+        )
+    assert result.exit_code == 0
+    recorded = subprocess.check_output(
+        ["git", "-C", str(repo), "config", f"branch.{branch}.issuesmithbase"],
+        text=True,
+    ).strip()
+    assert recorded == "main"
+
+
+def test_diary_branch_does_not_record_issuesmithbase(tmp_path: Path) -> None:
+    """AC-3c: diary branch (-diary suffix) does not get issuesmithbase recorded."""
+
+    repo = tmp_path / "nexus"
+    _git_init_with_main(repo)
+    diary_wt = tmp_path / "nexus" / ".claude" / "worktrees" / "issue-3661-base-diary"
+    diary_branch = "feat/issue-3661-base-diary"
+    p0.prepare_worktree(repo, diary_wt, diary_branch, "main")
+    result = subprocess.run(
+        ["git", "-C", str(repo), "config", f"branch.{diary_branch}.issuesmithbase"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+
+
+def test_local_run_reuses_previous_branch_head(tmp_path: Path) -> None:
+    """AC-1: P0 with a reused pipeline_id keeps the previous branch and its commit."""
+    repo = tmp_path / "nexus"
+    _git_init_with_main(repo)
+    branch = "feat/issue-7-aaaa1111"
+    subprocess.run(["git", "-C", str(repo), "branch", branch, "main"], check=True)
+    old_wt = tmp_path / "old-wt"
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "add", str(old_wt), branch],
+        check=True,
+        capture_output=True,
+    )
+    (old_wt / "work.txt").write_text("previous work\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(old_wt), "add", "work.txt"], check=True)
+    subprocess.run(
+        ["git", "-C", str(old_wt), "commit", "-m", "previous work"],
+        check=True,
+        capture_output=True,
+    )
+    prev_sha = subprocess.check_output(
+        ["git", "-C", str(old_wt), "rev-parse", "HEAD"], text=True
+    ).strip()
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "remove", str(old_wt)],
+        check=True,
+        capture_output=True,
+    )
+
+    wt = repo / ".claude" / "worktrees" / "issue-7-aaaa1111"
+    client = MagicMock()
+    client.issue_get.return_value = {
+        "labels": [{"name": "issuesmith:develop-ready"}],
+        "body": "```yaml\nbase_branch: main\nallow_paths:\n  - src/**\n```\n\n## Design\n",
+    }
+    with (
+        patch.object(p0, "_github_client", return_value=client),
+        patch.object(p0, "_repo_root", return_value=repo),
+    ):
+        result = p0.run(
+            _ctx(
+                issue_number="7",
+                worktree_path=str(wt),
+                branch=branch,
+                base_branch="main",
+                is_cross_repo="false",
+            )
+        )
+    assert result.exit_code == 0
+    head = subprocess.check_output(["git", "-C", str(wt), "rev-parse", "HEAD"], text=True).strip()
+    current = subprocess.check_output(
+        ["git", "-C", str(wt), "branch", "--show-current"], text=True
+    ).strip()
+    assert head == prev_sha
+    assert current == branch
