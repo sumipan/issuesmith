@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 
+## Unreleased
+
+### Added
+
+- `branch_reuse`: new module with `find_reusable_branch`, `record_base`, and `previous_commits`.
+  `find_reusable_branch` scans local branches for a previous-generation branch of the same Issue
+  that has uncommitted work and a matching `issuesmithbase` config entry, enabling `context_hook`
+  to reuse the same `pipeline_id` across `redispatch`/`resume` generations so P0 reconnects to
+  the existing worktree instead of creating a new one.
+- `context_hook.build_context`: new `previous_commits` key in the returned context dict.
+  Populated with `<sha7> <subject>` lines when the `pipeline_id` was restored via branch reuse;
+  empty string for comment-restored and new-uuid cases.
+
+### Changed
+
+- `context_hook.build_context`: `pipeline_id` determination now has a second fallback (between
+  comment-restore and new-uuid): `branch_reuse.find_reusable_branch` searches the target clone
+  for a local branch matching `feat/issue-N-[a-f0-9]+` with `issuesmithbase == base_branch`,
+  not merged into base, and with at least one commit ahead. `target_repo` / `target_clone_path`
+  resolution is moved before `pipeline_id` determination so the search uses the correct repo dir.
+- `steps.p0_worktree._prepare_local` / `_prepare_cross_repo`: call
+  `branch_reuse.record_base(repo_dir, branch, base)` after `prepare_worktree` succeeds (new
+  creation, existing branch attach, and existing worktree reuse). Idempotent; diary branches are
+  not recorded (they are not candidates for reuse).
+
 ## 0.55.1 - 2026-09-23
 
 ### Fixed

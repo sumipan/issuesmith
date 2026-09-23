@@ -742,3 +742,54 @@ def test_run_calls_ensure_base_included_and_stops_on_stale_base(tmp_path: Path) 
     assert result.exit_code == 1
     assert result.pipeline_status == "STALE_BASE"
     mock_ebi.assert_called_once()
+
+
+# --- AC-3c: record_base called after worktree preparation ---
+
+
+def test_local_run_records_issuesmithbase(tmp_path: Path) -> None:
+    """AC-3c: after local run succeeds, issuesmithbase is written for the branch."""
+    repo = tmp_path / "nexus"
+    _git_init_with_main(repo)
+    wt = tmp_path / "nexus" / ".claude" / "worktrees" / "issue-3661-base"
+    client = MagicMock()
+    client.issue_get.return_value = {
+        "labels": [{"name": "issuesmith:develop-ready"}],
+        "body": "```yaml\nbase_branch: main\nallow_paths:\n  - src/**\n```\n\n## Design\n",
+    }
+    branch = "feat/issue-3661-base"
+    with (
+        patch.object(p0, "_github_client", return_value=client),
+        patch.object(p0, "_repo_root", return_value=repo),
+    ):
+        result = p0.run(
+            _ctx(
+                worktree_path=str(wt),
+                branch=branch,
+                base_branch="main",
+                is_cross_repo="false",
+            )
+        )
+    assert result.exit_code == 0
+    recorded = subprocess.check_output(
+        ["git", "-C", str(repo), "config", f"branch.{branch}.issuesmithbase"],
+        text=True,
+    ).strip()
+    assert recorded == "main"
+
+
+def test_diary_branch_does_not_record_issuesmithbase(tmp_path: Path) -> None:
+    """AC-3c: diary branch (-diary suffix) does not get issuesmithbase recorded."""
+
+    repo = tmp_path / "nexus"
+    _git_init_with_main(repo)
+    diary_wt = tmp_path / "nexus" / ".claude" / "worktrees" / "issue-3661-base-diary"
+    diary_branch = "feat/issue-3661-base-diary"
+    p0.prepare_worktree(repo, diary_wt, diary_branch, "main")
+    result = subprocess.run(
+        ["git", "-C", str(repo), "config", f"branch.{diary_branch}.issuesmithbase"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0

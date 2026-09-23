@@ -26,9 +26,12 @@ import re
 import sys
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 
 import yaml
 
+from issuesmith.branch_reuse import find_reusable_branch
+from issuesmith.branch_reuse import previous_commits as _prev_commits
 from issuesmith.config import get_config
 from issuesmith.targets import targets_from_issue
 
@@ -230,29 +233,9 @@ def build_context(
     from ghdag.github_client import DEFAULT_REPO
 
     issue_repo = str(metadata.get("issue_repo", DEFAULT_REPO))
-
-    comments = _fetch_issue_comments_from_api(issue_number, issue_repo)
-    restored_pipeline_id = _pipeline_id_from_comments(issue_number, comments)
-    if restored_pipeline_id:
-        pipeline_id = restored_pipeline_id
-    else:
-        shortid = str(uuid.uuid4())[:8]
-        pipeline_id = f"issue-{issue_number}-{shortid}"
-
-    worktree_path = f"{_REPO_ROOT}/{_WORKTREES_REL}/{pipeline_id}"
-    branch = f"feat/{pipeline_id}"
     base_branch = str(metadata.get("base_branch", "main"))
 
-    allow_paths_raw = metadata.get("allow_paths", [])
-    if isinstance(allow_paths_raw, str):
-        allow_paths_raw = [allow_paths_raw]
-    if allow_paths_raw:
-        allow_paths = "\n".join(f"- {p}" for p in allow_paths_raw)
-    else:
-        allow_paths = "（制限なし）"
-
-    source = str(metadata.get("source", ""))
-
+    # target_repo / cross-repo を pipeline_id 決定より前に確定させる（branch_reuse の探索先に使う）
     target_repo = str(metadata.get("target_repo", ""))
     if target_repo and target_repo == issue_repo:
         # target_repo が issue_repo 自身（例: sumipan/nexus）の場合は cross-repo 扱いしない。
@@ -267,14 +250,51 @@ def build_context(
     if target_repo:
         repo_name = target_repo.split("/")[-1]
         target_clone_path = f"{_EXTERNAL_REL}/{repo_name}"
-        target_worktree_path = f"{_EXTERNAL_REL}/{repo_name}/worktrees/{pipeline_id}"
+        target_worktree_path_rel = f"{_EXTERNAL_REL}/{repo_name}/worktrees"
         is_cross_repo = "true"
-        worktree_path = target_worktree_path
+        _search_repo_dir = Path(_REPO_ROOT) / target_clone_path
     else:
         repo_name = ""
         target_clone_path = ""
-        target_worktree_path = ""
+        target_worktree_path_rel = ""
         is_cross_repo = "false"
+        _search_repo_dir = Path(_REPO_ROOT)
+
+    # pipeline_id 決定: 1) pipeline-branch コメント復元 2) ブランチ再利用 3) 新規 uuid
+    comments = _fetch_issue_comments_from_api(issue_number, issue_repo)
+    restored_pipeline_id = _pipeline_id_from_comments(issue_number, comments)
+    if restored_pipeline_id:
+        pipeline_id = restored_pipeline_id
+        previous_commits_str = ""
+    else:
+        reusable = find_reusable_branch(_search_repo_dir, issue_number, base_branch)
+        if reusable:
+            pipeline_id = reusable[len("feat/"):]
+            commits = _prev_commits(_search_repo_dir, reusable, base_branch)
+            previous_commits_str = "\n".join(commits)
+        else:
+            shortid = str(uuid.uuid4())[:8]
+            pipeline_id = f"issue-{issue_number}-{shortid}"
+            previous_commits_str = ""
+
+    worktree_path = f"{_REPO_ROOT}/{_WORKTREES_REL}/{pipeline_id}"
+    branch = f"feat/{pipeline_id}"
+
+    if target_repo:
+        target_worktree_path = f"{target_worktree_path_rel}/{pipeline_id}"
+        worktree_path = target_worktree_path
+    else:
+        target_worktree_path = ""
+
+    allow_paths_raw = metadata.get("allow_paths", [])
+    if isinstance(allow_paths_raw, str):
+        allow_paths_raw = [allow_paths_raw]
+    if allow_paths_raw:
+        allow_paths = "\n".join(f"- {p}" for p in allow_paths_raw)
+    else:
+        allow_paths = "（制限なし）"
+
+    source = str(metadata.get("source", ""))
 
     diary_allow_paths_raw = metadata.get("diary_allow_paths", [])
     if isinstance(diary_allow_paths_raw, str):
@@ -336,6 +356,7 @@ def build_context(
         "diary_worktree_path": diary_worktree_path,
         "diary_allow_paths": diary_allow_paths,
         "targets_json": targets_json,
+        "previous_commits": previous_commits_str,
     }
 
 

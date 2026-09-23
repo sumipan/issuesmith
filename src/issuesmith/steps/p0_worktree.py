@@ -14,6 +14,7 @@ from pathlib import Path
 from ghdag.forge import ForgePort, get_forge
 from ghdag.workflow.state_machine import _load_workflow_config, transition
 
+from issuesmith.branch_reuse import record_base
 from issuesmith.config import StepConfig, get_config
 from issuesmith.context_hook import parse_issue_metadata
 from issuesmith.steps import scope_gate as scope_gate_mod
@@ -444,6 +445,7 @@ def _prepare_cross_repo(ctx: StepContext, repo_root: Path) -> None:
         _fail(f"fetched base ref not found: origin/{base}")
 
     prepare_worktree(target_clone, target_worktree, branch, f"origin/{base}")
+    record_base(target_clone, branch, base)
 
     try:
         normalized = Path(os.path.realpath(target_worktree))
@@ -466,11 +468,13 @@ def _prepare_cross_repo(ctx: StepContext, repo_root: Path) -> None:
 
 def _prepare_local(ctx: StepContext, repo_root: Path) -> None:
     base = ctx.base_branch.strip()
+    branch = ctx.branch.strip()
     try:
         local_base = resolve_base_ref(repo_root, base)
     except WorktreeError:
         _fail(f"base branch not found: {base}")
-    prepare_worktree(repo_root, Path(ctx.worktree_path.strip()), ctx.branch.strip(), local_base)
+    prepare_worktree(repo_root, Path(ctx.worktree_path.strip()), branch, local_base)
+    record_base(repo_root, branch, base)
 
 
 _STALE_BASE_COMMENT_TEMPLATE = """\
