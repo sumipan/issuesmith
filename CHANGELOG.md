@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.53.2 - 2026-09-23
+
+### Fixed
+
+- `dispatch`: the `QuotaGate` used to register a deferred task now gets `brake_state_path`
+  (`paths.brake_state`). Without it `release_ready` saw every engine as available and re-queued
+  a brake-paused task on the next tick, so the step ran, deferred, and ran again (sumipan/nexus#3627
+  cp2 launched twice within four minutes while all engines were brake-paused)
+
 ## 0.53.1 - 2026-09-23
 
 ### Fixed
