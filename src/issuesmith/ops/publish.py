@@ -7,6 +7,7 @@ import argparse
 import fnmatch
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import NamedTuple
 
@@ -311,8 +312,44 @@ def _ensure_rebased(
     )
 
 
+# Transient push failures (network, auth refresh) are retried before giving up
+# (sumipan/nexus#3680). Delays in seconds between attempts; patched to () in tests.
+_PUSH_RETRY_DELAYS: tuple[float, ...] = (2.0, 5.0)
+_PUSH_REJECTED_MARKERS = ("[rejected]", "stale info", "non-fast-forward", "fetch first")
+
+
+def _push_with_retry(worktree: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run ``git push`` with ``check=False``; retry on failures that are not rejections."""
+    attempts = len(_PUSH_RETRY_DELAYS) + 1
+    result = _run_git(worktree, "push", *args, check=False)
+    for attempt in range(1, attempts):
+        if result.returncode == 0:
+            break
+        err = (result.stderr or result.stdout or "")
+        if any(marker in err for marker in _PUSH_REJECTED_MARKERS):
+            break
+        print(
+            f"git push failed (attempt {attempt}/{attempts}): {err.strip()[-300:]}",
+            file=sys.stderr,
+        )
+        time.sleep(_PUSH_RETRY_DELAYS[attempt - 1])
+        result = _run_git(worktree, "push", *args, check=False)
+    return result
+
+
+def _push_failed(pushed: subprocess.CompletedProcess[str], what: str) -> PublishResult:
+    err = (pushed.stderr or pushed.stdout or "").strip() or (
+        f"{what} failed with exit {pushed.returncode}"
+    )
+    return PublishResult(status="PUSH_FAILED", stderr=err, exit_code=1)
+
+
 def _push_branch(worktree: Path, branch: str) -> PublishResult | None:
     """Push ``branch`` with rebase-aware ``--force-with-lease`` (#3237).
+
+    Plain pushes never raise: a failure after retries is returned as
+    ``PUSH_FAILED`` with git's stderr so the step reports it instead of
+    crashing with a bare ``CalledProcessError`` (sumipan/nexus#3680).
 
     After ``_ensure_rebased``, a previously pushed tip may no longer be an
     ancestor of HEAD (same content, new SHAs). Plain ``git push`` then fails
@@ -323,7 +360,9 @@ def _push_branch(worktree: Path, branch: str) -> PublishResult | None:
     _run_git(worktree, "fetch", "origin", branch, check=False)
     remote_ref = _run_git(worktree, "rev-parse", f"origin/{branch}", check=False)
     if remote_ref.returncode != 0:
-        _run_git(worktree, "push", "-u", "origin", branch)
+        pushed = _push_with_retry(worktree, "-u", "origin", branch)
+        if pushed.returncode != 0:
+            return _push_failed(pushed, "git push -u origin")
         return None
 
     remote_sha = remote_ref.stdout.strip()
@@ -344,24 +383,26 @@ def _push_branch(worktree: Path, branch: str) -> PublishResult | None:
         check=False,
     )
     if ancestor.returncode == 0:
-        _run_git(worktree, "push", "-u", "origin", branch)
+        pushed = _push_with_retry(worktree, "-u", "origin", branch)
+        if pushed.returncode != 0:
+            return _push_failed(pushed, "git push -u origin")
         return None
 
-    pushed = _run_git(
+    pushed = _push_with_retry(
         worktree,
-        "push",
         f"--force-with-lease={branch}:{remote_sha}",
         "-u",
         "origin",
         branch,
-        check=False,
     )
     if pushed.returncode == 0:
         return None
     err = (pushed.stderr or pushed.stdout or "").strip() or (
         f"git push --force-with-lease failed with exit {pushed.returncode}"
     )
-    return PublishResult(status="PUSH_DIVERGED", stderr=err, exit_code=1)
+    if any(marker in err for marker in _PUSH_REJECTED_MARKERS):
+        return PublishResult(status="PUSH_DIVERGED", stderr=err, exit_code=1)
+    return PublishResult(status="PUSH_FAILED", stderr=err, exit_code=1)
 
 
 def publish(
