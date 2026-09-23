@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from issuesmith.observe.events import (
     AllEnginesPausedEvent,
@@ -43,6 +43,13 @@ class AndonAction:
     issue: int = 0
     summary: str = ""
     evidence: str = ""
+    # Stable identity of the condition (independent of counters in ``summary``), used to
+    # raise the andon once per occurrence. Empty means "one andon per issue".
+    key: str = ""
+
+    @property
+    def andon_id(self) -> str:
+        return f"observe:{self.issue}:{self.key or 'observe'}:0"
 
 
 @dataclass(frozen=True)
@@ -82,6 +89,7 @@ def _evaluate_one(event: ObserveEvent, config: "ObserveConfig") -> list[Action]:
                 kind="blocked",
                 issue=event.issue,
                 summary=f"issue #{event.issue} stalled in {event.phase} for {event.minutes} minutes",
+                key=f"stall:{event.phase}",
             )
         ]
 
@@ -92,6 +100,7 @@ def _evaluate_one(event: ObserveEvent, config: "ObserveConfig") -> list[Action]:
                 kind="blocked",
                 issue=issue,
                 summary=f"orphan exec UUID {event.uuid} has no in_flight tracking",
+                key=f"orphan:{event.uuid}",
             )
         ]
 
@@ -104,6 +113,7 @@ def _evaluate_one(event: ObserveEvent, config: "ObserveConfig") -> list[Action]:
                 kind="blocked",
                 issue=event.parent,
                 summary=f"milestone chain parent #{event.parent} is halted: {event.reason}",
+                key="chain_halted",
             )
         ]
 
@@ -113,6 +123,7 @@ def _evaluate_one(event: ObserveEvent, config: "ObserveConfig") -> list[Action]:
                 kind="blocked",
                 issue=0,
                 summary=f"task {event.uuid} timed out after {event.elapsed} minutes",
+                key=f"timeout:{event.uuid}",
             )
         ]
 
@@ -135,6 +146,7 @@ def _evaluate_one(event: ObserveEvent, config: "ObserveConfig") -> list[Action]:
                 issue=event.issues[0] if event.issues else 0,
                 summary=f"systemic step failure: {event.step} {event.failure_class}",
                 evidence=f"affected issues: {list(event.issues)}",
+                key=f"systemic:{event.step}:{event.failure_class}",
             ),
         ]
 
@@ -149,6 +161,7 @@ def _evaluate_one(event: ObserveEvent, config: "ObserveConfig") -> list[Action]:
                 kind="broken",
                 issue=0,
                 summary=f"forge API unavailable: {event.consecutive} consecutive errors",
+                key="forge_unavailable",
             ),
         ]
 
@@ -161,6 +174,7 @@ def _evaluate_one(event: ObserveEvent, config: "ObserveConfig") -> list[Action]:
                 kind="decision",
                 issue=0,
                 summary=f"version skew: {event.package} pinned={event.pinned} installed={event.installed}",
+                key=f"skew:{event.package}",
             )
         ]
 
@@ -186,8 +200,22 @@ def execute(
     actions: list[Action],
     store: "QueueStore",
     sinks: list["AndonSink"],
+    *,
+    client: Any | None = None,
 ) -> None:
-    from issuesmith.andon import Andon
+    """Apply policy actions.
+
+    Andons are raised **once per occurrence**: ``store`` remembers the ids of the andons whose
+    condition is still present, and only ids that are new in this call are raised. When the
+    condition disappears the id is forgotten, so a later recurrence is reported once more.
+    With ``client`` the andon is canonical (Issue comment + attention label via
+    ``raise_andon``, sinks included) for actions bound to an Issue; without ``client`` or for
+    ``issue == 0`` it is only emitted to ``sinks``. (sumipan/nexus#3621)
+    """
+    from issuesmith.andon import Andon, raise_andon
+
+    andon_actions = [a for a in actions if isinstance(a, AndonAction)]
+    new_ids = store.sync_observe_andons({a.andon_id for a in andon_actions})
 
     for action in actions:
         if isinstance(action, HaltAction):
@@ -199,14 +227,23 @@ def execute(
             logger.info("halt cleared: %s", action.reason)
 
         elif isinstance(action, AndonAction):
+            if action.andon_id not in new_ids:
+                logger.debug("andon already raised: %s", action.andon_id)
+                continue
             andon = Andon(
-                id=f"observe::{action.issue}::observe::0",
+                id=action.andon_id,
                 kind=action.kind,
                 issue=action.issue,
                 step="observe",
                 summary=action.summary,
                 evidence=action.evidence,
             )
+            if client is not None and action.issue:
+                try:
+                    raise_andon(client, andon, sinks=sinks)
+                except Exception:
+                    logger.exception("raise_andon failed for %s", action.andon_id)
+                continue
             for sink in sinks:
                 try:
                     sink.emit(andon)

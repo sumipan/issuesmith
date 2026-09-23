@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.53.1 - 2026-09-23
+
+### Fixed
+
+- `observe.policy.execute` raises each andon **once per occurrence** instead of re-emitting it to
+  the sinks on every tick (a halted milestone produced a Slack post every 30 minutes,
+  sumipan/nexus#3621). `QueueStore.sync_observe_andons` remembers the ids whose condition is
+  still present; an id is forgotten when the condition clears, so a recurrence is reported once
+  more. `AndonAction.key` gives the condition a stable identity (`stall:<phase>`,
+  `orphan:<uuid>`, `chain_halted`, `timeout:<uuid>`, `systemic:<step>:<class>`,
+  `forge_unavailable`, `skew:<package>`) independent of counters in the summary
+- `execute(..., client=)` makes the andon canonical for Issue-bound actions (Issue comment +
+  attention label through `raise_andon`, sinks included); `observe --apply` passes the forge
+  client. Calls without `client` keep the sink-only behaviour
+
 ## 0.53.0 - 2026-09-23
 
 ### Added
