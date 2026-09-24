@@ -19,6 +19,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- `TestsGate` now runs all tests without `-x`, compares failures against `origin/<base_branch>`,
+  and marks preexisting failures non-blocking (AC-6 / #3494 sub-2 AC-6). Added baseline comparison
+  via temporary git worktree, fail-safe for collection errors (rc=2), and correct handling of
+  parametrized test IDs with spaces (sumipan/nexus#3646)
+
 ### Added
 
 - `branch_reuse.is_base_recorded(repo_dir, branch)`: public helper that returns True if
