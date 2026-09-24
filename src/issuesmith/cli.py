@@ -245,15 +245,27 @@ def _cmd_resume(argv: list[str]) -> int:
         default=None,
         help="ghdag handler name for --from (default: derived from the step)",
     )
+    parser.add_argument(
+        "--mark-done",
+        dest="mark_done",
+        action="append",
+        default=None,
+        help="mark a failed/cancelled/skipped ancestor step as succeeded before recovering"
+        " (requires --from; may be repeated)",
+    )
     args = parser.parse_args(argv)
+    if args.mark_done and args.from_step is None:
+        parser.error("--mark-done requires --from")
     from issuesmith.resume import resume as _cmd_resume_fn
-    return _cmd_resume_fn(
-        args.issue,
+    kwargs: dict = dict(
         from_step=args.from_step,
         phase=args.phase,
         workflow=args.workflow,
         handler=args.handler,
     )
+    if args.mark_done is not None:
+        kwargs["mark_done"] = args.mark_done
+    return _cmd_resume_fn(args.issue, **kwargs)
 
 
 def _cmd_recover(argv: list[str]) -> int:

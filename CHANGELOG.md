@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 
+## [Unreleased]
+
+### Added
+
+- `issuesmith resume --from <step> --mark-done <step>`: explicitly mark a failed/cancelled/skipped
+  ancestor step as succeeded before recovering, so `--from` can restart from a later step without
+  re-running the already-completed work; `--mark-done` may be repeated for multiple ancestors
+  (sumipan/nexus#3636)
+
+### Fixed
+
+- `issuesmith resume --from <step>` now checks for upstream failures before calling
+  `ghdag dag recover`; if an ancestor step is failed/cancelled/skipped/dep_failed, the command
+  exits 1 with a message showing the blocking steps and two recovery options, instead of silently
+  reporting success while no step actually restarts (sumipan/nexus#3636)
+
 ## 0.58.0 - 2026-09-24
 
 ### Added
