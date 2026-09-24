@@ -206,6 +206,104 @@ def _write_step_mark_done(step: StepStatus) -> None:
             )
 
 
+
+def _phase_for_handler(handler: str) -> str | None:
+    cfg = get_config()
+    for ph in cfg.phases:
+        if getattr(ph, "handler", "") == handler:
+            return ph.name
+    fallback = {"impl": "develop", "merge": "merge", "draft": "draft", "sub": "sub"}
+    phase = fallback.get(handler)
+    return phase if phase and any(ph.name == phase for ph in cfg.phases) else None
+
+
+def _downstream_steps(steps: "list[StepStatus]", from_step: str) -> "list[StepStatus]":
+    """``from_step`` and every step that (transitively) depends on it."""
+    by_name = {s.step_name: s for s in steps}
+    start = by_name.get(from_step)
+    if start is None:
+        return []
+    selected = {start.uuid}
+    changed = True
+    while changed:
+        changed = False
+        for s in steps:
+            if s.uuid not in selected and any(d in selected for d in s.depends):
+                selected.add(s.uuid)
+                changed = True
+    return [s for s in steps if s.uuid in selected]
+
+
+def _clear_stale_results(steps: "list[StepStatus]", from_step: str) -> None:
+    """Delete result files of the steps about to re-run.
+
+    ghdag keeps a non-empty result file and discards the rerun's stdout
+    (``result_finalize=preserve_nonempty``), so a re-executed step was judged by its
+    previous PIPELINE_STATUS (sumipan/nexus#3638). Clear them before ``dag recover``.
+    """
+    cfg = get_config()
+    for step in _downstream_steps(steps, from_step):
+        if not step.result_path:
+            continue
+        path = Path(step.result_path)
+        if not path.is_absolute():
+            path = cfg.root / step.result_path
+        if path.exists():
+            try:
+                path.unlink()
+                print(f"cleared result: {step.step_name} ({path.name})", file=sys.stderr)
+            except OSError as exc:
+                print(f"warning: could not clear result for {step.step_name}: {exc}", file=sys.stderr)
+
+
+def _restore_running_state(issue: int, handler: str) -> None:
+    """Put the issue back into the state a running DAG expects.
+
+    When a DAG terminates the observe policy releases in_flight and projects
+    ``<phase>-ready`` (#3662). ``resume --from`` restarts the same DAG, so the
+    ``<phase>-running`` label (the P3 finalizer requires it) and the in_flight entry
+    must come back; before this they were restored by hand on every recovery
+    (sumipan/nexus#3627 / #3696, 2026-09-24).
+    """
+    from issuesmith.queue import READY_LABEL, RUNNING_LABEL, _issue_target_meta, _resolve_engine
+
+    phase = _phase_for_handler(handler)
+    if phase is None:
+        return
+    running = RUNNING_LABEL.get(phase, "")
+    ready = READY_LABEL.get(phase, "")
+    cfg = get_config()
+    try:
+        client = get_forge(repo=cfg.repo)
+        issue_data = client.issue_get(issue, fields=["state", "labels", "body", "number"])
+        if running:
+            client.issue_update(issue, labels_add=[running], labels_remove=[ready] if ready else [])
+            print(f"restored label: {running}", file=sys.stderr)
+        target_repo, allow_paths = _issue_target_meta(issue_data)
+        role = next((ph.role for ph in cfg.phases if ph.name == phase), "implementation")
+        QueueStore().add_in_flight(
+            issue,
+            _resolve_engine(phase),
+            role=role,
+            allow_paths=allow_paths,
+            target_repo=target_repo or None,
+        )
+        print(f"restored in_flight: #{issue} ({phase})", file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001 - the DAG is already recovering; report, do not fail
+        print(f"warning: could not restore running state for #{issue}: {exc}", file=sys.stderr)
+
+
+def _recover_and_restore(
+    issue: int, handler: str, from_step: str, workflow: str, steps: "list[StepStatus]"
+) -> int:
+    if steps:
+        _clear_stale_results(steps, from_step)
+    rc = _run_ghdag_recover(issue, handler, from_step, workflow)
+    if rc == 0 and steps:
+        _restore_running_state(issue, handler)
+    return rc
+
+
 def _resume_from_step(
     issue: int,
     from_step: str,
@@ -278,14 +376,14 @@ def _resume_from_step(
         for name in mark_done:
             _write_step_mark_done(by_name[name])
 
-        return _run_ghdag_recover(issue, handler, from_step, workflow)
+        return _recover_and_restore(issue, handler, from_step, workflow, steps)
 
     blockers = _upstream_blockers(steps, from_step)
     if blockers:
         print(_format_blockers_message(issue, from_step, blockers), file=sys.stderr)
         return 1
 
-    return _run_ghdag_recover(issue, handler, from_step, workflow)
+    return _recover_and_restore(issue, handler, from_step, workflow, steps)
 
 
 def _resume_phase(issue: int, phase: str) -> int:

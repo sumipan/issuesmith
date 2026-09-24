@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 
+## 0.59.1 - 2026-09-24
+
+### Fixed
+
+- `resume --from <step>` restores what the restarted DAG needs instead of leaving it to the
+  operator: the result files of the re-run steps are cleared first (ghdag keeps a non-empty
+  result and discards the rerun's stdout, sumipan/nexus#3638), and after `dag recover` the
+  `<phase>-running` label comes back (`<phase>-ready` removed) and the issue is registered in
+  in_flight. Without this the P3 finalizer failed with "REPORT_DONE requires
+  issuesmith:develop-running" on every recovery after #3662 released the slot
+  (sumipan/nexus#3627 / #3696, 2026-09-24)
+
 ## [Unreleased]
 
 ### Added
