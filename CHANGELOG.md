@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 
+## 0.61.2 - 2026-09-25
+
+### Added
+
+- `resume <issue> --from <step> --force`: re-run the step and everything downstream even if
+  they already succeeded (done markers and results are cleared). Until now re-running a
+  succeeded step meant moving `jobs/done/<uuid>` aside by hand (twice on 2026-09-25, #3628)
+
+### Fixed
+
+- `resume --from` no longer deletes the result files of succeeded downstream steps that
+  recover will not re-run (0.59.1 cleared every downstream result; a `--from` on a succeeded
+  step would have left later steps without their inputs)
+
 ## 0.61.1 - 2026-09-25
 
 ### Fixed

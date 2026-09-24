@@ -29,6 +29,7 @@ def resume(
     workflow: str | None = None,
     handler: str | None = None,
     mark_done: list[str] | None = None,
+    force: bool = False,
 ) -> int:
     """Resume a stalled issue.
 
@@ -38,6 +39,9 @@ def resume(
         stem of ``paths.workflow`` so hosts with several workflows resolve (#3590)
     handler: ghdag handler name; defaults to the handler owning ``from_step``
     mark_done: steps to mark as success before recovering (requires from_step)
+    force: with from_step, re-run the step and everything downstream even if they succeeded
+        (done markers and results are cleared; without it recover only re-runs failed /
+        pending steps and succeeded ones keep their results)
 
     Always releases in_flight before acting.
     """
@@ -48,7 +52,7 @@ def resume(
 
     if from_step is not None:
         return _resume_from_step(
-            issue, from_step, workflow=workflow, handler=handler, mark_done=mark_done
+            issue, from_step, workflow=workflow, handler=handler, mark_done=mark_done, force=force
         )
 
     assert phase is not None
@@ -234,15 +238,20 @@ def _downstream_steps(steps: "list[StepStatus]", from_step: str) -> "list[StepSt
     return [s for s in steps if s.uuid in selected]
 
 
-def _clear_stale_results(steps: "list[StepStatus]", from_step: str) -> None:
+def _clear_stale_results(steps: "list[StepStatus]", from_step: str, *, force: bool = False) -> None:
     """Delete result files of the steps about to re-run.
 
     ghdag keeps a non-empty result file and discards the rerun's stdout
     (``result_finalize=preserve_nonempty``), so a re-executed step was judged by its
     previous PIPELINE_STATUS (sumipan/nexus#3638). Clear them before ``dag recover``.
+
+    Only steps that recover will actually re-run are touched: succeeded steps keep their
+    results (downstream steps read them) unless ``force`` also resets their done markers.
     """
     cfg = get_config()
     for step in _downstream_steps(steps, from_step):
+        if step.status == "success" and not force:
+            continue
         if not step.result_path:
             continue
         path = Path(step.result_path)
@@ -293,11 +302,29 @@ def _restore_running_state(issue: int, handler: str) -> None:
         print(f"warning: could not restore running state for #{issue}: {exc}", file=sys.stderr)
 
 
+def _reset_done_markers(steps: "list[StepStatus]", from_step: str) -> None:
+    """``--force``: forget the success of from_step and everything downstream."""
+    done_dir = get_config().paths.done_dir
+    for step in _downstream_steps(steps, from_step):
+        marker = Path(done_dir) / step.uuid
+        if marker.exists():
+            marker.unlink()
+            print(f"reset done marker: {step.step_name} ({step.uuid})", file=sys.stderr)
+
+
 def _recover_and_restore(
-    issue: int, handler: str, from_step: str, workflow: str, steps: "list[StepStatus]"
+    issue: int,
+    handler: str,
+    from_step: str,
+    workflow: str,
+    steps: "list[StepStatus]",
+    *,
+    force: bool = False,
 ) -> int:
     if steps:
-        _clear_stale_results(steps, from_step)
+        if force:
+            _reset_done_markers(steps, from_step)
+        _clear_stale_results(steps, from_step, force=force)
     rc = _run_ghdag_recover(issue, handler, from_step, workflow)
     if rc == 0 and steps:
         _restore_running_state(issue, handler)
@@ -311,6 +338,7 @@ def _resume_from_step(
     workflow: str | None = None,
     handler: str | None = None,
     mark_done: list[str] | None = None,
+    force: bool = False,
 ) -> int:
     handler = handler or handler_for_failed_step(from_step, set())
     workflow = workflow or _default_workflow_name()
@@ -376,14 +404,14 @@ def _resume_from_step(
         for name in mark_done:
             _write_step_mark_done(by_name[name])
 
-        return _recover_and_restore(issue, handler, from_step, workflow, steps)
+        return _recover_and_restore(issue, handler, from_step, workflow, steps, force=force)
 
     blockers = _upstream_blockers(steps, from_step)
     if blockers:
         print(_format_blockers_message(issue, from_step, blockers), file=sys.stderr)
         return 1
 
-    return _recover_and_restore(issue, handler, from_step, workflow, steps)
+    return _recover_and_restore(issue, handler, from_step, workflow, steps, force=force)
 
 
 def _resume_phase(issue: int, phase: str) -> int:

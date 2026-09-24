@@ -81,3 +81,44 @@ def test_failed_recover_does_not_restore(env, monkeypatch):
     labels = {lb["name"] for lb in client.issue_get(number, fields=["labels"])["labels"]}
     assert "issuesmith:develop-running" not in labels
     assert QueueStore().snapshot().in_flight == []
+
+
+def test_succeeded_downstream_results_are_kept_without_force(env, monkeypatch):
+    """--from p2 with p3 already succeeded: recover re-runs p2 only, p3 keeps its result."""
+    tmp_path, client, number = env
+    steps = _steps(tmp_path)
+    steps[2] = StepStatus("u-p3", "p3", ["u-p2"], "success", None, None, steps[2].result_path)
+    monkeypatch.setattr(resume_mod, "_generation_keys_available", lambda: True)
+    monkeypatch.setattr(resume_mod, "_load_step_statuses", lambda *a, **k: steps)
+    monkeypatch.setattr(resume_mod, "_run_ghdag_recover", lambda *a, **k: 0)
+
+    assert resume_mod.resume(number, from_step="p2", handler="impl") == 0
+    assert not (tmp_path / "result-p2.md").exists()
+    assert (tmp_path / "result-p3.md").exists()
+
+
+def test_force_resets_succeeded_markers_and_results(env, monkeypatch):
+    """--from p2 --force: p2 and p3 lose their done markers and results even though they succeeded."""
+    tmp_path, client, number = env
+    from issuesmith.config import get_config
+
+    steps = [
+        StepStatus("u-p1", "p1", [], "success", None, None, str(tmp_path / "result-p1.md")),
+        StepStatus("u-p2", "p2", ["u-p1"], "success", None, None, str(tmp_path / "result-p2.md")),
+        StepStatus("u-p3", "p3", ["u-p2"], "success", None, None, str(tmp_path / "result-p3.md")),
+    ]
+    for st in steps:
+        Path(st.result_path).write_text("PIPELINE_STATUS: OLD\n", encoding="utf-8")
+    done_dir = get_config().paths.done_dir
+    done_dir.mkdir(parents=True, exist_ok=True)
+    for st in steps:
+        (done_dir / st.uuid).write_text("0", encoding="utf-8")
+    monkeypatch.setattr(resume_mod, "_generation_keys_available", lambda: True)
+    monkeypatch.setattr(resume_mod, "_load_step_statuses", lambda *a, **k: steps)
+    monkeypatch.setattr(resume_mod, "_run_ghdag_recover", lambda *a, **k: 0)
+
+    assert resume_mod.resume(number, from_step="p2", handler="impl", force=True) == 0
+    assert (done_dir / "u-p1").exists()
+    assert not (done_dir / "u-p2").exists() and not (done_dir / "u-p3").exists()
+    assert (tmp_path / "result-p1.md").exists()
+    assert not (tmp_path / "result-p2.md").exists() and not (tmp_path / "result-p3.md").exists()
