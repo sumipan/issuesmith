@@ -215,7 +215,6 @@ class ScopeCouplingConfig:
     contradicts scope_breadth on core-module changes and is disabled until redesigned).
     """
 
-    ignore_symbols: tuple[str, ...] = ()
     enabled: bool = True
 
 
@@ -556,16 +555,14 @@ def _build_terminal_labels(raw: Any) -> tuple[str, ...]:
 def _build_scope_coupling(raw: Mapping[str, Any] | None) -> ScopeCouplingConfig:
     if not raw:
         return ScopeCouplingConfig()
-    ignore_raw = raw.get("ignore_symbols")
-    if ignore_raw is None:
-        ignore_symbols: tuple[str, ...] = ()
-    elif isinstance(ignore_raw, list):
-        ignore_symbols = tuple(str(s) for s in ignore_raw if s is not None)
-    else:
-        ignore_symbols = ()
+    if "ignore_symbols" in raw:
+        raise ConfigError(
+            "scope_coupling.ignore_symbols is no longer supported; "
+            "remove it from issuesmith.yaml (requires-chain validation replaced it)"
+        )
     enabled_raw = raw.get("enabled")
     enabled = True if enabled_raw is None else bool(enabled_raw)
-    return ScopeCouplingConfig(ignore_symbols=ignore_symbols, enabled=enabled)
+    return ScopeCouplingConfig(enabled=enabled)
 
 
 def _build_observe(raw: Mapping[str, Any] | None) -> ObserveConfig:

@@ -46,6 +46,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   #3627; the one-off parity table is no longer needed (sumipan/nexus#3628).
 - `test_workflow_conventions.py` R3 tests (`test_r3_*`) removed alongside the code they
   guarded; R1 (contract-parser uniqueness) test is unchanged.
+- `ScopeCouplingConfig.ignore_symbols` (31-word exclusion list) and its YAML parser removed;
+  configs that still carry the `scope_coupling.ignore_symbols` key now raise `ConfigError` so
+  operators remove the dead setting. The requires-chain validation introduced in
+  sumipan/nexus#3626 / #3627 makes per-symbol exclusions structurally unnecessary
+  (sumipan/nexus#3628).
 
 ### Added
 
