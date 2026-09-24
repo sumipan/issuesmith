@@ -18,16 +18,66 @@ from ghdag.workflow.gates import Violation
 
 from issuesmith.gates.base import ContractInput
 
+_CHANGED_FILES_EXCLUDE_PREFIXES: tuple[str, ...] = ("jobs/", "logs/", ".pipeline-state/")
+
+
+def changed_files(worktree_path: Path, base_branch: str) -> list[str]:
+    """Return sorted changed files vs origin/<base_branch> plus uncommitted/untracked.
+
+    Excludes files under jobs/, logs/, .pipeline-state/, and deleted files.
+    """
+    committed: set[str] = set()
+    proc = subprocess.run(
+        ["git", "diff", "--name-only", f"origin/{base_branch}...HEAD"],
+        capture_output=True, text=True, check=False,
+        cwd=str(worktree_path),
+    )
+    if proc.returncode == 0:
+        for f in proc.stdout.splitlines():
+            f = f.strip()
+            if f:
+                committed.add(f)
+
+    status_files: set[str] = set()
+    proc2 = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=all"],
+        capture_output=True, text=True, check=False,
+        cwd=str(worktree_path),
+    )
+    if proc2.returncode == 0:
+        for line in proc2.stdout.splitlines():
+            if len(line) < 4:
+                continue
+            fname = line[3:].strip()
+            if not fname:
+                continue
+            if " -> " in fname:
+                fname = fname.split(" -> ", 1)[1].strip()
+            status_files.add(fname)
+
+    all_files = committed | status_files
+    return sorted(
+        f for f in all_files
+        if not any(f.startswith(p) for p in _CHANGED_FILES_EXCLUDE_PREFIXES)
+        and (worktree_path / f).exists()
+    )
+
 
 class LintGate:
-    """Run ruff check on allow_paths in the worktree; fix via ruff --fix."""
+    """Run ruff check on changed .py files in the worktree; fix via ruff --fix."""
 
     def __init__(self, worktree_path: Path, allow_paths: list[str]) -> None:
         self._root = worktree_path
         self._paths = allow_paths
 
     def _targets(self) -> list[str]:
-        return [str(self._root / p) for p in self._paths if (self._root / p).exists()]
+        """Return .py files from changed_files (not allow_paths globs)."""
+        try:
+            base_branch = "main"
+            files = changed_files(self._root, base_branch)
+        except Exception:
+            files = [p for p in self._paths if (self._root / p).exists()]
+        return [str(self._root / f) for f in files if f.endswith(".py")]
 
     def check(self, body: str, labels: list[str]) -> list[Violation]:
         targets = self._targets()
@@ -253,7 +303,7 @@ class TestsGate:
 
 
 class ExternalLeakGate:
-    """Check for accidental secrets or external references in allow_paths."""
+    """Check for accidental secrets or external references in changed files."""
 
     _LEAK_PATTERNS: tuple[str, ...] = (
         r"ghp_[A-Za-z0-9]{36}",
@@ -266,8 +316,13 @@ class ExternalLeakGate:
         self._paths = allow_paths
 
     def check(self, body: str, labels: list[str]) -> list[Violation]:
+        try:
+            base_branch = "main"
+            files_to_check = changed_files(self._root, base_branch)
+        except Exception:
+            files_to_check = [p for p in self._paths if (self._root / p).exists()]
         violations = []
-        for p in self._paths:
+        for p in files_to_check:
             full = self._root / p
             if not full.exists() or not full.is_file():
                 continue
@@ -375,6 +430,7 @@ WORKTREE_GATES: dict[str, object] = {
 }
 
 __all__ = [
+    "changed_files",
     "LintGate",
     "TestsGate",
     "ExternalLeakGate",

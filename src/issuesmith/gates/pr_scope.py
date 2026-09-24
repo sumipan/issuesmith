@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 from typing import Sequence
 
@@ -26,36 +25,33 @@ def check_pr_scope(
 
 
 class PrScopeGate:
-    """RequiresGate adapter: checks PR diff files against allow_paths."""
+    """RequiresGate adapter: checks changed files (committed + uncommitted) against allow_paths.
+
+    Returns one Violation per out-of-allow-paths file with rule_id='pr_scope.out_of_allow'.
+    """
 
     def __init__(self, worktree_path: Path, allow_paths: list[str], base_branch: str) -> None:
         self._worktree_path = worktree_path
         self._allow_paths = allow_paths
         self._base_branch = base_branch
 
-    def _get_changed_files(self) -> list[str]:
-        proc = subprocess.run(
-            ["git", "diff", "--name-only", f"origin/{self._base_branch}...HEAD"],
-            capture_output=True, text=True, check=False,
-            cwd=str(self._worktree_path),
-        )
-        if proc.returncode != 0:
-            return []
-        return [f for f in proc.stdout.splitlines() if f.strip()]
-
     def check(self, body: str, labels: list[str]) -> list[Violation]:
-        files = self._get_changed_files()
-        verdict = check_pr_scope(files, self._allow_paths)
-        if verdict.passed:
-            return []
-        return [Violation(
-            rule_id="pr_scope.violation",
-            severity="fail",
-            message="; ".join(verdict.reasons),
-            location=None,
-            auto_fixable=False,
-            fix_hint="Only modify files listed in allow_paths",
-        )]
+        from issuesmith.gates.worktree import changed_files as _changed_files
+
+        files = _changed_files(self._worktree_path, self._base_branch)
+        violations = []
+        for f in files:
+            verdict = check_pr_scope([f], self._allow_paths)
+            if not verdict.passed:
+                violations.append(Violation(
+                    rule_id="pr_scope.out_of_allow",
+                    severity="fail",
+                    message=f"{f}: outside allow_paths",
+                    location=f,
+                    auto_fixable=False,
+                    fix_hint=f"widen:{f}",
+                ))
+        return violations
 
 
 __all__ = ["check_pr_scope", "PrScopeGate"]

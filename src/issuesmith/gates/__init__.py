@@ -56,6 +56,8 @@ class GateEntry:
 
     input_kind: InputKind
     build: Callable[[GateBuildContext], RequiresGate]
+    pre_llm: bool = False
+    repairable: bool = True
 
 
 def _require_worktree(gate_id: str, ctx: GateBuildContext) -> Path:
@@ -82,6 +84,10 @@ def _build_registry() -> dict[str, GateEntry]:
     )
 
     # Worktree gates defined in gates/worktree.py.
+    # pre_llm=True: evaluated before LLM in run_guarded --requires-step
+    # repairable=False: violation triggers andon(decision) instead of repair loop
+    _PRE_LLM_GATES = frozenset({"base_freshness"})
+
     for gate_id, factory in WORKTREE_GATES.items():
         def _make_worktree_build(f=factory, gid=gate_id):
             def _build(ctx: GateBuildContext) -> RequiresGate:
@@ -91,6 +97,7 @@ def _build_registry() -> dict[str, GateEntry]:
         registry[gate_id] = GateEntry(
             input_kind="worktree",
             build=_make_worktree_build(),
+            pre_llm=gate_id in _PRE_LLM_GATES,
         )
 
     # scope and pr_scope: issue-authored adapters that wrap worktree operations.
@@ -116,9 +123,17 @@ def _build_registry() -> dict[str, GateEntry]:
             return gate
         return _build
 
+    # scope_breadth: pre_llm=True (checked before LLM), repairable=False (scope too large → split/reject)
+    _ISSUE_PRE_LLM_NON_REPAIRABLE = frozenset({"scope_breadth"})
+
     for gate_id, cls in _IMPL_REG.items():
         if gate_id not in registry:
-            registry[gate_id] = GateEntry(input_kind="issue", build=_make_rule_build(cls))
+            registry[gate_id] = GateEntry(
+                input_kind="issue",
+                build=_make_rule_build(cls),
+                pre_llm=gate_id in _ISSUE_PRE_LLM_NON_REPAIRABLE,
+                repairable=gate_id not in _ISSUE_PRE_LLM_NON_REPAIRABLE,
+            )
 
     return registry
 

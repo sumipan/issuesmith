@@ -382,7 +382,9 @@ class TestDispatchMaxRepairs:
                         _repair_count=_MAX_REPAIRS,
                     )
         _, raised = mock_andon.call_args[0]
-        assert "add missing fixture" in raised.options
+        assert raised.kind == "decision"
+        assert "split" in raised.options
+        assert "reject" in raised.options
 
 
 class TestDispatchGateException:

@@ -86,7 +86,7 @@ def test_andon_list_shows_usage_on_no_args():
 def test_call_resume_hook_resume_action_calls_resume():
     """_call_resume_hook with action='resume' must call resume.resume(), not dispatch_event."""
     from issuesmith.andon import _call_resume_hook
-    with patch("issuesmith.resume.resume") as mock_resume:
+    with patch("issuesmith.andon.resume") as mock_resume:
         mock_resume.return_value = 0
         client = MagicMock()
         _call_resume_hook(client, "issuesmith:42:cp2:0", "resume")
@@ -97,7 +97,7 @@ def test_call_resume_hook_resume_action_no_dispatch_event():
     """resume action must not call dispatch_event (the old broken path)."""
     from issuesmith.andon import _call_resume_hook
     client = MagicMock()
-    with patch("issuesmith.resume.resume", return_value=0):
+    with patch("issuesmith.andon.resume", return_value=0):
         _call_resume_hook(client, "issuesmith:42:cp2:0", "resume")
     client.dispatch_event.assert_not_called()
 
@@ -105,7 +105,7 @@ def test_call_resume_hook_resume_action_no_dispatch_event():
 def test_call_resume_hook_handoff_no_resume():
     """handoff action must not call resume (label/comment only)."""
     from issuesmith.andon import _call_resume_hook
-    with patch("issuesmith.resume.resume") as mock_resume:
+    with patch("issuesmith.andon.resume") as mock_resume:
         client = MagicMock()
         _call_resume_hook(client, "issuesmith:42:cp2:0", "handoff")
     mock_resume.assert_not_called()
@@ -122,7 +122,7 @@ def test_call_resume_hook_handoff_no_dispatch_event():
 def test_call_resume_hook_unknown_action_no_resume():
     """Unknown actions must not call resume."""
     from issuesmith.andon import _call_resume_hook
-    with patch("issuesmith.resume.resume") as mock_resume:
+    with patch("issuesmith.andon.resume") as mock_resume:
         client = MagicMock()
         _call_resume_hook(client, "issuesmith:42:cp2:0", "unknown-action")
     mock_resume.assert_not_called()
@@ -132,7 +132,7 @@ def test_call_resume_hook_resume_exception_suppressed():
     """Exceptions inside resume must not propagate (same contract as before)."""
     from issuesmith.andon import _call_resume_hook
     client = MagicMock()
-    with patch("issuesmith.resume.resume", side_effect=RuntimeError("oops")):
+    with patch("issuesmith.andon.resume", side_effect=RuntimeError("oops")):
         # Should not raise
         _call_resume_hook(client, "issuesmith:42:cp2:0", "resume")
 
@@ -141,7 +141,7 @@ def test_call_resume_hook_bad_andon_id_graceful():
     """Malformed andon_id must not raise."""
     from issuesmith.andon import _call_resume_hook
     client = MagicMock()
-    with patch("issuesmith.resume.resume") as mock_resume:
+    with patch("issuesmith.andon.resume") as mock_resume:
         _call_resume_hook(client, "bad-id", "resume")
     mock_resume.assert_not_called()
 

@@ -146,10 +146,11 @@ class PhaseConfig:
 
 @dataclass(frozen=True)
 class StepConfig:
-    module: str
+    module: str = ""
     template: str | None = None
     requires: tuple[str, ...] = ()
     input_kind: Literal["issue", "worktree", "artifact"] = "issue"
+    requires_declared: bool = False
 
 
 _DEFAULT_PHASES: tuple[PhaseConfig, ...] = (
@@ -489,9 +490,9 @@ def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
     for step_id, conf in raw.items():
         if not isinstance(conf, Mapping):
             raise ValueError(f"steps.{step_id} must be a mapping")
-        module = conf.get("module")
-        if not module or not str(module).strip():
-            raise ValueError(f"steps.{step_id} requires non-empty module")
+        module_raw = conf.get("module")
+        # module is optional: absent/empty means LLM-only step (run via engine run-guarded)
+        module = str(module_raw).strip() if module_raw else ""
         template_raw = conf.get("template")
         template = None if template_raw is None else str(template_raw)
 
@@ -502,12 +503,14 @@ def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
         # gate rule, some of which call ``get_config()`` at import time, which re-enters this
         # loader while ``issuesmith.gates`` is half-initialised (sumipan/nexus#3687).
         requires: tuple[str, ...] = ()
+        requires_declared: bool = False
         input_kind: str = "issue"
         if "requires" in conf:
             requires_raw = conf["requires"]
             if not isinstance(requires_raw, list):
                 raise ConfigError(f"steps.{step_id}.requires must be a list")
             requires = tuple(str(g) for g in requires_raw)
+            requires_declared = True
         if "input_kind" in conf:
             input_kind = str(conf["input_kind"])
             if input_kind not in _valid_input_kinds:
@@ -517,10 +520,11 @@ def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
                 )
 
         steps[str(step_id)] = StepConfig(
-            module=str(module).strip(),
+            module=module,
             template=template,
             requires=requires,
             input_kind=input_kind,  # type: ignore[arg-type]
+            requires_declared=requires_declared,
         )
     return steps
 
