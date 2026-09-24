@@ -17,7 +17,8 @@ from issuesmith.gate_rules.scope_coupling import ScopeCouplingRules
 
 
 @pytest.fixture(autouse=True)
-def _clear_config_cache():
+def _clear_config_cache(monkeypatch):
+    monkeypatch.delenv("ISSUESMITH_CONFIG", raising=False)
     reset_config_cache()
     yield
     reset_config_cache()
