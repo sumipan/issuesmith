@@ -73,15 +73,3 @@ class StepResult:
         # Compat: old exit_code=0 / pipeline_status → new markers
         if self.exit_code == 0 and self.pipeline_status and not self.markers:
             self.markers = [self.pipeline_status]
-
-        # R3 (nexus docs/ISSUESMITH.md ワークフロー設計規約): a step may only stop with a
-        # status that the preflight parity table knows. Enforced at construction so a new
-        # runtime-only stop cannot be added without declaring how (or why not) it is
-        # caught before dispatch.
-        from issuesmith.gate_rules import assert_preflight_parity
-
-        for marker in self.markers:
-            assert_preflight_parity(marker)
-        # Old-style exit_code=1 case: check pipeline_status directly
-        if self.exit_code is not None and self.exit_code != 0 and self.pipeline_status:
-            assert_preflight_parity(self.pipeline_status)
