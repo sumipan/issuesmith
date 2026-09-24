@@ -2,7 +2,7 @@
 
 Acceptance criteria (#3625):
 - Step missing requires → ConfigError (via validate_requires_chain)
-- Unknown gate id in requires → ConfigError at load time, message includes known ids
+- Unknown gate id in requires → ConfigError from validate_step_requires, message includes known ids
 - input_kind: artifact step cannot use issue gate
 - input_kind: worktree step can use worktree gate
 - doctor produces requires_chain: ok or requires_chain: <violation>
@@ -14,7 +14,7 @@ import pytest
 import yaml
 
 from issuesmith.config import ConfigError, StepConfig, load_config, reset_config_cache
-from issuesmith.gates import GATE_REGISTRY
+from issuesmith.gates import GATE_REGISTRY, validate_step_requires
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -102,8 +102,9 @@ def test_unknown_gate_id_raises_config_error(tmp_path, monkeypatch) -> None:
             },
         },
     )
+    cfg = load_config()  # loading never touches the registry
     with pytest.raises(ConfigError, match="nonexistent_gate"):
-        load_config()
+        validate_step_requires(cfg.steps)
 
 
 def test_config_error_message_includes_known_gate_ids(tmp_path, monkeypatch) -> None:
@@ -122,7 +123,7 @@ def test_config_error_message_includes_known_gate_ids(tmp_path, monkeypatch) -> 
         },
     )
     with pytest.raises(ConfigError) as exc_info:
-        load_config()
+        validate_step_requires(load_config().steps)
     msg = str(exc_info.value)
     for known_id in GATE_REGISTRY:
         assert known_id in msg, f"expected known gate id '{known_id}' in error: {msg}"
@@ -149,7 +150,7 @@ def test_artifact_step_with_issue_gate_raises_config_error(tmp_path, monkeypatch
         },
     )
     with pytest.raises(ConfigError, match="artifact"):
-        load_config()
+        validate_step_requires(load_config().steps)
 
 
 def test_issue_step_with_issue_gate_is_valid(tmp_path, monkeypatch) -> None:
@@ -332,7 +333,7 @@ def test_issue_step_with_worktree_gate_raises_config_error(tmp_path, monkeypatch
         },
     )
     with pytest.raises(ConfigError, match="lint"):
-        load_config()
+        validate_step_requires(load_config().steps)
 
 
 def test_config_error_missing_gate_ids_in_message(tmp_path, monkeypatch) -> None:
@@ -351,7 +352,7 @@ def test_config_error_missing_gate_ids_in_message(tmp_path, monkeypatch) -> None
         },
     )
     with pytest.raises(ConfigError) as exc_info:
-        load_config()
+        validate_step_requires(load_config().steps)
     msg = str(exc_info.value)
     assert "missing gate ids" in msg
     assert "nonexistent_gate" in msg

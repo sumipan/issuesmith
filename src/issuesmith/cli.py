@@ -299,9 +299,16 @@ def _json_default(o: object) -> object:
 
 
 def _cmd_config_show(_argv: list[str]) -> int:
-    from issuesmith.config import get_config
+    from issuesmith.config import ConfigError, get_config
+    from issuesmith.gates import validate_step_requires
 
-    print(json.dumps(asdict(get_config()), default=_json_default, indent=2))
+    cfg = get_config()
+    print(json.dumps(asdict(cfg), default=_json_default, indent=2))
+    try:
+        validate_step_requires(cfg.steps)
+    except ConfigError as exc:
+        print(f"config: invalid requires: {exc}", file=sys.stderr)
+        return 1
     return 0
 
 

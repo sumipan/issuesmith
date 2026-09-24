@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Literal, Protocol
+from typing import Any, Callable, Literal, Mapping, Protocol
 
 __all__ = [
     "Verdict",
@@ -13,6 +13,7 @@ __all__ = [
     "GateEntry",
     "RequiresGate",
     "GATE_REGISTRY",
+    "validate_step_requires",
     "check_scope",
     "check_pr_scope",
     "check_m2",
@@ -131,3 +132,43 @@ from issuesmith.gates.dep import check_deps  # noqa: E402
 from issuesmith.gates.m2 import check_m2  # noqa: E402
 from issuesmith.gates.pr_scope import check_pr_scope  # noqa: E402
 from issuesmith.gates.scope import check_scope  # noqa: E402
+
+
+def validate_step_requires(steps: "Mapping[str, Any]") -> None:
+    """Validate ``StepConfig.requires`` against GATE_REGISTRY (unknown ids, input_kind rules).
+
+    Kept out of ``config.load_config`` so loading the config never imports the gate registry
+    (sumipan/nexus#3687). Raises ``issuesmith.config.ConfigError`` with the same messages the
+    loader used to raise. Call from doctor, dispatch and ``config show``.
+    """
+    from issuesmith.config import ConfigError  # noqa: PLC0415 - config must not import gates
+
+    known = sorted(GATE_REGISTRY)
+    for step_id, step in steps.items():
+        requires = tuple(getattr(step, "requires", ()) or ())
+        if not requires:
+            continue
+        unknown = [g for g in requires if g not in GATE_REGISTRY]
+        if unknown:
+            raise ConfigError(
+                f"steps.{step_id}.requires contains unknown gate ids"
+                f" (missing gate ids: {unknown}). Known ids: {known}"
+            )
+        input_kind = getattr(step, "input_kind", "issue")
+        for gate_id in requires:
+            gate_input_kind = GATE_REGISTRY[gate_id].input_kind
+            if gate_input_kind == "worktree" and input_kind != "worktree":
+                raise ConfigError(
+                    f"steps.{step_id}: worktree gate {gate_id!r} can only be used"
+                    f" in worktree steps, but step input_kind={input_kind!r}"
+                )
+            if gate_input_kind == "artifact" and input_kind != "artifact":
+                raise ConfigError(
+                    f"steps.{step_id}: artifact gate {gate_id!r} can only be used"
+                    f" in artifact steps, but step input_kind={input_kind!r}"
+                )
+            if gate_input_kind == "issue" and input_kind == "artifact":
+                raise ConfigError(
+                    f"steps.{step_id}: issue gate {gate_id!r} cannot be used"
+                    f" in artifact steps"
+                )

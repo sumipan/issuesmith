@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 
+## 0.57.2 - 2026-09-24
+
+### Fixed
+
+- `config.load_config` no longer imports the gate registry to validate `requires`. The registry
+  imports every gate rule, some of which call `get_config()` at import time, so any
+  `issuesmith.yaml` with `requires:` crashed every command with
+  `ImportError: partially initialized module 'issuesmith.gates'` (sumipan/nexus#3687, found
+  while resuming #3627). Gate ids and input_kind compatibility are now validated by
+  `gates.validate_step_requires`, called by `doctor` (`requires_chain`), `dispatch` (fail fast,
+  exit 2) and `config show`; the messages are unchanged
+- `tests/conventions/test_config_load_is_import_light.py` loads a config that declares every
+  registered gate in a fresh interpreter, and asserts the loader never imports `issuesmith.gates`
+
 ## 0.57.1 - 2026-09-24
 
 ### Fixed

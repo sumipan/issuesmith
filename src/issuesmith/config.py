@@ -495,7 +495,12 @@ def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
         template_raw = conf.get("template")
         template = None if template_raw is None else str(template_raw)
 
-        # requires / input_kind are optional (backward compat); validate only when present.
+        # requires / input_kind are optional (backward compat). Only the shape is checked here:
+        # gate ids and gate/step input_kind compatibility are validated by
+        # ``issuesmith.gates.validate_step_requires`` (doctor / dispatch / config show).
+        # Loading the config must not import the gate registry: the registry pulls in every
+        # gate rule, some of which call ``get_config()`` at import time, which re-enters this
+        # loader while ``issuesmith.gates`` is half-initialised (sumipan/nexus#3687).
         requires: tuple[str, ...] = ()
         input_kind: str = "issue"
         if "requires" in conf:
@@ -503,15 +508,6 @@ def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
             if not isinstance(requires_raw, list):
                 raise ConfigError(f"steps.{step_id}.requires must be a list")
             requires = tuple(str(g) for g in requires_raw)
-            # Lazy import to avoid circular import (gates → m2_gate → targets → config).
-            from issuesmith.gates import GATE_REGISTRY as _gate_reg  # noqa: PLC0415
-            unknown = [g for g in requires if g not in _gate_reg]
-            if unknown:
-                known = sorted(_gate_reg)
-                raise ConfigError(
-                    f"steps.{step_id}.requires contains unknown gate ids"
-                    f" (missing gate ids: {unknown}). Known ids: {known}"
-                )
         if "input_kind" in conf:
             input_kind = str(conf["input_kind"])
             if input_kind not in _valid_input_kinds:
@@ -519,30 +515,6 @@ def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
                     f"steps.{step_id}.input_kind must be one of"
                     f" {sorted(_valid_input_kinds)}, got {input_kind!r}"
                 )
-        # Validate gate/step input_kind compatibility.
-        # Rules:
-        #   - issue gate: usable in "issue" or "worktree" steps (body+labels are always readable)
-        #   - worktree gate: only in "worktree" steps
-        #   - artifact gate: only in "artifact" steps
-        if requires:
-            from issuesmith.gates import GATE_REGISTRY as _gate_reg  # noqa: PLC0415
-            for gate_id in requires:
-                gate_input_kind = _gate_reg[gate_id].input_kind
-                if gate_input_kind == "worktree" and input_kind != "worktree":
-                    raise ConfigError(
-                        f"steps.{step_id}: worktree gate {gate_id!r} can only be used"
-                        f" in worktree steps, but step input_kind={input_kind!r}"
-                    )
-                if gate_input_kind == "artifact" and input_kind != "artifact":
-                    raise ConfigError(
-                        f"steps.{step_id}: artifact gate {gate_id!r} can only be used"
-                        f" in artifact steps, but step input_kind={input_kind!r}"
-                    )
-                if gate_input_kind == "issue" and input_kind == "artifact":
-                    raise ConfigError(
-                        f"steps.{step_id}: issue gate {gate_id!r} cannot be used"
-                        f" in artifact steps"
-                    )
 
         steps[str(step_id)] = StepConfig(
             module=str(module).strip(),
