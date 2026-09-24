@@ -240,6 +240,59 @@ class TestAC2:
         mock_recover.assert_called_once()
         assert "marked done: p1" in captured.err
 
+    def test_mark_done_then_real_recover_resets_downstream(self, pipeline_fs, capsys):
+        """After --mark-done p1 and an in-process recover, p1 is success and p2 pending."""
+        from ghdag import status as ghdag_status
+        from ghdag.dag.recover import execute_recover, plan_recover
+
+        from issuesmith.resume import resume
+
+        tmp, cfg = pipeline_fs
+        jobs = tmp / "jobs"
+        _make_done(jobs / "done", "p1-uuid", "TIMEOUT")
+        _make_done(jobs / "done", "p2-uuid", "DEP_FAILED")
+        for rec in _STEPS:
+            (jobs / f"20260923000000-shell-order-{rec['uuid']}.md").write_text(
+                rec["command"], encoding="utf-8"
+            )
+
+        def _in_process_recover(issue, handler, from_step, workflow=None):
+            plan = plan_recover(
+                state_dir=tmp / ".pipeline-state",
+                exec_jsonl_path=jobs / "exec.jsonl",
+                workflow_name=workflow,
+                handler_name=handler,
+                issue_number=issue,
+                queue_dir=jobs,
+                done_dir=jobs / "done",
+                from_step=from_step,
+            )
+            execute_recover(plan, queue_dir=jobs, done_dir=jobs / "done")
+            return 0
+
+        with (
+            patch("issuesmith.resume.get_config", return_value=cfg),
+            patch("issuesmith.resume._run_ghdag_recover", side_effect=_in_process_recover),
+            patch("issuesmith.resume.QueueStore"),
+        ):
+            rc = resume(
+                _ISSUE, from_step="p2", mark_done=["p1"],
+                workflow=_WORKFLOW, handler=_HANDLER,
+            )
+
+        assert rc == 0
+        steps = ghdag_status.issue_status(
+            _ISSUE,
+            handler=_HANDLER,
+            workflow=_WORKFLOW,
+            exec_jsonl_path=jobs / "exec.jsonl",
+            state_dir=tmp / ".pipeline-state",
+            done_dir=jobs / "done",
+        ).steps
+        by_name = {st.step_name: st.status for st in steps}
+        assert by_name["p1"] == "success"
+        assert by_name["p2"] == "pending"
+
     def test_ac2b_mark_done_dep_failed_exits_2(self, pipeline_fs, capsys):
         """--mark-done p2 (dep_failed) returns 2, no marker written."""
         tmp, cfg = pipeline_fs
@@ -280,6 +333,7 @@ class TestAC2:
         assert rc == 1
         assert mock_recover.call_count == 0
         assert p1_done.read_text() == original_content
+        assert "--from p2 --mark-done p1" in captured.err
 
     def test_ac2d_warns_when_result_file_missing(self, pipeline_fs, capsys):
         """--mark-done p1 when p1 has no result file: warning on stderr, proceeds."""

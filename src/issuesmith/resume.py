@@ -270,7 +270,8 @@ def _resume_from_step(
         mark_done_set = set(mark_done)
         remaining = [b for b in blockers if b.step_name not in mark_done_set]
         if remaining:
-            print(_format_blockers_message(issue, from_step, remaining), file=sys.stderr)
+            # Report all blockers so option 2 keeps the requested --mark-done steps.
+            print(_format_blockers_message(issue, from_step, blockers), file=sys.stderr)
             return 1
 
         # All clear: write done markers then recover
