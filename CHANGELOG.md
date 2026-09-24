@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 
+## 0.57.1 - 2026-09-24
+
+### Fixed
+
+- `publish`: a failing plain `git push` no longer escapes as a bare `CalledProcessError` (the P3
+  step crashed with only a traceback while the commit was already complete, sumipan/nexus#3680).
+  Pushes are retried twice on transient errors (network, auth) and then reported as
+  `PUBLISH_STATUS: PUSH_FAILED` with git's stderr; rejections keep `PUSH_DIVERGED` without retry
+
 ## Unreleased
 
 ### Added
