@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 
+## 0.58.0 - 2026-09-24
+
+### Added
+
+- `observe.dag_state.load_dag_states`: reads DAG liveness from `exec.jsonl`, done markers, and
+  `running/<uuid>.json` markers without any GitHub API calls; returns `DagState` per issue
+- `observe.events.DagTerminatedEvent`: fired when an issue's DAG is `failed` and the issue is
+  still tracked in `in_flight` or has a `develop-running` label
+- `observe.policy.ReleaseInFlightAction`: removes the issue from `in_flight` and removes the
+  `<phase>-running` label without adding a `<phase>-ready` label (preventing auto-redispatch)
+- `observe._detect_dag_terminated`: detects failed DAGs and emits `DagTerminatedEvent`
+
+### Fixed
+
+- `_find_untracked_running` now only re-registers issues whose DAG is actually running (has a
+  `running/<uuid>.json` marker); issues whose DAG has failed are excluded so they are not
+  re-added to `in_flight` on every tick (sumipan/nexus#3662 bugfix 1)
+- `_dispatch_pipeline_ready` no longer blocks for issues whose DAG is still running even when
+  those issues are absent from `in_flight` (e.g. merged and auto-closed by GitHub before the
+  DAG finished); only truly orphaned / pending exec rows continue to block (sumipan/nexus#3662
+  bugfix 2)
+- `_detect_orphan_exec` skips exec rows whose issue's DAG is still running, eliminating false
+  orphan andons for CLOSED issues mid-execution (sumipan/nexus#3662)
+
 ## 0.57.2 - 2026-09-24
 
 ### Fixed
