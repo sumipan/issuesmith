@@ -253,6 +253,11 @@ def _cmd_resume(argv: list[str]) -> int:
         help="mark a failed/cancelled/skipped ancestor step as succeeded before recovering"
         " (requires --from; may be repeated)",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="with --from: re-run the step and everything downstream even if they already succeeded",
+    )
     args = parser.parse_args(argv)
     if args.mark_done and args.from_step is None:
         parser.error("--mark-done requires --from")
@@ -265,6 +270,11 @@ def _cmd_resume(argv: list[str]) -> int:
     )
     if args.mark_done is not None:
         kwargs["mark_done"] = args.mark_done
+    if args.force:
+        if args.from_step is None:
+            print("resume: --force requires --from", file=sys.stderr)
+            return 2
+        kwargs["force"] = True
     return _cmd_resume_fn(args.issue, **kwargs)
 
 
