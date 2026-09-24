@@ -1960,7 +1960,7 @@ if __name__ == "__main__":
 
 def issue_target_meta(issue: dict[str, Any]) -> tuple[str, tuple[str, ...]]:
     """Public wrapper of ``_issue_target_meta`` for resume / dispatch callers."""
-    return _issue_target_meta(issue, Any])
+    return _issue_target_meta(issue)
 
 
 def resolve_engine(phase: str) -> str:
