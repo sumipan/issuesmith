@@ -285,7 +285,7 @@ class TestAC3AutoWiden:
 
 
 class TestAC4IgnoreShortAndConfigSymbols:
-    """AC-4: short keys (<=3 chars) and ignore_symbols cause no violation."""
+    """AC-4: short keys (<=3 chars) cause no violation (ignore_symbols removed in #3628)."""
 
     def test_three_char_key_generates_no_grep_call(self):
         # basename of run.py is "run" (3 chars) -> filtered
@@ -312,32 +312,6 @@ class TestAC4IgnoreShortAndConfigSymbols:
         assert violations == []
         run_calls = [c for c in mock_grep.call_args_list if c.args[1] == "run"]
         assert not run_calls, "grep should not be called for 3-char key 'run'"
-
-    def test_ignore_symbols_from_config_excludes_key(self, tmp_path, monkeypatch):
-
-        cfg_path = tmp_path / "issuesmith.yaml"
-        cfg_path.write_text(
-            yaml.safe_dump({
-                "repo": "sumipan/issuesmith",
-                "scope_coupling": {"ignore_symbols": ["run_guarded"]},
-            }),
-            encoding="utf-8",
-        )
-        monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-        reset_config_cache()
-
-        with mock.patch(
-            "issuesmith.gate_rules.scope_coupling.resolve_scope_root",
-            return_value=_FAKE_ROOT,
-        ):
-            with mock.patch(
-                "issuesmith.gate_rules.scope_coupling._git_grep",
-                return_value=["src/issuesmith/steps/cp2_checkpoint.py"],
-            ) as mock_grep:
-                ScopeCouplingRules().check(_AC1_BODY, [])
-
-        rg_calls = [c for c in mock_grep.call_args_list if c.args[1] == "run_guarded"]
-        assert not rg_calls, "run_guarded should be excluded by ignore_symbols"
 
 
 class TestAC5RegistryAndGateIntegration:

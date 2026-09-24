@@ -9,6 +9,7 @@ import pytest
 import yaml
 
 from issuesmith.config import (
+    ConfigError,
     ScopeCouplingConfig,
     get_config,
     load_config,
@@ -204,7 +205,7 @@ def test_brake_state_omitted_equals_quota_state(tmp_path, monkeypatch):
 
 
 def test_scope_coupling_defaults_when_section_absent(tmp_path, monkeypatch):
-    """Without scope_coupling section, defaults to empty ignore_symbols."""
+    """Without scope_coupling section, defaults apply (ignore_symbols removed in #3628)."""
     cfg_path = tmp_path / "issuesmith.yaml"
     cfg_path.write_text(yaml.safe_dump({"repo": "example/repo"}), encoding="utf-8")
     monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
@@ -213,11 +214,12 @@ def test_scope_coupling_defaults_when_section_absent(tmp_path, monkeypatch):
     cfg = load_config()
 
     assert isinstance(cfg.scope_coupling, ScopeCouplingConfig)
-    assert cfg.scope_coupling.ignore_symbols == ()
+    assert cfg.scope_coupling.enabled is True
+    assert not hasattr(cfg.scope_coupling, "ignore_symbols")
 
 
-def test_scope_coupling_ignore_symbols_loaded_from_yaml(tmp_path, monkeypatch):
-    """scope_coupling.ignore_symbols from YAML is a tuple of strings."""
+def test_scope_coupling_ignore_symbols_key_raises_config_error(tmp_path, monkeypatch):
+    """scope_coupling.ignore_symbols was removed in #3628; a stale key is a ConfigError."""
     cfg_path = tmp_path / "issuesmith.yaml"
     cfg_path.write_text(
         yaml.safe_dump({
@@ -229,15 +231,12 @@ def test_scope_coupling_ignore_symbols_loaded_from_yaml(tmp_path, monkeypatch):
     monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
     reset_config_cache()
 
-    cfg = load_config()
-
-    assert isinstance(cfg.scope_coupling, ScopeCouplingConfig)
-    assert "run_guarded" in cfg.scope_coupling.ignore_symbols
-    assert "my_func" in cfg.scope_coupling.ignore_symbols
+    with pytest.raises(ConfigError, match="ignore_symbols"):
+        load_config()
 
 
-def test_scope_coupling_empty_ignore_symbols_list(tmp_path, monkeypatch):
-    """scope_coupling.ignore_symbols: [] results in empty tuple."""
+def test_scope_coupling_empty_ignore_symbols_list_raises(tmp_path, monkeypatch):
+    """Even an empty scope_coupling.ignore_symbols list is rejected (#3628)."""
     cfg_path = tmp_path / "issuesmith.yaml"
     cfg_path.write_text(
         yaml.safe_dump({
@@ -249,9 +248,8 @@ def test_scope_coupling_empty_ignore_symbols_list(tmp_path, monkeypatch):
     monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
     reset_config_cache()
 
-    cfg = load_config()
-
-    assert cfg.scope_coupling.ignore_symbols == ()
+    with pytest.raises(ConfigError, match="ignore_symbols"):
+        load_config()
 
 
 def test_scope_coupling_enabled_flag_loaded_from_yaml(tmp_path, monkeypatch):
