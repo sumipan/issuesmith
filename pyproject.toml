@@ -22,13 +22,13 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-ghdag = ["ghdag @ git+https://github.com/sumipan/ghdag.git@v0.68.0"]
+ghdag = ["ghdag @ git+https://github.com/sumipan/ghdag.git@v0.72.0"]
 dev = [
   "pytest>=7.0.0",
   "pytest-cov>=4.0.0",
   "mypy>=1.10.0",
   "ruff>=0.4.0",
-  "ghdag @ git+https://github.com/sumipan/ghdag.git@v0.68.0",
+  "ghdag @ git+https://github.com/sumipan/ghdag.git@v0.72.0",
 ]
 
 [project.scripts]

@@ -849,3 +849,131 @@ def test_local_run_reuses_previous_branch_head(tmp_path: Path) -> None:
     ).strip()
     assert head == prev_sha
     assert current == branch
+
+
+# ===========================================================================
+# AC-3b: WORKTREE_REUSED output when branch pre-exists
+# ===========================================================================
+
+
+def _make_repo_with_existing_branch(tmp_path: Path, branch: str) -> tuple[Path, Path]:
+    """Return (repo, worktree_dir) where branch already exists in repo with 1 commit."""
+    repo = tmp_path / "nexus"
+    _git_init_with_main(repo)
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", "-b", branch],
+        check=True,
+        capture_output=True,
+    )
+    (repo / "work.txt").write_text("previous work\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "work.txt"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-m", "previous work"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", "main"],
+        check=True,
+        capture_output=True,
+    )
+    wt = repo / ".claude" / "worktrees" / branch.replace("feat/", "")
+    return repo, wt
+
+
+def test_ac3b_existing_branch_posts_comment_and_stdout(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AC-3b: branch pre-exists → Issue comment posted + WORKTREE_REUSED in stdout."""
+    branch = "feat/issue-3695-abc12345"
+    repo, wt = _make_repo_with_existing_branch(tmp_path, branch)
+    client = MagicMock()
+    client.issue_get.return_value = {
+        "labels": [{"name": "issuesmith:develop-ready"}],
+        "body": "```yaml\nbase_branch: main\nallow_paths:\n  - src/**\n```\n\n## Design\n",
+    }
+    with (
+        patch.object(p0, "_github_client", return_value=client),
+        patch.object(p0, "_repo_root", return_value=repo),
+    ):
+        result = p0.run(
+            _ctx(
+                issue_number="3695",
+                worktree_path=str(wt),
+                branch=branch,
+                base_branch="main",
+                is_cross_repo="false",
+            )
+        )
+    assert result.exit_code == 0
+    assert result.pipeline_status == "WORKTREE_READY"
+    client.issue_comment.assert_called()
+    comment_body = client.issue_comment.call_args.args[1]
+    assert "WORKTREE_REUSED" in comment_body or branch in comment_body
+    out = capsys.readouterr().out
+    assert f"WORKTREE_REUSED: {branch}" in out
+
+
+def test_ac3b_new_branch_no_comment_no_reuse_stdout(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AC-3b: brand-new branch → no reuse comment, no WORKTREE_REUSED in stdout."""
+    branch = "feat/issue-3695-newbranch"
+    repo = tmp_path / "nexus"
+    _git_init_with_main(repo)
+    wt = repo / ".claude" / "worktrees" / "issue-3695-newbranch"
+    client = MagicMock()
+    client.issue_get.return_value = {
+        "labels": [{"name": "issuesmith:develop-ready"}],
+        "body": "```yaml\nbase_branch: main\nallow_paths:\n  - src/**\n```\n\n## Design\n",
+    }
+    with (
+        patch.object(p0, "_github_client", return_value=client),
+        patch.object(p0, "_repo_root", return_value=repo),
+    ):
+        result = p0.run(
+            _ctx(
+                issue_number="3695",
+                worktree_path=str(wt),
+                branch=branch,
+                base_branch="main",
+                is_cross_repo="false",
+            )
+        )
+    assert result.exit_code == 0
+    assert result.pipeline_status == "WORKTREE_READY"
+    # The only issue_comment call should be from scope_gate or other, not reuse
+    for call in client.issue_comment.call_args_list:
+        body = call.args[1] if call.args else call.kwargs.get("body", "")
+        assert "WORKTREE_REUSED" not in body
+    out = capsys.readouterr().out
+    assert "WORKTREE_REUSED" not in out
+
+
+def test_ac3b_comment_failure_still_succeeds(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AC-3b: issue_comment raises but run() still returns WORKTREE_READY."""
+    branch = "feat/issue-3695-failcomment"
+    repo, wt = _make_repo_with_existing_branch(tmp_path, branch)
+    client = MagicMock()
+    client.issue_get.return_value = {
+        "labels": [{"name": "issuesmith:develop-ready"}],
+        "body": "```yaml\nbase_branch: main\nallow_paths:\n  - src/**\n```\n\n## Design\n",
+    }
+    client.issue_comment.side_effect = Exception("API failure")
+    with (
+        patch.object(p0, "_github_client", return_value=client),
+        patch.object(p0, "_repo_root", return_value=repo),
+    ):
+        result = p0.run(
+            _ctx(
+                issue_number="3695",
+                worktree_path=str(wt),
+                branch=branch,
+                base_branch="main",
+                is_cross_repo="false",
+            )
+        )
+    assert result.exit_code == 0
+    assert result.pipeline_status == "WORKTREE_READY"
