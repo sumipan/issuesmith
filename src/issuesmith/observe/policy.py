@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from issuesmith.observe.events import (
     AllEnginesPausedEvent,
     ChainHaltedEvent,
+    DagTerminatedEvent,
     DispatchBlockedEvent,
     ForgeUnavailableEvent,
     IssueStallEvent,
@@ -64,7 +65,14 @@ class ResumeAction:
     reason: str = ""
 
 
-Action = WaitAction | AndonAction | HaltAction | ResumeAction
+@dataclass(frozen=True)
+class ReleaseInFlightAction:
+    issue: int
+    phase: str = ""
+    reason: str = ""
+
+
+Action = WaitAction | AndonAction | HaltAction | ResumeAction | ReleaseInFlightAction
 
 
 # ---------------------------------------------------------------------------
@@ -83,6 +91,19 @@ def evaluate(
 
 
 def _evaluate_one(event: ObserveEvent, config: "ObserveConfig") -> list[Action]:
+    if isinstance(event, DagTerminatedEvent):
+        reason = f"DAG {event.key} terminated at step {event.failed_step}"
+        return [
+            ReleaseInFlightAction(issue=event.issue, phase=event.phase, reason=reason),
+            AndonAction(
+                kind="blocked",
+                issue=event.issue,
+                summary=f"{reason}; in_flight released",
+                evidence=f"uuid={event.failed_uuid} result={event.result_path}",
+                key=f"dag_terminated:{event.key}",
+            ),
+        ]
+
     if isinstance(event, IssueStallEvent):
         return [
             AndonAction(
@@ -181,6 +202,11 @@ def _evaluate_one(event: ObserveEvent, config: "ObserveConfig") -> list[Action]:
     return [WaitAction(reason=f"unknown event: {event.kind}")]
 
 
+def _label_namespace() -> str:
+    from issuesmith.config import get_config as _get_config
+    return _get_config().label_namespace
+
+
 def _resolve_phase_scope(step: str, config: "ObserveConfig") -> str:
     from issuesmith.config import get_config as _get_config
 
@@ -249,6 +275,18 @@ def execute(
                     sink.emit(andon)
                 except Exception:
                     logger.exception("andon sink emit failed")
+
+        elif isinstance(action, ReleaseInFlightAction):
+            store.remove_in_flight(action.issue)
+            logger.info("in_flight released: issue=#%s reason=%s", action.issue, action.reason)
+            if client is not None and action.phase:
+                ns = _label_namespace()
+                try:
+                    client.issue_update(action.issue, labels_remove=[f"{ns}:{action.phase}-running"])
+                except Exception:
+                    logger.exception(
+                        "issue_update failed removing running label for #%s", action.issue
+                    )
 
         elif isinstance(action, WaitAction):
             logger.debug("wait: %s", action.reason)

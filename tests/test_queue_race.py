@@ -338,6 +338,8 @@ def test_draft_done_still_releases_when_exec_complete(tmp_path, monkeypatch):
 
 def test_recover_untracked_develop_running_3039_fixture(tmp_path, monkeypatch):
     """AC-2/AC-4: 16:30 state — in_flight=#3020 only; re-register #3039 develop-running."""
+    import json
+
     from issuesmith import queue as qmod
 
     store = _store(tmp_path)
@@ -355,6 +357,19 @@ def test_recover_untracked_develop_running_3039_fixture(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setattr(qmod, "ENGINE_STATE_PATH", engine_state)
+
+    exec_path = tmp_path / "exec.jsonl"
+    done_dir = tmp_path / "done"
+    done_dir.mkdir()
+    running_dir = tmp_path / "running"
+    running_dir.mkdir()
+    exec_path.write_text(
+        json.dumps({"uuid": "impl-3039", "idempotency_key": "issuesmith:impl:3039"}) + "\n",
+        encoding="utf-8",
+    )
+    (running_dir / "impl-3039.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(qmod, "EXEC_PATH", exec_path)
+    monkeypatch.setattr(qmod, "DONE_DIR", done_dir)
 
     class Client:
         def list_issues(self, label, state="open"):
@@ -389,6 +404,8 @@ def test_recover_untracked_develop_running_3039_fixture(tmp_path, monkeypatch):
 
 def test_recover_untracked_3046_case(tmp_path, monkeypatch):
     """AC-4: 19:0x #3046 — re-register when develop-running but missing from in_flight."""
+    import json
+
     from issuesmith import queue as qmod
 
     store = _store(tmp_path)
@@ -398,6 +415,19 @@ def test_recover_untracked_3046_case(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setattr(qmod, "ENGINE_STATE_PATH", engine_state)
+
+    exec_path = tmp_path / "exec.jsonl"
+    done_dir = tmp_path / "done"
+    done_dir.mkdir()
+    running_dir = tmp_path / "running"
+    running_dir.mkdir()
+    exec_path.write_text(
+        json.dumps({"uuid": "impl-3046", "idempotency_key": "issuesmith:impl:3046"}) + "\n",
+        encoding="utf-8",
+    )
+    (running_dir / "impl-3046.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(qmod, "EXEC_PATH", exec_path)
+    monkeypatch.setattr(qmod, "DONE_DIR", done_dir)
 
     class Client:
         def list_issues(self, label, state="open"):
@@ -479,12 +509,15 @@ def test_dispatch_recovers_before_orphan_gate(tmp_path, monkeypatch):
     cfg = load_config(cfg_path)
     done_dir = tmp_path / "jobs" / "done"
     done_dir.mkdir(parents=True)
+    running_dir = tmp_path / "jobs" / "running"
+    running_dir.mkdir(parents=True)
     exec_path = tmp_path / "jobs" / "exec.jsonl"
     exec_path.write_text(
         json.dumps({"uuid": "impl-3046", "idempotency_key": "issuesmith:impl:3046"})
         + "\n",
         encoding="utf-8",
     )
+    (running_dir / "impl-3046.json").write_text("{}", encoding="utf-8")
     engine_state = tmp_path / ".pipeline-state" / "issuesmith-engine.yml"
     engine_state.parent.mkdir(parents=True)
     # Recovered impl uses cursor so design (claude) still has capacity for #50.
@@ -600,12 +633,27 @@ def test_dispatch_recovers_before_orphan_gate(tmp_path, monkeypatch):
     reset_config_cache()
 
 
-def test_status_warns_untracked_running(tmp_path, capsys):
+def test_status_warns_untracked_running(tmp_path, monkeypatch, capsys):
     """AC-3: queue status warns about untracked develop-running."""
+    import json
+
     from issuesmith import queue as qmod
 
     store = _store(tmp_path)
     store.add_in_flight(3020, "claude", role="design")
+
+    exec_path = tmp_path / "exec.jsonl"
+    done_dir = tmp_path / "done"
+    done_dir.mkdir()
+    running_dir = tmp_path / "running"
+    running_dir.mkdir()
+    exec_path.write_text(
+        json.dumps({"uuid": "impl-3039", "idempotency_key": "issuesmith:impl:3039"}) + "\n",
+        encoding="utf-8",
+    )
+    (running_dir / "impl-3039.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(qmod, "EXEC_PATH", exec_path)
+    monkeypatch.setattr(qmod, "DONE_DIR", done_dir)
 
     class FakeClient:
         def list_issues(self, label, state="open"):
@@ -628,11 +676,26 @@ def test_status_warns_untracked_running(tmp_path, capsys):
     assert "warning: untracked running issues: #3039" in captured.out
 
 
-def test_doctor_reports_untracked_running(tmp_path, capsys):
+def test_doctor_reports_untracked_running(tmp_path, monkeypatch, capsys):
     """AC-3: queue doctor returns the same untracked judgment as status."""
+    import json
+
     from issuesmith import queue as qmod
 
     store = _store(tmp_path)
+
+    exec_path = tmp_path / "exec.jsonl"
+    done_dir = tmp_path / "done"
+    done_dir.mkdir()
+    running_dir = tmp_path / "running"
+    running_dir.mkdir()
+    exec_path.write_text(
+        json.dumps({"uuid": "impl-3046", "idempotency_key": "issuesmith:impl:3046"}) + "\n",
+        encoding="utf-8",
+    )
+    (running_dir / "impl-3046.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(qmod, "EXEC_PATH", exec_path)
+    monkeypatch.setattr(qmod, "DONE_DIR", done_dir)
 
     class FakeClient:
         def list_issues(self, label, state="open"):

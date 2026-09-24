@@ -237,14 +237,24 @@ def _dispatch_pipeline_ready(
     と判定され、別 engine の新規ディスパッチまで巻き添えでブロックされて
     いた）。in_flight に無い issue の未完了ステップは、in_flight リークや
     クラッシュ後の孤児タスクを示すため、引き続きブロック対象とする。
+
+    ただし、in_flight に無い issue でも DAG が running（#3662）であれば塞がない。
+    CLOSED だが DAG が動いている issue（例: merge 直後に GitHub が自動クローズした）も同様。
+    DAG が pending（隙間・孤児）の場合は今どおり塞ぐ。
     """
+    from issuesmith.observe.dag_state import load_dag_states
+
     in_flight_issues = {
         entry.get("issue") for entry in snap.in_flight if isinstance(entry, dict)
     }
+    dag_states = load_dag_states(EXEC_PATH, DONE_DIR, DONE_DIR.parent / "running")
     for uuid, issue_number in _iter_issuesmith_exec_records():
         if issue_number in in_flight_issues:
             continue
         if not (DONE_DIR / uuid).exists():
+            state = dag_states.get(issue_number)
+            if state is not None and state.status == "running":
+                continue
             return False
     if snap.in_flight:
         return True
@@ -404,7 +414,9 @@ def _in_flight_should_release(client: ForgePort, entry: dict[str, Any]) -> bool:
 
 
 def _find_untracked_running(client: ForgePort, snap: QueueSnapshot) -> list[int]:
-    """Return impl-phase running issue numbers absent from ``snap.in_flight``."""
+    """Return impl-phase running issue numbers absent from ``snap.in_flight`` with a live DAG."""
+    from issuesmith.observe.dag_state import load_dag_states
+
     try:
         issues = client.list_issues(RUNNING_LABEL["develop"], state="open")
     except Exception:
@@ -414,12 +426,16 @@ def _find_untracked_running(client: ForgePort, snap: QueueSnapshot) -> list[int]
     tracked = {
         entry.get("issue") for entry in snap.in_flight if isinstance(entry, dict)
     }
+    dag_states = load_dag_states(EXEC_PATH, DONE_DIR, DONE_DIR.parent / "running")
     untracked: list[int] = []
     for issue in issues:
         if not isinstance(issue, dict):
             continue
         num = issue.get("number")
-        if isinstance(num, int) and num not in tracked:
+        if not isinstance(num, int) or num in tracked:
+            continue
+        state = dag_states.get(num)
+        if state is not None and state.status == "running":
             untracked.append(num)
     return sorted(untracked)
 

@@ -80,3 +80,14 @@ class VersionSkewEvent(ObserveEvent):
     package: str = ""
     pinned: str = ""
     installed: str = ""
+
+
+@dataclass(frozen=True)
+class DagTerminatedEvent(ObserveEvent):
+    kind: str = "dag_terminated"
+    issue: int = 0
+    key: str = ""
+    phase: str = ""
+    failed_step: str = ""
+    failed_uuid: str = ""
+    result_path: str = ""

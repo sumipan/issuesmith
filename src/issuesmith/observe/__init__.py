@@ -11,9 +11,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from issuesmith.observe.dag_state import load_dag_states
 from issuesmith.observe.events import (
     AllEnginesPausedEvent,
     ChainHaltedEvent,
+    DagTerminatedEvent,
     IssueStallEvent,
     LabelDriftEvent,
     ObserveEvent,
@@ -46,9 +48,16 @@ def observe(
     obs = config.observe
     events: list[ObserveEvent] = []
 
+    dag_states = load_dag_states(
+        config.paths.exec_jsonl,
+        config.paths.done_dir,
+        config.paths.done_dir.parent / "running",
+    )
+
     events.extend(_detect_stall(snapshot, config, now, obs.stall_minutes))
     events.extend(_detect_task_timeout(snapshot, now, obs.task_timeout_minutes))
-    events.extend(_detect_orphan_exec(snapshot, config))
+    events.extend(_detect_orphan_exec(snapshot, config, dag_states))
+    events.extend(_detect_dag_terminated(snapshot, client, config, obs.max_api_calls, dag_states))
     events.extend(_detect_label_drift(snapshot, client, config, obs.max_api_calls))
     events.extend(_detect_chain_halted(snapshot))
     events.extend(_detect_systemic_failure(
@@ -129,7 +138,10 @@ def _detect_task_timeout(
 def _detect_orphan_exec(
     snapshot: "QueueSnapshot",
     config: "IssuesmithConfig",
+    dag_states: "dict | None" = None,
 ) -> list[ObserveEvent]:
+    from issuesmith.observe.dag_state import DagState
+
     exec_path = config.paths.exec_jsonl
     done_dir = config.paths.done_dir
     if not exec_path.exists():
@@ -162,6 +174,11 @@ def _detect_orphan_exec(
             continue
         issue = _issue_from_key(idempotency_key)
         if issue not in in_flight_issues:
+            # If the DAG is still running, do not flag this as an orphan.
+            if dag_states is not None and issue is not None:
+                state = dag_states.get(issue)
+                if isinstance(state, DagState) and state.status == "running":
+                    continue
             events.append(OrphanExecEvent(uuid=uuid_val, issue=issue))
 
     return events
@@ -178,6 +195,73 @@ def _issue_from_key(key: str) -> int | None:
         return int(parts[2])
     return None
 
+
+def _detect_dag_terminated(
+    snapshot: "QueueSnapshot",
+    client: "ForgePort",
+    config: "IssuesmithConfig",
+    max_api_calls: int,
+    dag_states: "dict",
+) -> list[ObserveEvent]:
+    from issuesmith.observe.dag_state import DagState
+
+    ns = config.label_namespace
+
+    # Candidate issues: in_flight union impl-phase running open issues (same set as _find_untracked_running)
+    from issuesmith.queue_triage import RUNNING_LABEL
+
+    candidates: set[int] = {
+        entry.get("issue")
+        for entry in snapshot.in_flight
+        if isinstance(entry, dict) and isinstance(entry.get("issue"), int)
+    }
+    try:
+        running_issues = client.list_issues(RUNNING_LABEL["develop"], state="open")
+        if isinstance(running_issues, list):
+            for issue in running_issues:
+                if isinstance(issue, dict):
+                    num = issue.get("number")
+                    if isinstance(num, int):
+                        candidates.add(num)
+    except Exception:
+        pass
+
+    api_calls = 0
+    events: list[ObserveEvent] = []
+
+    for issue_num in sorted(candidates):
+        state = dag_states.get(issue_num)
+        if not isinstance(state, DagState) or state.status != "failed":
+            continue
+        if api_calls >= max_api_calls:
+            break
+        try:
+            issue_data = client.issue_get(issue_num, fields=["labels", "state"])
+            api_calls += 1
+        except Exception:
+            continue
+
+        current_labels = {
+            lbl["name"] if isinstance(lbl, dict) else str(lbl)
+            for lbl in issue_data.get("labels", [])
+        }
+        phase = ""
+        for p in config.phases:
+            running_label = f"{ns}:{p.name}-running"
+            if running_label in current_labels:
+                phase = p.name
+                break
+
+        events.append(DagTerminatedEvent(
+            issue=issue_num,
+            key=state.key,
+            phase=phase,
+            failed_step=state.failed_step,
+            failed_uuid=state.failed_uuid,
+            result_path=state.failed_result_path,
+        ))
+
+    return events
 
 
 def _detect_label_drift(
