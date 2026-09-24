@@ -96,7 +96,7 @@ def test_rejection_is_not_retried(tmp_path: Path):
 
     def _inject(worktree: Path, *args: str, check: bool = True):
         result = original(worktree, *args, check=check)
-        if args[:3] == ("fetch", "origin", _BRANCH):
+        if args[:2] == ("fetch", "origin") and _BRANCH in args[2]:
             (other / "c.txt").write_text("c\n", encoding="utf-8")
             _git(other, "add", "c.txt")
             _git(other, "commit", "-m", "unknown remote commit")

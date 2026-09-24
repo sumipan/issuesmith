@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 
+## 0.61.1 - 2026-09-25
+
+### Fixed
+
+- `publish`: the remote branch is fetched with an explicit refspec
+  (`+refs/heads/<branch>:refs/remotes/origin/<branch>`). In the single-branch clones used for
+  external repositories (`fetch = +refs/heads/main:refs/remotes/origin/main`) a bare
+  `git fetch origin <branch>` never created `origin/<branch>`, so every publish after the
+  first took the "new branch" path and was rejected non-fast-forward instead of using
+  `--force-with-lease` (sumipan/nexus#3628 generation 3)
+
 ## 0.59.1 - 2026-09-24
 
 ### Fixed

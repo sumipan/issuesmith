@@ -357,8 +357,19 @@ def _push_branch(worktree: Path, branch: str) -> PublishResult | None:
     ``--force-with-lease=<branch>:<remote_sha>`` so a concurrent unknown
     remote update is rejected (``PUSH_DIVERGED``) instead of overwritten.
     """
-    _run_git(worktree, "fetch", "origin", branch, check=False)
-    remote_ref = _run_git(worktree, "rev-parse", f"origin/{branch}", check=False)
+    # Explicit refspec: clones made with a single-branch fetch config
+    # (``+refs/heads/main:refs/remotes/origin/main``, the default for the /var/tmp/<repo>
+    # clones) never create ``origin/<branch>`` from a bare ``git fetch origin <branch>``, so
+    # every second publish believed the branch was new and pushed without the lease
+    # (rejected non-fast-forward; sumipan/nexus#3628 gen 3, 2026-09-25).
+    _run_git(
+        worktree,
+        "fetch",
+        "origin",
+        f"+refs/heads/{branch}:refs/remotes/origin/{branch}",
+        check=False,
+    )
+    remote_ref = _run_git(worktree, "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{branch}", check=False)
     if remote_ref.returncode != 0:
         pushed = _push_with_retry(worktree, "-u", "origin", branch)
         if pushed.returncode != 0:
