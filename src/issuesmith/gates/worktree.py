@@ -7,8 +7,11 @@ allow_paths or adds new scope.
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 from ghdag.workflow.gates import Violation
@@ -73,31 +76,177 @@ class LintGate:
         return inp
 
 
-class TestsGate:
-    """Run pytest baseline in the worktree; no deterministic fix."""
+def _run_pytest(root: Path, args: list[str]) -> tuple[int, str]:
+    """Run pytest with `-q -rfE --tb=no` in `root`; prepend `root/src` to PYTHONPATH if present."""
+    env = dict(os.environ)
+    src = root / "src"
+    if src.is_dir():
+        existing = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = (str(src) + ":" + existing) if existing else str(src)
+    proc = subprocess.run(
+        ["python", "-m", "pytest", "-q", "-rfE", "--tb=no", "-p", "no:cacheprovider", *args],
+        capture_output=True, text=True, check=False,
+        cwd=str(root), env=env,
+    )
+    return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
-    def __init__(self, worktree_path: Path, test_paths: list[str] | None = None) -> None:
+
+def _parse_failed_ids(output: str) -> list[str]:
+    """Extract unique test IDs from `FAILED`/`ERROR` lines; preserves spaces in parametrize IDs."""
+    seen: set[str] = set()
+    ids: list[str] = []
+    for line in output.splitlines():
+        if line.startswith("FAILED ") or line.startswith("ERROR "):
+            rest = line.split(" ", 1)[1]
+            test_id = rest.split(" - ")[0]
+            if test_id not in seen:
+                seen.add(test_id)
+                ids.append(test_id)
+    return ids
+
+
+def _func_id(test_id: str) -> str:
+    """Strip trailing `[...]` parameters; baseline comparison is function-level."""
+    return re.sub(r"\[.*\]$", "", test_id)
+
+
+def _baseline_failed_func_ids(
+    root: Path, base_branch: str, ids: list[str]
+) -> set[str] | None:
+    """Return func-level IDs that also fail on `origin/<base_branch>`, or None if unavailable."""
+    tmp = tempfile.mkdtemp(dir=str(root.parent))
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "worktree", "add", "--detach", tmp,
+             f"origin/{base_branch}"],
+            capture_output=True, text=True, check=False,
+        )
+        if result.returncode != 0:
+            return None
+
+        # Only run IDs whose file exists in baseline; convert to function-level IDs.
+        baseline_func_ids: list[str] = []
+        seen: set[str] = set()
+        for test_id in ids:
+            file_path = test_id.split("::")[0]
+            if (Path(tmp) / file_path).exists():
+                fid = _func_id(test_id)
+                if fid not in seen:
+                    seen.add(fid)
+                    baseline_func_ids.append(fid)
+
+        if not baseline_func_ids:
+            return set()
+
+        rc, output = _run_pytest(Path(tmp), baseline_func_ids)
+        if rc >= 2:
+            return None
+
+        return {_func_id(i) for i in _parse_failed_ids(output)}
+    except Exception:
+        return None
+    finally:
+        subprocess.run(
+            ["git", "-C", str(root), "worktree", "remove", "--force", tmp],
+            capture_output=True, check=False,
+        )
+        subprocess.run(
+            ["git", "-C", str(root), "worktree", "prune"],
+            capture_output=True, check=False,
+        )
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+class TestsGate:
+    """Run pytest in the worktree with baseline comparison against `origin/<base_branch>`.
+
+    - Runs all tests (no -x) and collects all failure IDs.
+    - Failures that also fail on `origin/<base_branch>` are non-blocking (preexisting).
+    - rc=2 (collection error) or rc=1 with no parseable IDs → fail-safe blocking violation.
+
+    Assumes this gate runs outside a pytest session (dispatch process), not inside the nexus
+    pytest harness, so tests/harness/pollution.py will not see worktree diffs from here.
+    """
+
+    def __init__(
+        self,
+        worktree_path: Path,
+        test_paths: list[str] | None = None,
+        base_branch: str = "main",
+    ) -> None:
         self._root = worktree_path
         self._test_paths = test_paths or ["tests"]
+        self._base = base_branch
 
     def check(self, body: str, labels: list[str]) -> list[Violation]:
         targets = [str(self._root / p) for p in self._test_paths]
-        proc = subprocess.run(
-            ["python", "-m", "pytest", *targets, "-x", "-q", "--tb=line"],
-            capture_output=True, text=True, check=False,
-            cwd=str(self._root),
-        )
-        if proc.returncode == 0:
+        rc, output = _run_pytest(self._root, targets)
+
+        if rc == 0:
             return []
-        output = (proc.stdout or proc.stderr or "pytest failed").strip()
-        return [Violation(
-            rule_id="tests.pytest_failure",
-            severity="fail",
-            message=output[:500],
-            location=None,
-            auto_fixable=False,
-            fix_hint="Fix failing tests before proceeding",
-        )]
+
+        if rc not in (0, 1):
+            return [Violation(
+                rule_id="tests.collection_error",
+                severity="fail",
+                message=output[-500:],
+                location=None,
+                auto_fixable=False,
+                fix_hint=None,
+            )]
+
+        ids = _parse_failed_ids(output)
+        if not ids:
+            return [Violation(
+                rule_id="tests.collection_error",
+                severity="fail",
+                message=output[-500:],
+                location=None,
+                auto_fixable=False,
+                fix_hint=None,
+            )]
+
+        baseline_failed = _baseline_failed_func_ids(self._root, self._base, ids)
+        baseline_unavailable = baseline_failed is None
+
+        new_ids: list[str] = []
+        preexisting_ids: list[str] = []
+        for test_id in ids:
+            if not baseline_unavailable and _func_id(test_id) in baseline_failed:  # type: ignore[operator]
+                preexisting_ids.append(test_id)
+            else:
+                new_ids.append(test_id)
+
+        if not new_ids:
+            return []
+
+        fix_hint = "Fix failing tests before proceeding"
+        if preexisting_ids:
+            fix_hint += (
+                f"; preexisting on origin/{self._base} (non-blocking):"
+                f" {', '.join(preexisting_ids)}"
+            )
+
+        violations: list[Violation] = []
+        for test_id in new_ids:
+            location = test_id.split("::")[0] if "::" in test_id else None
+            message = test_id
+            for line in output.splitlines():
+                if (line.startswith("FAILED ") or line.startswith("ERROR ")) and test_id in line:
+                    message = line
+                    break
+            if baseline_unavailable:
+                message += " baseline unavailable"
+            violations.append(Violation(
+                rule_id="tests.pytest_failure",
+                severity="fail",
+                message=message,
+                location=location,
+                auto_fixable=False,
+                fix_hint=fix_hint,
+            ))
+
+        return violations
 
     def fix(self, inp: ContractInput) -> ContractInput:
         return inp  # no deterministic fix for test failures
@@ -201,7 +350,7 @@ def _build_lint(worktree_path: Path, allow_paths: list[str], base_branch: str) -
 
 
 def _build_tests(worktree_path: Path, allow_paths: list[str], base_branch: str) -> TestsGate:
-    return TestsGate(worktree_path)
+    return TestsGate(worktree_path, base_branch=base_branch)
 
 
 def _build_external_leak(
@@ -225,4 +374,14 @@ WORKTREE_GATES: dict[str, object] = {
     "base_freshness": _build_base_freshness,
 }
 
-__all__ = ["LintGate", "TestsGate", "ExternalLeakGate", "BaseFreshnessGate", "WORKTREE_GATES"]
+__all__ = [
+    "LintGate",
+    "TestsGate",
+    "ExternalLeakGate",
+    "BaseFreshnessGate",
+    "WORKTREE_GATES",
+    "_run_pytest",
+    "_parse_failed_ids",
+    "_func_id",
+    "_baseline_failed_func_ids",
+]
