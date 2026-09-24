@@ -232,7 +232,7 @@ class TestsGate:
             location = test_id.split("::")[0] if "::" in test_id else None
             message = test_id
             for line in output.splitlines():
-                if (line.startswith("FAILED ") or line.startswith("ERROR ")) and test_id in line:
+                if _parse_failed_ids(line) == [test_id]:
                     message = line
                     break
             if baseline_unavailable:

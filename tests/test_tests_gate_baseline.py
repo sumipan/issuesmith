@@ -134,6 +134,7 @@ def test_ac3_baseline_worktree_cleaned_up(tmp_path: Path) -> None:
     worktree_lines = [ln for ln in result.stdout.splitlines() if ln.startswith("worktree ")]
     assert len(worktree_lines) == 1
     assert str(clone) in worktree_lines[0]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["clone", "origin"]
 
 
 # ---------------------------------------------------------------------------
@@ -276,3 +277,21 @@ def test_parse_failed_ids_deduplicates() -> None:
 def test_parse_failed_ids_ignores_non_failed_lines() -> None:
     output = "PASSED tests/t.py::test_x\nfailed (exit code 1)\n"
     assert _parse_failed_ids(output) == []
+
+
+def test_message_uses_exact_id_line_not_prefix_match(tmp_path: Path) -> None:
+    """test_a must not pick up the FAILED line of test_ab (prefix match)."""
+    _, clone = _setup_repo(tmp_path)
+
+    _commit(clone, {
+        "tests/test_m.py": (
+            "def test_ab():\n    assert False, 'from_ab'\n"
+            "def test_a():\n    assert False, 'from_a'\n"
+        ),
+    })
+
+    violations = TestsGate(clone, base_branch="main").check("", [])
+
+    by_loc = {v.message.split(" - ")[0]: v.message for v in violations}
+    assert "from_a" in by_loc["FAILED tests/test_m.py::test_a"]
+    assert "from_ab" in by_loc["FAILED tests/test_m.py::test_ab"]
