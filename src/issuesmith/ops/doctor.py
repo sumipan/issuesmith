@@ -39,7 +39,13 @@ def validate_requires_chain(steps: Mapping[str, StepConfig]) -> list[str]:
 
 def requires_chain_report(steps: Mapping[str, StepConfig]) -> str:
     """Return the requires_chain doctor line: 'requires_chain: ok' or a violation summary."""
-    violations = validate_requires_chain(steps)
+    violations = list(validate_requires_chain(steps))
+    try:
+        from issuesmith.gates import validate_step_requires  # noqa: PLC0415
+
+        validate_step_requires(steps)
+    except Exception as exc:  # noqa: BLE001 - ConfigError or an import failure in the registry
+        violations.append(str(exc))
     if not violations:
         return "requires_chain: ok"
     return "requires_chain: " + "; ".join(violations)

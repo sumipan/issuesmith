@@ -650,6 +650,14 @@ def _handle_retry_signal(
 
 
 def main(argv: list[str]) -> int:
+    from issuesmith.config import ConfigError  # noqa: PLC0415
+    from issuesmith.gates import validate_step_requires  # noqa: PLC0415
+
+    try:
+        validate_step_requires(get_config().steps)
+    except ConfigError as exc:
+        print(f"[issuesmith-dispatch] ERROR: invalid requires in issuesmith.yaml: {exc}", file=sys.stderr)
+        return 2
     if not argv:
         print(__doc__, file=sys.stderr)
         return 2
