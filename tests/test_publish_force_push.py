@@ -133,7 +133,7 @@ def test_unknown_remote_commit_returns_push_diverged(
 
     def _run_git_inject(worktree: Path, *args: str, check: bool = True):
         result = original(worktree, *args, check=check)
-        if args[:3] == ("fetch", "origin", branch):
+        if args[:2] == ("fetch", "origin") and branch in args[2]:
             _write(other, "src/other.py", "other-unknown\n")
             _git(other, "add", "--", "src/other.py")
             _git(other, "commit", "-m", "unknown remote commit")
