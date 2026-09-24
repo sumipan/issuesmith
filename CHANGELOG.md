@@ -28,6 +28,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `"unrecorded"` / `"none"`) indicating how the pipeline_id was determined (sumipan/nexus#3695)
 - P0 posts an Issue comment and prints `WORKTREE_REUSED: <branch>` to stdout when the
   target branch already existed before preparation (sumipan/nexus#3695)
+- `issuesmith resume --from <step> --mark-done <step>`: explicitly mark a failed/cancelled/skipped
+  ancestor step as succeeded before recovering, so `--from` can restart from a later step without
+  re-running the already-completed work; `--mark-done` may be repeated for multiple ancestors
+  (sumipan/nexus#3636)
 
 ### Fixed
 
@@ -38,16 +42,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   era) as long as they share common history with base, are not merged, and have at least one
   commit ahead; orphan/unrelated branches are still excluded (sumipan/nexus#3695)
 - ghdag dependency bumped to `v0.72.0` (fixes full-pagination for comments and issues)
-
-### Changed
-
-- `issuesmith resume --from <step> --mark-done <step>`: explicitly mark a failed/cancelled/skipped
-  ancestor step as succeeded before recovering, so `--from` can restart from a later step without
-  re-running the already-completed work; `--mark-done` may be repeated for multiple ancestors
-  (sumipan/nexus#3636)
-
-### Fixed
-
 - `issuesmith resume --from <step>` now checks for upstream failures before calling
   `ghdag dag recover`; if an ancestor step is failed/cancelled/skipped/dep_failed, the command
   exits 1 with a message showing the blocking steps and two recovery options, instead of silently

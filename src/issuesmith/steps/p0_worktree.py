@@ -598,16 +598,20 @@ def _emit_reuse_notification(
     branch: str,
     repo_dir: Path,
     base: str,
+    recorded: bool,
 ) -> None:
-    """Post a reuse comment to the Issue and print WORKTREE_REUSED to stdout."""
-    recorded = is_base_recorded(repo_dir, branch)
+    """Post a reuse comment to the Issue and print WORKTREE_REUSED to stdout.
+
+    ``recorded`` must be observed before preparation: P0 always calls record_base.
+    """
     recorded_label = "recorded" if recorded else "unrecorded"
     commits = _branch_previous_commits(repo_dir, branch, base)
     n_commits = len(commits)
     print(f"WORKTREE_REUSED: {branch} ({recorded_label}, {n_commits} commits)")
     comment = (
-        f"P0: existing branch `{branch}` resumed "
-        f"(base recorded: {'yes' if recorded else 'no'}, {n_commits} previous commits)."
+        f"P0: 既存ブランチ `{branch}` から worktree を再開しました"
+        f"（base 記録: {'あり' if recorded else 'なし'}、前世代コミット {n_commits} 件）。"
+        f"\n\n`WORKTREE_REUSED: {branch} ({recorded_label}, {n_commits} commits)`"
     )
     try:
         client.issue_comment(issue_number, comment)
@@ -648,6 +652,7 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
         else:
             check_repo = repo_root
         branch_pre_exists = _check_branch_exists(check_repo, branch_val)
+        base_pre_recorded = branch_pre_exists and is_base_recorded(check_repo, branch_val)
 
         if ctx.is_cross_repo == "true":
             _prepare_cross_repo(ctx, repo_root)
@@ -657,7 +662,9 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
             worktree_dir = Path(ctx.worktree_path.strip())
 
         if branch_pre_exists:
-            _emit_reuse_notification(client, issue_number, branch_val, check_repo, base_val)
+            _emit_reuse_notification(
+                client, issue_number, branch_val, check_repo, base_val, base_pre_recorded
+            )
 
         stale = _ensure_base_included(worktree_dir, ctx.base_branch.strip(), client, issue_number)
         if stale is not None:

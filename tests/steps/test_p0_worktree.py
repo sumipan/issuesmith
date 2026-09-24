@@ -911,7 +911,15 @@ def test_ac3b_existing_branch_posts_comment_and_stdout(
     comment_body = client.issue_comment.call_args.args[1]
     assert "WORKTREE_REUSED" in comment_body or branch in comment_body
     out = capsys.readouterr().out
-    assert f"WORKTREE_REUSED: {branch}" in out
+    assert f"WORKTREE_REUSED: {branch} (unrecorded, 1 commits)" in out
+    assert f"WORKTREE_REUSED: {branch} (unrecorded, 1 commits)" in comment_body
+    recorded = subprocess.run(
+        ["git", "-C", str(repo), "config", f"branch.{branch}.issuesmithbase"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.strip()
+    assert recorded == "main"
 
 
 def test_ac3b_new_branch_no_comment_no_reuse_stdout(
