@@ -1957,3 +1957,13 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+def issue_target_meta(issue: dict[str, Any]) -> tuple[str, tuple[str, ...]]:
+    """Public wrapper of ``_issue_target_meta`` for resume / dispatch callers."""
+    return _issue_target_meta(issue, Any])
+
+
+def resolve_engine(phase: str) -> str:
+    """Public wrapper of ``_resolve_engine``: engine currently assigned to ``phase``'s role."""
+    return _resolve_engine(phase)
+
