@@ -211,10 +211,12 @@ def _detect_dag_terminated(
     from issuesmith.queue_triage import RUNNING_LABEL
 
     candidates: set[int] = {
-        entry.get("issue")
+        entry["issue"]
         for entry in snapshot.in_flight
         if isinstance(entry, dict) and isinstance(entry.get("issue"), int)
     }
+    # list_issues and issue_get share the max_api_calls budget.
+    api_calls = 1
     try:
         running_issues = client.list_issues(RUNNING_LABEL["develop"], state="open")
         if isinstance(running_issues, list):
@@ -226,7 +228,6 @@ def _detect_dag_terminated(
     except Exception:
         pass
 
-    api_calls = 0
     events: list[ObserveEvent] = []
 
     for issue_num in sorted(candidates):

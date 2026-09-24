@@ -187,3 +187,59 @@ def test_ac7_orphan_exec_still_raised_when_no_running_marker(env):
     snap = store.snapshot()
     orphans = _detect_orphan_exec(snap, patched_cfg, dag_states)
     assert any(isinstance(e, OrphanExecEvent) and e.issue == issue_num for e in orphans)
+
+
+def test_ac1_end_to_end_with_real_done_markers(env):
+    """AC-1 via observe(): real exec.jsonl + done markers drive the release."""
+    from dataclasses import replace
+
+    from issuesmith.observe import observe
+
+    store, client, tmp_path = env
+    cfg = get_config()
+    ns = cfg.label_namespace
+    done_dir, _running_dir = _make_dirs(tmp_path)
+    exec_path = tmp_path / "exec.jsonl"
+
+    issue_num = client.issue_create("title6", "body")
+    client.issue_update(issue_num, labels_add=[f"{ns}:draft-done", f"{ns}:develop-running"])
+    store.add_in_flight(issue_num, "claude", role="implementation")
+
+    key = f"issuesmith:impl:{issue_num}"
+    rows = [
+        {"uuid": "u-p1", "idempotency_key": key, "depends": [],
+         "annotations": {"step_name": "p1"}},
+        {"uuid": "u-p2", "idempotency_key": key, "depends": ["u-p1"],
+         "annotations": {"step_name": "p2"}},
+    ]
+    exec_path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    (done_dir / "u-p1").write_text("0", encoding="utf-8")
+    (done_dir / "u-p2").write_text("1", encoding="utf-8")
+
+    patched_cfg = replace(cfg, paths=replace(cfg.paths, exec_jsonl=exec_path, done_dir=done_dir))
+
+    def _tick():
+        evts = [
+            e for e in observe(store.snapshot(), client, patched_cfg)
+            if isinstance(e, DagTerminatedEvent)
+        ]
+        execute(evaluate(evts, cfg.observe), store, sinks=[], client=client)
+        return evts
+
+    evts = _tick()
+    assert len(evts) == 1
+    assert evts[0].failed_step == "p2"
+    assert evts[0].phase == "develop"
+    assert not any(e.get("issue") == issue_num for e in store.snapshot().in_flight)
+    labels_after = {
+        lbl["name"] if isinstance(lbl, dict) else str(lbl)
+        for lbl in client.issue_get(issue_num, fields=["labels"]).get("labels", [])
+    }
+    assert f"{ns}:develop-running" not in labels_after
+    assert f"{ns}:develop-ready" not in labels_after
+    assert f"{ns}:draft-done" in labels_after
+    assert len(list_open(client)) == 1
+    comments_first = client.get_issue_comments(issue_num)
+
+    assert _tick() == []
+    assert len(client.get_issue_comments(issue_num)) == len(comments_first)

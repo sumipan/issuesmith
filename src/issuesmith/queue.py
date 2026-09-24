@@ -247,12 +247,14 @@ def _dispatch_pipeline_ready(
     in_flight_issues = {
         entry.get("issue") for entry in snap.in_flight if isinstance(entry, dict)
     }
-    dag_states = load_dag_states(EXEC_PATH, DONE_DIR, DONE_DIR.parent / "running")
+    dag_states = None  # loaded lazily: only needed when an unfinished row is off in_flight
     for uuid, issue_number in _iter_issuesmith_exec_records():
         if issue_number in in_flight_issues:
             continue
         if not (DONE_DIR / uuid).exists():
-            state = dag_states.get(issue_number)
+            if dag_states is None:
+                dag_states = load_dag_states(EXEC_PATH, DONE_DIR, DONE_DIR.parent / "running")
+            state = dag_states.get(issue_number) if issue_number is not None else None
             if state is not None and state.status == "running":
                 continue
             return False
