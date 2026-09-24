@@ -8,7 +8,6 @@ from typing import Any
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Fixture: bare origin + clone with staged changes
 # ---------------------------------------------------------------------------
@@ -135,7 +134,7 @@ def test_evaluate_requires_collects_multiple_violations(
 
     # allow_paths includes src/ but not scripts/
     allow_paths = ["src/foo.py"]
-    ctx = GateBuildContext(
+    GateBuildContext(
         worktree_path=git_worktree,
         allow_paths=allow_paths,
         base_branch="main",

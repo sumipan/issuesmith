@@ -86,7 +86,7 @@ def test_answer_widen_deduplicates_paths():
 
     client.issue_update.side_effect = fake_issue_update
 
-    with patch("issuesmith.andon.resume") as mock_resume:
+    with patch("issuesmith.andon.resume"):
         with patch("issuesmith.andon._default_metrics_path", return_value=MagicMock()):
             with patch("issuesmith.andon._write_metrics"):
                 answer(client, andon_id, "widen:src/a.py")

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -259,7 +259,7 @@ def test_llm_impl_done_overridden_by_gate_fail(capsys, fresh_repo: Path):
 
     assert rc == 1
     # Engine should NOT emit IMPL_DONE since gate failed
-    out = capsys.readouterr().out
+    capsys.readouterr().out
     # The engine writes LLM stdout, so IMPL_DONE from LLM stdout appears
     # but the engine itself should NOT emit an additional PIPELINE_STATUS: IMPL_DONE
     # (the run_requires_loop returning 1 means we exit 1 without emitting emit_status)
@@ -273,6 +273,7 @@ def test_llm_impl_done_overridden_by_gate_fail(capsys, fresh_repo: Path):
 def test_scope_breadth_blocks_llm(capsys, fresh_repo: Path):
     """scope_breadth.too_large (repairable=False) → LLM not called, andon(decision)."""
     from ghdag.workflow.gates import Violation
+
     from issuesmith.engine import run_guarded
 
     variables = [
@@ -301,7 +302,6 @@ def test_scope_breadth_blocks_llm(capsys, fresh_repo: Path):
     with patch("issuesmith.engine._execute", side_effect=mock_execute):
         with patch("issuesmith.ops.dispatch.resolve_step_config") as mock_resolve:
             from issuesmith.config import StepConfig
-            from issuesmith.gates import GATE_REGISTRY
             mock_resolve.return_value = StepConfig(
                 module="",
                 requires=("scope_breadth",),
@@ -346,6 +346,7 @@ def test_scope_breadth_blocks_llm(capsys, fresh_repo: Path):
 def test_base_freshness_fixed_before_llm(capsys, fresh_repo: Path):
     """base_freshness.behind_base → auto-fixed before LLM call."""
     from ghdag.workflow.gates import Violation
+
     from issuesmith.engine import run_guarded
 
     variables = [
@@ -414,6 +415,7 @@ def test_base_freshness_fixed_before_llm(capsys, fresh_repo: Path):
 def test_run_requires_loop_max_repairs_options_widen():
     """max_repairs exceeded with pr_scope violation → options include widen:<file>."""
     from ghdag.workflow.gates import Violation
+
     from issuesmith.config import StepConfig
     from issuesmith.ops.dispatch import _MAX_REPAIRS, run_requires_loop
 
@@ -434,7 +436,7 @@ def test_run_requires_loop_max_repairs_options_widen():
     )
 
     with patch("issuesmith.ops.dispatch._build_requires_gates",
-               return_value={"pr_scope": MagicMock(check=lambda b, l: [pr_violation])}):
+               return_value={"pr_scope": MagicMock(check=lambda body, labels: [pr_violation])}):
         with patch("issuesmith.ops.dispatch._fetch_fresh_issue_body", return_value=""):
             with patch("issuesmith.ops.dispatch._get_issue_labels", return_value=[]):
                 with patch("issuesmith.ops.dispatch._get_preexisting_rule_ids",
@@ -467,6 +469,7 @@ def test_run_requires_loop_max_repairs_options_widen():
 def test_run_requires_loop_max_repairs_no_pr_scope_no_widen():
     """max_repairs exceeded without pr_scope → options are split and reject only."""
     from ghdag.workflow.gates import Violation
+
     from issuesmith.config import StepConfig
     from issuesmith.ops.dispatch import _MAX_REPAIRS, run_requires_loop
 
@@ -487,7 +490,7 @@ def test_run_requires_loop_max_repairs_no_pr_scope_no_widen():
     )
 
     with patch("issuesmith.ops.dispatch._build_requires_gates",
-               return_value={"tests": MagicMock(check=lambda b, l: [test_violation])}):
+               return_value={"tests": MagicMock(check=lambda body, labels: [test_violation])}):
         with patch("issuesmith.ops.dispatch._fetch_fresh_issue_body", return_value=""):
             with patch("issuesmith.ops.dispatch._get_issue_labels", return_value=[]):
                 with patch("issuesmith.ops.dispatch._get_preexisting_rule_ids",
