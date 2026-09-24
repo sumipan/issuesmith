@@ -21,6 +21,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `branch_reuse.is_base_recorded(repo_dir, branch)`: public helper that returns True if
+  `git config branch.<branch>.issuesmithbase` is set; used by both context_hook and P0 to
+  avoid duplicating the lookup (sumipan/nexus#3695)
+- `build_context` now returns a `reuse_source` key (`"comment"` / `"recorded"` /
+  `"unrecorded"` / `"none"`) indicating how the pipeline_id was determined (sumipan/nexus#3695)
+- P0 posts an Issue comment and prints `WORKTREE_REUSED: <branch>` to stdout when the
+  target branch already existed before preparation (sumipan/nexus#3695)
 - `issuesmith resume --from <step> --mark-done <step>`: explicitly mark a failed/cancelled/skipped
   ancestor step as succeeded before recovering, so `--from` can restart from a later step without
   re-running the already-completed work; `--mark-done` may be repeated for multiple ancestors
@@ -28,6 +35,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `_fetch_issue_comments_from_api` now calls `get_issue_comments` (full pagination, ghdag
+  v0.72.0) instead of `issue_get(fields=["comments"])` which returned only the first 30;
+  falls back to the old path if `get_issue_comments` raises (sumipan/nexus#3695)
+- `find_reusable_branch` now accepts branches without `issuesmithbase` recorded (pre-0.56.0
+  era) as long as they share common history with base, are not merged, and have at least one
+  commit ahead; orphan/unrelated branches are still excluded (sumipan/nexus#3695)
+- ghdag dependency bumped to `v0.72.0` (fixes full-pagination for comments and issues)
 - `issuesmith resume --from <step>` now checks for upstream failures before calling
   `ghdag dag recover`; if an ancestor step is failed/cancelled/skipped/dep_failed, the command
   exits 1 with a message showing the blocking steps and two recovery options, instead of silently

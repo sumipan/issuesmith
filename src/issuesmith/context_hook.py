@@ -31,6 +31,7 @@ from pathlib import Path
 import yaml
 
 from issuesmith.branch_reuse import find_reusable_branch
+from issuesmith.branch_reuse import is_base_recorded as _is_base_recorded
 from issuesmith.branch_reuse import previous_commits as _prev_commits
 from issuesmith.config import get_config
 from issuesmith.targets import targets_from_issue
@@ -175,10 +176,14 @@ def _pipeline_id_from_comments(issue_number: int, comments: list[dict]) -> str |
 
 
 def _fetch_issue_comments_from_api(issue_number: int, issue_repo: str) -> list[dict]:
-    """GitHub API で Issue コメント一覧を取得する。失敗時は空リスト。"""
+    """GitHub API で Issue コメント一覧を全件取得する。失敗時は空リスト。"""
     try:
         from ghdag.forge import get_forge
-
+        return get_forge(repo=issue_repo).get_issue_comments(issue_number)
+    except Exception:
+        pass
+    try:
+        from ghdag.forge import get_forge
         data = get_forge(repo=issue_repo).issue_get(issue_number, fields=["comments"])
         comments = data.get("comments")
         return comments if isinstance(comments, list) else []
@@ -266,16 +271,19 @@ def build_context(
     if restored_pipeline_id:
         pipeline_id = restored_pipeline_id
         previous_commits_str = ""
+        reuse_source = "comment"
     else:
         reusable = find_reusable_branch(_search_repo_dir, issue_number, base_branch)
         if reusable:
             pipeline_id = reusable[len("feat/"):]
             commits = _prev_commits(_search_repo_dir, reusable, base_branch)
             previous_commits_str = "\n".join(commits)
+            reuse_source = "recorded" if _is_base_recorded(_search_repo_dir, reusable) else "unrecorded"
         else:
             shortid = str(uuid.uuid4())[:8]
             pipeline_id = f"issue-{issue_number}-{shortid}"
             previous_commits_str = ""
+            reuse_source = "none"
 
     worktree_path = f"{_REPO_ROOT}/{_WORKTREES_REL}/{pipeline_id}"
     branch = f"feat/{pipeline_id}"
@@ -357,6 +365,7 @@ def build_context(
         "diary_allow_paths": diary_allow_paths,
         "targets_json": targets_json,
         "previous_commits": previous_commits_str,
+        "reuse_source": reuse_source,
     }
 
 

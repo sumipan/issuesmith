@@ -14,7 +14,8 @@ from pathlib import Path
 from ghdag.forge import ForgePort, get_forge
 from ghdag.workflow.state_machine import _load_workflow_config, transition
 
-from issuesmith.branch_reuse import record_base
+from issuesmith.branch_reuse import is_base_recorded, record_base
+from issuesmith.branch_reuse import previous_commits as _branch_previous_commits
 from issuesmith.config import StepConfig, get_config
 from issuesmith.context_hook import parse_issue_metadata
 from issuesmith.steps import scope_gate as scope_gate_mod
@@ -579,6 +580,45 @@ def _assert_jobs_clean(worktree_dir: Path) -> None:
         _fail(msg)
 
 
+def _check_branch_exists(repo_dir: Path, branch: str) -> bool:
+    """Return True if refs/heads/<branch> exists in repo_dir. Never raises."""
+    if not repo_dir.exists():
+        return False
+    proc = subprocess.run(
+        ["git", "-C", str(repo_dir), "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
+        capture_output=True,
+        check=False,
+    )
+    return proc.returncode == 0
+
+
+def _emit_reuse_notification(
+    client: "ForgePort",
+    issue_number: int,
+    branch: str,
+    repo_dir: Path,
+    base: str,
+    recorded: bool,
+) -> None:
+    """Post a reuse comment to the Issue and print WORKTREE_REUSED to stdout.
+
+    ``recorded`` must be observed before preparation: P0 always calls record_base.
+    """
+    recorded_label = "recorded" if recorded else "unrecorded"
+    commits = _branch_previous_commits(repo_dir, branch, base)
+    n_commits = len(commits)
+    print(f"WORKTREE_REUSED: {branch} ({recorded_label}, {n_commits} commits)")
+    comment = (
+        f"P0: 既存ブランチ `{branch}` から worktree を再開しました"
+        f"（base 記録: {'あり' if recorded else 'なし'}、前世代コミット {n_commits} 件）。"
+        f"\n\n`WORKTREE_REUSED: {branch} ({recorded_label}, {n_commits} commits)`"
+    )
+    try:
+        client.issue_comment(issue_number, comment)
+    except Exception as exc:  # noqa: BLE001
+        print(f"P0 reuse comment failed: {exc}", file=sys.stderr)
+
+
 def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
     """Execute the P0 worktree provisioning step."""
     del step  # reserved for dispatch StepConfig parity with other steps
@@ -605,12 +645,26 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
         if not repo_root.is_dir():
             _fail("issuesmith runner is not inside the nexus repository")
 
+        branch_val = ctx.branch.strip()
+        base_val = ctx.base_branch.strip()
+        if ctx.is_cross_repo == "true":
+            check_repo = repo_root / ctx.target_clone_path.strip()
+        else:
+            check_repo = repo_root
+        branch_pre_exists = _check_branch_exists(check_repo, branch_val)
+        base_pre_recorded = branch_pre_exists and is_base_recorded(check_repo, branch_val)
+
         if ctx.is_cross_repo == "true":
             _prepare_cross_repo(ctx, repo_root)
             worktree_dir = repo_root / ctx.target_worktree_path.strip()
         else:
             _prepare_local(ctx, repo_root)
             worktree_dir = Path(ctx.worktree_path.strip())
+
+        if branch_pre_exists:
+            _emit_reuse_notification(
+                client, issue_number, branch_val, check_repo, base_val, base_pre_recorded
+            )
 
         stale = _ensure_base_included(worktree_dir, ctx.base_branch.strip(), client, issue_number)
         if stale is not None:

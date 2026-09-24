@@ -37,6 +37,19 @@ def record_base(repo_dir: Path, branch: str, base: str) -> None:
         print(f"branch_reuse.record_base warning: {stderr}", file=sys.stderr)
 
 
+def is_base_recorded(repo_dir: Path, branch: str) -> bool:
+    """Return True if git config branch.<branch>.issuesmithbase is set. Never raises."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo_dir), "config", f"branch.{branch}.{BASE_CONFIG_KEY}"],
+            capture_output=True,
+            check=False,
+        )
+        return proc.returncode == 0
+    except Exception:
+        return False
+
+
 def _resolve_base_ref(repo_dir: Path, base: str) -> str | None:
     """Return 'origin/<base>' or '<base>' if the ref exists, else None."""
     for ref in (f"refs/remotes/origin/{base}", f"refs/heads/{base}"):
@@ -109,11 +122,21 @@ def find_reusable_branch(repo_dir: Path, issue_number: int, base: str) -> str | 
             text=True,
             check=False,
         )
-        if recorded_base_proc.returncode != 0:
-            continue
-        recorded_base = recorded_base_proc.stdout.strip()
-        if recorded_base != base:
-            continue
+        has_recorded = recorded_base_proc.returncode == 0
+        recorded_base = recorded_base_proc.stdout.strip() if has_recorded else None
+
+        if has_recorded:
+            if recorded_base != base:
+                continue
+        else:
+            # Unrecorded: require common history (not orphan / unrelated)
+            merge_base_proc = subprocess.run(
+                ["git", "-C", str(repo_dir), "merge-base", cand, base_ref],
+                capture_output=True,
+                check=False,
+            )
+            if merge_base_proc.returncode != 0:
+                continue
 
         ancestor_proc = subprocess.run(
             [
