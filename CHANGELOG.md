@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 
+## Unreleased
+
+### Added
+
+- `andon.answer_if_open(client, andon_id, action)`: like `answer()` but silently skips
+  when the andon is not found (already closed) and never calls `_call_resume_hook` (#3740)
+- `andon list --all`: show all open andons in original unsorted order (new flag); default
+  now sorts decision → broken → non-observe blocked → observe blocked (#3740)
+
+### Changed
+
+- `sync_observe_andons` now returns `tuple[set[str], set[str]]` = `(new_ids, resolved_ids)`
+  instead of just `new_ids`; callers receive resolved IDs for auto-resolve (#3740)
+- `dag_terminated` andon key is now `dag_terminated:{stripped_event_key}` (generation
+  suffix stripped) so the same issue/phase/step deduplicates across generations (#3740)
+- `observe/policy.execute()` auto-resolves `resolved_ids` andons by calling
+  `answer_if_open`; `dag_terminated` andons are only auto-resolved when the issue is back
+  in_flight (prevents premature resolution before user re-dispatches) (#3740)
+
+
 ## 0.62.0 - 2026-09-25
 
 ### Added

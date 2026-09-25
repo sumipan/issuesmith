@@ -6,6 +6,7 @@ id format: <workflow>:<issue>:<step>:<gen>
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterator, Protocol, runtime_checkable
@@ -13,6 +14,8 @@ from typing import Any, Iterator, Protocol, runtime_checkable
 import yaml
 
 from issuesmith.resume import resume
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -286,3 +289,43 @@ def answer(
     path = metrics_path if metrics_path is not None else _default_metrics_path()
     _write_metrics(path, "andon_answered", andon_id)
     _call_resume_hook(client, andon_id, action)
+
+
+def answer_if_open(
+    client: Any,
+    andon_id: str,
+    action: str,
+    *,
+    metrics_path: Path | None = None,
+) -> None:
+    """Post answer comment and remove label if the andon is open; silently skip if not found.
+
+    Unlike answer(), does not call _call_resume_hook and does not raise KeyError
+    when the andon is not found (e.g. already closed). Skips entirely when client is None.
+    """
+    if client is None:
+        return
+
+    ns = _ns()
+
+    target: Andon | None = None
+    for issue in _iter_open_andon_issues(client):
+        for comment in client.get_issue_comments(issue["number"]):
+            parsed = from_comment(comment.get("body", ""))
+            if parsed is not None and parsed.id == andon_id:
+                target = parsed
+                break
+        if target is not None:
+            break
+
+    if target is None:
+        logger.debug("answer_if_open: andon not found (already closed?): %s", andon_id)
+        return
+
+    label = f"{ns}:andon-{target.kind}"
+    reply = f"<!-- andon-answer -->\nandon `{andon_id}` answered: **{action}**\n"
+    client.issue_comment(target.issue, reply)
+    client.issue_update(target.issue, labels_remove=[label])
+
+    path = metrics_path if metrics_path is not None else _default_metrics_path()
+    _write_metrics(path, "andon_answered", andon_id)

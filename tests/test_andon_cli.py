@@ -206,3 +206,84 @@ def test_cli_redispatch_emits_future_warning():
     )
     combined = result.stdout + result.stderr
     assert "DeprecationWarning" in combined or "FutureWarning" in combined or result.returncode in (0, 1, 2)
+
+
+# ---------------------------------------------------------------------------
+# AC-5 / AC-6: andon list sort order and --all flag
+# ---------------------------------------------------------------------------
+
+def _make_andons_mixed():
+    """Return a list of andons in an unsorted order for testing default sort."""
+    from issuesmith.andon import Andon
+    return [
+        Andon(id="observe:1:orphan:uuid1:0", kind="blocked", issue=1, step="observe", summary="orphan"),
+        Andon(id="issuesmith:2:cp2:0", kind="broken", issue=2, step="cp2", summary="broken thing"),
+        Andon(id="observe:3:stall:develop:0", kind="blocked", issue=3, step="observe", summary="stall"),
+        Andon(id="issuesmith:4:cp2:0", kind="decision", issue=4, step="cp2", summary="needs decision"),
+        Andon(id="issuesmith:5:p2:0", kind="blocked", issue=5, step="p2", summary="blocked non-observe"),
+    ]
+
+
+def test_andon_list_default_sort_order():
+    """AC-5: default list sorts decision → broken → non-observe blocked → observe blocked."""
+    from io import StringIO
+    from unittest.mock import MagicMock
+    from unittest.mock import patch as mpatch
+
+    from issuesmith.__main__ import _cmd_andon
+
+    andons = _make_andons_mixed()
+    fake_client = MagicMock()
+    output = StringIO()
+
+    with mpatch("issuesmith.andon.list_open", return_value=andons), \
+         mpatch("ghdag.forge.get_forge", return_value=fake_client), \
+         mpatch("sys.stdout", output):
+        ret = _cmd_andon(["list"])
+
+    assert ret == 0
+    lines = [ln for ln in output.getvalue().splitlines() if ln.strip()]
+    ids_in_output = [ln.split("\t")[0] for ln in lines]
+    kinds_order = [ln.split("\t")[1] for ln in lines]
+    steps_order = [next(a.step for a in andons if a.id == aid) for aid in ids_in_output]
+
+    # decision must come first
+    assert kinds_order[0] == "decision", f"expected decision first, got: {kinds_order}"
+    # broken before non-observe blocked
+    broken_idx = kinds_order.index("broken")
+    non_obs_blocked_idx = next(
+        i for i, (k, s) in enumerate(zip(kinds_order, steps_order))
+        if k == "blocked" and s != "observe"
+    )
+    obs_blocked_indices = [
+        i for i, (k, s) in enumerate(zip(kinds_order, steps_order))
+        if k == "blocked" and s == "observe"
+    ]
+    assert broken_idx < non_obs_blocked_idx, "broken should precede non-observe blocked"
+    assert all(i > non_obs_blocked_idx for i in obs_blocked_indices), (
+        "observe blocked should come after non-observe blocked"
+    )
+
+
+def test_andon_list_all_flag_shows_unsorted():
+    """AC-6: --all flag shows all andons without sorting (original order)."""
+    from io import StringIO
+    from unittest.mock import MagicMock
+    from unittest.mock import patch as mpatch
+
+    from issuesmith.__main__ import _cmd_andon
+
+    andons = _make_andons_mixed()
+    fake_client = MagicMock()
+    output = StringIO()
+
+    with mpatch("issuesmith.andon.list_open", return_value=andons), \
+         mpatch("ghdag.forge.get_forge", return_value=fake_client), \
+         mpatch("sys.stdout", output):
+        ret = _cmd_andon(["list", "--all"])
+
+    assert ret == 0
+    lines = [ln for ln in output.getvalue().splitlines() if ln.strip()]
+    ids_in_output = [ln.split("\t")[0] for ln in lines]
+    ids_original = [a.id for a in andons]
+    assert ids_in_output == ids_original, "--all should preserve original order"
