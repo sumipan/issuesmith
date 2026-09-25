@@ -28,11 +28,22 @@ class SizeMeasure:
     kinds: frozenset[str]                  # subset of {"delete", "new", "modify"}
 
 
+# nexus writes the change table's kind column and the sub-plan table in Japanese.
+# This module stays ASCII (public repo rule), so those words are spelled as escapes.
+_KIND_DELETE_WORDS = ("delete", "\u524a\u9664")  # U+524A U+9664
+_KIND_NEW_WORDS = ("new", "add", "\u65b0\u898f")  # U+65B0 U+898F
+_SUB_PLAN_HEADER = (
+    "| # | \u30bf\u30a4\u30c8\u30eb | \u5bfe\u8c61\u30ea\u30dd\u30b8\u30c8\u30ea"
+    " | \u5185\u5bb9 | \u4f9d\u5b58 |"
+)  # "| # | title | target repo | content | depends on |"
+_NO_DEPS = "\u306a\u3057"  # U+306A U+3057 ("none")
+
+
 def _normalize_kind(change_type: str) -> str:
     lowered = change_type.lower()
-    if "削除" in change_type or "delete" in lowered:
+    if any(word in lowered for word in _KIND_DELETE_WORDS):
         return "delete"
-    if "新規" in change_type or any(k in lowered for k in ("new", "add")):
+    if any(word in lowered for word in _KIND_NEW_WORDS):
         return "new"
     return "modify"
 
@@ -70,14 +81,14 @@ def _fix_hint(body: str, measure: SizeMeasure) -> str:
     except Exception:
         target_repo = ""
     lines = [
-        f"本文に `## {sections['milestone']}` > `### {sections['sub_plan']}` を足して、"
-        "関心事（親ディレクトリ）ごとにサブイシューへ分割する。例:",
+        f"Add `## {sections['milestone']}` > `### {sections['sub_plan']}` to the body and "
+        "split the work into one sub-issue per concern (parent directory). Example:",
         "",
-        "| # | タイトル | 対象リポジトリ | 内容 | 依存 |",
+        _SUB_PLAN_HEADER,
         "|---|---|---|---|---|",
     ]
     for i, (concern, paths) in enumerate(measure.concerns.items(), start=1):
-        lines.append(f"| {i} | {concern} | {target_repo} | {', '.join(paths)} | なし |")
+        lines.append(f"| {i} | {concern} | {target_repo} | {', '.join(paths)} | {_NO_DEPS} |")
     return "\n".join(lines)
 
 
