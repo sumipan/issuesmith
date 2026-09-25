@@ -6,14 +6,18 @@ from unittest.mock import MagicMock, patch
 
 from issuesmith.dep_extractor import (
     _DEP_PREFIX_RE,
+    _PARENT_ISSUE_RE,
+    UNPARSED_DEPENDENCY_SECTION,
     DepStatus,
     check_dependencies,
     extract_dependencies,
     get_dep_status,
     is_satisfied,
+    unparsed_dependency_refs,
 )
 
 _DEP_PREFIX = _DEP_PREFIX_RE.pattern[1:_DEP_PREFIX_RE.pattern.index(":")]
+_PARENT_PREFIX = _PARENT_ISSUE_RE.pattern[1:_PARENT_ISSUE_RE.pattern.index(":")]
 
 # --- extract_dependencies ---
 
@@ -60,10 +64,82 @@ def test_section_without_table_returns_empty():
     assert extract_dependencies(body) == []
 
 
-def test_section_list_format_no_longer_extracts():
+def test_section_list_items_extract():
+    # ASCII fixture data. Hand-written issues declare deps as list items.
+    body = (
+        "## Dependencies\n\n"
+        "- #400 (tracking removal)\n"
+        "* #401\n"
+        "+ #402\n"
+        "1. #403 release first\n"
+        "2) #404\n"
+        "  - #405 nested\n"
+    )
+    assert extract_dependencies(body) == [400, 401, 402, 403, 404, 405]
+
+
+def test_section_list_item_inside_code_block_ignored():
     # ASCII fixture data.
-    body = "## Dependencies\n\n- #400\n"
+    body = "## Dependencies\n\n```\n- #400\n```\n\n- #401\n"
+    assert extract_dependencies(body) == [401]
+
+
+def test_section_list_items_exclude_parent_child_lines():
+    # ASCII fixture data.
+    body = (
+        "## Dependencies\n\n"
+        f"{_PARENT_PREFIX}: #1\n"
+        "- #2\n"
+    )
+    assert extract_dependencies(body) == [2]
+
+
+# --- unparsed_dependency_refs ---
+
+
+def test_unparsed_refs_empty_without_section():
+    # ASCII fixture data.
+    body = "## Overview\n\nsee #300\n"
+    assert unparsed_dependency_refs(body) == []
+
+
+def test_unparsed_refs_empty_when_declared():
+    # ASCII fixture data.
+    body = (
+        "## Dependencies\n\n"
+        "| # | Issue |\n| --- | --- |\n| 1 | #300 |\n"
+        "- #301\n"
+    )
+    assert unparsed_dependency_refs(body) == []
+
+
+def test_unparsed_refs_reports_prose_only_mentions():
+    # ASCII fixture data.
+    body = "## Dependencies\n\nmentions #300 and #301\n"
     assert extract_dependencies(body) == []
+    assert unparsed_dependency_refs(body) == [300, 301]
+
+
+def test_unparsed_refs_reports_prose_mentions_next_to_declared():
+    # ASCII fixture data.
+    body = "## Dependencies\n\n- #300\n\nalso needs #302 eventually\n"
+    assert unparsed_dependency_refs(body) == [302]
+
+
+def test_unparsed_refs_ignores_refs_declared_by_prefix_line():
+    # ASCII fixture data.
+    body = f"{_DEP_PREFIX}: #300\n\n## Dependencies\n\nsee #300 above\n"
+    assert unparsed_dependency_refs(body) == []
+
+
+def test_unparsed_refs_ignores_parent_child_lines_and_code_blocks():
+    # ASCII fixture data.
+    body = (
+        "## Dependencies\n\n"
+        f"{_PARENT_PREFIX}: #1\n"
+        "```\n#2\n```\n"
+    )
+    assert unparsed_dependency_refs(body) == []
 
 
 def test_dep_prefix_line_unaffected():
@@ -206,6 +282,25 @@ def test_empty_deps_passes():
     assert result.decision == "PASS"
     assert result.deps_found == []
     assert result.blocking_deps == []
+
+
+def test_unparsed_refs_block_before_any_forge_call():
+    client = MagicMock()
+    result = check_dependencies([], client=client, unparsed_refs=[300])
+    assert result.decision == "BLOCK"
+    assert result.reason == UNPARSED_DEPENDENCY_SECTION
+    assert result.unparsed_refs == [300]
+    assert result.blocking_deps == []
+    client.issue_get.assert_not_called()
+
+
+def test_unparsed_refs_block_even_with_declared_deps():
+    client = MagicMock()
+    result = check_dependencies([100], client=client, unparsed_refs=[300])
+    assert result.decision == "BLOCK"
+    assert result.deps_found == [100]
+    assert result.reason == UNPARSED_DEPENDENCY_SECTION
+    client.issue_get.assert_not_called()
 
 
 def test_cli_check_outputs_json(capsys):

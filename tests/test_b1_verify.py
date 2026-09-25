@@ -36,6 +36,14 @@ def test_migration_rules_are_included():
     assert any(v.rule_id.startswith("b1_migration.") for v in violations)
 
 
+def test_complete_migration_body_satisfies_ac_format_and_migration_gates():
+    """One migration body must be able to satisfy every B1 gate at once (nexus #3899)."""
+    from tests.gate_rules.test_b1_migration import BODY_COMPLETE
+
+    rule_ids = {v.rule_id for v in collect_violations(_VALID_BODY + "\n" + BODY_COMPLETE, ["scope:migration"])}
+    assert not {r for r in rule_ids if r.startswith(("b1_ac_format.", "b1_migration."))}, rule_ids
+
+
 def test_format_report_shape():
     violations = collect_violations("## Overview\nno yaml\n", [])
     report = format_report(violations)

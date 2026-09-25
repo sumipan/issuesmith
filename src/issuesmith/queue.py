@@ -22,7 +22,7 @@ from ghdag.forge import ForgePort, get_forge
 from ghdag.quota import QuotaGate
 
 from issuesmith.config import get_config
-from issuesmith.dep_extractor import check_dependencies, extract_dependencies
+from issuesmith.dep_extractor import check_dependencies, extract_dependencies, unparsed_dependency_refs
 from issuesmith.forge_api import api_request
 from issuesmith.milestone import advance_milestone_chains, milestone_last_issue_terminal_ok
 from issuesmith.queue_store import (
@@ -980,7 +980,12 @@ def _phase_preconditions(phase: str, issue: dict[str, Any], client: ForgePort, i
     labels = label_names(issue)
 
     def _deps_ok() -> tuple[bool, str]:
-        deps = extract_dependencies(str(issue.get("body") or ""))
+        body = str(issue.get("body") or "")
+        unparsed = unparsed_dependency_refs(body)
+        if unparsed:
+            refs = ", ".join(f"#{n}" for n in unparsed)
+            return False, f"dependencies section mentions {refs} without declaring them"
+        deps = extract_dependencies(body)
         if deps:
             result = check_dependencies(deps, client=client)
             if result.decision == "BLOCK":

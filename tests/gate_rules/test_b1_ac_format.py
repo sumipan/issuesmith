@@ -188,6 +188,28 @@ def test_all_allowed_keys_returns_empty():
     assert violations == []
 
 
+BODY_WITH_MIGRATION_KEYS = """\
+## Acceptance Criteria
+
+```yaml
+paths_must_exist:
+  - a.py
+post_merge:
+  - kind: stable_install
+    repo: sumipan/issuesmith
+    path: /var/tmp/issuesmith
+removed_trees:
+  - tools/issuesmith
+```
+"""
+
+
+def test_migration_contract_keys_are_allowed():
+    """post_merge / removed_trees are required by b1_migration; b1_ac_format must accept them."""
+    assert _check(BODY_WITH_MIGRATION_KEYS, ["scope:migration"]) == []
+    assert _check(BODY_WITH_MIGRATION_KEYS, MILESTONE_LABELS) == []
+
+
 def test_design_table_body_returns_empty():
     violations = _check(BODY_WITH_DESIGN_TABLE, MILESTONE_LABELS)
     assert violations == []

@@ -338,6 +338,21 @@ def test_dispatch_allows_non_overlapping_or_other_repo(
     assert first.issue in (2976, 2980)
 
 
+def test_phase_preconditions_block_unparsed_dependency_section(monkeypatch):
+    from issuesmith import queue as qmod
+
+    class _Client:
+        def issue_get(self, number, fields=None):  # pragma: no cover - must not be called
+            raise AssertionError("forge must not be queried for an unparsed section")
+
+    # ASCII fixture data: prose mention only, no table row / list item.
+    body = _BODY_QUEUE + "\n## Dependencies\n\nwaits for #2999 to land\n"
+    issue = {"state": "OPEN", "labels": [], "body": body, "title": "t"}
+    ok, why = qmod._phase_preconditions("draft", issue, _Client(), 10)
+    assert ok is False
+    assert "#2999" in why
+
+
 @pytest.mark.parametrize("phase", ["draft", "sub", "merge"])
 def test_phase_preconditions_block_unsatisfied_deps(phase, monkeypatch):
     from issuesmith import queue as qmod
