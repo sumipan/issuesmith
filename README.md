@@ -95,6 +95,9 @@ Entry points: `issuesmith` / `python3 -m issuesmith`.
 | `dispatch` | Render and enqueue a workflow template |
 | `publish` | Publish / version-bump orchestration |
 | `labels reconcile [--fix] [--json]` | report (or fix) managed-label divergences |
+| `andon list [--all] [--json]` | List open (unanswered) andons; `--json` prints an array of `asdict(Andon)` plus `raised_at` (andon comment `created_at`) and `notes` (`[]` when none) |
+| `andon show <id>` / `andon answer <id> <action>` | Show an open andon / post the answer, remove the label and call the resume hook |
+| `andon note <id> --key <k> --value <v>` | Post an `<!-- andon-note -->` comment on an open andon (no label / metrics / resume change); later notes with the same key win in `list --json`. Exit 1 when the andon is not open, 2 on missing arguments |
 | `doctor` | Preflight / environment checks |
 | `smoke` | Template smoke against live Issue bodies |
 | `gen-live` | Generate live dispatch payloads |

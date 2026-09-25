@@ -369,3 +369,161 @@ def test_cli_andon_no_subcommand(capsys):
     )
     assert result.returncode != 0
     assert "list" in result.stderr or "usage" in result.stderr.lower()
+
+
+# ---------------------------------------------------------------------------
+# LocalForge round trip: list_open_records / note / answer (nexus #3678)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def local_client(tmp_path, monkeypatch):
+    import yaml
+    from ghdag.forge import get_forge
+
+    from issuesmith.config import reset_config_cache
+
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(yaml.safe_dump({"repo": "example/repo"}), encoding="utf-8")
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    monkeypatch.setenv("GHDAG_FORGE", "local")
+    monkeypatch.setenv("GHDAG_FORGE_ROOT", str(tmp_path / "forge"))
+    reset_config_cache()
+    yield get_forge()
+    reset_config_cache()
+
+
+def _raise_local(client, tmp_path, *, andon_id_suffix: str = "cp2:0", number: int | None = None) -> Andon:
+    if number is None:
+        number = client.issue_create("andon target", "body")
+    a = _make_andon(
+        andon_id=f"wf:{number}:{andon_id_suffix}",
+        issue=number,
+        options=["resume", "reject"],
+        default="resume",
+    )
+    raise_andon(client, a, metrics_path=tmp_path / "metrics.jsonl")
+    return a
+
+
+def test_list_open_records_returns_raised_andon(local_client, tmp_path):
+    from issuesmith.andon import list_open_records
+
+    a = _raise_local(local_client, tmp_path)
+    records = list_open_records(local_client)
+    assert len(records) == 1
+    rec = records[0]
+    assert rec["id"] == a.id
+    assert rec["options"] == ["resume", "reject"]
+    assert rec["default"] == "resume"
+    assert isinstance(rec["raised_at"], str) and rec["raised_at"]
+    assert rec["notes"] == {}
+    json.dumps(rec)
+
+
+def test_note_is_folded_into_records_last_write_wins(local_client, tmp_path):
+    from issuesmith.andon import list_open_records, note
+
+    a = _raise_local(local_client, tmp_path)
+    note(local_client, a.id, "asked", "2026-09-26T00:00:00Z")
+    assert list_open_records(local_client)[0]["notes"] == {"asked": "2026-09-26T00:00:00Z"}
+
+    note(local_client, a.id, "asked", "2026-09-27T00:00:00Z")
+    note(local_client, a.id, "channel", "C123")
+    assert list_open_records(local_client)[0]["notes"] == {
+        "asked": "2026-09-27T00:00:00Z",
+        "channel": "C123",
+    }
+
+
+def test_note_does_not_touch_labels(local_client, tmp_path):
+    from issuesmith.andon import note
+
+    a = _raise_local(local_client, tmp_path)
+    with patch.object(local_client, "issue_update") as mock_update:
+        note(local_client, a.id, "asked", "yes")
+    mock_update.assert_not_called()
+
+
+def test_answer_removes_andon_from_list_and_records(local_client, tmp_path):
+    from issuesmith.andon import list_open_records, note
+
+    a = _raise_local(local_client, tmp_path)
+    note(local_client, a.id, "asked", "yes")
+    with patch("issuesmith.andon._call_resume_hook"):
+        answer(local_client, a.id, "resume", metrics_path=tmp_path / "metrics.jsonl")
+    assert [x.id for x in list_open(local_client)] == []
+    assert list_open_records(local_client) == []
+
+
+def test_answered_andon_excluded_when_sibling_is_open(local_client, tmp_path):
+    from issuesmith.andon import list_open_records
+
+    first = _raise_local(local_client, tmp_path, andon_id_suffix="cp2:0")
+    second = _raise_local(local_client, tmp_path, andon_id_suffix="cp2:1", number=first.issue)
+    with patch("issuesmith.andon._call_resume_hook"):
+        answer(local_client, first.id, "resume", metrics_path=tmp_path / "metrics.jsonl")
+    # answer() removed the shared label; put it back so the Issue is still listed.
+    local_client.issue_update(first.issue, labels_add=[f"{_ns()}:andon-decision"])
+
+    assert [x.id for x in list_open(local_client)] == [second.id]
+    assert [r["id"] for r in list_open_records(local_client)] == [second.id]
+
+
+def test_list_open_excludes_answered_with_mock_client():
+    a = _make_andon(issue=9, andon_id="wf:9:s:0")
+    b = _make_andon(issue=9, andon_id="wf:9:s:1")
+    comments = [
+        {"body": to_comment(a), "created_at": "t1"},
+        {"body": to_comment(b), "created_at": "t2"},
+        {"body": "<!-- andon-answer -->\nandon `wf:9:s:0` answered: **yes**\n", "created_at": "t3"},
+    ]
+    client = _fake_client(comments=comments)
+    with patch("issuesmith.andon._iter_open_andon_issues", return_value=iter([{"number": 9}])):
+        result = list_open(client)
+    assert [x.id for x in result] == ["wf:9:s:1"]
+    client.get_issue_comments.assert_called_once_with(9)
+
+
+def test_note_unknown_id_raises_key_error(local_client, tmp_path):
+    from issuesmith.andon import note
+
+    a = _raise_local(local_client, tmp_path)
+    before = len(local_client.get_issue_comments(a.issue))
+    with pytest.raises(KeyError):
+        note(local_client, "wf:999:cp2:0", "asked", "yes")
+    assert len(local_client.get_issue_comments(a.issue)) == before
+
+
+def test_note_answered_id_raises_key_error(local_client, tmp_path):
+    from issuesmith.andon import note
+
+    a = _raise_local(local_client, tmp_path)
+    with patch("issuesmith.andon._call_resume_hook"):
+        answer(local_client, a.id, "resume", metrics_path=tmp_path / "metrics.jsonl")
+    # keep the Issue listed so the answered andon is still scanned
+    local_client.issue_update(a.issue, labels_add=[f"{_ns()}:andon-decision"])
+    before = len(local_client.get_issue_comments(a.issue))
+    with pytest.raises(KeyError):
+        note(local_client, a.id, "asked", "yes")
+    assert len(local_client.get_issue_comments(a.issue)) == before
+
+
+def test_note_empty_key_raises_value_error(local_client, tmp_path):
+    from issuesmith.andon import note
+
+    a = _raise_local(local_client, tmp_path)
+    before = len(local_client.get_issue_comments(a.issue))
+    with pytest.raises(ValueError):
+        note(local_client, a.id, "", "yes")
+    assert len(local_client.get_issue_comments(a.issue)) == before
+
+
+def test_note_comment_is_not_parsed_as_andon(local_client, tmp_path):
+    from issuesmith.andon import note
+
+    a = _raise_local(local_client, tmp_path)
+    note(local_client, a.id, "asked", "2026-09-26T00:00:00Z")
+    last = local_client.get_issue_comments(a.issue)[-1]["body"]
+    assert last.startswith("<!-- andon-note -->")
+    assert "```andon-note" in last
+    assert from_comment(last) is None
