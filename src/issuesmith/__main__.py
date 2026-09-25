@@ -9,9 +9,10 @@ _ANDON_USAGE = """\
 usage: issuesmith andon <subcommand> ...
 
 subcommands:
-  list                     list open (unanswered) andons
+  list [--all] [--json]    list open (unanswered) andons (--json: records with raised_at / notes)
   show <andon-id>          show a specific andon by id
   answer <andon-id> <action>  post answer, remove label, call resume hook
+  note <andon-id> --key <key> --value <value>  record a note on an open andon (no label change)
 """
 
 _LABELS_USAGE = """\
@@ -23,7 +24,9 @@ subcommands:
 
 
 def _cmd_andon(argv: list[str]) -> int:
-    from issuesmith.andon import answer, list_open, to_comment
+    import json
+
+    from issuesmith.andon import answer, list_open, list_open_records, note, to_comment
 
     if not argv:
         print(_ANDON_USAGE, end="", file=sys.stderr)
@@ -36,19 +39,28 @@ def _cmd_andon(argv: list[str]) -> int:
 
     if sub == "list":
         show_all = "--all" in rest
+        as_json = "--json" in rest
         from ghdag.forge import get_forge
         client = get_forge()
+
+        def _sort_key(kind: str, step: str) -> int:
+            if kind == "decision":
+                return 0
+            if kind == "broken":
+                return 1
+            if kind == "blocked" and step != "observe":
+                return 2
+            return 3
+
+        if as_json:
+            records = list_open_records(client)
+            if not show_all:
+                records = sorted(records, key=lambda r: _sort_key(r["kind"], r["step"]))
+            print(json.dumps(records, ensure_ascii=False))
+            return 0
         andons = list_open(client)
         if not show_all:
-            def _sort_key(a):
-                if a.kind == "decision":
-                    return 0
-                if a.kind == "broken":
-                    return 1
-                if a.kind == "blocked" and a.step != "observe":
-                    return 2
-                return 3
-            andons = sorted(andons, key=_sort_key)
+            andons = sorted(andons, key=lambda a: _sort_key(a.kind, a.step))
         if not andons:
             print("no open andons")
         for a in andons:
@@ -80,6 +92,40 @@ def _cmd_andon(argv: list[str]) -> int:
         client = get_forge()
         answer(client, andon_id, action)
         print(f"answered {andon_id} with: {action}")
+        return 0
+
+    if sub == "note":
+        note_id: str | None = None
+        opts: dict[str, str] = {}
+        i = 0
+        while i < len(rest):
+            arg = rest[i]
+            if arg in {"--key", "--value"}:
+                if i + 1 >= len(rest):
+                    note_id = None
+                    opts.clear()
+                    break
+                opts[arg[2:]] = rest[i + 1]
+                i += 2
+                continue
+            if note_id is None:
+                note_id = arg
+            i += 1
+        if note_id is None or "key" not in opts or "value" not in opts:
+            print("andon note: <andon-id> --key <key> --value <value> required", file=sys.stderr)
+            print(_ANDON_USAGE, end="", file=sys.stderr)
+            return 2
+        from ghdag.forge import get_forge
+        client = get_forge()
+        try:
+            note(client, note_id, opts["key"], opts["value"])
+        except KeyError:
+            print(f"andon not found: {note_id}", file=sys.stderr)
+            return 1
+        except ValueError as exc:
+            print(f"andon note: {exc}", file=sys.stderr)
+            return 2
+        print(f"noted {note_id}: {opts['key']}={opts['value']}")
         return 0
 
     print(f"andon: unknown subcommand: {sub}", file=sys.stderr)

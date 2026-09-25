@@ -287,3 +287,148 @@ def test_andon_list_all_flag_shows_unsorted():
     ids_in_output = [ln.split("\t")[0] for ln in lines]
     ids_original = [a.id for a in andons]
     assert ids_in_output == ids_original, "--all should preserve original order"
+
+
+# ---------------------------------------------------------------------------
+# andon list --json / andon note (nexus #3678)
+# ---------------------------------------------------------------------------
+
+def _record(andon, *, raised_at: str = "2026-09-26T00:00:00Z", notes: dict | None = None) -> dict:
+    from dataclasses import asdict
+    return {**asdict(andon), "raised_at": raised_at, "notes": notes or {}}
+
+
+def test_andon_list_json_empty_prints_brackets(capsys):
+    from issuesmith.__main__ import _cmd_andon
+
+    with patch("issuesmith.andon.list_open_records", return_value=[]), \
+         patch("ghdag.forge.get_forge", return_value=MagicMock()):
+        ret = _cmd_andon(["list", "--json"])
+
+    out = capsys.readouterr().out
+    assert ret == 0
+    assert out.strip() == "[]"
+    assert "no open andons" not in out
+
+
+def test_andon_list_json_outputs_records_sorted(capsys):
+    import json
+
+    from issuesmith.__main__ import _cmd_andon
+
+    records = [_record(a) for a in _make_andons_mixed()]
+    records[3]["notes"] = {"asked": "2026-09-26T00:00:00Z"}
+
+    with patch("issuesmith.andon.list_open_records", return_value=records), \
+         patch("ghdag.forge.get_forge", return_value=MagicMock()):
+        ret = _cmd_andon(["list", "--json"])
+
+    assert ret == 0
+    data = json.loads(capsys.readouterr().out)
+    assert isinstance(data, list) and len(data) == 5
+    for rec in data:
+        for key in ("id", "kind", "options", "default", "raised_at", "notes"):
+            assert key in rec
+    assert data[0]["kind"] == "decision"
+    assert data[0]["notes"] == {"asked": "2026-09-26T00:00:00Z"}
+    assert [r["id"] for r in data][-2:] == ["observe:1:orphan:uuid1:0", "observe:3:stall:develop:0"]
+
+
+def test_andon_list_json_all_keeps_order(capsys):
+    import json
+
+    from issuesmith.__main__ import _cmd_andon
+
+    records = [_record(a) for a in _make_andons_mixed()]
+    with patch("issuesmith.andon.list_open_records", return_value=records), \
+         patch("ghdag.forge.get_forge", return_value=MagicMock()):
+        ret = _cmd_andon(["list", "--all", "--json"])
+
+    assert ret == 0
+    assert [r["id"] for r in json.loads(capsys.readouterr().out)] == [r["id"] for r in records]
+
+
+def test_andon_note_success(capsys):
+    from issuesmith.__main__ import _cmd_andon
+
+    client = MagicMock()
+    with patch("issuesmith.andon.note") as mock_note, \
+         patch("ghdag.forge.get_forge", return_value=client):
+        ret = _cmd_andon(["note", "wf:1:cp2:0", "--key", "asked", "--value", "2026-09-26T00:00:00Z"])
+
+    assert ret == 0
+    mock_note.assert_called_once_with(client, "wf:1:cp2:0", "asked", "2026-09-26T00:00:00Z")
+    assert "noted wf:1:cp2:0: asked=2026-09-26T00:00:00Z" in capsys.readouterr().out
+
+
+def test_andon_note_missing_args_exit_2(capsys):
+    from issuesmith.__main__ import _cmd_andon
+
+    for argv in (
+        ["note", "wf:1:cp2:0", "--value", "v"],
+        ["note", "wf:1:cp2:0", "--key", "k"],
+        ["note", "--key", "k", "--value", "v"],
+        ["note", "wf:1:cp2:0", "--key"],
+    ):
+        with patch("issuesmith.andon.note") as mock_note, \
+             patch("ghdag.forge.get_forge", return_value=MagicMock()):
+            ret = _cmd_andon(argv)
+        assert ret == 2, argv
+        mock_note.assert_not_called()
+        assert "usage" in capsys.readouterr().err
+
+
+def test_andon_note_not_found_exit_1(capsys):
+    from issuesmith.__main__ import _cmd_andon
+
+    with patch("issuesmith.andon.note", side_effect=KeyError("Andon not found: wf:1:cp2:0")), \
+         patch("ghdag.forge.get_forge", return_value=MagicMock()):
+        ret = _cmd_andon(["note", "wf:1:cp2:0", "--key", "k", "--value", "v"])
+
+    assert ret == 1
+    assert "andon not found: wf:1:cp2:0" in capsys.readouterr().err
+
+
+def test_andon_usage_mentions_json_and_note():
+    from issuesmith.__main__ import _ANDON_USAGE
+
+    assert "--json" in _ANDON_USAGE
+    assert "note <andon-id>" in _ANDON_USAGE
+
+
+def test_andon_list_json_and_note_with_local_forge(tmp_path, monkeypatch, capsys):
+    import json
+
+    import yaml
+
+    from issuesmith.__main__ import _cmd_andon
+    from issuesmith.andon import Andon, raise_andon
+    from issuesmith.config import reset_config_cache
+
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(yaml.safe_dump({"repo": "example/repo"}), encoding="utf-8")
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    monkeypatch.setenv("GHDAG_FORGE", "local")
+    monkeypatch.setenv("GHDAG_FORGE_ROOT", str(tmp_path / "forge"))
+    reset_config_cache()
+    try:
+        from ghdag.forge import get_forge
+        client = get_forge()
+        number = client.issue_create("andon target", "body")
+        andon_id = f"wf:{number}:cp2:0"
+        raise_andon(
+            client,
+            Andon(id=andon_id, kind="decision", issue=number, step="cp2", summary="s",
+                  options=["resume", "reject"], default="resume"),
+            metrics_path=tmp_path / "m.jsonl",
+        )
+        assert _cmd_andon(["note", andon_id, "--key", "asked", "--value", "v1"]) == 0
+        capsys.readouterr()
+        assert _cmd_andon(["list", "--json"]) == 0
+        data = json.loads(capsys.readouterr().out)
+        assert [r["id"] for r in data] == [andon_id]
+        assert data[0]["notes"] == {"asked": "v1"}
+        assert data[0]["raised_at"]
+        assert _cmd_andon(["note", "wf:999:cp2:0", "--key", "k", "--value", "v"]) == 1
+    finally:
+        reset_config_cache()

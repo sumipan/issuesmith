@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterator, Protocol, runtime_checkable
@@ -88,6 +89,41 @@ def from_comment(text: str) -> Andon | None:
         return None
 
 
+_NOTE_MARKER = "<!-- andon-note -->"
+_NOTE_FENCE_OPEN = "```andon-note"
+_ANSWER_RE = re.compile(r"<!-- andon-answer -->\s*\nandon `([^`]+)` answered:")
+
+
+def _note_comment(andon_id: str, key: str, value: str) -> str:
+    data = {"id": andon_id, "key": key, "value": value}
+    body = yaml.dump(data, allow_unicode=True, sort_keys=False, default_flow_style=False)
+    return f"{_NOTE_MARKER}\n{_NOTE_FENCE_OPEN}\n{body}{_FENCE_CLOSE}\n"
+
+
+def _parse_note(text: str) -> tuple[str, str, str] | None:
+    """Return (id, key, value) from a note comment body; None if it is not one."""
+    if _NOTE_MARKER not in text:
+        return None
+    start = text.find(_NOTE_FENCE_OPEN + "\n")
+    if start == -1:
+        return None
+    inner_start = start + len(_NOTE_FENCE_OPEN) + 1
+    end = text.find(_FENCE_CLOSE, inner_start)
+    if end == -1:
+        return None
+    try:
+        # BaseLoader keeps every scalar a string (timestamps stay verbatim).
+        data = yaml.load(text[inner_start:end], Loader=yaml.BaseLoader)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    andon_id, key, value = data.get("id"), data.get("key"), data.get("value")
+    if not isinstance(andon_id, str) or not isinstance(key, str) or not key:
+        return None
+    return andon_id, key, value if isinstance(value, str) else ""
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -112,6 +148,41 @@ def _iter_open_andon_issues(client: Any) -> Iterator[dict]:
             if num not in seen:
                 seen.add(num)
                 yield issue
+
+
+@dataclass
+class _OpenEntry:
+    andon: Andon
+    raised_at: str
+    notes: dict[str, str] = field(default_factory=dict)
+
+
+def _iter_open_entries(client: Any) -> Iterator[_OpenEntry]:
+    """Yield unanswered andons of open andon Issues, fetching each Issue's comments once.
+
+    Comments are folded in posting order: an andon comment opens an entry, an
+    ``<!-- andon-answer -->`` comment closes every open entry with that id, and a note
+    comment sets ``notes[key]`` on the open entries with that id (last write wins).
+    """
+    for issue in _iter_open_andon_issues(client):
+        entries: list[_OpenEntry] = []
+        for comment in client.get_issue_comments(issue["number"]):
+            body = str(comment.get("body") or "")
+            parsed = from_comment(body)
+            if parsed is not None:
+                entries.append(_OpenEntry(parsed, str(comment.get("created_at") or "")))
+                continue
+            m = _ANSWER_RE.search(body)
+            if m is not None:
+                entries = [e for e in entries if e.andon.id != m.group(1)]
+                continue
+            note_data = _parse_note(body)
+            if note_data is not None:
+                note_id, key, value = note_data
+                for e in entries:
+                    if e.andon.id == note_id:
+                        e.notes[key] = value
+        yield from entries
 
 
 def _write_metrics(path: Path, event: str, andon_id: str) -> None:
@@ -248,13 +319,29 @@ def raise_andon(
 
 def list_open(client: Any) -> list[Andon]:
     """Return all unanswered Andons from open Issues' comments."""
-    result: list[Andon] = []
-    for issue in _iter_open_andon_issues(client):
-        for comment in client.get_issue_comments(issue["number"]):
-            parsed = from_comment(comment.get("body", ""))
-            if parsed is not None:
-                result.append(parsed)
-    return result
+    return [e.andon for e in _iter_open_entries(client)]
+
+
+def list_open_records(client: Any) -> list[dict[str, Any]]:
+    """Return list_open() as dicts with ``raised_at`` (andon comment created_at) and ``notes``."""
+    return [
+        {**asdict(e.andon), "raised_at": e.raised_at, "notes": dict(e.notes)}
+        for e in _iter_open_entries(client)
+    ]
+
+
+def note(client: Any, andon_id: str, key: str, value: str) -> None:
+    """Post a note comment (``key=value``) on the Issue of the open andon ``andon_id``.
+
+    Labels, metrics and resume are left untouched. Raises ValueError for an empty key
+    and KeyError when no unanswered andon has that id.
+    """
+    if not key:
+        raise ValueError("note key must not be empty")
+    target = next((e.andon for e in _iter_open_entries(client) if e.andon.id == andon_id), None)
+    if target is None:
+        raise KeyError(f"Andon not found: {andon_id}")
+    client.issue_comment(target.issue, _note_comment(andon_id, key, value))
 
 
 def answer(
