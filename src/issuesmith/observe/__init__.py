@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -31,6 +32,78 @@ if TYPE_CHECKING:
     from issuesmith.queue_store import QueueSnapshot
 
 logger = logging.getLogger(__name__)
+
+_ISSUE_FIELDS = ["labels", "number", "state"]
+
+
+@dataclass
+class ObserveSnapshot:
+    """Per-tick forge read cache shared by the API-backed detectors (#3768).
+
+    Each issue is fetched at most once per tick; every forge call is charged against
+    ``max_api_calls``. Once the budget is spent, further calls are skipped with one WARN.
+    """
+
+    issues: dict[int, dict] = field(default_factory=dict)
+    max_api_calls: int = 0
+    api_calls: int = 0
+    _attempted: set[int] = field(default_factory=set)
+    _warned: bool = False
+
+    def take_api_call(self, *, reserve: int = 0) -> bool:
+        """Charge one forge call; ``reserve`` keeps that many calls for later callers."""
+        if self.api_calls + reserve >= self.max_api_calls:
+            if not self._warned:
+                logger.warning(
+                    "observe: max_api_calls=%d reached; skipping remaining forge reads",
+                    self.max_api_calls,
+                )
+                self._warned = True
+            return False
+        self.api_calls += 1
+        return True
+
+    def get_issue(
+        self, client: "ForgePort", issue_num: int, *, reserve: int = 0,
+    ) -> dict | None:
+        """Return the cached issue, fetching it once if the budget allows."""
+        if issue_num not in self._attempted:
+            if not self.take_api_call(reserve=reserve):
+                return None
+            self._attempted.add(issue_num)
+            try:
+                self.issues[issue_num] = client.issue_get(issue_num, fields=_ISSUE_FIELDS)
+            except Exception:
+                pass
+        return self.issues.get(issue_num)
+
+
+def _observed_issues(snapshot: "QueueSnapshot") -> list[int]:
+    """in_flight issues first (sorted), then queued-only issues (sorted)."""
+    in_flight = {
+        entry["issue"]
+        for entry in snapshot.in_flight
+        if isinstance(entry, dict) and isinstance(entry.get("issue"), int)
+    }
+    queued = {req.issue for req in snapshot.active_requests} - in_flight
+    return sorted(in_flight) + sorted(queued)
+
+
+def _prefetch(
+    snapshot: "QueueSnapshot", client: "ForgePort", max_api_calls: int,
+) -> ObserveSnapshot:
+    """Fetch every observed issue once, leaving one call for the dag_terminated list_issues."""
+    obs_snapshot = ObserveSnapshot(max_api_calls=max_api_calls)
+    for issue_num in _observed_issues(snapshot):
+        obs_snapshot.get_issue(client, issue_num, reserve=1)
+    return obs_snapshot
+
+
+def _as_obs_snapshot(obs_snapshot: "ObserveSnapshot | int") -> ObserveSnapshot:
+    """Accept a bare ``max_api_calls`` budget (direct detector calls) as an empty cache."""
+    if isinstance(obs_snapshot, ObserveSnapshot):
+        return obs_snapshot
+    return ObserveSnapshot(max_api_calls=obs_snapshot)
 
 
 def observe(
@@ -57,8 +130,9 @@ def observe(
     events.extend(_detect_stall(snapshot, config, now, obs.stall_minutes))
     events.extend(_detect_task_timeout(snapshot, now, obs.task_timeout_minutes))
     events.extend(_detect_orphan_exec(snapshot, config, dag_states))
-    events.extend(_detect_dag_terminated(snapshot, client, config, obs.max_api_calls, dag_states))
-    events.extend(_detect_label_drift(snapshot, client, config, obs.max_api_calls))
+    obs_snapshot = _prefetch(snapshot, client, obs.max_api_calls)
+    events.extend(_detect_dag_terminated(snapshot, client, config, obs_snapshot, dag_states))
+    events.extend(_detect_label_drift(snapshot, client, config, obs_snapshot))
     events.extend(_detect_chain_halted(snapshot))
     events.extend(_detect_systemic_failure(
         snapshot,
@@ -200,11 +274,12 @@ def _detect_dag_terminated(
     snapshot: "QueueSnapshot",
     client: "ForgePort",
     config: "IssuesmithConfig",
-    max_api_calls: int,
+    obs_snapshot: "ObserveSnapshot | int",
     dag_states: "dict",
 ) -> list[ObserveEvent]:
     from issuesmith.observe.dag_state import DagState
 
+    obs_snapshot = _as_obs_snapshot(obs_snapshot)
     ns = config.label_namespace
 
     # Candidate issues: in_flight union impl-phase running open issues (same set as _find_untracked_running)
@@ -215,10 +290,13 @@ def _detect_dag_terminated(
         for entry in snapshot.in_flight
         if isinstance(entry, dict) and isinstance(entry.get("issue"), int)
     }
-    # list_issues and issue_get share the max_api_calls budget.
-    api_calls = 1
+    # list_issues and issue_get share the max_api_calls budget (obs_snapshot).
     try:
-        running_issues = client.list_issues(RUNNING_LABEL["develop"], state="open")
+        running_issues = (
+            client.list_issues(RUNNING_LABEL["develop"], state="open")
+            if obs_snapshot.take_api_call()
+            else []
+        )
         if isinstance(running_issues, list):
             for issue in running_issues:
                 if isinstance(issue, dict):
@@ -234,12 +312,8 @@ def _detect_dag_terminated(
         state = dag_states.get(issue_num)
         if not isinstance(state, DagState) or state.status != "failed":
             continue
-        if api_calls >= max_api_calls:
-            break
-        try:
-            issue_data = client.issue_get(issue_num, fields=["labels", "state"])
-            api_calls += 1
-        except Exception:
+        issue_data = obs_snapshot.get_issue(client, issue_num)
+        if issue_data is None:
             continue
 
         current_labels = {
@@ -269,7 +343,7 @@ def _detect_label_drift(
     snapshot: "QueueSnapshot",
     client: "ForgePort",
     config: "IssuesmithConfig",
-    max_api_calls: int,
+    obs_snapshot: "ObserveSnapshot | int",
 ) -> list[ObserveEvent]:
     from issuesmith.ops.labels import (
         ExecRecord,
@@ -281,26 +355,15 @@ def _detect_label_drift(
         project as labels_project,
     )
 
+    obs_snapshot = _as_obs_snapshot(obs_snapshot)
     events: list[ObserveEvent] = []
-    api_calls = 0
     ns = _ns()
-
-    all_issues: set[int] = set()
-    for entry in snapshot.in_flight:
-        if isinstance(entry, dict) and isinstance(entry.get("issue"), int):
-            all_issues.add(entry["issue"])
-    for req in snapshot.active_requests:
-        all_issues.add(req.issue)
 
     queued_issues = {req.issue for req in snapshot.active_requests}
 
-    for issue_num in sorted(all_issues):
-        if api_calls >= max_api_calls:
-            break
-        try:
-            issue = client.issue_get(issue_num, fields=["labels", "number", "state"])
-            api_calls += 1
-        except Exception:
+    for issue_num in sorted(_observed_issues(snapshot)):
+        issue = obs_snapshot.get_issue(client, issue_num)
+        if issue is None:
             continue
         if str(issue.get("state", "")).upper() != "OPEN":
             continue

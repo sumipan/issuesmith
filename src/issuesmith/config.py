@@ -233,7 +233,7 @@ class ObserveConfig:
     systemic_min_issues: int = 2
     systemic_window_minutes: int = 60
     forge_max_consecutive_errors: int = 3
-    max_api_calls: int = 20
+    max_api_calls: int = 8
 
 
 @dataclass(frozen=True)

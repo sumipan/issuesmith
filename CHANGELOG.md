@@ -20,6 +20,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- `observe()` cuts GitHub API calls: a per-tick `ObserveSnapshot` prefetches each in_flight /
+  queued Issue once (`issue_get` with `labels`/`number`/`state`), and `_detect_dag_terminated` /
+  `_detect_label_drift` read from it instead of fetching the same Issue again. All forge reads
+  share one `max_api_calls` budget (one call reserved for the `develop-running` listing); when it
+  is exhausted the remaining reads are skipped with a single WARN. No `/labels` or comments
+  endpoints are called during observation. `ObserveConfig.max_api_calls` default 20 → 8.
+  in_flight 3 with failed DAGs: 7 → 4 calls (#3768)
+
 - `queue.dispatch_one` (tick) cuts GitHub API calls: Issue reads go through a tick-scoped
   cache (`_TickCachedForge`) so each Issue is fetched once per tick with the union of needed
   fields, and every `issues?state=open` list request (including the milestone
