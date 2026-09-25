@@ -13,7 +13,9 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
+import time
 from pathlib import Path
 
 from ghdag.workflow.gates import Violation
@@ -341,6 +343,66 @@ def derive_test_allow_paths(
     return derived
 
 
+def _mapped_test_paths(root: Path, changed: list[str]) -> list[str]:
+    """Return existing test files that map to changed sources (tests/**/test_<stem>*.py).
+
+    Changed files under tests/ are not mapped on their own: a failure there may sit next
+    to preexisting failures, and only the full run reports those (non-blocking) and every
+    new failure. They are still picked up when a changed source maps to them.
+    """
+    mapped: set[str] = set()
+    for path in changed:
+        p = Path(path)
+        if p.suffix != ".py" or path.startswith("tests/"):
+            continue
+        for hit in root.glob(f"tests/**/test_{p.stem}*.py"):
+            mapped.add(hit.relative_to(root).as_posix())
+    return sorted(m for m in mapped if (root / m).is_file())
+
+
+# rc of a pytest killed by SIGTERM/SIGKILL: negative from subprocess, 128+N via a shell.
+_INTERRUPTED_RC: frozenset[int] = frozenset({143, 137, -15, -9})
+_NO_TESTS_RC = 5
+_SUMMARY_RE = re.compile(r"\bin \d+(?:\.\d+)?s\b")
+
+
+def _log_run(mode: str, rc: int, elapsed: float) -> None:
+    print(f"[tests] {mode}: rc={rc} elapsed={elapsed:.2f}s", file=sys.stderr)
+
+
+def _log_durations(output: str) -> None:
+    """Echo the `slowest` section and the final summary line of pytest output to stderr."""
+    lines = output.splitlines()
+    section: list[str] = []
+    for i, line in enumerate(lines):
+        if "slowest" in line and line.startswith("="):
+            section.append(line)
+            for rest in lines[i + 1:]:
+                if rest.startswith("="):
+                    break
+                section.append(rest)
+            break
+    summary = next((ln for ln in reversed(lines) if _SUMMARY_RE.search(ln)), None)
+    if summary is not None:
+        section.append(summary)
+    if section:
+        print("\n".join(section), file=sys.stderr)
+
+
+def _interrupted(rc: int) -> Violation:
+    return Violation(
+        rule_id="tests.interrupted",
+        severity="fail",
+        message=(
+            f"pytest interrupted by external signal (rc={rc}, SIGTERM/SIGKILL);"
+            " not a test failure"
+        ),
+        location=None,
+        auto_fixable=False,
+        fix_hint="Rerun only; do not modify code",
+    )
+
+
 _SKIP_NAMES: frozenset[str] = frozenset({"skip", "skipif", "xfail", "skipTest"})
 
 
@@ -420,7 +482,9 @@ def check_derived_test_guard(
 class TestsGate:
     """Run pytest in the worktree with baseline comparison against `origin/<base_branch>`.
 
-    - Runs all tests (no -x) and collects all failure IDs.
+    - Runs tests mapped from changed files first (`-x`); new failures there skip the full run.
+    - Runs all tests (no -x) with `--durations` and collects all failure IDs.
+    - rc from SIGTERM/SIGKILL → `tests.interrupted` (rerun only, no code change).
     - Failures that also fail on `origin/<base_branch>` are non-blocking (preexisting).
     - rc=2 (collection error) or rc=1 with no parseable IDs → fail-safe blocking violation.
 
@@ -460,13 +524,39 @@ class TestsGate:
             return None
         return [i for i in ids if _func_id(i) not in baseline_failed]
 
+    def _run(self, mode: str, args: list[str]) -> tuple[int, str]:
+        started = time.monotonic()
+        rc, output = _run_pytest(self._root, args)
+        _log_run(mode, rc, time.monotonic() - started)
+        return rc, output
+
     def check(self, body: str, labels: list[str]) -> list[Violation]:
         self.derived_allow_paths = []
-        targets = [str(self._root / p) for p in self._test_paths]
-        rc, output = _run_pytest(self._root, targets)
+        try:
+            changed = changed_files(self._root, self._base)
+        except Exception:
+            changed = []
+        mapped = _mapped_test_paths(self._root, changed)
+        if mapped:
+            rc, output = self._run("mapped", [*mapped, "-x"])
+            # rc=5: nothing collected (helper-only file, all deselected); the full run decides.
+            if rc not in (0, _NO_TESTS_RC):
+                violations = self._judge(rc, output)
+                if violations:
+                    return violations
 
+        targets = [str(self._root / p) for p in self._test_paths]
+        rc, output = self._run("full", [*targets, "--durations=20", "--durations-min=1.0"])
+        _log_durations(output)
+        return self._judge(rc, output)
+
+    def _judge(self, rc: int, output: str) -> list[Violation]:
+        """Turn a pytest result into violations; [] when all failures are preexisting."""
         if rc == 0:
             return []
+
+        if rc in _INTERRUPTED_RC:
+            return [_interrupted(rc)]
 
         if rc not in (0, 1):
             # Collection errors stay blocking, but newly broken files still get derived.

@@ -480,7 +480,13 @@ def test_parallel_dispatch_respects_limit(tmp_path, monkeypatch, issuesmith_conf
     def worker():
         barrier.wait()
         results.append(
-            qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
+            qmod.dispatch_one(
+                now=now,
+                client=client,
+                store=store,
+                skip_seed=True,
+                call_llm=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")),
+            )
         )
 
     threads = [threading.Thread(target=worker) for _ in range(2)]
