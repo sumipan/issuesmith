@@ -404,6 +404,42 @@ def test_scope_size_defaults_when_section_absent(tmp_path, monkeypatch):
     )
 
 
+def test_scope_size_vocabulary_overrides(tmp_path, monkeypatch):
+    cfg = _load_with(
+        tmp_path,
+        monkeypatch,
+        {
+            "scope_size": {
+                "delete_words": ["Remove ", "drop"],
+                "new_words": ["create"],
+                "sub_plan_header": "| # | T | R | C | D |",
+                "no_deps_word": "-",
+            }
+        },
+    )
+    assert cfg.scope_size.delete_words == ("remove", "drop")
+    assert cfg.scope_size.new_words == ("create",)
+    assert cfg.scope_size.sub_plan_header == "| # | T | R | C | D |"
+    assert cfg.scope_size.no_deps_word == "-"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"delete_words": []},
+        {"delete_words": "delete"},
+        {"new_words": [1]},
+        {"sub_plan_header": ""},
+        {"no_deps_word": 3},
+    ],
+)
+def test_scope_size_vocabulary_rejects_invalid(tmp_path, monkeypatch, bad):
+    from issuesmith.config import ConfigError
+
+    with pytest.raises(ConfigError):
+        _load_with(tmp_path, monkeypatch, {"scope_size": bad})
+
+
 def test_scope_size_overrides(tmp_path, monkeypatch):
     cfg = _load_with(
         tmp_path,

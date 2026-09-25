@@ -198,6 +198,10 @@ the body is never rewritten.
 | `max_concerns` | `2` | Max distinct parent directories of counted files (integer >= 1, else `ConfigError`) |
 | `delete_with_new` | `false` | When `false`, deletion and creation in one Issue fail |
 | `exclude_prefixes` | `["tests/", "docs/", "README.md", "CHANGELOG.md", "pyproject.toml"]` | Path prefixes not counted (list of strings, else `ConfigError`) |
+| `delete_words` | `["delete"]` | Change-type cell substrings (case-insensitive) that mean deletion; hosts writing Issues in another language set their own words |
+| `new_words` | `["new", "add"]` | Change-type cell substrings that mean creation |
+| `sub_plan_header` | `\| # \| Title \| Target repo \| Content \| Depends on \|` | Header row of the sub-issue split plan in the fix_hint |
+| `no_deps_word` | `none` | Dependency cell of the split plan rows |
 
 Optional `observe.main_health` keys in `issuesmith.yaml` (base-branch health check, #3664).
 Without the section the feature is disabled:

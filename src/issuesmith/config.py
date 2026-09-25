@@ -232,6 +232,13 @@ class ScopeSizeConfig:
     exclude_prefixes: tuple[str, ...] = (
         "tests/", "docs/", "README.md", "CHANGELOG.md", "pyproject.toml",
     )
+    # Vocabulary of the host's Issue bodies (change-table kind column, sub-plan example).
+    # Defaults are English; a host that writes Issues in another language sets these
+    # in issuesmith.yaml (this package stays ASCII). Kind words are matched case-insensitively.
+    delete_words: tuple[str, ...] = ("delete",)
+    new_words: tuple[str, ...] = ("new", "add")
+    sub_plan_header: str = "| # | Title | Target repo | Content | Depends on |"
+    no_deps_word: str = "none"
 
 
 @dataclass(frozen=True)
@@ -648,12 +655,32 @@ def _build_scope_size(raw: Mapping[str, Any] | None) -> ScopeSizeConfig:
         if not isinstance(ex_raw, list) or not all(isinstance(x, str) for x in ex_raw):
             raise ConfigError("scope_size.exclude_prefixes must be a list of strings")
         exclude_prefixes = tuple(ex_raw)
+    words: dict[str, tuple[str, ...]] = {}
+    for key in ("delete_words", "new_words"):
+        value = raw.get(key, getattr(defaults, key))
+        if (
+            not isinstance(value, (list, tuple))
+            or not value
+            or not all(isinstance(x, str) and x.strip() for x in value)
+        ):
+            raise ConfigError(f"scope_size.{key} must be a non-empty list of strings")
+        words[key] = tuple(x.strip().lower() for x in value)
+    texts: dict[str, str] = {}
+    for key in ("sub_plan_header", "no_deps_word"):
+        value = raw.get(key, getattr(defaults, key))
+        if not isinstance(value, str) or not value.strip():
+            raise ConfigError(f"scope_size.{key} must be a non-empty string")
+        texts[key] = value.strip()
     return ScopeSizeConfig(
         enabled=bool(raw.get("enabled", defaults.enabled)),
         max_files=limits["max_files"],
         max_concerns=limits["max_concerns"],
         delete_with_new=bool(raw.get("delete_with_new", defaults.delete_with_new)),
         exclude_prefixes=exclude_prefixes,
+        delete_words=words["delete_words"],
+        new_words=words["new_words"],
+        sub_plan_header=texts["sub_plan_header"],
+        no_deps_word=texts["no_deps_word"],
     )
 
 

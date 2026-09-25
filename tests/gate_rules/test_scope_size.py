@@ -12,7 +12,6 @@ from issuesmith.config import reset_config_cache
 from issuesmith.gate_rules.scope_size import ScopeSizeRules, measure_size
 
 _FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
-_DEFAULT_EXCLUDE = ("tests/", "docs/", "README.md", "CHANGELOG.md", "pyproject.toml")
 _ALL_RULES = {
     "scope_size.too_many_files",
     "scope_size.too_many_concerns",
@@ -45,9 +44,25 @@ def _body(rows: list[tuple[str, str]]) -> str:
     )
 
 
+def _vocabulary() -> dict:
+    """scope_size vocabulary matching the fixtures' change types (host language)."""
+    return {
+        "delete_words": [_decode(_DELETE), "delete"],
+        "new_words": [_decode(_NEW), "new", "add"],
+    }
+
+
 def _write_config(tmp_path: Path, monkeypatch, extra: dict | None = None) -> None:
-    data: dict = {"repo": "sumipan/issuesmith", "sections": {"changed_files": "Changed Files"}}
-    data.update(extra or {})
+    data: dict = {
+        "repo": "sumipan/issuesmith",
+        "sections": {"changed_files": "Changed Files"},
+        "scope_size": _vocabulary(),
+    }
+    for key, value in (extra or {}).items():
+        if key == "scope_size":
+            data["scope_size"].update(value)
+        else:
+            data[key] = value
     cfg_path = tmp_path / "issuesmith.yaml"
     cfg_path.write_text(yaml.safe_dump(data), encoding="utf-8")
     monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
@@ -91,7 +106,7 @@ def test_original_fixture_messages():
 
 
 def test_original_fixture_measure():
-    measure = measure_size(_fixture("issue_3627_original.md"), _DEFAULT_EXCLUDE)
+    measure = measure_size(_fixture("issue_3627_original.md"))
     assert len(measure.files) == 10
     assert list(measure.concerns) == [
         "workflows",
@@ -154,7 +169,7 @@ def test_excluded_paths_are_not_counted():
     rows += [(f"tests/t{i}.py", _MODIFY) for i in range(10)]
     body = _body(rows)
     assert ScopeSizeRules().check(body, []) == []
-    measure = measure_size(body, _DEFAULT_EXCLUDE)
+    measure = measure_size(body)
     assert measure.files == ("src/a/x.py",)
     assert measure.kinds == frozenset({"delete"})
 
@@ -166,7 +181,7 @@ def test_delete_with_new_detected_outside_excludes():
 
 def test_english_change_types_are_normalized():
     rows = [("src/a/x.py", "Delete"), ("src/a/y.py", "Add"), ("src/a/z.py", "update")]
-    measure = measure_size(_body(rows), _DEFAULT_EXCLUDE)
+    measure = measure_size(_body(rows))
     assert measure.kinds == frozenset({"delete", "new", "modify"})
 
 
@@ -181,6 +196,34 @@ def test_body_without_change_table_passes():
 def test_disabled_config_skips_evaluation(tmp_path, monkeypatch):
     _write_config(tmp_path, monkeypatch, {"scope_size": {"enabled": False}})
     assert ScopeSizeRules().check(_fixture("issue_3627_original.md"), []) == []
+
+
+def test_default_vocabulary_is_english(tmp_path, monkeypatch):
+    """Without configured words only the English defaults are recognized."""
+    _write_config(tmp_path, monkeypatch, {"scope_size": {"delete_words": ["delete"], "new_words": ["new", "add"]}})
+    host_rows = [("src/a/x.py", _DELETE), ("src/a/y.py", _NEW)]
+    assert measure_size(_body(host_rows)).kinds == frozenset({"modify"})
+    english_rows = [("src/a/x.py", "Delete"), ("src/a/y.py", "Added")]
+    assert measure_size(_body(english_rows)).kinds == frozenset({"delete", "new"})
+
+
+def test_fix_hint_uses_configured_sub_plan_vocabulary(tmp_path, monkeypatch):
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {"scope_size": {"sub_plan_header": "| # | T | R | C | D |", "no_deps_word": "-"}},
+    )
+    rows = [("src/a/x.py", _MODIFY), ("src/b/x.py", _MODIFY), ("src/c/x.py", _MODIFY)]
+    (violation,) = ScopeSizeRules().check(_body(rows), [])
+    assert "| # | T | R | C | D |" in violation.fix_hint
+    assert "| 1 | src/a | sumipan/issuesmith | src/a/x.py | - |" in violation.fix_hint
+
+
+def test_fix_hint_default_vocabulary_is_ascii():
+    rows = [("src/a/x.py", _MODIFY), ("src/b/x.py", _MODIFY), ("src/c/x.py", _MODIFY)]
+    (violation,) = ScopeSizeRules().check(_body(rows), [])
+    assert "| # | Title | Target repo | Content | Depends on |" in violation.fix_hint
+    assert violation.fix_hint.endswith("| none |")
 
 
 def test_config_thresholds_are_honoured(tmp_path, monkeypatch):

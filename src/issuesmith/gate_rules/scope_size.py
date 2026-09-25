@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 from ghdag.workflow.gates import GATE_REGISTRY, Violation
 
-from issuesmith.config import get_config
+from issuesmith.config import ScopeSizeConfig, get_config
 from issuesmith.context_hook import parse_issue_metadata
 from issuesmith.contract import extract_change_table_rows
 
@@ -28,27 +28,21 @@ class SizeMeasure:
     kinds: frozenset[str]                  # subset of {"delete", "new", "modify"}
 
 
-# nexus writes the change table's kind column and the sub-plan table in Japanese.
-# This module stays ASCII (public repo rule), so those words are spelled as escapes.
-_KIND_DELETE_WORDS = ("delete", "\u524a\u9664")  # U+524A U+9664
-_KIND_NEW_WORDS = ("new", "add", "\u65b0\u898f")  # U+65B0 U+898F
-_SUB_PLAN_HEADER = (
-    "| # | \u30bf\u30a4\u30c8\u30eb | \u5bfe\u8c61\u30ea\u30dd\u30b8\u30c8\u30ea"
-    " | \u5185\u5bb9 | \u4f9d\u5b58 |"
-)  # "| # | title | target repo | content | depends on |"
-_NO_DEPS = "\u306a\u3057"  # U+306A U+3057 ("none")
+def _normalize_kind(change_type: str, cfg: ScopeSizeConfig) -> str:
+    """Map a change-table kind cell to ``delete`` / ``new`` / ``modify``.
 
-
-def _normalize_kind(change_type: str) -> str:
+    The kind vocabulary comes from ``scope_size.delete_words`` / ``new_words``
+    (English defaults; hosts writing Issues in another language configure theirs).
+    """
     lowered = change_type.lower()
-    if any(word in lowered for word in _KIND_DELETE_WORDS):
+    if any(word in lowered for word in cfg.delete_words):
         return "delete"
-    if any(word in lowered for word in _KIND_NEW_WORDS):
+    if any(word in lowered for word in cfg.new_words):
         return "new"
     return "modify"
 
 
-def _counted_rows(body: str, exclude_prefixes: tuple[str, ...]) -> list[tuple[str, str]]:
+def _counted_rows(body: str, cfg: ScopeSizeConfig) -> list[tuple[str, str]]:
     """Return ``(path, kind)`` for counted rows, deduplicated by ``(repo, path)``."""
     seen: set[tuple[str, str]] = set()
     rows: list[tuple[str, str]] = []
@@ -56,14 +50,15 @@ def _counted_rows(body: str, exclude_prefixes: tuple[str, ...]) -> list[tuple[st
         if (repo, path) in seen:
             continue
         seen.add((repo, path))
-        if path.startswith(exclude_prefixes):
+        if path.startswith(cfg.exclude_prefixes):
             continue
-        rows.append((path, _normalize_kind(change_type)))
+        rows.append((path, _normalize_kind(change_type, cfg)))
     return rows
 
 
-def measure_size(body: str, exclude_prefixes: tuple[str, ...]) -> SizeMeasure:
-    rows = _counted_rows(body, exclude_prefixes)
+def measure_size(body: str, cfg: ScopeSizeConfig | None = None) -> SizeMeasure:
+    cfg = cfg or get_config().scope_size
+    rows = _counted_rows(body, cfg)
     concerns: dict[str, list[str]] = {}
     for path, _ in rows:
         concerns.setdefault(posixpath.dirname(path) or ".", []).append(path)
@@ -74,7 +69,7 @@ def measure_size(body: str, exclude_prefixes: tuple[str, ...]) -> SizeMeasure:
     )
 
 
-def _fix_hint(body: str, measure: SizeMeasure) -> str:
+def _fix_hint(body: str, measure: SizeMeasure, cfg: ScopeSizeConfig) -> str:
     sections = get_config().sections
     try:
         target_repo = str(parse_issue_metadata(body).get("target_repo") or "").strip()
@@ -84,11 +79,13 @@ def _fix_hint(body: str, measure: SizeMeasure) -> str:
         f"Add `## {sections['milestone']}` > `### {sections['sub_plan']}` to the body and "
         "split the work into one sub-issue per concern (parent directory). Example:",
         "",
-        _SUB_PLAN_HEADER,
+        cfg.sub_plan_header,
         "|---|---|---|---|---|",
     ]
     for i, (concern, paths) in enumerate(measure.concerns.items(), start=1):
-        lines.append(f"| {i} | {concern} | {target_repo} | {', '.join(paths)} | {_NO_DEPS} |")
+        lines.append(
+            f"| {i} | {concern} | {target_repo} | {', '.join(paths)} | {cfg.no_deps_word} |"
+        )
     return "\n".join(lines)
 
 
@@ -102,9 +99,9 @@ class ScopeSizeRules:
         if not extract_change_table_rows(body):
             return []
 
-        rows = _counted_rows(body, cfg.exclude_prefixes)
-        measure = measure_size(body, cfg.exclude_prefixes)
-        fix_hint = _fix_hint(body, measure)
+        rows = _counted_rows(body, cfg)
+        measure = measure_size(body, cfg)
+        fix_hint = _fix_hint(body, measure, cfg)
 
         def _violation(rule_id: str, message: str) -> Violation:
             return Violation(
