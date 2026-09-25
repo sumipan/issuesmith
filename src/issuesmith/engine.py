@@ -1069,9 +1069,11 @@ def _run_pre_gate_phase(
     if not pre_gates:
         return None
 
-    body = context.get("issue_body", "")
-    labels_raw = context.get("issue_labels", "")
-    labels = [lbl.strip() for lbl in labels_raw.split(",") if lbl.strip()] if labels_raw else []
+    # run-guarded callers (p1-role-dispatch) pass issue_number but not issue_body;
+    # fetch from forge so issue gates such as scope_breadth see the real body.
+    from issuesmith.ops.dispatch import fetch_issue_inputs
+
+    body, labels = fetch_issue_inputs(context)
     inp = ContractInput(body=body, labels=labels)
 
     result = evaluate_requires(pre_gates, body, labels)
@@ -1219,6 +1221,7 @@ def _run_guarded_with_requires(
         if emit_status:
             print(f"PIPELINE_STATUS: {emit_status}")
         return 0
+    print(f"PIPELINE_STATUS: {failure_status}")
     return post_rc
 
 

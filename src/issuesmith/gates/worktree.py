@@ -66,15 +66,17 @@ def changed_files(worktree_path: Path, base_branch: str) -> list[str]:
 class LintGate:
     """Run ruff check on changed .py files in the worktree; fix via ruff --fix."""
 
-    def __init__(self, worktree_path: Path, allow_paths: list[str]) -> None:
+    def __init__(
+        self, worktree_path: Path, allow_paths: list[str], base_branch: str = "main"
+    ) -> None:
         self._root = worktree_path
         self._paths = allow_paths
+        self._base_branch = base_branch
 
     def _targets(self) -> list[str]:
         """Return .py files from changed_files (not allow_paths globs)."""
         try:
-            base_branch = "main"
-            files = changed_files(self._root, base_branch)
+            files = changed_files(self._root, self._base_branch)
         except Exception:
             files = [p for p in self._paths if (self._root / p).exists()]
         return [str(self._root / f) for f in files if f.endswith(".py")]
@@ -311,14 +313,16 @@ class ExternalLeakGate:
         r"sk-[A-Za-z0-9]{48}",
     )
 
-    def __init__(self, worktree_path: Path, allow_paths: list[str]) -> None:
+    def __init__(
+        self, worktree_path: Path, allow_paths: list[str], base_branch: str = "main"
+    ) -> None:
         self._root = worktree_path
         self._paths = allow_paths
+        self._base_branch = base_branch
 
     def check(self, body: str, labels: list[str]) -> list[Violation]:
         try:
-            base_branch = "main"
-            files_to_check = changed_files(self._root, base_branch)
+            files_to_check = changed_files(self._root, self._base_branch)
         except Exception:
             files_to_check = [p for p in self._paths if (self._root / p).exists()]
         violations = []
@@ -401,7 +405,7 @@ class BaseFreshnessGate:
 
 
 def _build_lint(worktree_path: Path, allow_paths: list[str], base_branch: str) -> LintGate:
-    return LintGate(worktree_path, allow_paths)
+    return LintGate(worktree_path, allow_paths, base_branch)
 
 
 def _build_tests(worktree_path: Path, allow_paths: list[str], base_branch: str) -> TestsGate:
@@ -411,7 +415,7 @@ def _build_tests(worktree_path: Path, allow_paths: list[str], base_branch: str) 
 def _build_external_leak(
     worktree_path: Path, allow_paths: list[str], base_branch: str
 ) -> ExternalLeakGate:
-    return ExternalLeakGate(worktree_path, allow_paths)
+    return ExternalLeakGate(worktree_path, allow_paths, base_branch)
 
 
 def _build_base_freshness(

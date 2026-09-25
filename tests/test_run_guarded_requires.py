@@ -219,6 +219,7 @@ def test_run_guarded_with_requires_step_post_fail_no_impl_done(capsys, fresh_rep
     assert rc == 1
     out = capsys.readouterr().out
     assert "PIPELINE_STATUS: IMPL_DONE" not in out
+    assert "PIPELINE_STATUS: IMPL_FAILED" in out
 
 
 # ---------------------------------------------------------------------------
@@ -315,7 +316,10 @@ def test_scope_breadth_blocks_llm(capsys, fresh_repo: Path):
             with patch(
                 "issuesmith.engine._build_pre_gates",
                 return_value={"scope_breadth": scope_gate},
-            ):
+            ), patch(
+                "issuesmith.ops.dispatch._fetch_fresh_issue_body",
+                return_value="FORGE_BODY",
+            ), patch("issuesmith.ops.dispatch._get_issue_labels", return_value=[]):
                 with patch("issuesmith.engine.get_forge") as mock_forge:
                     mock_forge.return_value = MagicMock()
                     with patch("issuesmith.engine._raise_andon") as mock_andon:
@@ -331,6 +335,8 @@ def test_scope_breadth_blocks_llm(capsys, fresh_repo: Path):
 
     assert len(execute_called) == 0, "LLM should NOT be called when scope_breadth fails"
     assert rc == 1
+    # The pre phase evaluates the body fetched from the forge, not the (absent) variable.
+    assert scope_gate.check.call_args[0][0] == "FORGE_BODY"
     mock_andon.assert_called_once()
     andon_arg = mock_andon.call_args[0][1]
     assert andon_arg.kind == "decision"
@@ -392,7 +398,9 @@ def test_base_freshness_fixed_before_llm(capsys, fresh_repo: Path):
                 with patch(
                     "issuesmith.engine._build_pre_gates",
                     return_value={"base_freshness": FakeFreshnessGate()},
-                ):
+                ), patch(
+                    "issuesmith.ops.dispatch._fetch_fresh_issue_body", return_value=""
+                ), patch("issuesmith.ops.dispatch._get_issue_labels", return_value=[]):
                     rc = run_guarded(
                         "implementation",
                         "fake.md",

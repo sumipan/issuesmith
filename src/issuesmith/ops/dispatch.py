@@ -370,6 +370,11 @@ def _fetch_fresh_issue_body(context: dict[str, str]) -> str:
         return context.get("issue_body", "")
 
 
+def fetch_issue_inputs(context: dict[str, str]) -> tuple[str, list[str]]:
+    """Return (fresh issue body, labels) for gate evaluation outside dispatch (#3663)."""
+    return _fetch_fresh_issue_body(context), _get_issue_labels(context)
+
+
 def _get_issue_labels(context: dict[str, str]) -> list[str]:
     """Return issue labels for requires evaluation (from context cache or forge)."""
     raw = context.get("issue_labels", "")
