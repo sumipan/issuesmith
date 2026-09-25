@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `publish` is idempotent after its own version bump: `_bump_commits_on_top` recognizes publish-made `chore: bump version to ...` commits at the top of `origin/<base>..HEAD`; the commit diff gate inspects the diff below them and `_maybe_bump_version` does not bump twice. `pr_list` failures (rate limit, network) return `PublishResult(status="PR_LIST_FAILED")` instead of a traceback. Re-running P3 after a failed PR lookup no longer fails with `P3_GATE_FAILED` on the bump commit.
 - Derived allow_paths for newly failing tests (#3756). `TestsGate(allow_paths=...)` sets
   `derived_allow_paths` to test files under `tests/` that pass on base, fail on the branch and
   reference a changed file (path, module name, stem or public def/class in the diff);

@@ -203,6 +203,29 @@ def _run_version_bump(worktree: Path, base_branch: str) -> subprocess.CompletedP
     )
 
 
+_BUMP_SUBJECT_PREFIX = "chore: bump version to "
+
+
+def _bump_commits_on_top(worktree: Path, base_branch: str) -> int:
+    """Number of consecutive publish-made bump commits at the top of ``origin/<base>..HEAD``.
+
+    ``publish`` commits the bump, pushes, then looks up / creates the PR. When a later step
+    fails (rate limit on ``pr_list``, PR creation, M1) and P3 is re-run, HEAD already carries
+    the bump commit. Without this the diff gate rejects our own bump and a second run would
+    bump again (#3767 / #3794).
+    """
+    log = _run_git(
+        worktree, "log", "--format=%s", f"origin/{base_branch}..HEAD", check=False
+    ).stdout.splitlines()
+    count = 0
+    for subject in log:
+        if subject.startswith(_BUMP_SUBJECT_PREFIX):
+            count += 1
+        else:
+            break
+    return count
+
+
 def _maybe_bump_version(
     worktree: Path,
     base_branch: str,
@@ -212,10 +235,14 @@ def _maybe_bump_version(
     """cross-repo かつ pyproject.toml があるときだけ決定論バンプを実行する.
 
     失敗時は PublishResult(status="BUMP_FAILED") を返す。成功・スキップ時は None。
+    既に HEAD が publish の bump commit なら再バンプしない（再実行の冪等性、#3794）。
     """
     if repo == issue_repo:
         return None
     if not (worktree / "pyproject.toml").is_file():
+        return None
+    if _bump_commits_on_top(worktree, base_branch) > 0:
+        print("version bump skipped: HEAD is already a bump commit")
         return None
 
     result = _run_version_bump(worktree, base_branch)
@@ -233,7 +260,10 @@ def _check_commit_diff_gates(worktree: Path, base_branch: str) -> PublishResult 
     三点ドット差分（merge-base 起点）を使う。二点ドットだと base が進んだだけで
     逆方向の version 差分が写り、偽陽性になる（#3221）。
     """
-    diff = _run_git(worktree, "diff", f"origin/{base_branch}...HEAD").stdout
+    # Our own bump commit(s) on top are not the LLM's doing: inspect the diff below them.
+    skip = _bump_commits_on_top(worktree, base_branch)
+    head = "HEAD" if skip == 0 else f"HEAD~{skip}"
+    diff = _run_git(worktree, "diff", f"origin/{base_branch}...{head}").stdout
     violations = check_version_line_in_diff(diff) + check_test_version_exact_assert(diff)
     if not violations:
         return None
@@ -449,7 +479,10 @@ def publish(
         return push_result
 
     client = get_forge(repo=repo)
-    existing = client.pr_list(head=branch, state="all", limit=1)
+    try:
+        existing = client.pr_list(head=branch, state="all", limit=1)
+    except Exception as exc:  # noqa: BLE001 - rate limit / network: report, do not crash (#3767)
+        return PublishResult(status="PR_LIST_FAILED", stderr=str(exc), exit_code=1)
     if existing:
         return PublishResult(status="OK", pr_url=existing[0].get("url", ""), exit_code=0)
 

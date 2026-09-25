@@ -45,7 +45,7 @@ def test_check_commit_diff_gates_rejects_exact_assert():
     mock_result.stdout = _EXACT_DIFF
     with patch("issuesmith.ops.publish._run_git", return_value=mock_result) as run_git:
         result = _check_commit_diff_gates(worktree, "main")
-    run_git.assert_called_once_with(worktree, "diff", "origin/main...HEAD")
+    run_git.assert_any_call(worktree, "diff", "origin/main...HEAD")
     assert result is not None
     assert result.status == "P3_GATE_FAILED"
     assert result.exit_code == 1
@@ -83,7 +83,7 @@ def test_check_commit_diff_gates_passes_when_only_base_advanced():
     mock_result.stdout = ""  # git diff origin/main...HEAD — measured: no diff
     with patch("issuesmith.ops.publish._run_git", return_value=mock_result) as run_git:
         assert _check_commit_diff_gates(worktree, "main") is None
-    run_git.assert_called_once_with(worktree, "diff", "origin/main...HEAD")
+    run_git.assert_any_call(worktree, "diff", "origin/main...HEAD")
 
 
 def test_two_dot_base_advanced_diff_would_fail_but_three_dot_empty_passes():
