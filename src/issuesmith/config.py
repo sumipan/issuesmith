@@ -222,6 +222,19 @@ class ScopeCouplingConfig:
 
 
 @dataclass(frozen=True)
+class ScopeSizeConfig:
+    """B1 Issue size gate (nexus #3665): limits read from the Issue's change table."""
+
+    enabled: bool = True
+    max_files: int = 8
+    max_concerns: int = 2
+    delete_with_new: bool = False
+    exclude_prefixes: tuple[str, ...] = (
+        "tests/", "docs/", "README.md", "CHANGELOG.md", "pyproject.toml",
+    )
+
+
+@dataclass(frozen=True)
 class DerivedAllowConfig:
     """Derived allow_paths for newly failing tests in the requires loop (#3756).
 
@@ -285,6 +298,7 @@ class IssuesmithConfig:
     forbidden_pr_paths: tuple[str, ...] = _DEFAULT_FORBIDDEN_PR_PATHS
     scope_gate: ScopeGateConfig = field(default_factory=ScopeGateConfig)
     scope_coupling: ScopeCouplingConfig = field(default_factory=ScopeCouplingConfig)
+    scope_size: ScopeSizeConfig = field(default_factory=ScopeSizeConfig)
     derived_allow: DerivedAllowConfig = field(default_factory=DerivedAllowConfig)
     terminal_labels: tuple[str, ...] = _DEFAULT_TERMINAL_LABELS
     observe: ObserveConfig = field(default_factory=ObserveConfig)
@@ -618,6 +632,31 @@ def _build_scope_coupling(raw: Mapping[str, Any] | None) -> ScopeCouplingConfig:
     return ScopeCouplingConfig(enabled=enabled, search_dirs=search_dirs)
 
 
+def _build_scope_size(raw: Mapping[str, Any] | None) -> ScopeSizeConfig:
+    defaults = ScopeSizeConfig()
+    if not raw:
+        return defaults
+    limits: dict[str, int] = {}
+    for key in ("max_files", "max_concerns"):
+        value = raw.get(key, getattr(defaults, key))
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ConfigError(f"scope_size.{key} must be an integer >= 1 (got {value!r})")
+        limits[key] = value
+    exclude_prefixes = defaults.exclude_prefixes
+    if "exclude_prefixes" in raw:
+        ex_raw = raw["exclude_prefixes"]
+        if not isinstance(ex_raw, list) or not all(isinstance(x, str) for x in ex_raw):
+            raise ConfigError("scope_size.exclude_prefixes must be a list of strings")
+        exclude_prefixes = tuple(ex_raw)
+    return ScopeSizeConfig(
+        enabled=bool(raw.get("enabled", defaults.enabled)),
+        max_files=limits["max_files"],
+        max_concerns=limits["max_concerns"],
+        delete_with_new=bool(raw.get("delete_with_new", defaults.delete_with_new)),
+        exclude_prefixes=exclude_prefixes,
+    )
+
+
 def _build_derived_allow(raw: Mapping[str, Any] | None) -> DerivedAllowConfig:
     if not raw:
         return DerivedAllowConfig()
@@ -714,6 +753,9 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     scope_coupling_raw = (
         data.get("scope_coupling") if isinstance(data.get("scope_coupling"), dict) else None
     )
+    scope_size_raw = (
+        data.get("scope_size") if isinstance(data.get("scope_size"), dict) else None
+    )
     derived_allow_raw = (
         data.get("derived_allow") if isinstance(data.get("derived_allow"), dict) else None
     )
@@ -741,6 +783,7 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         forbidden_pr_paths=_build_forbidden_pr_paths(data.get("forbidden_pr_paths")),
         scope_gate=_build_scope_gate(scope_gate_raw),
         scope_coupling=_build_scope_coupling(scope_coupling_raw),
+        scope_size=_build_scope_size(scope_size_raw),
         derived_allow=_build_derived_allow(derived_allow_raw),
         terminal_labels=_build_terminal_labels(data.get("terminal_labels")),
         observe=_build_observe(observe_raw, root.resolve()),

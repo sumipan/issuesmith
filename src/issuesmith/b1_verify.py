@@ -13,7 +13,15 @@ import sys
 
 from issuesmith.gate_rules import GATE_REGISTRY
 
-_GATES = ("cp1", "b1_ac_format", "b1_migration", "milestone_consistency", "scope_breadth", "scope_coupling")
+_GATES = (
+    "cp1",
+    "b1_ac_format",
+    "b1_migration",
+    "milestone_consistency",
+    "scope_breadth",
+    "scope_coupling",
+    "scope_size",
+)
 _EXCLUDED_RULE_IDS = frozenset({"cp1.intentional_hold"})
 
 

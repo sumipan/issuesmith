@@ -54,3 +54,30 @@ def test_format_report_shape():
 
 def test_format_report_empty():
     assert format_report([]) == "VERIFY_FAILED_CHECKS: (none)\n"
+
+
+def test_scope_size_violations_are_collected(tmp_path, monkeypatch):
+    """scope_size runs in B1 Verify: the #3627 original fixture is reported (nexus #3665)."""
+    import re
+    from pathlib import Path
+
+    import yaml
+
+    from issuesmith.config import reset_config_cache
+
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "sumipan/nexus", "scope_gate": {"enabled": False}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    raw = (
+        Path(__file__).resolve().parent / "fixtures" / "issue_3627_original.md"
+    ).read_text(encoding="utf-8")
+    body = re.sub(r"c([0-9A-F]{4})_?", lambda m: chr(int(m.group(1), 16)), raw)
+    try:
+        violations = collect_violations(body, [])
+    finally:
+        reset_config_cache()
+    assert any(v.rule_id.startswith("scope_size.") for v in violations)
