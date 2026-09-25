@@ -51,6 +51,30 @@ def get_section(body: str, heading: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _split_table_row(line: str) -> list[str]:
+    """Split a ``| a | b |`` row, ignoring ``|`` inside inline-code spans (#3481).
+
+    An unmatched backtick is literal (CommonMark), so it never opens a span.
+    """
+    cells: list[str] = []
+    current: list[str] = []
+    in_tick = False
+    for i, ch in enumerate(line):
+        if ch == "`" and (in_tick or "`" in line[i + 1 :]):
+            in_tick = not in_tick
+        if ch == "|" and not in_tick:
+            cells.append("".join(current).strip())
+            current = []
+        else:
+            current.append(ch)
+    cells.append("".join(current).strip())
+    if cells and not cells[0]:
+        cells = cells[1:]
+    if cells and not cells[-1]:
+        cells = cells[:-1]
+    return cells
+
+
 def parse_table_rows(section: str) -> list[list[str]]:
     """Parse markdown table rows (header included, separator excluded)."""
     rows: list[list[str]] = []
@@ -60,7 +84,7 @@ def parse_table_rows(section: str) -> list[list[str]]:
             continue
         if _TABLE_SEP_RE.match(stripped):
             continue
-        cells = [cell.strip() for cell in stripped.split("|")[1:-1]]
+        cells = _split_table_row(stripped)
         if cells:
             rows.append(cells)
     return rows
