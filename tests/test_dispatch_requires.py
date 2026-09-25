@@ -791,3 +791,57 @@ class TestDerivedAllowPaths:
             "Do not touch files outside allow_paths.\n"
             "- tests.pytest_failure: test violation"
         )
+
+
+class TestAutoFixRoundLimit:
+    """A gate that keeps failing after a successful fix() must not loop until the task timeout."""
+
+    def test_auto_fixable_violation_recurring_is_waived_after_limit(self, capsys):
+        from issuesmith.config import StepConfig
+        from issuesmith.ops.dispatch import _MAX_AUTO_FIX_ROUNDS, map_step_result
+        from issuesmith.steps.base import StepResult
+
+        cfg = StepConfig(module="issuesmith.steps.test", requires=("base_freshness",))
+        gate = MagicMock()
+        # behind_base every time: the base branch moves between evaluations
+        gate.check.side_effect = lambda body, labels: [_v(rule_id="base_freshness.behind_base", auto_fixable=True)]
+        gate.fix.side_effect = lambda inp: inp
+
+        with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"base_freshness": gate}):
+            with patch("issuesmith.ops.dispatch.get_forge"):
+                with patch("issuesmith.ops.dispatch._run_repair_step") as mock_repair:
+                    rc = map_step_result(
+                        StepResult(status="done", markers=["IMPL_DONE"]),
+                        step_id="p1",
+                        context=_make_ctx(),
+                        step_cfg=cfg,
+                    )
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert gate.fix.call_count == _MAX_AUTO_FIX_ROUNDS
+        assert "auto-fix round limit" in out and "base_freshness.behind_base" in out
+        assert "PIPELINE_STATUS: IMPL_DONE" in out
+        mock_repair.assert_not_called()
+
+    def test_gate_fix_raising_keeps_violation_and_does_not_recurse(self):
+        from issuesmith.config import StepConfig
+        from issuesmith.ops.dispatch import map_step_result
+        from issuesmith.steps.base import StepResult
+
+        cfg = StepConfig(module="issuesmith.steps.test", requires=("base_freshness",))
+        gate = MagicMock()
+        gate.check.side_effect = lambda body, labels: [_v(rule_id="base_freshness.behind_base", auto_fixable=True)]
+        gate.fix.side_effect = RuntimeError("rebase conflict")
+
+        with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"base_freshness": gate}):
+            with patch("issuesmith.ops.dispatch.get_forge"):
+                with patch("issuesmith.ops.dispatch._run_repair_step", return_value=1) as mock_repair:
+                    with patch("issuesmith.ops.dispatch._raise_andon"):
+                        rc = map_step_result(
+                            StepResult(status="done", markers=["IMPL_DONE"]),
+                            step_id="p1",
+                            context=_make_ctx(),
+                            step_cfg=cfg,
+                        )
+        assert rc != 0
+        assert gate.fix.call_count == 1
