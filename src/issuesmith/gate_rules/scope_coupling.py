@@ -52,6 +52,12 @@ _BACKTICK_IDENT_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]{3,})`")
 
 _DELETE_MOVE_KEYWORDS: tuple[str, ...] = ("削除", "移動", "リネーム", "delete", "move", "rename")
 
+# Keywords that mark removal/deprecation context in headings and table rows.
+_REMOVAL_KEYWORDS: tuple[str, ...] = ("削除", "撤去", "廃止", "delete", "remove")
+
+# Matches ${identifier} template variable syntax inside backticks.
+_BACKTICK_TEMPLATE_VAR_RE = re.compile(r"`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`")
+
 
 def _parse_allow_paths(metadata: dict) -> list[str]:
     raw = metadata.get("allow_paths")
@@ -100,6 +106,65 @@ def _in_allow_paths(file_path: str, patterns: list[str]) -> bool:
         if fnmatch.fnmatch(file_path, pat):
             return True
     return False
+
+
+def _removal_names(body: str) -> set[str]:
+    """Return backtick identifiers and template variable names from removal context.
+
+    Removal context is: table rows whose cells contain a removal keyword, or headings
+    whose text contains a removal keyword (the heading text and the body under it).
+    """
+    names: set[str] = set()
+
+    def _extract_from_text(text: str) -> None:
+        for m in _BACKTICK_IDENT_RE.finditer(text):
+            names.add(m.group(1))
+        for m in _BACKTICK_TEMPLATE_VAR_RE.finditer(text):
+            names.add(m.group(1))
+
+    lines = body.splitlines()
+    in_removal_section = False
+    current_section_level = 0
+    section_body_lines: list[str] = []
+
+    def _flush_section_body() -> None:
+        _extract_from_text("\n".join(section_body_lines))
+        section_body_lines.clear()
+
+    for line in lines:
+        # Table rows
+        if line.strip().startswith("|"):
+            row_lower = line.lower()
+            if any(kw in row_lower for kw in _REMOVAL_KEYWORDS):
+                _extract_from_text(line)
+            continue
+
+        # Heading detection
+        heading_match = re.match(r"^(#{2,4})\s+(.*)", line)
+        if heading_match:
+            if in_removal_section:
+                _flush_section_body()
+            level = len(heading_match.group(1))
+            heading_text = heading_match.group(2).lower()
+            if any(kw in heading_text for kw in _REMOVAL_KEYWORDS):
+                # The heading itself may name the target (e.g. "## `FOO` の廃止").
+                _extract_from_text(heading_match.group(2))
+                in_removal_section = True
+                current_section_level = level
+                section_body_lines.clear()
+            else:
+                # Close removal section when we hit same or higher level heading
+                if in_removal_section and level <= current_section_level:
+                    in_removal_section = False
+            continue
+
+        if in_removal_section:
+            section_body_lines.append(line)
+
+    if in_removal_section:
+        _flush_section_body()
+
+    return names
 
 
 def _extract_search_keys(
@@ -151,11 +216,18 @@ def _extract_search_keys(
             if _is_valid_key(base):
                 required.add(base)
 
+    # Identifiers appearing in removal-context (tables/headings): unconditionally required.
+    for name in _removal_names(body):
+        if _is_valid_key(name):
+            required.add(name)
+
     # Backtick-quoted identifiers with a def/class in the target repo: required only when the
     # definition is in a file this Issue changes (its public interface may change).
     for m in _BACKTICK_IDENT_RE.finditer(body):
         ident = m.group(1)
         if not _is_valid_key(ident):
+            continue
+        if ident in required:
             continue
         defined_in = _git_grep(root, f"def {ident}", "") + _git_grep(root, f"class {ident}", "")
         if not defined_in:
@@ -181,7 +253,8 @@ class ScopeCouplingRules:
         self.autofix_note = None
         self.autofix_new_allow_paths = None
 
-        if not get_config().scope_coupling.enabled:
+        cfg = get_config()
+        if not cfg.scope_coupling.enabled:
             return []
 
         try:
@@ -193,9 +266,26 @@ class ScopeCouplingRules:
         if not allow_paths:
             return []
 
-        root = resolve_scope_root(metadata, get_config())
+        root = resolve_scope_root(metadata, cfg)
         if root is None:
-            return []
+            target_repo = (metadata.get("target_repo") or "").strip()
+            external_dir = str(cfg.paths.external_dir)
+            return [
+                Violation(
+                    rule_id="scope_coupling.root_unavailable",
+                    severity="fail",
+                    message=(
+                        f"scope coupling cannot be measured: "
+                        f"no clone for '{target_repo}' under {external_dir}"
+                    ),
+                    location=None,
+                    auto_fixable=False,
+                    fix_hint=(
+                        "clone the target repo into .claude/external/<repo> "
+                        "(same layout P0 uses) and re-run the gate"
+                    ),
+                )
+            ]
 
         # scope_mode: internal — the Issue declares its public interface unchanged, so callers
         # and tests need no follow-up. P2 verifies the declaration (public symbol set == base).
@@ -206,12 +296,18 @@ class ScopeCouplingRules:
         if not required and not optional:
             return []
 
+        search_dirs = cfg.scope_coupling.search_dirs
+
         def _hits(keys: set[str]) -> tuple[set[str], set[str]]:
             tests: set[str] = set()
             srcs: set[str] = set()
             for key in sorted(keys):
-                tests.update(_git_grep(root, key, "tests"))
-                srcs.update(_git_grep(root, key, "src"))
+                for d in search_dirs:
+                    hits = _git_grep(root, key, d)
+                    if d == "tests":
+                        tests.update(hits)
+                    else:
+                        srcs.update(hits)
             return tests, srcs
 
         req_tests, req_srcs = _hits(required)
@@ -229,7 +325,7 @@ class ScopeCouplingRules:
             return []
 
         all_missing = missing_tests + missing_srcs
-        max_files = get_config().scope_gate.max_files
+        max_files = cfg.scope_gate.max_files
         merged = list(allow_paths)
         for f in all_missing:
             if f not in merged:

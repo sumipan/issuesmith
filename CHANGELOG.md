@@ -9,6 +9,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `ScopeCouplingConfig.search_dirs`: configurable list of directories to grep for callers
+  and tests (default `["tests", "src"]`). Set in `issuesmith.yaml` under `scope_coupling:
+  search_dirs: [tests, src, workflows, tools, scripts]` to catch references in workflow
+  templates, tool scripts, etc. (#3647)
+- `scope_coupling._removal_names`: backtick identifiers and `` `${template_var}` `` names
+  in removal-context table rows, removal section headings (heading text and body) are now unconditionally required search
+  keys, allowing the gate to catch references to constants, YAML keys, and dataclass fields
+  being removed (not just `def`/`class`-defined symbols) (#3647)
+
+### Changed
+
+- `scope_coupling` gate now returns `scope_coupling.root_unavailable` (severity `fail`,
+  `auto_fixable=False`) when the target repo clone is absent, instead of silently returning
+  an empty violation list. This aligns with `scope_breadth.root_unavailable` (#3647)
+
 - `andon.answer_if_open(client, andon_id, action)`: like `answer()` but silently skips
   when the andon is not found (already closed) and never calls `_call_resume_hook` (#3740)
 - `andon list --all`: show all open andons in original unsorted order (new flag); default

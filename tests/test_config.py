@@ -266,3 +266,82 @@ def test_scope_coupling_enabled_flag_loaded_from_yaml(tmp_path, monkeypatch):
     cfg_path.write_text(yaml.safe_dump({"repo": "example/repo"}), encoding="utf-8")
     reset_config_cache()
     assert load_config().scope_coupling.enabled is True
+
+
+def test_scope_coupling_search_dirs_default(tmp_path, monkeypatch):
+    """search_dirs absent -> default ("tests", "src")."""
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(yaml.safe_dump({"repo": "example/repo"}), encoding="utf-8")
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+
+    cfg = load_config()
+    assert cfg.scope_coupling.search_dirs == ("tests", "src")
+
+
+def test_scope_coupling_search_dirs_explicit(tmp_path, monkeypatch):
+    """search_dirs: [tests, src, workflows] -> ("tests", "src", "workflows")."""
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({
+            "repo": "example/repo",
+            "scope_coupling": {"search_dirs": ["tests", "src", "workflows"]},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+
+    cfg = load_config()
+    assert cfg.scope_coupling.search_dirs == ("tests", "src", "workflows")
+
+
+def test_scope_coupling_search_dirs_empty_list_raises(tmp_path, monkeypatch):
+    """search_dirs: [] -> ConfigError."""
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({
+            "repo": "example/repo",
+            "scope_coupling": {"search_dirs": []},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+
+    with pytest.raises(ConfigError, match="search_dirs"):
+        load_config()
+
+
+def test_scope_coupling_search_dirs_non_list_raises(tmp_path, monkeypatch):
+    """search_dirs: 'tests' (not a list) -> ConfigError."""
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({
+            "repo": "example/repo",
+            "scope_coupling": {"search_dirs": "tests"},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+
+    with pytest.raises(ConfigError, match="search_dirs"):
+        load_config()
+
+
+def test_scope_coupling_search_dirs_empty_string_element_raises(tmp_path, monkeypatch):
+    """search_dirs with an empty-string element -> ConfigError."""
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({
+            "repo": "example/repo",
+            "scope_coupling": {"search_dirs": ["tests", ""]},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+
+    with pytest.raises(ConfigError, match="search_dirs"):
+        load_config()
