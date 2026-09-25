@@ -330,13 +330,47 @@ def _handle_fail(
     return StepResult(exit_code=1, pipeline_status="CP2_FAILED")
 
 
+def _derived_allow_paths_from_p1_result(repo_root: Path, p1_result_filename: str) -> list[str]:
+    """Read the ``derived_allow_paths:`` block engine prints into the P1 result (#3756).
+
+    Missing file or block → [] (fail-closed: body allow_paths only).
+    """
+    if not p1_result_filename:
+        return []
+    path = repo_root / "jobs" / p1_result_filename
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    derived: list[str] = []
+    in_block = False
+    for line in lines:
+        if line.strip() == "derived_allow_paths:":
+            in_block = True
+            continue
+        if in_block:
+            stripped = line.strip()
+            if line.startswith("  - ") and stripped[2:].strip():
+                derived.append(stripped[2:].strip())
+                continue
+            in_block = False
+    return derived
+
+
 def _check_pr_scope(
     client: ForgePort,
     issue_number: int,
     body: str,
     pr_detail: dict | None,
+    *,
+    repo_root: Path | None = None,
+    p1_result_filename: str = "",
 ) -> StepResult | None:
-    """Run pr_diff_scope gate. Return a FAIL StepResult, or None to continue."""
+    """Run pr_diff_scope gate. Return a FAIL StepResult, or None to continue.
+
+    Test files recorded as derived_allow_paths in the P1 result are allowed too; the
+    derived test guard already ran in P1's requires loop on the same commits.
+    """
     if pr_detail is None:
         return None
     file_entries = pr_detail.get("files")
@@ -344,6 +378,9 @@ def _check_pr_scope(
     if not filenames:
         return None
     allow_paths = _allow_paths_from_body(body)
+    if allow_paths and repo_root is not None:
+        derived = _derived_allow_paths_from_p1_result(repo_root, p1_result_filename)
+        allow_paths += [p for p in derived if p not in allow_paths]
     violations = check_pr_diff_scope(
         filenames, allow_paths, file_entries=file_entries
     )
@@ -374,7 +411,10 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
         body = ""
 
     diff_lines, pr_detail = _load_pr_for_branch(client, repo, ctx.branch)
-    scope_fail = _check_pr_scope(client, issue_number, body, pr_detail)
+    scope_fail = _check_pr_scope(
+        client, issue_number, body, pr_detail,
+        repo_root=repo_root, p1_result_filename=ctx.p1_result_filename,
+    )
     if scope_fail is not None:
         return scope_fail
 

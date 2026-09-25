@@ -178,6 +178,12 @@ Optional `scope_coupling` keys in `issuesmith.yaml` (caller/test coupling check)
 | `enabled` | `true` | When `false`, skip coupling check entirely |
 | `search_dirs` | `["tests", "src"]` | Directories to grep for callers and tests. Hits from `tests` go to `tests_outside_allow_paths`; all others go to `callers_outside_allow_paths`. Example: `[tests, src, workflows, tools, scripts]` to cover workflow templates and helper scripts |
 
+Optional `derived_allow` keys in `issuesmith.yaml` (derived allow_paths for newly failing tests, #3756):
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `true` | When `false`, `TestsGate` never derives paths and `pr_scope` checks `allow_paths` only. Other keys raise `ConfigError` |
+
 When a body's change table row or section heading contains a removal keyword (`delete`, `remove`, `削除`, `撤去`, `廃止`), backtick identifiers and `` `${template_var}` `` names in that row, in the heading text, or in the section body under that heading are unconditionally treated as required search keys — even if they have no `def`/`class` definition in the changed files. This catches constants, YAML keys, and dataclass fields being removed. Bare (non-backticked) words are not extracted. Example:
 
 ```markdown
@@ -263,6 +269,30 @@ All gate ids usable in `steps.<id>.requires` in `issuesmith.yaml`. Issue gates e
 | `scope_breadth` | issue | gate_rules/scope_breadth.py |
 | `scope_coupling` | issue | gate_rules/scope_coupling.py |
 | `tests` | worktree | gates/worktree.py (TestsGate) |
+
+### Derived allow_paths for newly failing tests (#3756)
+
+In the `run-guarded --requires-step` loop, `TestsGate` computes `derived_allow_paths`: test files
+the repair step may edit even though they are outside `allow_paths`. A file qualifies only when
+all of the following hold (deterministic; see `gates.worktree.derive_test_allow_paths`):
+
+- it is under `tests/` and does not already match `allow_paths`;
+- it has a test that passes on `origin/<base>` but fails on the branch (collection errors
+  included), and the file exists on `origin/<base>`. No baseline → nothing is derived;
+- its text references a changed file: the path itself, the dotted module name of a changed
+  `src/**.py`, the file stem, or a public `def`/`class` name on a `+`/`-` diff line.
+
+`run_requires_loop` keeps the union for the generation in `context["derived_allow_paths"]`,
+`pr_scope` accepts those files, and the repair instruction lists them. On success
+`run-guarded` prints a `derived_allow_paths:` block before the `PIPELINE_STATUS:` line, and CP2
+reads it from `jobs/<p1_result_filename>` when checking the PR scope. The Issue body's
+`allow_paths` and the queue's overlap check are unchanged.
+
+Guard: `pr_scope` runs `check_derived_test_guard` on derived files. Fewer test functions or
+`assert` statements than on base (or a file that no longer parses) is
+`derived_allow.test_weakened`; more `skip` / `skipif` / `xfail` / `skipTest` references is
+`derived_allow.test_skipped`. Both are repairable failures that end in andon(decision) after
+`max_repairs`.
 
 ## Error Reference
 

@@ -568,3 +568,59 @@ def test_run_requires_loop_refetches_body():
     assert result is None
     # _fetch_fresh_issue_body was called (not the cached body)
     assert len(fetch_calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# #3756 AC-5: derived_allow_paths block is printed before PIPELINE_STATUS
+# ---------------------------------------------------------------------------
+
+
+def _run_guarded_with_loop(fake_loop, fresh_repo: Path) -> int:
+    from issuesmith.config import StepConfig
+    from issuesmith.engine import run_guarded
+
+    variables = [
+        "issue_number=42",
+        "base_branch=main",
+        f"worktree_path={fresh_repo}",
+        "allow_paths=- README.md",
+        "workflow_name=issuesmith",
+    ]
+    with patch("issuesmith.engine._run_emit_order", return_value=(0, "")):
+        with patch("issuesmith.ops.dispatch.run_requires_loop", side_effect=fake_loop):
+            with patch("issuesmith.ops.dispatch.resolve_step_config") as mock_resolve:
+                mock_resolve.return_value = StepConfig(
+                    module="", requires=("tests",), requires_declared=True
+                )
+                return run_guarded(
+                    "implementation",
+                    "fake.md",
+                    variables,
+                    success_statuses=["IMPL_DONE"],
+                    failure_status="IMPL_FAILED",
+                    emit_status="IMPL_DONE",
+                    requires_step="p1",
+                )
+
+
+def test_run_guarded_prints_derived_allow_paths_before_status(capsys, fresh_repo: Path):
+    def fake_loop(step_cfg, step_id, context, **kwargs):
+        context["derived_allow_paths"] = "tests/test_a.py\ntests/test_b.py"
+        return None
+
+    rc = _run_guarded_with_loop(fake_loop, fresh_repo)
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    block = "derived_allow_paths:\n  - tests/test_a.py\n  - tests/test_b.py\n"
+    assert block in out
+    assert out.index(block) < out.index("PIPELINE_STATUS: IMPL_DONE")
+
+
+def test_run_guarded_no_derived_block_when_empty(capsys, fresh_repo: Path):
+    rc = _run_guarded_with_loop(lambda *a, **k: None, fresh_repo)
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "derived_allow_paths" not in out
+    assert "PIPELINE_STATUS: IMPL_DONE" in out

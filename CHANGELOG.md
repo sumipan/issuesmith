@@ -9,6 +9,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Derived allow_paths for newly failing tests (#3756). `TestsGate(allow_paths=...)` sets
+  `derived_allow_paths` to test files under `tests/` that pass on base, fail on the branch and
+  reference a changed file (path, module name, stem or public def/class in the diff);
+  `run_requires_loop` keeps the union in `context["derived_allow_paths"]`, `PrScopeGate`
+  (`derived_allow_paths=` / `GateBuildContext.derived_allow_paths`) allows them behind
+  `check_derived_test_guard` (`derived_allow.test_weakened` / `derived_allow.test_skipped`),
+  the repair instruction lists them, `run-guarded` prints a `derived_allow_paths:` block before
+  `PIPELINE_STATUS:`, and CP2 accepts the files recorded in the P1 result. Disable with
+  `derived_allow: {enabled: false}`
 - GitHub API rate-limit brake (`api_brake:` in `issuesmith.yaml`, `ApiBreakConfig(enabled=False,
   min_remaining=800)`). `issuesmith.quota_gate` reads the latest `github_rate_limit` record that
   ghdag writes to `jobs/audit.jsonl`; while `remaining < min_remaining` and the reset time is

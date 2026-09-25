@@ -220,6 +220,16 @@ class ScopeCouplingConfig:
     search_dirs: tuple[str, ...] = ("tests", "src")
 
 
+@dataclass(frozen=True)
+class DerivedAllowConfig:
+    """Derived allow_paths for newly failing tests in the requires loop (#3756).
+
+    ``enabled: false`` restores the strict allow_paths-only behaviour.
+    """
+
+    enabled: bool = True
+
+
 _DEFAULT_TERMINAL_LABELS: tuple[str, ...] = ("issuesmith:merge-done", "bump:done")
 
 
@@ -263,6 +273,7 @@ class IssuesmithConfig:
     forbidden_pr_paths: tuple[str, ...] = _DEFAULT_FORBIDDEN_PR_PATHS
     scope_gate: ScopeGateConfig = field(default_factory=ScopeGateConfig)
     scope_coupling: ScopeCouplingConfig = field(default_factory=ScopeCouplingConfig)
+    derived_allow: DerivedAllowConfig = field(default_factory=DerivedAllowConfig)
     terminal_labels: tuple[str, ...] = _DEFAULT_TERMINAL_LABELS
     observe: ObserveConfig = field(default_factory=ObserveConfig)
     api_brake: ApiBreakConfig = field(default_factory=ApiBreakConfig)
@@ -595,6 +606,18 @@ def _build_scope_coupling(raw: Mapping[str, Any] | None) -> ScopeCouplingConfig:
     return ScopeCouplingConfig(enabled=enabled, search_dirs=search_dirs)
 
 
+def _build_derived_allow(raw: Mapping[str, Any] | None) -> DerivedAllowConfig:
+    if not raw:
+        return DerivedAllowConfig()
+    unknown = sorted(str(k) for k in raw if k != "enabled")
+    if unknown:
+        raise ConfigError(
+            f"derived_allow supports only 'enabled'; unknown keys: {unknown}"
+        )
+    enabled_raw = raw.get("enabled")
+    return DerivedAllowConfig(enabled=True if enabled_raw is None else bool(enabled_raw))
+
+
 def _build_observe(raw: Mapping[str, Any] | None) -> ObserveConfig:
     defaults = ObserveConfig()
     if not raw:
@@ -648,6 +671,9 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     scope_coupling_raw = (
         data.get("scope_coupling") if isinstance(data.get("scope_coupling"), dict) else None
     )
+    derived_allow_raw = (
+        data.get("derived_allow") if isinstance(data.get("derived_allow"), dict) else None
+    )
     observe_raw = data.get("observe") if isinstance(data.get("observe"), dict) else None
     api_brake_raw = (
         data.get("api_brake") if isinstance(data.get("api_brake"), dict) else None
@@ -672,6 +698,7 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         forbidden_pr_paths=_build_forbidden_pr_paths(data.get("forbidden_pr_paths")),
         scope_gate=_build_scope_gate(scope_gate_raw),
         scope_coupling=_build_scope_coupling(scope_coupling_raw),
+        derived_allow=_build_derived_allow(derived_allow_raw),
         terminal_labels=_build_terminal_labels(data.get("terminal_labels")),
         observe=_build_observe(observe_raw),
         api_brake=_build_api_brake(api_brake_raw),

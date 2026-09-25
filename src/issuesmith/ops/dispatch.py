@@ -293,6 +293,24 @@ def map_step_result(
 # ---------------------------------------------------------------------------
 
 
+def _derived_allow_paths(context: dict[str, str]) -> list[str]:
+    """Return derived allow_paths (#3756) stored newline-separated in context."""
+    raw = context.get("derived_allow_paths", "")
+    return [p.strip() for p in raw.splitlines() if p.strip()]
+
+
+def _merge_derived_allow_paths(context: dict[str, str], gates: dict[str, object]) -> None:
+    """Union TestsGate.derived_allow_paths into context in place (kept for the generation)."""
+    from issuesmith.gates.worktree import TestsGate
+
+    merged = set(_derived_allow_paths(context))
+    for gate in gates.values():
+        if isinstance(gate, TestsGate):
+            merged.update(gate.derived_allow_paths)
+    if merged:
+        context["derived_allow_paths"] = "\n".join(sorted(merged))
+
+
 def _build_requires_gates(
     requires: tuple[str, ...],
     context: dict[str, str],
@@ -315,6 +333,7 @@ def _build_requires_gates(
         worktree_path=worktree_path,
         allow_paths=allow_paths,
         base_branch=base_branch,
+        derived_allow_paths=tuple(_derived_allow_paths(context)),
     )
 
     gates: dict[str, object] = {}
@@ -444,9 +463,17 @@ def _run_repair_step(
     """
     repair_ctx = dict(context)
     violation_lines = "\n".join(f"- {v.rule_id}: {v.message}" for v in violations)
+    derived = _derived_allow_paths(context)
+    if derived:
+        scope_line = (
+            "Do not touch files outside allow_paths and derived_allow_paths.\n"
+            "derived_allow_paths:\n" + "".join(f"- {p}\n" for p in derived)
+        )
+    else:
+        scope_line = "Do not touch files outside allow_paths.\n"
     repair_ctx["repair_violations"] = (
         "Fix only the violations below with the smallest possible diff. "
-        "Do not touch files outside allow_paths.\n" + violation_lines
+        + scope_line + violation_lines
     )
     repair_ctx["repair_step_origin"] = step_id
     repair_ctx["previous_commits"] = _get_previous_commits(context)
@@ -577,6 +604,8 @@ def run_requires_loop(
     result = evaluate_requires(
         gates, body, labels, preexisting_rule_ids=preexisting_ids
     )
+    # Shared with recursive calls and engine._run_guarded_with_requires (#3756).
+    _merge_derived_allow_paths(context, gates)
 
     issue_num = int(eval_context.get("issue_number") or "0")
     workflow = eval_context.get("workflow_name", "unknown")
