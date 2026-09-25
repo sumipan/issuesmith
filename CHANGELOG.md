@@ -9,6 +9,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- GitHub API rate-limit brake (`api_brake:` in `issuesmith.yaml`, `ApiBreakConfig(enabled=False,
+  min_remaining=800)`). `issuesmith.quota_gate` reads the latest `github_rate_limit` record that
+  ghdag writes to `jobs/audit.jsonl`; while `remaining < min_remaining` and the reset time is
+  still ahead, `dispatch_one` returns `github_api_low (remaining=…, reset=HH:MM)` before any
+  forge call, and `observe()` runs a reduced, API-free mode (`dag_terminated` for in_flight
+  Issues and `orphan_exec` only). `GitHubApiLowEvent` / `GitHubApiRecoveredEvent` are emitted
+  once per state change (flag kept in quota-gate.json `resources.github_api_notified`) and map
+  to notify-only andons (no halt). Disabled by default (#3769)
 - `ScopeCouplingConfig.search_dirs`: configurable list of directories to grep for callers
   and tests (default `["tests", "src"]`). Set in `issuesmith.yaml` under `scope_coupling:
   search_dirs: [tests, src, workflows, tools, scripts]` to catch references in workflow

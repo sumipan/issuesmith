@@ -1097,6 +1097,22 @@ def ensure_seeds_enqueued(store: QueueStore, *, seed_path: Path | None = None, n
     return count
 
 
+def _github_api_brake_reason(now: datetime) -> str:
+    """Return a skip reason when the GitHub API budget is below api_brake (#3769), else ''."""
+    from issuesmith.config import ApiBreakConfig
+    from issuesmith.quota_gate import is_github_api_low, read_github_api_state
+
+    cfg = get_config()
+    brake = getattr(cfg, "api_brake", None) or ApiBreakConfig()
+    if not brake.enabled:
+        return ""
+    state = read_github_api_state(cfg.paths.exec_jsonl.parent / "audit.jsonl")
+    if state is None or not is_github_api_low(state, brake.min_remaining, now):
+        return ""
+    reset_str = state.reset_at.astimezone(now.tzinfo).strftime("%H:%M")
+    return f"github_api_low (remaining={state.remaining}, reset={reset_str})"
+
+
 def dispatch_one(
     now: datetime | None = None,
     client: ForgePort | None = None,
@@ -1114,6 +1130,10 @@ def dispatch_one(
 
     if not skip_seed:
         ensure_seeds_enqueued(store, seed_path=seed_path, now=now)
+
+    brake = _github_api_brake_reason(now)
+    if brake:
+        return DispatchResult(dispatched=False, reason=brake)
 
     advance_milestone_chains(store, client, get_config())
 

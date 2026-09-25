@@ -237,6 +237,14 @@ class ObserveConfig:
 
 
 @dataclass(frozen=True)
+class ApiBreakConfig:
+    """GitHub API rate-limit brake (issuesmith.yaml api_brake: section, #3769)."""
+
+    enabled: bool = False
+    min_remaining: int = 800  # 16% of 5000/h: stop before the shared PAT budget runs out
+
+
+@dataclass(frozen=True)
 class IssuesmithConfig:
     repo: str
     label_namespace: str
@@ -257,6 +265,7 @@ class IssuesmithConfig:
     scope_coupling: ScopeCouplingConfig = field(default_factory=ScopeCouplingConfig)
     terminal_labels: tuple[str, ...] = _DEFAULT_TERMINAL_LABELS
     observe: ObserveConfig = field(default_factory=ObserveConfig)
+    api_brake: ApiBreakConfig = field(default_factory=ApiBreakConfig)
 
 
 _cached: IssuesmithConfig | None = None
@@ -602,6 +611,16 @@ def _build_observe(raw: Mapping[str, Any] | None) -> ObserveConfig:
     )
 
 
+def _build_api_brake(raw: Mapping[str, Any] | None) -> ApiBreakConfig:
+    defaults = ApiBreakConfig()
+    if not raw:
+        return defaults
+    return ApiBreakConfig(
+        enabled=bool(raw.get("enabled", defaults.enabled)),
+        min_remaining=int(raw.get("min_remaining", defaults.min_remaining)),
+    )
+
+
 def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     repo_raw = data.get("repo")
     if not repo_raw or not str(repo_raw).strip():
@@ -630,6 +649,9 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         data.get("scope_coupling") if isinstance(data.get("scope_coupling"), dict) else None
     )
     observe_raw = data.get("observe") if isinstance(data.get("observe"), dict) else None
+    api_brake_raw = (
+        data.get("api_brake") if isinstance(data.get("api_brake"), dict) else None
+    )
     return IssuesmithConfig(
         repo=repo,
         label_namespace=label_namespace,
@@ -652,4 +674,5 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         scope_coupling=_build_scope_coupling(scope_coupling_raw),
         terminal_labels=_build_terminal_labels(data.get("terminal_labels")),
         observe=_build_observe(observe_raw),
+        api_brake=_build_api_brake(api_brake_raw),
     )
