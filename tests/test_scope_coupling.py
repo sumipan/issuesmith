@@ -575,10 +575,10 @@ def _setup_git_repo(tmp_path: Path) -> Path:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
 
-    write("src/issuesmith/x_step.py", "# placeholder\n")
-    write("tests/test_x.py", "import x_step\n")
+    write("workflows/x-step.md", "# placeholder\n")
+    write("tests/test_x.py", "STEP = 'x-step'\n")
     write("workflows/y.md", "x-step is used here\n")
-    write("tools/z.py", "from x_step import run\n")
+    write("tools/z.py", "STEP = 'x-step'\n")
 
     subprocess.run(
         ["git", "-C", str(repo), "add", "."], check=True, capture_output=True,
@@ -595,11 +595,11 @@ _SEARCH_DIRS_BODY_TEMPLATE = (
     "target_repo: sumipan/issuesmith\n"
     "base_branch: main\n"
     "allow_paths:\n"
-    "  - src/issuesmith/x_step.py\n"
+    "  - workflows/x-step.md\n"
     "```\n\n"
     "## Changed Files\n\n"
     "| Repo | File | Change |\n"
-    "| sumipan/issuesmith | src/issuesmith/x_step.py | delete |\n"
+    "| sumipan/issuesmith | workflows/x-step.md | delete |\n"
 )
 
 
@@ -636,7 +636,8 @@ class TestSearchDirsRealGit:
         caller_v = [v for v in violations if v.rule_id == "scope_coupling.callers_outside_allow_paths"]
         assert caller_v, f"Expected callers violation, got: {violations}"
         msg = caller_v[0].message
-        assert "tools/z.py" in msg or "workflows/y.md" in msg
+        assert "tools/z.py" in msg
+        assert "workflows/y.md" in msg
 
     def test_default_search_dirs_misses_workflows_and_tools(self, tmp_path, monkeypatch):
         """AC-1b: default search_dirs=[tests,src] does not find workflows/y.md or tools/z.py."""
@@ -694,9 +695,9 @@ class TestSearchDirsRealGit:
         reset_config_cache()
 
         body_with_all = _SEARCH_DIRS_BODY_TEMPLATE.replace(
-            "  - src/issuesmith/x_step.py\n",
+            "  - workflows/x-step.md\n",
             (
-                "  - src/issuesmith/x_step.py\n"
+                "  - workflows/x-step.md\n"
                 "  - tests/test_x.py\n"
                 "  - workflows/y.md\n"
                 "  - tools/z.py\n"
@@ -826,9 +827,10 @@ class TestRemovalNames:
 
         test_v = [v for v in violations if v.rule_id == "scope_coupling.tests_outside_allow_paths"]
         caller_v = [v for v in violations if v.rule_id == "scope_coupling.callers_outside_allow_paths"]
-        assert test_v or caller_v, f"Expected violations, got: {violations}"
-        all_msgs = " ".join(v.message for v in violations)
-        assert "tests/test_foo.py" in all_msgs or "src/pkg/bar.py" in all_msgs
+        assert test_v, f"Expected tests violation, got: {violations}"
+        assert caller_v, f"Expected callers violation, got: {violations}"
+        assert "tests/test_foo.py" in test_v[0].message
+        assert "src/pkg/bar.py" in caller_v[0].message
 
     def test_removal_heading_template_var_required(self, tmp_path, monkeypatch):
         """AC-4b: ${old_result} in removal heading -> src/pkg/tmpl.py outside allow_paths."""
