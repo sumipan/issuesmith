@@ -2603,6 +2603,17 @@ class TestTickIssueCache:
         cache.issue_get(1, fields=["state"])
         assert client.issue_get_count(1) == 2
 
+    def test_remove_label_invalidates_issue(self):
+        from issuesmith import queue as qmod
+
+        client = _CountingClient(issues={1: {"state": "OPEN", "labels": []}})
+        client.remove_label = lambda number, label: client.calls.append(("remove_label", number))
+        cache = qmod._TickCachedForge(client)
+        cache.issue_get(1, fields=["state"])
+        cache.remove_label(1, "x")
+        cache.issue_get(1, fields=["state"])
+        assert client.issue_get_count(1) == 2
+
     def test_errors_are_memoized(self):
         from issuesmith import queue as qmod
 

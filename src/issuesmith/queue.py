@@ -304,7 +304,11 @@ def _serial_concurrency() -> bool:
 _TICK_ISSUE_FIELDS = ("state", "labels", "title", "body", "number", "milestone")
 _OPEN_ISSUES_PATH = "issues?state=open&per_page=100"
 _OPEN_ISSUES_QUERY = re.compile(r"^issues\?(?P<query>[^/]*)$")
-_ISSUE_WRITE_METHODS = frozenset({"issue_update", "issue_close", "issue_reopen", "issue_edit"})
+# ForgePort methods that mutate Issue state/labels or the open-issue set.
+_ISSUE_WRITE_METHODS = frozenset({
+    "issue_update", "issue_close", "reopen_issue", "remove_label", "update_label",
+    "issue_create",
+})
 
 
 class _TickCachedForge:
