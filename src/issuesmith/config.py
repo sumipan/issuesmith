@@ -251,6 +251,20 @@ class DerivedAllowConfig:
     enabled: bool = True
 
 
+@dataclass(frozen=True)
+class ExternalLeakConfig:
+    """Options of the ``external_leak`` worktree gate.
+
+    ``cjk_free_external_targets``: when true, added lines of a branch whose Issue
+    targets another repository (``target_repo`` differs from ``repo``) must not
+    contain CJK characters (literal or ``\\uXXXX`` escaped). Hosts that keep their
+    public repositories English-only enable this so P1's repair loop fixes the lines
+    instead of a later publish check stopping the pipeline.
+    """
+
+    cjk_free_external_targets: bool = False
+
+
 _DEFAULT_TERMINAL_LABELS: tuple[str, ...] = ("issuesmith:merge-done", "bump:done")
 
 
@@ -307,6 +321,7 @@ class IssuesmithConfig:
     scope_coupling: ScopeCouplingConfig = field(default_factory=ScopeCouplingConfig)
     scope_size: ScopeSizeConfig = field(default_factory=ScopeSizeConfig)
     derived_allow: DerivedAllowConfig = field(default_factory=DerivedAllowConfig)
+    external_leak: ExternalLeakConfig = field(default_factory=ExternalLeakConfig)
     terminal_labels: tuple[str, ...] = _DEFAULT_TERMINAL_LABELS
     observe: ObserveConfig = field(default_factory=ObserveConfig)
     api_brake: ApiBreakConfig = field(default_factory=ApiBreakConfig)
@@ -696,6 +711,17 @@ def _build_derived_allow(raw: Mapping[str, Any] | None) -> DerivedAllowConfig:
     return DerivedAllowConfig(enabled=True if enabled_raw is None else bool(enabled_raw))
 
 
+def _build_external_leak(raw: Mapping[str, Any] | None) -> ExternalLeakConfig:
+    if not raw:
+        return ExternalLeakConfig()
+    unknown = sorted(str(k) for k in raw if k != "cjk_free_external_targets")
+    if unknown:
+        raise ConfigError(
+            f"external_leak supports only 'cjk_free_external_targets'; unknown keys: {unknown}"
+        )
+    return ExternalLeakConfig(cjk_free_external_targets=bool(raw.get("cjk_free_external_targets")))
+
+
 def _build_main_health(raw: Any, root: Path) -> MainHealthConfig | None:
     if raw is None:
         return None
@@ -786,6 +812,9 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     derived_allow_raw = (
         data.get("derived_allow") if isinstance(data.get("derived_allow"), dict) else None
     )
+    external_leak_raw = (
+        data.get("external_leak") if isinstance(data.get("external_leak"), dict) else None
+    )
     observe_raw = data.get("observe") if isinstance(data.get("observe"), dict) else None
     api_brake_raw = (
         data.get("api_brake") if isinstance(data.get("api_brake"), dict) else None
@@ -812,6 +841,7 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         scope_coupling=_build_scope_coupling(scope_coupling_raw),
         scope_size=_build_scope_size(scope_size_raw),
         derived_allow=_build_derived_allow(derived_allow_raw),
+        external_leak=_build_external_leak(external_leak_raw),
         terminal_labels=_build_terminal_labels(data.get("terminal_labels")),
         observe=_build_observe(observe_raw, root.resolve()),
         api_brake=_build_api_brake(api_brake_raw),

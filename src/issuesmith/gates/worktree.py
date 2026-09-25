@@ -638,8 +638,103 @@ class TestsGate:
         return inp  # no deterministic fix for test failures
 
 
+# CJK detection for public-repository targets. Ranges are built from code points so
+# this module itself stays ASCII (the same rule it enforces).
+_CJK_RANGE_RE = re.compile(
+    "["
+    + chr(0x3000) + "-" + chr(0x30FF)
+    + chr(0x3400) + "-" + chr(0x9FFF)
+    + chr(0xF900) + "-" + chr(0xFAFF)
+    + chr(0xFF00) + "-" + chr(0xFFEF)
+    + chr(0xAC00) + "-" + chr(0xD7AF)
+    + "]"
+)
+_UNICODE_ESC_RE = re.compile(r"\\[uU]([0-9a-fA-F]{4,8})")
+_HUNK_HEADER_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+
+
+def line_has_cjk(line: str) -> bool:
+    """True when ``line`` contains CJK, literally or as a ``\\uXXXX`` escape."""
+    if _CJK_RANGE_RE.search(line):
+        return True
+
+    def _decode(m: re.Match[str]) -> str:
+        try:
+            return chr(int(m.group(1), 16))
+        except (ValueError, OverflowError):
+            return ""
+
+    return bool(_CJK_RANGE_RE.search(_UNICODE_ESC_RE.sub(_decode, line)))
+
+
+def cjk_added_lines(worktree_path: Path, base_branch: str) -> list[tuple[str, int, str]]:
+    """``(path, line_no, text)`` for lines added in ``origin/<base>...HEAD`` that contain CJK.
+
+    Only added lines are scanned so pre-existing CJK never blocks a branch.
+    Raises ``RuntimeError`` when git cannot produce the diff.
+    """
+    proc = subprocess.run(
+        [
+            "git", "-c", "core.quotePath=false", "diff", "-U0", "--no-color",
+            "--no-ext-diff", f"origin/{base_branch}...HEAD",
+        ],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        check=False, cwd=str(worktree_path),
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"git diff failed: {proc.stderr.strip()}")
+    hits: list[tuple[str, int, str]] = []
+    path: str | None = None
+    lineno = 0
+    in_header = False
+    for line in proc.stdout.splitlines():
+        if line.startswith("diff --git "):
+            in_header = True
+            path = None
+            continue
+        if in_header:
+            if line.startswith("+++ "):
+                target = line[4:]
+                path = None if target == "/dev/null" else target.removeprefix("b/")
+                continue
+            if not line.startswith("@@"):
+                continue
+            in_header = False
+        m = _HUNK_HEADER_RE.match(line)
+        if m:
+            lineno = int(m.group(1))
+            continue
+        if path is None or not line.startswith("+"):
+            continue
+        added = line[1:]
+        if line_has_cjk(added):
+            hits.append((path, lineno, added))
+        lineno += 1
+    return hits
+
+
+def is_external_target(body: str) -> bool:
+    """True when the Issue's ``target_repo`` names a repository other than the host."""
+    from issuesmith.config import get_config
+    from issuesmith.context_hook import parse_issue_metadata
+
+    try:
+        target_repo = str(parse_issue_metadata(body).get("target_repo") or "").strip()
+    except Exception:
+        return False
+    if not target_repo:
+        return False
+    return target_repo != str(get_config().repo or "").strip()
+
+
 class ExternalLeakGate:
-    """Check for accidental secrets or external references in changed files."""
+    """Check for accidental secrets or external references in changed files.
+
+    With ``external_leak.cjk_free_external_targets`` enabled, a branch for an Issue
+    whose ``target_repo`` is not the host repository must not add CJK lines
+    (``external_leak.cjk_added_line``, one violation per file, not auto-fixable:
+    the repair step rewrites the lines).
+    """
 
     _LEAK_PATTERNS: tuple[str, ...] = (
         r"ghp_[A-Za-z0-9]{36}",
@@ -679,6 +774,36 @@ class ExternalLeakGate:
                         fix_hint="Remove or redact the secret before proceeding",
                     ))
                     break
+        violations.extend(self._cjk_violations(body))
+        return violations
+
+    def _cjk_violations(self, body: str) -> list[Violation]:
+        from issuesmith.config import get_config
+
+        if not get_config().external_leak.cjk_free_external_targets:
+            return []
+        if not is_external_target(body):
+            return []
+        by_file: dict[str, list[tuple[int, str]]] = {}
+        for path, lineno, text in cjk_added_lines(self._root, self._base_branch):
+            by_file.setdefault(path, []).append((lineno, text))
+        violations: list[Violation] = []
+        for path, items in by_file.items():
+            lines = ", ".join(str(n) for n, _ in items[:10])
+            more = f" (+{len(items) - 10} more)" if len(items) > 10 else ""
+            sample = items[0][1].strip()[:80]
+            violations.append(Violation(
+                rule_id="external_leak.cjk_added_line",
+                severity="fail",
+                message=f"{path}: CJK in added line(s) {lines}{more}; e.g. line {items[0][0]}: {sample}",
+                location=path,
+                auto_fixable=False,
+                fix_hint=(
+                    "This target repository is English-only: rewrite added comments, "
+                    "docstrings, messages and docs in English; encode CJK test data as "
+                    "ASCII (cXXXX_) and never as \\uXXXX escapes"
+                ),
+            ))
         return violations
 
     def fix(self, inp: ContractInput) -> ContractInput:
@@ -798,6 +923,9 @@ __all__ = [
     "LintGate",
     "TestsGate",
     "ExternalLeakGate",
+    "line_has_cjk",
+    "cjk_added_lines",
+    "is_external_target",
     "BaseFreshnessGate",
     "WORKTREE_GATES",
     "_run_pytest",
