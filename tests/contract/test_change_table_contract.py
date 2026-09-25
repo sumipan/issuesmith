@@ -9,7 +9,11 @@ module feeds the same fixture to both and asserts they agree.
 
 from __future__ import annotations
 
-from issuesmith.contract import change_paths_for_repo, extract_change_table_rows
+from issuesmith.contract import (
+    change_paths_for_repo,
+    extract_change_table_rows,
+    parse_table_rows,
+)
 from issuesmith.gate_rules.b1_milestone_subdesign import B1MilestoneSubdesignRules
 from issuesmith.steps import sub1_create as sub1
 from tests.legacy_text import (
@@ -122,3 +126,50 @@ def test_parent_allow_paths_are_never_inherited() -> None:
         assert p not in head
     for p in _CHILD_PATHS:
         assert p in head
+
+
+# --- cell-internal pipes (#3481) -------------------------------------------------
+
+
+def test_pipe_inside_inline_code_does_not_split_cell() -> None:
+    table = (
+        "| # | scope | dep |\n"
+        "|---|---|---|\n"
+        "| 1 | add `andon list|show|answer` cmd | none |\n"
+    )
+    rows = parse_table_rows(table)
+    assert rows == [
+        ["#", "scope", "dep"],
+        ["1", "add `andon list|show|answer` cmd", "none"],
+    ]
+
+
+def test_table_without_cell_pipes_keeps_existing_behavior() -> None:
+    table = "| a | b | c |\n|---|:-:|---|\n| 1 |  | `x` |\n|  2  | y | z |\n"
+    assert parse_table_rows(table) == [["a", "b", "c"], ["1", "", "`x`"], ["2", "y", "z"]]
+
+
+def test_lone_backtick_cell_parses() -> None:
+    table = "| a | b |\n|---|---|\n| ` | x |\n"
+    rows = parse_table_rows(table)
+    assert rows[0] == ["a", "b"]
+    assert rows[1][0] == "`"
+
+
+def test_split_plan_with_cell_pipe_reads_dep_repo_scope() -> None:
+    from issuesmith.config import get_config
+
+    sec = get_config().sections
+    body = (
+        f"## {sec['milestone']}\n\n### {sec['sub_plan']}\n"
+        f"| # | {TITLE} | {TARGET_REPOSITORY} | {CONTENT} | {DEPENDENCY} |\n"
+        "|---|---|---|---|---|\n"
+        f"| 1 | andon | `sumipan/issuesmith` | add `andon list|show|answer` | {NONE} |\n"
+        "| 2 | wire | `sumipan/nexus` | use `a|b` | #1 |\n"
+    )
+    rows, has_repo = sub1._parse_split_plan(body, parent_target_repo="sumipan/nexus")
+    assert has_repo is True
+    assert [(r.row_num, r.repo, r.scope, r.dep_raw) for r in rows] == [
+        (1, "sumipan/issuesmith", "add `andon list|show|answer`", NONE),
+        (2, "sumipan/nexus", "use `a|b`", "#1"),
+    ]
