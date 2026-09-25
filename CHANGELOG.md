@@ -14,7 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   search_dirs: [tests, src, workflows, tools, scripts]` to catch references in workflow
   templates, tool scripts, etc. (#3647)
 - `scope_coupling._removal_names`: backtick identifiers and `` `${template_var}` `` names
-  in removal-context table rows and section headings are now unconditionally required search
+  in removal-context table rows, removal section headings (heading text and body) are now unconditionally required search
   keys, allowing the gate to catch references to constants, YAML keys, and dataclass fields
   being removed (not just `def`/`class`-defined symbols) (#3647)
 

@@ -111,8 +111,8 @@ def _in_allow_paths(file_path: str, patterns: list[str]) -> bool:
 def _removal_names(body: str) -> set[str]:
     """Return backtick identifiers and template variable names from removal context.
 
-    Removal context is: table rows whose cells contain a removal keyword, or body
-    paragraphs under headings whose text contains a removal keyword.
+    Removal context is: table rows whose cells contain a removal keyword, or headings
+    whose text contains a removal keyword (the heading text and the body under it).
     """
     names: set[str] = set()
 
@@ -147,6 +147,8 @@ def _removal_names(body: str) -> set[str]:
             level = len(heading_match.group(1))
             heading_text = heading_match.group(2).lower()
             if any(kw in heading_text for kw in _REMOVAL_KEYWORDS):
+                # The heading itself may name the target (e.g. "## `FOO` の廃止").
+                _extract_from_text(heading_match.group(2))
                 in_removal_section = True
                 current_section_level = level
                 section_body_lines.clear()

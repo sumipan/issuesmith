@@ -178,10 +178,10 @@ Optional `scope_coupling` keys in `issuesmith.yaml` (caller/test coupling check)
 | `enabled` | `true` | When `false`, skip coupling check entirely |
 | `search_dirs` | `["tests", "src"]` | Directories to grep for callers and tests. Hits from `tests` go to `tests_outside_allow_paths`; all others go to `callers_outside_allow_paths`. Example: `[tests, src, workflows, tools, scripts]` to cover workflow templates and helper scripts |
 
-When a body's change table or section heading contains a removal keyword (`delete`, `remove`, `削除`, `撤去`, `廃止`), backtick identifiers and `` `${template_var}` `` names in that context are unconditionally treated as required search keys — even if they have no `def`/`class` definition in the changed files. This catches constants, YAML keys, and dataclass fields being removed. Example:
+When a body's change table row or section heading contains a removal keyword (`delete`, `remove`, `削除`, `撤去`, `廃止`), backtick identifiers and `` `${template_var}` `` names in that row, in the heading text, or in the section body under that heading are unconditionally treated as required search keys — even if they have no `def`/`class` definition in the changed files. This catches constants, YAML keys, and dataclass fields being removed. Bare (non-backticked) words are not extracted. Example:
 
 ```markdown
-## Items to remove: MY_CONST
+## Items to remove: `MY_CONST`
 
 The `${old_step_result}` template variable is no longer used.
 ```

@@ -883,3 +883,34 @@ class TestRemovalNames:
         assert "src/pkg/baz.py" not in all_msgs, (
             f"BAZ_QUUX (no removal context) should not generate violation, got: {all_msgs}"
         )
+
+
+class TestRemovalNamesUnit:
+    """Unit tests for _removal_names on heading text itself."""
+
+    def test_backtick_ident_in_removal_heading_extracted(self):
+        from issuesmith.gate_rules.scope_coupling import _removal_names
+
+        body = "## `MY_CONST` の廃止\n\n本文に識別子は無い。\n"
+        assert "MY_CONST" in _removal_names(body)
+
+    def test_template_var_in_removal_heading_extracted(self):
+        from issuesmith.gate_rules.scope_coupling import _removal_names
+
+        body = "### Remove `${old_step_result}`\n\nNo longer used.\n"
+        assert "old_step_result" in _removal_names(body)
+
+    def test_backtick_ident_in_non_removal_heading_ignored(self):
+        from issuesmith.gate_rules.scope_coupling import _removal_names
+
+        body = "## `KEEP_CONST` の説明\n\nplain text\n"
+        assert _removal_names(body) == set()
+
+    def test_removal_section_closes_at_same_level_heading(self):
+        from issuesmith.gate_rules.scope_coupling import _removal_names
+
+        body = (
+            "## 削除対象\n\n`GONE_NAME` を消す。\n\n"
+            "## 次の節\n\n`STAY_NAME` は残る。\n"
+        )
+        assert _removal_names(body) == {"GONE_NAME"}
