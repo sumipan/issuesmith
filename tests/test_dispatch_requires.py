@@ -679,3 +679,115 @@ class TestContextToStep:
         })
         assert ctx.repair_violations == ""
         assert ctx.repair_step_origin == ""
+
+
+# ---------------------------------------------------------------------------
+# #3756 AC-3b: derived_allow_paths kept across repairs; repair instruction text
+# ---------------------------------------------------------------------------
+
+
+class TestDerivedAllowPaths:
+    def test_derived_kept_after_repair_and_allowed_by_pr_scope(self, tmp_path):
+        from issuesmith.config import StepConfig
+        from issuesmith.gates.worktree import TestsGate
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        state = {"repaired": False, "calls": 0}
+
+        def fake_tests_check(self, body, labels):
+            state["calls"] += 1
+            if state["repaired"]:
+                self.derived_allow_paths = []
+                return []
+            self.derived_allow_paths = ["tests/test_uses_mod.py"]
+            return [_v(rule_id="tests.pytest_failure")]
+
+        def fake_changed(root, base):
+            if state["repaired"]:
+                return ["src/pkg/mod.py", "tests/test_uses_mod.py"]
+            return ["src/pkg/mod.py"]
+
+        repair_contexts: list[dict] = []
+
+        def fake_repair(violations, step_id, context):
+            repair_contexts.append(dict(context))
+            state["repaired"] = True
+            return None
+
+        cfg = StepConfig(
+            module="", requires=("tests", "pr_scope"), input_kind="worktree",
+            requires_declared=True,
+        )
+        context = {
+            "issue_number": "42",
+            "workflow_name": "issuesmith",
+            "base_branch": "main",
+            "worktree_path": str(tmp_path),
+            "allow_paths": "- src/pkg/mod.py",
+        }
+        with (
+            patch.object(TestsGate, "check", fake_tests_check),
+            patch("issuesmith.gates.worktree.changed_files", side_effect=fake_changed),
+            patch("issuesmith.gates.worktree.check_derived_test_guard", return_value=[]),
+            patch("issuesmith.ops.dispatch._fetch_fresh_issue_body", return_value=""),
+            patch("issuesmith.ops.dispatch._get_issue_labels", return_value=[]),
+            patch("issuesmith.ops.dispatch._run_repair_step", side_effect=fake_repair),
+            patch("issuesmith.ops.dispatch._raise_andon") as andon,
+            patch("issuesmith.ops.dispatch.get_forge"),
+        ):
+            rc = run_requires_loop(cfg, "p1", context)
+
+        assert rc is None
+        andon.assert_not_called()
+        assert state["calls"] == 2
+        assert context["derived_allow_paths"] == "tests/test_uses_mod.py"
+        assert repair_contexts[0]["derived_allow_paths"] == "tests/test_uses_mod.py"
+        # frozen order: allow_paths itself is not rewritten
+        assert context["allow_paths"] == "- src/pkg/mod.py"
+
+    def test_build_requires_gates_reads_derived_from_context(self, tmp_path):
+        from issuesmith.ops.dispatch import _build_requires_gates
+
+        gates = _build_requires_gates(
+            ("pr_scope",),
+            {
+                "worktree_path": str(tmp_path),
+                "allow_paths": "- src/a.py",
+                "derived_allow_paths": "tests/test_a.py\ntests/test_b.py\n",
+            },
+        )
+        assert gates["pr_scope"]._derived_allow_paths == [
+            "tests/test_a.py", "tests/test_b.py",
+        ]
+
+    def _repair_text(self, context: dict) -> str:
+        from issuesmith.ops.dispatch import _run_repair_step
+
+        captured: dict = {}
+
+        def fake_step(step_id, ctx):
+            captured.update(ctx)
+            return 0
+
+        with patch("issuesmith.ops.dispatch._try_python_step", side_effect=fake_step):
+            assert _run_repair_step([_v("tests.pytest_failure")], "p1", context) is None
+        return captured["repair_violations"]
+
+    def test_repair_instruction_lists_derived(self):
+        text = self._repair_text({
+            "issue_number": "42",
+            "derived_allow_paths": "tests/test_a.py\ntests/test_b.py",
+        })
+        assert (
+            "Do not touch files outside allow_paths and derived_allow_paths.\n"
+            "derived_allow_paths:\n- tests/test_a.py\n- tests/test_b.py\n"
+        ) in text
+        assert text.endswith("- tests.pytest_failure: test violation")
+
+    def test_repair_instruction_unchanged_without_derived(self):
+        text = self._repair_text({"issue_number": "42"})
+        assert text == (
+            "Fix only the violations below with the smallest possible diff. "
+            "Do not touch files outside allow_paths.\n"
+            "- tests.pytest_failure: test violation"
+        )

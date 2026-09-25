@@ -38,6 +38,8 @@ class GateBuildContext:
     worktree_path: Path | None
     allow_paths: list[str]
     base_branch: str
+    # Test files repair may edit beyond allow_paths (#3756); consumed by pr_scope.
+    derived_allow_paths: tuple[str, ...] = ()
 
 
 class GateBuildError(ValueError):
@@ -107,7 +109,10 @@ def _build_registry() -> dict[str, GateEntry]:
 
     def _build_pr_scope(ctx: GateBuildContext) -> RequiresGate:
         p = _require_worktree("pr_scope", ctx)
-        return PrScopeGate(p, ctx.allow_paths, ctx.base_branch)
+        return PrScopeGate(
+            p, ctx.allow_paths, ctx.base_branch,
+            derived_allow_paths=list(ctx.derived_allow_paths),
+        )
 
     registry["scope"] = GateEntry(input_kind="worktree", build=_build_scope)
     registry["pr_scope"] = GateEntry(input_kind="worktree", build=_build_pr_scope)

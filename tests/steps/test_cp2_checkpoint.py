@@ -486,3 +486,98 @@ def test_run_nexus_target_empty_repo_skips_scope_when_config_empty(capsys) -> No
     guarded.assert_called_once()
     fail.assert_not_called()
     assert capsys.readouterr().err  # skip reason on stderr
+
+
+# --- #3756 AC-5: CP2 honours derived_allow_paths recorded in the P1 result ---
+
+_ISSUE_BODY_SRC_ONLY = (
+    "```yaml\n"
+    "target_repo: sumipan/issuesmith\n"
+    "allow_paths:\n"
+    "  - src/a.py\n"
+    "```\n"
+)
+
+_PR_DETAIL_WITH_TEST = {
+    "number": 3180,
+    "additions": 2,
+    "deletions": 0,
+    "files": [
+        {"filename": "src/a.py", "status": "modified", "additions": 1, "deletions": 0},
+        {"filename": "tests/test_foo.py", "status": "modified", "additions": 1, "deletions": 0},
+    ],
+}
+
+_P1_RESULT_WITH_DERIVED = (
+    "implementation log\n"
+    "derived_allow_paths:\n"
+    "  - tests/test_foo.py\n"
+    "PIPELINE_STATUS: IMPL_DONE\n"
+)
+
+
+def _scope_check(tmp_path: Path, p1_text: str | None, p1_name: str = "p1.md"):
+    if p1_text is not None:
+        (tmp_path / "jobs").mkdir(exist_ok=True)
+        (tmp_path / "jobs" / "p1.md").write_text(p1_text, encoding="utf-8")
+    with patch.object(cp2, "_handle_fail", return_value="FAILED") as fail:
+        result = cp2._check_pr_scope(
+            MagicMock(), 3162, _ISSUE_BODY_SRC_ONLY, _PR_DETAIL_WITH_TEST,
+            repo_root=tmp_path, p1_result_filename=p1_name,
+        )
+    return result, fail
+
+
+def test_cp2_scope_allows_derived_from_p1_result(tmp_path: Path) -> None:
+    result, fail = _scope_check(tmp_path, _P1_RESULT_WITH_DERIVED)
+    assert result is None
+    fail.assert_not_called()
+
+
+def test_cp2_scope_fails_without_p1_result(tmp_path: Path) -> None:
+    result, fail = _scope_check(tmp_path, None)
+    assert result == "FAILED"
+    assert "tests/test_foo.py" in fail.call_args.kwargs["comment"]
+
+
+def test_cp2_scope_fails_when_p1_result_has_no_block(tmp_path: Path) -> None:
+    result, _fail = _scope_check(tmp_path, "PIPELINE_STATUS: IMPL_DONE\n")
+    assert result == "FAILED"
+
+
+def test_cp2_scope_fails_when_p1_result_filename_empty(tmp_path: Path) -> None:
+    result, _fail = _scope_check(tmp_path, _P1_RESULT_WITH_DERIVED, p1_name="")
+    assert result == "FAILED"
+
+
+def test_derived_allow_paths_from_p1_result_parses_block(tmp_path: Path) -> None:
+    (tmp_path / "jobs").mkdir()
+    (tmp_path / "jobs" / "p1.md").write_text(
+        "x\nderived_allow_paths:\n  - tests/a.py\n  - tests/b.py\nPIPELINE_STATUS: IMPL_DONE\n",
+        encoding="utf-8",
+    )
+    assert cp2._derived_allow_paths_from_p1_result(tmp_path, "p1.md") == [
+        "tests/a.py", "tests/b.py",
+    ]
+
+
+def test_run_passes_p1_result_to_scope_check(tmp_path: Path) -> None:
+    (tmp_path / "jobs").mkdir()
+    (tmp_path / "jobs" / "p1.md").write_text(_P1_RESULT_WITH_DERIVED, encoding="utf-8")
+    client = MagicMock()
+    client.issue_get.return_value = {"body": _ISSUE_BODY_SRC_ONLY}
+
+    with (
+        patch.object(cp2, "_github_client", return_value=client),
+        patch.object(cp2, "_repo_root", return_value=tmp_path),
+        patch.object(cp2, "_load_pr_for_branch", return_value=(2, _PR_DETAIL_WITH_TEST)),
+        patch.object(cp2, "_tier_via_cli", return_value="light"),
+        patch.object(cp2, "resolve", return_value=MagicMock(engine="claude", model="m")),
+        patch.object(cp2, "_run_guarded_design", return_value=0) as guarded,
+        patch.object(cp2, "_handle_fail") as fail,
+    ):
+        result = cp2.run(_ctx(p1_result_filename="p1.md"))
+
+    assert result.exit_code == 0
+    guarded.assert_called_once()
+    fail.assert_not_called()

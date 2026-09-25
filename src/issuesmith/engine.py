@@ -1218,6 +1218,14 @@ def _run_guarded_with_requires(
         return 0
 
     if post_rc is None:
+        derived = [
+            p.strip() for p in context.get("derived_allow_paths", "").splitlines() if p.strip()
+        ]
+        if derived:
+            # P1 result record read by CP2 (#3756); must precede the status line.
+            print("derived_allow_paths:")
+            for path in derived:
+                print(f"  - {path}")
         if emit_status:
             print(f"PIPELINE_STATUS: {emit_status}")
         return 0

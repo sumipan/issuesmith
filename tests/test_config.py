@@ -10,6 +10,7 @@ import yaml
 
 from issuesmith.config import (
     ConfigError,
+    DerivedAllowConfig,
     ScopeCouplingConfig,
     get_config,
     load_config,
@@ -344,4 +345,39 @@ def test_scope_coupling_search_dirs_empty_string_element_raises(tmp_path, monkey
     reset_config_cache()
 
     with pytest.raises(ConfigError, match="search_dirs"):
+        load_config()
+
+
+def test_derived_allow_default_enabled(tmp_path, monkeypatch):
+    """derived_allow is enabled when unspecified (#3756)."""
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(yaml.safe_dump({"repo": "example/repo"}), encoding="utf-8")
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    assert load_config().derived_allow == DerivedAllowConfig(enabled=True)
+
+
+def test_derived_allow_enabled_false_loaded(tmp_path, monkeypatch):
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "example/repo", "derived_allow": {"enabled": False}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    assert load_config().derived_allow.enabled is False
+
+
+def test_derived_allow_unknown_key_raises(tmp_path, monkeypatch):
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({
+            "repo": "example/repo",
+            "derived_allow": {"enabled": True, "tests_glob": "tests/**"},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    with pytest.raises(ConfigError, match="tests_glob"):
         load_config()
