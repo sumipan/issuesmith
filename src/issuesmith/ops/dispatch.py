@@ -276,8 +276,8 @@ def map_step_result(
     # Repair step: skip requires evaluation (re-evaluation is done by the caller loop).
     cfg = step_cfg if step_cfg is not None else resolve_step_config(step_id)
     if cfg.requires and step_id != _REPAIR_STEP_ID:
-        rc = _check_requires_loop(
-            cfg, step_id, context, markers, repair_count=_repair_count
+        rc = run_requires_loop(
+            cfg, step_id, context, repair_count=_repair_count
         )
         if rc is not None:
             return rc
@@ -353,6 +353,28 @@ def _get_issue_body(context: dict[str, str]) -> str:
         return ""
 
 
+def _fetch_fresh_issue_body(context: dict[str, str]) -> str:
+    """Always fetch issue body from forge (no context cache); falls back to context on failure."""
+    raw_issue = context.get("issue_number", "")
+    if not raw_issue:
+        return context.get("issue_body", "")
+    try:
+        issue_num = int(raw_issue)
+    except ValueError:
+        return context.get("issue_body", "")
+    try:
+        data = get_forge().issue_get(issue_num, fields=["body"])
+        body = str(data.get("body") or "")
+        return body if body else context.get("issue_body", "")
+    except Exception:
+        return context.get("issue_body", "")
+
+
+def fetch_issue_inputs(context: dict[str, str]) -> tuple[str, list[str]]:
+    """Return (fresh issue body, labels) for gate evaluation outside dispatch (#3663)."""
+    return _fetch_fresh_issue_body(context), _get_issue_labels(context)
+
+
 def _get_issue_labels(context: dict[str, str]) -> list[str]:
     """Return issue labels for requires evaluation (from context cache or forge)."""
     raw = context.get("issue_labels", "")
@@ -389,6 +411,26 @@ def _get_preexisting_rule_ids(
     return frozenset()
 
 
+def _get_previous_commits(context: dict[str, str]) -> str:
+    """Return git log --oneline for commits ahead of origin/<base>."""
+    worktree_path_str = (
+        context.get("worktree_path") or context.get("target_worktree_path") or ""
+    )
+    base_branch = context.get("base_branch", "main")
+    if not worktree_path_str:
+        return ""
+    try:
+        import subprocess as _sp
+        proc = _sp.run(
+            ["git", "log", "--oneline", f"origin/{base_branch}..HEAD"],
+            capture_output=True, text=True, check=False,
+            cwd=worktree_path_str,
+        )
+        return proc.stdout.strip() if proc.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
 def _run_repair_step(
     violations: list,
     step_id: str,
@@ -401,10 +443,13 @@ def _run_repair_step(
     count toward repair_count).
     """
     repair_ctx = dict(context)
-    repair_ctx["repair_violations"] = "\n".join(
-        f"- {v.rule_id}: {v.message}" for v in violations
+    violation_lines = "\n".join(f"- {v.rule_id}: {v.message}" for v in violations)
+    repair_ctx["repair_violations"] = (
+        "Fix only the violations below with the smallest possible diff. "
+        "Do not touch files outside allow_paths.\n" + violation_lines
     )
     repair_ctx["repair_step_origin"] = step_id
+    repair_ctx["previous_commits"] = _get_previous_commits(context)
 
     rc = _try_python_step(_REPAIR_STEP_ID, repair_ctx)
     if rc is None:
@@ -433,18 +478,56 @@ def _safe_record_metrics(event: str, step_id: str, issue_num: int) -> None:
         pass
 
 
-def _check_requires_loop(
+def _violation_gate_id(rule_id: str, gates: dict[str, object]) -> str | None:
+    """Map a violation rule_id to its gate_id by prefix matching."""
+    for gate_id in gates:
+        if rule_id == gate_id or rule_id.startswith(gate_id + "."):
+            return gate_id
+    return None
+
+
+def _is_violation_repairable(rule_id: str, gates: dict[str, object]) -> bool:
+    """Return True if the gate that produced this violation allows LLM repair."""
+    from issuesmith.gates import GATE_REGISTRY
+
+    gate_id = _violation_gate_id(rule_id, gates)
+    if gate_id is None:
+        return True
+    entry = GATE_REGISTRY.get(gate_id)
+    if entry is None:
+        return True
+    return getattr(entry, "repairable", True)
+
+
+def _build_andon_options(blocking: list) -> list[str]:
+    """Build andon decision options from blocking violations.
+
+    pr_scope.out_of_allow → widen:<file1>,<file2> (sorted, deduplicated)
+    Always append split and reject.
+    """
+    pr_scope_files = sorted({
+        v.location
+        for v in blocking
+        if v.rule_id == "pr_scope.out_of_allow" and v.location
+    })
+    options: list[str] = []
+    if pr_scope_files:
+        options.append(f"widen:{','.join(pr_scope_files)}")
+    options.extend(["split", "reject"])
+    return options
+
+
+def run_requires_loop(
     step_cfg: StepConfig,
     step_id: str,
     context: dict[str, str],
-    markers: list[str],
     *,
-    gates: dict[str, object] | None = None,
     repair_count: int = 0,
 ) -> int | None:
     """Evaluate requires gates; auto-fix, repair, or raise andon as needed.
 
-    Returns None to proceed to marker emission, or an exit code to stop.
+    Returns None when all gates pass, or an exit code to stop.
+    Rebuilds gates and fetches fresh issue body on each evaluation.
     May raise RetrySignal — callers must propagate it (not counted as repair).
     """
     from issuesmith.gates.base import ContractInput
@@ -453,33 +536,50 @@ def _check_requires_loop(
     if not step_cfg.requires:
         return None
 
-    if gates is None:
-        from issuesmith.gates import GateBuildError
-        try:
-            gates = _build_requires_gates(step_cfg.requires, context)
-        except GateBuildError as exc:
-            summary = f"gate could not be built in step {step_id}: {exc}"
-            full_andon = _FullAndon(
-                id=f"{context.get('workflow_name', 'unknown')}:{context.get('issue_number', 0)}:{step_id}:0",
-                kind="broken",
-                issue=int(context.get("issue_number") or "0"),
-                step=step_id,
-                summary=summary,
-            )
-            _raise_andon(get_forge(), full_andon)
-            return 1
+    # Always fetch fresh issue body (not from context cache)
+    body = _fetch_fresh_issue_body(context)
 
-    body = _get_issue_body(context)
+    # Rebuild allow_paths from fresh body (fall back to context value)
+    fresh_allow_paths: str | None = None
+    if body:
+        try:
+            from issuesmith.context_hook import parse_issue_metadata
+            metadata = parse_issue_metadata(body)
+            ap_raw = metadata.get("allow_paths", [])
+            if isinstance(ap_raw, list) and ap_raw:
+                fresh_allow_paths = "\n".join(f"- {p}" for p in ap_raw)
+        except Exception:
+            pass
+
+    eval_context = dict(context)
+    if fresh_allow_paths is not None:
+        eval_context["allow_paths"] = fresh_allow_paths
+
+    from issuesmith.gates import GateBuildError
+    try:
+        gates = _build_requires_gates(step_cfg.requires, eval_context)
+    except GateBuildError as exc:
+        summary = f"gate could not be built in step {step_id}: {exc}"
+        full_andon = _FullAndon(
+            id=f"{eval_context.get('workflow_name', 'unknown')}:{eval_context.get('issue_number', 0)}:{step_id}:0",
+            kind="broken",
+            issue=int(eval_context.get("issue_number") or "0"),
+            step=step_id,
+            summary=summary,
+        )
+        _raise_andon(get_forge(), full_andon)
+        return 1
+
     labels = _get_issue_labels(context)
     inp = ContractInput(body=body, labels=labels)
 
-    preexisting_ids = _get_preexisting_rule_ids(step_cfg, context, gates)
+    preexisting_ids = _get_preexisting_rule_ids(step_cfg, eval_context, gates)
     result = evaluate_requires(
         gates, body, labels, preexisting_rule_ids=preexisting_ids
     )
 
-    issue_num = int(context.get("issue_number") or "0")
-    workflow = context.get("workflow_name", "unknown")
+    issue_num = int(eval_context.get("issue_number") or "0")
+    workflow = eval_context.get("workflow_name", "unknown")
 
     # Gate exception → andon(broken), no repair attempted.
     if result.gate_error is not None:
@@ -498,7 +598,7 @@ def _check_requires_loop(
 
     # Preexisting violations: visualize only, do not block.
     if result.preexisting:
-        _record_preexisting_violations(result.preexisting, step_id, context, issue_num)
+        _record_preexisting_violations(result.preexisting, step_id, eval_context, issue_num)
 
     if not result.blocking:
         _safe_record_metrics("requires_check", step_id, issue_num)
@@ -509,10 +609,8 @@ def _check_requires_loop(
     if has_auto_fixable:
         result, inp = apply_auto_fixes(result, gates, inp)
         if not result.blocking:
-            # All blocking violations auto-fixed → re-evaluate before emitting markers.
-            return _check_requires_loop(
-                step_cfg, step_id, context, markers,
-                gates=gates,
+            return run_requires_loop(
+                step_cfg, step_id, context,
                 repair_count=repair_count,
             )
 
@@ -520,9 +618,31 @@ def _check_requires_loop(
         _safe_record_metrics("requires_check", step_id, issue_num)
         return None
 
-    # Non-auto-fixable violations remain → repair step or andon.
+    # Non-repairable violations → andon(decision) without repair
+    non_repairable = [
+        v for v in result.blocking
+        if not _is_violation_repairable(v.rule_id, gates)
+    ]
+    if non_repairable:
+        options = _build_andon_options(result.blocking)
+        summary = (
+            f"non-repairable gate violation in step {step_id}: "
+            + "; ".join(v.message for v in non_repairable)
+        )
+        full_andon = _FullAndon(
+            id=f"{workflow}:{issue_num}:{step_id}:0",
+            kind="decision",
+            issue=issue_num,
+            step=step_id,
+            summary=summary,
+            options=options,
+        )
+        _raise_andon(get_forge(), full_andon)
+        return 1
+
+    # Non-auto-fixable repairable violations remain → repair step or andon.
     if repair_count >= _MAX_REPAIRS:
-        options = [v.fix_hint for v in result.blocking if v.fix_hint]
+        options = _build_andon_options(result.blocking)
         summary = (
             f"requires evaluation failed after {repair_count} repair(s)"
             f" in step {step_id}: "
@@ -547,9 +667,8 @@ def _check_requires_loop(
         return rc  # repair step failed
 
     # Re-evaluate after successful repair (increment repair_count).
-    return _check_requires_loop(
-        step_cfg, step_id, context, markers,
-        gates=gates,
+    return run_requires_loop(
+        step_cfg, step_id, context,
         repair_count=repair_count + 1,
     )
 
@@ -649,6 +768,18 @@ def _handle_retry_signal(
     print(f"PIPELINE_STATUS: {DONE_DEFERRED}")
 
 
+def handle_retry_signal(
+    sig: "RetrySignal",
+    step_id: str,
+    issue_number: "int | None",
+    *,
+    quota_gate: "QuotaGate | None" = None,
+    task_uuid: "str | None" = None,
+) -> None:
+    """Public wrapper for _handle_retry_signal (sumipan/nexus#3663)."""
+    _handle_retry_signal(sig, step_id, issue_number, quota_gate=quota_gate, task_uuid=task_uuid)
+
+
 def main(argv: list[str]) -> int:
     from issuesmith.config import ConfigError  # noqa: PLC0415
     from issuesmith.gates import validate_step_requires  # noqa: PLC0415
@@ -679,6 +810,16 @@ def main(argv: list[str]) -> int:
     # Remove waiting label at the start of every run (clears it after a resume).
     if issue_number is not None:
         _forge_remove_waiting(issue_number)
+
+    # Module-less step (LLM-only step) guard: must be run via engine run-guarded --requires-step.
+    steps = get_config().steps
+    if step_id in steps and not steps[step_id].module:
+        summary = (
+            f"step {step_id} has no module; run it via engine run-guarded "
+            f"--requires-step {step_id}"
+        )
+        broken = StepResult(status="andon", andon=Andon(kind="broken", summary=summary))
+        return map_step_result(broken, step_id=step_id, context=context)
 
     # Repair recursion guard: if ISSUESMITH_REPAIR_ACTIVE is set and we are asked to
     # run the repair step again, stop immediately with andon(broken).

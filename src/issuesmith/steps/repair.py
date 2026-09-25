@@ -3,12 +3,28 @@
 from __future__ import annotations
 
 import os
+import subprocess
 
 from issuesmith.config import StepConfig, get_config
 from issuesmith.engine import run_guarded
 from issuesmith.steps.base import Andon, StepContext, StepResult
 
 _REPAIR_ACTIVE_ENV = "ISSUESMITH_REPAIR_ACTIVE"
+
+
+def _get_previous_commits(worktree_path: str, base_branch: str) -> str:
+    """Return git log --oneline for commits ahead of origin/<base>."""
+    if not worktree_path:
+        return ""
+    try:
+        proc = subprocess.run(
+            ["git", "log", "--oneline", f"origin/{base_branch}..HEAD"],
+            capture_output=True, text=True, check=False,
+            cwd=worktree_path,
+        )
+        return proc.stdout.strip() if proc.returncode == 0 else ""
+    except Exception:
+        return ""
 
 
 def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
@@ -41,6 +57,7 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
     template = str(get_config().paths.template_dir / step.template)
     worktree_path = ctx.worktree_path or ctx.target_worktree_path or ""
 
+    previous_commits = _get_previous_commits(worktree_path, ctx.base_branch)
     variables = [
         f"repair_violations={ctx.repair_violations}",
         f"repair_step_origin={ctx.repair_step_origin}",
@@ -48,6 +65,7 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
         f"worktree_path={worktree_path}",
         f"branch={ctx.branch}",
         f"base_branch={ctx.base_branch}",
+        f"previous_commits={previous_commits}",
     ]
 
     env = os.environ.copy()

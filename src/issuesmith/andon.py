@@ -12,6 +12,8 @@ from typing import Any, Iterator, Protocol, runtime_checkable
 
 import yaml
 
+from issuesmith.resume import resume
+
 # ---------------------------------------------------------------------------
 # Data model
 # ---------------------------------------------------------------------------
@@ -116,9 +118,12 @@ def _write_metrics(path: Path, event: str, andon_id: str) -> None:
 
 
 def _call_resume_hook(client: Any, andon_id: str, action: str) -> None:
-    """Call resume() directly for 'resume' action; no-op for all other actions (#3509)."""
-    if action != "resume":
-        return
+    """Handle post-answer hooks for 'resume' and 'widen:<files>' actions.
+
+    - resume: call resume() directly
+    - widen:<files>: update allow_paths in issue body and call resume()
+    - other actions: no-op
+    """
     try:
         parts = andon_id.split(":")
         # format: <workflow>:<issue>:<step>:<gen>
@@ -126,7 +131,83 @@ def _call_resume_hook(client: Any, andon_id: str, action: str) -> None:
             return
         issue_num = int(parts[1])
         step = parts[2]
-        from issuesmith.resume import resume
+    except Exception:
+        return
+
+    if action == "resume":
+        try:
+            resume(issue_num, from_step=step)
+        except Exception:
+            pass
+        return
+
+    if action.startswith("widen:"):
+        files_str = action[len("widen:"):]
+        new_files = [f.strip() for f in files_str.split(",") if f.strip()]
+        _handle_widen_action(client, issue_num, step, new_files)
+        return
+
+
+def _handle_widen_action(
+    client: Any,
+    issue_num: int,
+    step: str,
+    new_files: list[str],
+) -> None:
+    """Update allow_paths in issue body with new_files and call resume()."""
+    try:
+        data = client.issue_get(issue_num, fields=["body"])
+        body = str(data.get("body") or "") if isinstance(data, dict) else ""
+    except Exception:
+        return
+
+    if not body:
+        return
+
+    from issuesmith.body_editor import replace_allow_paths
+
+    # Parse existing allow_paths
+    existing: list[str] = []
+    try:
+        import re as _re
+
+        import yaml as _yaml
+        m = _re.search(r"^```yaml\n(.*?)\n```", body, _re.DOTALL | _re.MULTILINE)
+        if m:
+            data_yaml = _yaml.safe_load(m.group(1))
+            if isinstance(data_yaml, dict) and "allow_paths" in data_yaml:
+                existing = list(data_yaml["allow_paths"]) if isinstance(data_yaml["allow_paths"], list) else []
+    except Exception:
+        pass
+
+    # Merge without duplicates
+    merged = list(existing)
+    for f in new_files:
+        if f not in merged:
+            merged.append(f)
+
+    new_body = replace_allow_paths(body, merged)
+    if new_body is None:
+        # No yaml block — post comment only, do not resume
+        try:
+            client.issue_comment(
+                issue_num,
+                f"<!-- andon-widen-failed -->\n"
+                f"Cannot widen allow_paths: no yaml metadata block found in Issue body.\n"
+                f"Requested files: {new_files}",
+            )
+        except Exception:
+            pass
+        return
+
+    # Update issue body
+    try:
+        client.issue_update(issue_num, body=new_body)
+    except Exception:
+        return
+
+    # Call resume
+    try:
         resume(issue_num, from_step=step)
     except Exception:
         pass

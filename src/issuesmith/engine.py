@@ -29,6 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ghdag.forge import get_forge
 from ghdag.llm import call_managed
 from ghdag.llm import managed as _llm_managed
 from ghdag.llm.capabilities import LLMCapabilities
@@ -38,6 +39,8 @@ from ghdag.metrics.models import FailureClass
 from ghdag.quota import QuotaGate
 from ruamel.yaml import YAML
 
+from issuesmith.andon import Andon as _AndonModel
+from issuesmith.andon import raise_andon as _raise_andon
 from issuesmith.config import get_config
 
 
@@ -1011,6 +1014,114 @@ def _run_emit_order(
     return 1, proc.stdout
 
 
+def _build_pre_gates(
+    step_cfg: "Any",
+    context: dict[str, str],
+) -> dict[str, object]:
+    """Build pre_llm=True gates for pre-LLM evaluation."""
+    from issuesmith.gates import GATE_REGISTRY, GateBuildContext, GateBuildError
+
+    pre_gate_ids = [
+        gid for gid in step_cfg.requires
+        if gid in GATE_REGISTRY and getattr(GATE_REGISTRY[gid], "pre_llm", False)
+    ]
+    if not pre_gate_ids:
+        return {}
+
+    worktree_path_str = context.get("worktree_path") or context.get("target_worktree_path") or ""
+    base_branch = context.get("base_branch", "main")
+    allow_paths_raw = context.get("allow_paths", "")
+    allow_paths = [
+        p.lstrip("- ").strip()
+        for p in allow_paths_raw.splitlines()
+        if p.strip()
+    ]
+    worktree_path = Path(worktree_path_str) if worktree_path_str else None
+    build_ctx = GateBuildContext(
+        worktree_path=worktree_path,
+        allow_paths=allow_paths,
+        base_branch=base_branch,
+    )
+    gates: dict[str, object] = {}
+    for gid in pre_gate_ids:
+        try:
+            gates[gid] = GATE_REGISTRY[gid].build(build_ctx)
+        except GateBuildError:
+            pass
+    return gates
+
+
+def _run_pre_gate_phase(
+    step_cfg: "Any",
+    step_id: str,
+    context: dict[str, str],
+    failure_status: str,
+) -> int | None:
+    """Evaluate pre_llm gates before LLM execution.
+
+    Returns None to proceed to LLM, or exit code to stop.
+    """
+    from issuesmith.gates import GATE_REGISTRY
+    from issuesmith.gates.base import ContractInput
+    from issuesmith.repair import apply_auto_fixes, evaluate_requires
+
+    pre_gates = _build_pre_gates(step_cfg, context)
+    if not pre_gates:
+        return None
+
+    # run-guarded callers (p1-role-dispatch) pass issue_number but not issue_body;
+    # fetch from forge so issue gates such as scope_breadth see the real body.
+    from issuesmith.ops.dispatch import fetch_issue_inputs
+
+    body, labels = fetch_issue_inputs(context)
+    inp = ContractInput(body=body, labels=labels)
+
+    result = evaluate_requires(pre_gates, body, labels)
+
+    if result.gate_error is not None:
+        return None
+
+    if not result.blocking:
+        return None
+
+    # Apply auto-fixes for auto_fixable pre-gate violations
+    has_auto_fixable = any(v.auto_fixable for v in result.blocking)
+    if has_auto_fixable:
+        result, inp = apply_auto_fixes(result, pre_gates, inp)
+
+    if not result.blocking:
+        return None
+
+    # Non-repairable violations → andon(decision), stop before LLM
+    non_repairable = [
+        v for v in result.blocking
+        if not getattr(GATE_REGISTRY.get(
+            next((gid for gid in pre_gates if v.rule_id == gid or v.rule_id.startswith(gid + ".") ), ""),
+            object()
+        ), "repairable", True)
+    ]
+    if non_repairable:
+        issue_num = int(context.get("issue_number") or "0")
+        workflow = context.get("workflow_name", "unknown")
+        summary = (
+            f"pre-LLM gate violation in step {step_id}: "
+            + "; ".join(v.message for v in non_repairable)
+        )
+        full_andon = _AndonModel(
+            id=f"{workflow}:{issue_num}:{step_id}:0",
+            kind="decision",
+            issue=issue_num,
+            step=step_id,
+            summary=summary,
+            options=["split", "reject"],
+        )
+        _raise_andon(get_forge(), full_andon)
+        print(f"PIPELINE_STATUS: {failure_status}")
+        return 1
+
+    return None
+
+
 def run_guarded(
     role: str,
     template_path: str,
@@ -1020,6 +1131,7 @@ def run_guarded(
     cwd: str | None = None,
     tier: str | None = None,
     emit_status: str | None = None,
+    requires_step: str | None = None,
 ) -> int:
     for status in success_statuses:
         if status.endswith("_SKIPPED"):
@@ -1028,6 +1140,13 @@ def run_guarded(
                 "a skipped step is not a success — handle it with skip_verify_statuses "
                 "in run_verified or a dedicated failure_status"
             )
+
+    if requires_step is not None:
+        return _run_guarded_with_requires(
+            role, template_path, variables, success_statuses, failure_status,
+            cwd=cwd, tier=tier, emit_status=emit_status, requires_step=requires_step,
+        )
+
     if emit_status:
         rc, _stdout = _run_emit_order(
             role, template_path, variables, failure_status, cwd, tier
@@ -1039,6 +1158,71 @@ def run_guarded(
         role, template_path, variables, success_statuses, failure_status, cwd, tier
     )
     return rc
+
+
+def _run_guarded_with_requires(
+    role: str,
+    template_path: str,
+    variables: list[str],
+    success_statuses: list[str],
+    failure_status: str,
+    *,
+    cwd: str | None,
+    tier: str | None,
+    emit_status: str | None,
+    requires_step: str,
+) -> int:
+    """run_guarded with requires loop pre and post LLM."""
+    from issuesmith.ops.dispatch import handle_retry_signal, resolve_step_config, run_requires_loop
+
+    step_cfg = resolve_step_config(requires_step)
+
+    # Build context from variables; override worktree_path with resolved --cwd
+    context = _parse_variables(variables)
+    if cwd is not None:
+        try:
+            cwd_path = _working_directory(cwd)
+            if cwd_path is not None:
+                context["worktree_path"] = str(cwd_path)
+        except ValueError:
+            pass
+
+    # Pre-phase: evaluate pre_llm gates before LLM
+    pre_rc = _run_pre_gate_phase(step_cfg, requires_step, context, failure_status)
+    if pre_rc is not None:
+        return pre_rc
+
+    # Execute LLM
+    if emit_status:
+        rc, _stdout = _run_emit_order(role, template_path, variables, failure_status, cwd, tier)
+    else:
+        rc, _stdout = _run_guarded_order(
+            role, template_path, variables, success_statuses, failure_status, cwd, tier
+        )
+    if rc != 0:
+        return rc
+
+    # Post-phase: run full requires loop
+    issue_number: int | None = None
+    raw_issue = context.get("issue_number", "")
+    if raw_issue:
+        try:
+            issue_number = int(raw_issue)
+        except ValueError:
+            pass
+
+    try:
+        post_rc = run_requires_loop(step_cfg, requires_step, context)
+    except RetrySignal as sig:
+        handle_retry_signal(sig, requires_step, issue_number)
+        return 0
+
+    if post_rc is None:
+        if emit_status:
+            print(f"PIPELINE_STATUS: {emit_status}")
+        return 0
+    print(f"PIPELINE_STATUS: {failure_status}")
+    return post_rc
 
 
 def _run_verify_command(verify_cmd: str) -> tuple[int, str]:
@@ -1198,6 +1382,7 @@ def _build_parser() -> argparse.ArgumentParser:
     guarded_parser.add_argument("--success", action="append", default=[])
     guarded_parser.add_argument("--failure-status", required=True)
     guarded_parser.add_argument("--emit-status")
+    guarded_parser.add_argument("--requires-step")
     guarded_parser.add_argument("variables", nargs="*")
 
     verified_parser = subparsers.add_parser("run-verified", help=argparse.SUPPRESS)
@@ -1265,6 +1450,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.cwd,
                 args.tier,
                 emit_status=args.emit_status,
+                requires_step=getattr(args, "requires_step", None),
             )
         if args.action == "run-verified":
             return run_verified(

@@ -91,6 +91,7 @@ Entry points: `issuesmith` / `python3 -m issuesmith`.
 | `comments` | Pipeline comment helpers |
 | `gh` | GitHub Issue/PR helpers via ghdag client (not the `gh` CLI) |
 | `engine` | LLM role switcher / runner |
+| `run-guarded --requires-step <step>` | Run pre/post gate evaluation around an LLM call for a module-less step |
 | `dispatch` | Render and enqueue a workflow template |
 | `publish` | Publish / version-bump orchestration |
 | `labels reconcile [--fix] [--json]` | report (or fix) managed-label divergences |
@@ -201,6 +202,17 @@ Optional `triage` keys in `issuesmith.yaml` (queue tick LLM reorder):
 | `circuit_breaker_reset_seconds` | `1800` | After this many seconds from the oldest timeout in the window, allow LLM again |
 
 Resolution order for the config file: explicit path → `ISSUESMITH_CONFIG` → walk up from cwd → package repo-root fallback → builtin defaults.
+
+### LLM-only (module-less) steps and `run-guarded --requires-step`
+
+A step whose `module` key is absent (or empty) is an **LLM-only step**. Attempting to dispatch it via `dispatch` raises `andon(broken)` immediately; run it instead with `run-guarded --requires-step <step_id>`, which wraps the LLM call with gate evaluation:
+
+- **Pre-phase**: gates whose `pre_llm=True` flag is set (`base_freshness`, `scope_breadth`) run before the LLM. A non-repairable violation (e.g. `scope_breadth`) raises `andon(decision)` with `widen:<files>`, `split`, and `reject` options.
+- **Post-phase**: the full `requires` gate list runs after the LLM via `run_requires_loop`, which fetches a fresh issue body and rebuilds gates from scratch on every evaluation.
+
+`requires: []` (explicit empty list) is valid and means "no gates for this step." A step that omits the `requires:` key entirely is a `validate_requires_chain` violation (except for `repair`).
+
+`andon.answer("widen:<file1>,<file2>")` merges the listed files into `allow_paths` in the issue body YAML block and calls `resume(issue_num, from_step=step)` automatically. If the body has no YAML block, a comment is posted and no resume is triggered.
 
 ## Milestone chain (multi-repo)
 
