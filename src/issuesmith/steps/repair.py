@@ -74,7 +74,7 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
     os.environ[_REPAIR_ACTIVE_ENV] = "1"
     try:
         rc = run_guarded(
-            "implement",
+            "implementation",  # engine state roles are "design" / "implementation" (#3794 follow-up)
             template,
             variables,
             success_statuses=["REPAIR_DONE"],
