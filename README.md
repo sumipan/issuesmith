@@ -183,6 +183,26 @@ Optional `scope_coupling` keys in `issuesmith.yaml` (caller/test coupling check)
 | `enabled` | `true` | When `false`, skip coupling check entirely |
 | `search_dirs` | `["tests", "src"]` | Directories to grep for callers and tests. Hits from `tests` go to `tests_outside_allow_paths`; all others go to `callers_outside_allow_paths`. Example: `[tests, src, workflows, tools, scripts]` to cover workflow templates and helper scripts |
 
+Optional `scope_size` keys in `issuesmith.yaml` (Issue size gate run by B1 Verify, nexus #3665).
+The gate reads only the Issue's change table: counted files are rows whose path does not start
+with an `exclude_prefixes` entry, concerns are their distinct parent directories, and change types
+are normalized to `delete` / `new` / `modify`. Issues labelled `scope:milestone` are skipped. Each
+violation (`scope_size.too_many_files`, `scope_size.too_many_concerns`,
+`scope_size.delete_with_new`) carries a fix_hint with a sub-issue split plan (one row per concern);
+the body is never rewritten.
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `true` | When `false`, skip the size check entirely |
+| `max_files` | `8` | Max counted files (integer >= 1, else `ConfigError`) |
+| `max_concerns` | `2` | Max distinct parent directories of counted files (integer >= 1, else `ConfigError`) |
+| `delete_with_new` | `false` | When `false`, deletion and creation in one Issue fail |
+| `exclude_prefixes` | `["tests/", "docs/", "README.md", "CHANGELOG.md", "pyproject.toml"]` | Path prefixes not counted (list of strings, else `ConfigError`) |
+| `delete_words` | `["delete"]` | Change-type cell substrings (case-insensitive) that mean deletion; hosts writing Issues in another language set their own words |
+| `new_words` | `["new", "add"]` | Change-type cell substrings that mean creation |
+| `sub_plan_header` | `\| # \| Title \| Target repo \| Content \| Depends on \|` | Header row of the sub-issue split plan in the fix_hint |
+| `no_deps_word` | `none` | Dependency cell of the split plan rows |
+
 Optional `observe.main_health` keys in `issuesmith.yaml` (base-branch health check, #3664).
 Without the section the feature is disabled:
 
@@ -289,6 +309,7 @@ All gate ids usable in `steps.<id>.requires` in `issuesmith.yaml`. Issue gates e
 | `scope` | worktree | gates/scope.py (ScopeGate) |
 | `scope_breadth` | issue | gate_rules/scope_breadth.py |
 | `scope_coupling` | issue | gate_rules/scope_coupling.py |
+| `scope_size` | issue | gate_rules/scope_size.py |
 | `tests` | worktree | gates/worktree.py (TestsGate) |
 
 ### Derived allow_paths for newly failing tests (#3756)

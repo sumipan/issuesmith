@@ -8,3 +8,4 @@ import issuesmith.gate_rules.m2  # noqa: E402,F401
 import issuesmith.gate_rules.milestone_consistency  # noqa: E402,F401
 import issuesmith.gate_rules.scope_breadth  # noqa: E402,F401
 import issuesmith.gate_rules.scope_coupling  # noqa: E402,F401
+import issuesmith.gate_rules.scope_size  # noqa: E402,F401

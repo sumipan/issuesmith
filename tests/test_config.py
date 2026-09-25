@@ -12,6 +12,7 @@ from issuesmith.config import (
     ConfigError,
     DerivedAllowConfig,
     ScopeCouplingConfig,
+    ScopeSizeConfig,
     get_config,
     load_config,
     reset_config_cache,
@@ -381,3 +382,99 @@ def test_derived_allow_unknown_key_raises(tmp_path, monkeypatch):
     reset_config_cache()
     with pytest.raises(ConfigError, match="tests_glob"):
         load_config()
+
+
+def _load_with(tmp_path, monkeypatch, extra: dict):
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(yaml.safe_dump({"repo": "example/repo", **extra}), encoding="utf-8")
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    return load_config()
+
+
+def test_scope_size_defaults_when_section_absent(tmp_path, monkeypatch):
+    cfg = _load_with(tmp_path, monkeypatch, {})
+    assert cfg.scope_size == ScopeSizeConfig()
+    assert cfg.scope_size.enabled is True
+    assert cfg.scope_size.max_files == 8
+    assert cfg.scope_size.max_concerns == 2
+    assert cfg.scope_size.delete_with_new is False
+    assert cfg.scope_size.exclude_prefixes == (
+        "tests/", "docs/", "README.md", "CHANGELOG.md", "pyproject.toml",
+    )
+
+
+def test_scope_size_vocabulary_overrides(tmp_path, monkeypatch):
+    cfg = _load_with(
+        tmp_path,
+        monkeypatch,
+        {
+            "scope_size": {
+                "delete_words": ["Remove ", "drop"],
+                "new_words": ["create"],
+                "sub_plan_header": "| # | T | R | C | D |",
+                "no_deps_word": "-",
+            }
+        },
+    )
+    assert cfg.scope_size.delete_words == ("remove", "drop")
+    assert cfg.scope_size.new_words == ("create",)
+    assert cfg.scope_size.sub_plan_header == "| # | T | R | C | D |"
+    assert cfg.scope_size.no_deps_word == "-"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"delete_words": []},
+        {"delete_words": "delete"},
+        {"new_words": [1]},
+        {"sub_plan_header": ""},
+        {"no_deps_word": 3},
+    ],
+)
+def test_scope_size_vocabulary_rejects_invalid(tmp_path, monkeypatch, bad):
+    from issuesmith.config import ConfigError
+
+    with pytest.raises(ConfigError):
+        _load_with(tmp_path, monkeypatch, {"scope_size": bad})
+
+
+def test_scope_size_overrides(tmp_path, monkeypatch):
+    cfg = _load_with(
+        tmp_path,
+        monkeypatch,
+        {
+            "scope_size": {
+                "enabled": False,
+                "max_files": 12,
+                "max_concerns": 3,
+                "delete_with_new": True,
+                "exclude_prefixes": ["tests/"],
+            }
+        },
+    )
+    assert cfg.scope_size == ScopeSizeConfig(
+        enabled=False,
+        max_files=12,
+        max_concerns=3,
+        delete_with_new=True,
+        exclude_prefixes=("tests/",),
+    )
+
+
+@pytest.mark.parametrize(
+    "section",
+    [
+        {"max_files": 0},
+        {"max_concerns": 0},
+        {"max_files": "8"},
+        {"max_concerns": 1.5},
+        {"max_files": True},
+        {"exclude_prefixes": "tests/"},
+        {"exclude_prefixes": ["tests/", 1]},
+    ],
+)
+def test_scope_size_invalid_values_raise(tmp_path, monkeypatch, section):
+    with pytest.raises(ConfigError, match="scope_size"):
+        _load_with(tmp_path, monkeypatch, {"scope_size": section})
