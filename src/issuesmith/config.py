@@ -217,6 +217,7 @@ class ScopeCouplingConfig:
     """
 
     enabled: bool = True
+    search_dirs: tuple[str, ...] = ("tests", "src")
 
 
 _DEFAULT_TERMINAL_LABELS: tuple[str, ...] = ("issuesmith:merge-done", "bump:done")
@@ -566,7 +567,23 @@ def _build_scope_coupling(raw: Mapping[str, Any] | None) -> ScopeCouplingConfig:
         )
     enabled_raw = raw.get("enabled")
     enabled = True if enabled_raw is None else bool(enabled_raw)
-    return ScopeCouplingConfig(enabled=enabled)
+    search_dirs: tuple[str, ...] = ("tests", "src")
+    if "search_dirs" in raw:
+        sd_raw = raw["search_dirs"]
+        if not isinstance(sd_raw, list) or not sd_raw:
+            raise ConfigError(
+                "scope_coupling.search_dirs must be a non-empty list of directory names"
+            )
+        stripped = [str(x).strip() for x in sd_raw]
+        if any(not s for s in stripped):
+            raise ConfigError(
+                "scope_coupling.search_dirs must be a non-empty list of directory names"
+            )
+        seen: dict[str, None] = {}
+        for s in stripped:
+            seen[s] = None
+        search_dirs = tuple(seen.keys())
+    return ScopeCouplingConfig(enabled=enabled, search_dirs=search_dirs)
 
 
 def _build_observe(raw: Mapping[str, Any] | None) -> ObserveConfig:

@@ -171,6 +171,23 @@ tests outside `allow_paths` to follow. Without it, `scope_coupling` requires onl
 public symbols defined in the changed files and basenames of deleted / moved files; files that
 match by string only are listed for reference and never widen `allow_paths`.
 
+Optional `scope_coupling` keys in `issuesmith.yaml` (caller/test coupling check):
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `true` | When `false`, skip coupling check entirely |
+| `search_dirs` | `["tests", "src"]` | Directories to grep for callers and tests. Hits from `tests` go to `tests_outside_allow_paths`; all others go to `callers_outside_allow_paths`. Example: `[tests, src, workflows, tools, scripts]` to cover workflow templates and helper scripts |
+
+When a body's change table or section heading contains a removal keyword (`delete`, `remove`, `削除`, `撤去`, `廃止`), backtick identifiers and `` `${template_var}` `` names in that context are unconditionally treated as required search keys — even if they have no `def`/`class` definition in the changed files. This catches constants, YAML keys, and dataclass fields being removed. Example:
+
+```markdown
+## Items to remove: MY_CONST
+
+The `${old_step_result}` template variable is no longer used.
+```
+
+Both `MY_CONST` and `old_step_result` become required keys; any file outside `allow_paths` that references them generates a violation.
+
 **CP1 narrows automatically, P0 is a safety net (#3487).** `steps.scope_gate.resolve_scope_root`
 is the single root resolver both CP1 (`gate_rules.scope_breadth`) and P0 (`steps.p0_worktree`) call,
 so both measure the same tree. When CP1 finds allow_paths over threshold, it deterministically
