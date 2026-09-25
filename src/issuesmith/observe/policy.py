@@ -261,7 +261,9 @@ def execute(
     if resolved_ids and client is not None:
         # dag_terminated andons are only auto-resolved when the issue is back in_flight
         # (the first tick that processes a failure removes in_flight + running label, so
-        # subsequent ticks can't detect the failure anymore — we must wait for re-dispatch)
+        # subsequent ticks can't detect the failure anymore — we must wait for re-dispatch).
+        # Deferred ids are retained in the store so they are re-checked on later ticks.
+        deferred: set[str] = set()
         snap = store.snapshot()
         in_flight_issues: set[int] = {
             entry.get("issue")  # type: ignore[misc]
@@ -277,13 +279,15 @@ def execute(
                     issue_num = None
                 if issue_num is None or issue_num not in in_flight_issues:
                     logger.debug(
-                        "skip auto-resolve: dag_terminated %s, issue not in_flight", resolved_id
+                        "defer auto-resolve: dag_terminated %s, issue not in_flight", resolved_id
                     )
+                    deferred.add(resolved_id)
                     continue
             try:
                 answer_if_open(client, resolved_id, "auto-resolved: condition cleared")
             except Exception:
                 logger.exception("answer_if_open failed for %s", resolved_id)
+        store.retain_observe_andons(deferred)
 
     for action in actions:
         if isinstance(action, HaltAction):

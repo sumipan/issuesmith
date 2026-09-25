@@ -626,6 +626,16 @@ class QueueStore:
             self._save_state_unlocked(state)
             return new_ids, resolved_ids
 
+    def retain_observe_andons(self, ids: set[str]) -> None:
+        """Keep ``ids`` known so they are reported as resolved again on the next sync."""
+        if not ids:
+            return
+        with self.lock():
+            state = self._load_state_unlocked()
+            known = set(state.get("observe_andons") or [])
+            state["observe_andons"] = sorted(known | set(ids))
+            self._save_state_unlocked(state)
+
     def mark_triaged(self, revision: int) -> None:
         with self.lock():
             state = self._load_state_unlocked()

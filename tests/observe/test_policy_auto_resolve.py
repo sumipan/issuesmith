@@ -92,6 +92,25 @@ def test_dag_terminated_stays_open_without_redispatch(store, client):
     )
 
 
+# AC-1: re-dispatch several ticks after the failure still auto-resolves the andon
+def test_dag_terminated_auto_resolved_when_redispatched_after_idle_ticks(store, client):
+    number = client.issue_create("late redispatch", "body")
+    store.add_in_flight(number, "claude", role="implementation")
+    execute(_dag_terminated_actions(number), store, sinks=[], client=client)
+
+    dag_id = f"observe:{number}:dag_terminated:{number}:develop:cp1:0"
+
+    # Idle ticks while the user has not re-dispatched yet
+    execute([], store, sinks=[], client=client)
+    execute([], store, sinks=[], client=client)
+    assert any(a.id == dag_id for a in list_open(client))
+
+    store.add_in_flight(number, "claude", role="implementation")
+    execute([], store, sinks=[], client=client)
+
+    assert not any(a.id == dag_id for a in list_open(client))
+
+
 # AC-1: after redispatch and auto-resolve, re-occurrence raises andon again
 def test_dag_terminated_recurs_after_auto_resolve(store, client):
     number = client.issue_create("recur issue", "body")
