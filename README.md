@@ -99,6 +99,8 @@ Entry points: `issuesmith` / `python3 -m issuesmith`.
 | `smoke` | Template smoke against live Issue bodies |
 | `gen-live` | Generate live dispatch payloads |
 | `version-bump` | Deterministic package version bump |
+| `observe [--apply] [--json]` | Collect observe events; `--apply` executes the policy actions |
+| `main-health` | Run `observe.main_health.command` on the latest base branch and write `issuesmith-main-health.json` (prints `main_health: <green\|red> <sha12>`; `disabled` when unset; exit 2 on git / timeout errors) |
 | `apply` / `ingest-review` | Moved to host `tools/stash/`; exits 2 |
 
 ## Public API
@@ -177,6 +179,22 @@ Optional `scope_coupling` keys in `issuesmith.yaml` (caller/test coupling check)
 |---|---|---|
 | `enabled` | `true` | When `false`, skip coupling check entirely |
 | `search_dirs` | `["tests", "src"]` | Directories to grep for callers and tests. Hits from `tests` go to `tests_outside_allow_paths`; all others go to `callers_outside_allow_paths`. Example: `[tests, src, workflows, tools, scripts]` to cover workflow templates and helper scripts |
+
+Optional `observe.main_health` keys in `issuesmith.yaml` (base-branch health check, #3664).
+Without the section the feature is disabled:
+
+| Key | Default | Description |
+|---|---|---|
+| `worktree` | (required) | Detached worktree of the base branch (create it beforehand) |
+| `command` | (required) | Health command; a string is split with `shlex`, a list is used as-is (no shell) |
+| `base_branch` | `main` | Branch fetched from `origin` and checked out detached |
+| `timeout_seconds` | `1800` | Command timeout; a timeout leaves the state file unchanged |
+
+`issuesmith main-health` skips the command while `origin/<base_branch>` has the SHA already
+recorded in `<queue_state dir>/issuesmith-main-health.json`. `observe()` only reads that file:
+a red state emits `main_red` on every tick (halt `phase:develop` with `keep_existing`, one
+`broken` andon `observe:0:main_red:0`), and a green state emits `main_green` while the halt
+was raised by `main_red`, which clears only that halt. Scheduling the command is up to the host.
 
 Optional `derived_allow` keys in `issuesmith.yaml` (derived allow_paths for newly failing tests, #3756):
 

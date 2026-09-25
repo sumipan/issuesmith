@@ -27,6 +27,7 @@ commands:
   milestone  status / resume-progress (sub_issues_summary progress + child table)
   config show
   observe [--apply] [--json]
+  main-health  (run observe.main_health.command on the base branch, write state)
   apply  ingest-review  (moved to tools/stash/; exit 2)
 """
 
@@ -380,6 +381,26 @@ def _cmd_observe(argv: list[str]) -> int:
     return 0
 
 
+def _cmd_main_health(_argv: list[str]) -> int:
+    from issuesmith.config import get_config
+    from issuesmith.observe.main_health import MainHealthError, check, state_path
+
+    cfg = get_config()
+    mh = cfg.observe.main_health
+    if mh is None:
+        print("main_health: disabled")
+        return 0
+    try:
+        state = check(mh, state_path(cfg))
+    except MainHealthError as exc:
+        print(f"main_health: {exc}", file=sys.stderr)
+        return 2
+    print(f"main_health: {state.status} {state.sha[:12]}")
+    for test_id in state.failing:
+        print(f"  {test_id}")
+    return 0
+
+
 def _cmd_stash_moved(_argv: list[str]) -> int:
     print(_STASH_MOVED_MSG, file=sys.stderr)
     return 2
@@ -415,6 +436,7 @@ _HANDLERS = {
     "milestone": _cmd_milestone,
     "config": _cmd_config,
     "observe": _cmd_observe,
+    "main-health": _cmd_main_health,
     "apply": _cmd_stash_moved,
     "ingest-review": _cmd_stash_moved,
 }

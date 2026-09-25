@@ -22,6 +22,8 @@ from issuesmith.observe.events import (
     GitHubApiRecoveredEvent,
     IssueStallEvent,
     LabelDriftEvent,
+    MainGreenEvent,
+    MainRedEvent,
     ObserveEvent,
     OrphanExecEvent,
     SystemicStepFailureEvent,
@@ -121,7 +123,8 @@ def observe(
     """Collect pipeline events.
 
     ``github_api_low=True`` runs the reduced mode: no forge calls, only ``dag_terminated``
-    (in_flight candidates, local DAG state) and ``orphan_exec`` (#3769). ``None`` (default)
+    (in_flight candidates, local DAG state), ``orphan_exec`` (#3769) and the local
+    ``main_red`` / ``main_green`` state file (#3664). ``None`` (default)
     derives it from audit.jsonl via :func:`github_api_status` when ``api_brake`` is enabled
     — the only side effect of observe(), persisting the low/recovered notification flag.
     With ``api_brake`` disabled, ``None`` behaves as ``False`` and observe() is read-only.
@@ -143,6 +146,7 @@ def observe(
         reduced: list[ObserveEvent] = []
         reduced.extend(_detect_dag_terminated_local(snapshot, config, dag_states))
         reduced.extend(_detect_orphan_exec(snapshot, config, dag_states))
+        reduced.extend(_detect_main_health(snapshot, config))
         reduced.extend(transition_events)
         return reduced
 
@@ -165,6 +169,7 @@ def observe(
         now=now,
     ))
     events.extend(_detect_all_engines_paused(config))
+    events.extend(_detect_main_health(snapshot, config))
     events.extend(transition_events)
 
     return events
@@ -608,6 +613,30 @@ def _detect_all_engines_paused(config: "IssuesmithConfig") -> list[ObserveEvent]
     if paused_roles and len(paused_roles) == len(config.engines):
         return [AllEnginesPausedEvent(roles=tuple(sorted(paused_roles)))]
 
+    return []
+
+
+def _detect_main_health(
+    snapshot: "QueueSnapshot", config: "IssuesmithConfig",
+) -> list[ObserveEvent]:
+    """Read the ``issuesmith main-health`` state file (#3664); no forge call, no test run.
+
+    Red is reported on every tick (execute() deduplicates the andon); green only while the
+    queue is still halted by ``main_red``, so it resumes that halt exactly once.
+    """
+    from issuesmith.config import MainHealthConfig
+    from issuesmith.observe.main_health import load_state, state_path
+
+    if not isinstance(getattr(config.observe, "main_health", None), MainHealthConfig):
+        return []
+
+    state = load_state(state_path(config))
+    if state is None:
+        return []
+    if state.status == "red":
+        return [MainRedEvent(sha=state.sha, reason=state.reason, failing=state.failing)]
+    if getattr(snapshot, "halt_event", None) == "main_red":
+        return [MainGreenEvent(sha=state.sha)]
     return []
 
 

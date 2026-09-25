@@ -7,6 +7,7 @@ config file so the package can be reused outside this repository.
 from __future__ import annotations
 
 import os
+import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Mapping
@@ -235,6 +236,16 @@ _DEFAULT_TERMINAL_LABELS: tuple[str, ...] = ("issuesmith:merge-done", "bump:done
 
 
 @dataclass(frozen=True)
+class MainHealthConfig:
+    """Periodic base-branch test run (issuesmith.yaml observe.main_health:, #3664)."""
+
+    worktree: Path
+    command: tuple[str, ...]
+    base_branch: str = "main"
+    timeout_seconds: int = 1800
+
+
+@dataclass(frozen=True)
 class ObserveConfig:
     """Configuration for the observe layer (issuesmith.yaml observe: section)."""
 
@@ -244,6 +255,7 @@ class ObserveConfig:
     systemic_window_minutes: int = 60
     forge_max_consecutive_errors: int = 3
     max_api_calls: int = 8
+    main_health: MainHealthConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -618,7 +630,37 @@ def _build_derived_allow(raw: Mapping[str, Any] | None) -> DerivedAllowConfig:
     return DerivedAllowConfig(enabled=True if enabled_raw is None else bool(enabled_raw))
 
 
-def _build_observe(raw: Mapping[str, Any] | None) -> ObserveConfig:
+def _build_main_health(raw: Any, root: Path) -> MainHealthConfig | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping):
+        raise ValueError("observe.main_health must be a mapping")
+    worktree_raw = str(raw.get("worktree") or "").strip()
+    if not worktree_raw:
+        raise ValueError("observe.main_health.worktree is required")
+    command_raw = raw.get("command")
+    if isinstance(command_raw, str):
+        command = tuple(shlex.split(command_raw))
+    elif isinstance(command_raw, (list, tuple)):
+        command = tuple(str(x) for x in command_raw)
+    else:
+        command = ()
+    if not command:
+        raise ValueError("observe.main_health.command is required")
+    worktree = Path(worktree_raw).expanduser()
+    if not worktree.is_absolute():
+        worktree = root / worktree
+    return MainHealthConfig(
+        worktree=worktree,
+        command=command,
+        base_branch=str(raw.get("base_branch") or "main"),
+        timeout_seconds=int(raw.get("timeout_seconds", 1800)),
+    )
+
+
+def _build_observe(
+    raw: Mapping[str, Any] | None, root: Path | None = None,
+) -> ObserveConfig:
     defaults = ObserveConfig()
     if not raw:
         return defaults
@@ -631,6 +673,7 @@ def _build_observe(raw: Mapping[str, Any] | None) -> ObserveConfig:
             raw.get("forge_max_consecutive_errors", defaults.forge_max_consecutive_errors)
         ),
         max_api_calls=int(raw.get("max_api_calls", defaults.max_api_calls)),
+        main_health=_build_main_health(raw.get("main_health"), root or Path.cwd()),
     )
 
 
@@ -700,6 +743,6 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         scope_coupling=_build_scope_coupling(scope_coupling_raw),
         derived_allow=_build_derived_allow(derived_allow_raw),
         terminal_labels=_build_terminal_labels(data.get("terminal_labels")),
-        observe=_build_observe(observe_raw),
+        observe=_build_observe(observe_raw, root.resolve()),
         api_brake=_build_api_brake(api_brake_raw),
     )
