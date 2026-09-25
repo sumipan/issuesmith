@@ -27,6 +27,7 @@ import string
 import subprocess
 import sys
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 from ghdag.core.vocabulary import DONE_DEFERRED
@@ -544,12 +545,16 @@ def _build_andon_options(blocking: list) -> list[str]:
     return options
 
 
+_MAX_AUTO_FIX_ROUNDS = 2
+
+
 def run_requires_loop(
     step_cfg: StepConfig,
     step_id: str,
     context: dict[str, str],
     *,
     repair_count: int = 0,
+    auto_fix_round: int = 0,
 ) -> int | None:
     """Evaluate requires gates; auto-fix, repair, or raise andon as needed.
 
@@ -634,13 +639,25 @@ def run_requires_loop(
         return None
 
     # Try deterministic auto-fixes for auto_fixable violations.
+    # Bounded: every round re-evaluates all gates (full pytest included), and a base
+    # branch that moves every few seconds re-creates base_freshness.behind_base each
+    # time. After _MAX_AUTO_FIX_ROUNDS the remaining auto-fixable violations are
+    # waived (publish rebases onto the base at P3 anyway) (nexus #3865 / #3864).
     has_auto_fixable = any(v.auto_fixable for v in result.blocking)
-    if has_auto_fixable:
+    if has_auto_fixable and auto_fix_round >= _MAX_AUTO_FIX_ROUNDS:
+        waived = [v for v in result.blocking if v.auto_fixable]
+        print(
+            f"[issuesmith-dispatch] auto-fix round limit ({_MAX_AUTO_FIX_ROUNDS}) reached in step {step_id}; "
+            "waiving: " + ", ".join(v.rule_id for v in waived)
+        )
+        result = replace(result, blocking=[v for v in result.blocking if not v.auto_fixable])
+    elif has_auto_fixable:
         result, inp = apply_auto_fixes(result, gates, inp)
         if not result.blocking:
             return run_requires_loop(
                 step_cfg, step_id, context,
                 repair_count=repair_count,
+                auto_fix_round=auto_fix_round + 1,
             )
 
     if not result.blocking:

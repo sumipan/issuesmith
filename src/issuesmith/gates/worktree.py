@@ -130,18 +130,41 @@ class LintGate:
         return inp
 
 
-def _run_pytest(root: Path, args: list[str]) -> tuple[int, str]:
-    """Run pytest with `-q -rfE --tb=no` in `root`; prepend `root/src` to PYTHONPATH if present."""
+_PYTEST_TIMEOUT_ENV = "ISSUESMITH_PYTEST_TIMEOUT_SEC"
+_PYTEST_TIMEOUT_DEFAULT_SEC = 1500.0
+
+
+def _pytest_timeout_sec() -> float:
+    raw = (os.environ.get(_PYTEST_TIMEOUT_ENV) or "").strip()
+    try:
+        return float(raw) if raw else _PYTEST_TIMEOUT_DEFAULT_SEC
+    except ValueError:
+        return _PYTEST_TIMEOUT_DEFAULT_SEC
+
+
+def _run_pytest(root: Path, args: list[str], *, timeout: float | None = None) -> tuple[int, str]:
+    """Run pytest with `-q -rfE --tb=no` in `root`; prepend `root/src` to PYTHONPATH if present.
+
+    A run that exceeds ``timeout`` (default ``ISSUESMITH_PYTEST_TIMEOUT_SEC`` or 1500 s)
+    returns exit code 124 with a one-line message instead of hanging until the
+    outer task timeout kills the whole step (nexus #3864).
+    """
     env = dict(os.environ)
     src = root / "src"
     if src.is_dir():
         existing = env.get("PYTHONPATH", "")
         env["PYTHONPATH"] = (str(src) + ":" + existing) if existing else str(src)
-    proc = subprocess.run(
-        ["python", "-m", "pytest", "-q", "-rfE", "--tb=no", "-p", "no:cacheprovider", *args],
-        capture_output=True, text=True, check=False,
-        cwd=str(root), env=env,
-    )
+    limit = timeout if timeout is not None else _pytest_timeout_sec()
+    try:
+        proc = subprocess.run(
+            ["python", "-m", "pytest", "-q", "-rfE", "--tb=no", "-p", "no:cacheprovider", *args],
+            capture_output=True, text=True, check=False,
+            cwd=str(root), env=env, timeout=limit,
+        )
+    except subprocess.TimeoutExpired as exc:
+        partial = ((exc.stdout or b"") if isinstance(exc.stdout, bytes) else (exc.stdout or "").encode())
+        tail = partial.decode(errors="replace")[-2000:]
+        return 124, f"pytest timed out after {limit:.0f} s\n{tail}"
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
 
@@ -617,12 +640,36 @@ class BaseFreshnessGate:
         )]
 
     def fix(self, inp: ContractInput) -> ContractInput:
-        subprocess.run(
+        """Catch up with origin/<base>: fast-forward, else rebase our commits on top.
+
+        A silent ``--ff-only`` failure used to leave the branch behind while the loop
+        believed the fix succeeded; with a base that moves every few seconds the
+        requires loop then re-ran every gate until the task timeout (2026-09-25,
+        nexus #3865 / #3864). A rebase that conflicts is aborted and reported.
+        """
+        ff = subprocess.run(
             ["git", "merge", "--ff-only", f"origin/{self._base}"],
-            capture_output=True, check=False,
+            capture_output=True, text=True, check=False,
             cwd=str(self._root),
         )
-        return inp
+        if ff.returncode == 0:
+            return inp
+        rebase = subprocess.run(
+            ["git", "rebase", f"origin/{self._base}"],
+            capture_output=True, text=True, check=False,
+            cwd=str(self._root),
+        )
+        if rebase.returncode == 0:
+            return inp
+        subprocess.run(
+            ["git", "rebase", "--abort"],
+            capture_output=True, text=True, check=False,
+            cwd=str(self._root),
+        )
+        detail = (rebase.stderr or rebase.stdout or "").strip()[-400:]
+        raise RuntimeError(
+            f"base_freshness auto-fix failed: ff-only and rebase onto origin/{self._base} both failed: {detail}"
+        )
 
 
 def _build_lint(worktree_path: Path, allow_paths: list[str], base_branch: str) -> LintGate:

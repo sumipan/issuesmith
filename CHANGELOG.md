@@ -9,6 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `BaseFreshnessGate.fix()` no longer swallows a failed `git merge --ff-only`: on a diverged branch it rebases onto `origin/<base>`, and a conflicting rebase is aborted and raised (the violation stays blocking → andon instead of a silent loop). `run_requires_loop` bounds auto-fix rounds (`_MAX_AUTO_FIX_ROUNDS = 2`); remaining auto-fixable violations are waived after that (publish rebases at P3). `_run_pytest` gets a timeout (`ISSUESMITH_PYTEST_TIMEOUT_SEC`, default 1500 s) and returns 124 instead of hanging until the task timeout. Fixes P1 post-phase loops that hit the 3600 s task timeout while the base branch moved every few seconds (nexus #3865 / #3864).
+
 - `steps/repair.py` asked the engine for role `implement`; the engine state only has `design` / `implementation`, so the requires repair loop (#3663) crashed with `KeyError` on its first real use and the step exited 1 without a message. Fixed to `implementation`; `tests/conventions/test_run_guarded_roles.py` rejects unknown literal roles.
 
 - `publish` is idempotent after its own version bump: `_bump_commits_on_top` recognizes publish-made `chore: bump version to ...` commits at the top of `origin/<base>..HEAD`; the commit diff gate inspects the diff below them and `_maybe_bump_version` does not bump twice. `pr_list` failures (rate limit, network) return `PublishResult(status="PR_LIST_FAILED")` instead of a traceback. Re-running P3 after a failed PR lookup no longer fails with `P3_GATE_FAILED` on the bump commit.
