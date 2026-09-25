@@ -102,3 +102,17 @@ class GitHubApiLowEvent(ObserveEvent):
 @dataclass(frozen=True)
 class GitHubApiRecoveredEvent(ObserveEvent):
     kind: str = "github_api_recovered"
+
+
+@dataclass(frozen=True)
+class MainRedEvent(ObserveEvent):
+    kind: str = "main_red"
+    sha: str = ""
+    reason: str = ""
+    failing: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class MainGreenEvent(ObserveEvent):
+    kind: str = "main_green"
+    sha: str = ""

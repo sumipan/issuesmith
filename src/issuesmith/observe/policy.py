@@ -15,6 +15,8 @@ from issuesmith.observe.events import (
     GitHubApiRecoveredEvent,
     IssueStallEvent,
     LabelDriftEvent,
+    MainGreenEvent,
+    MainRedEvent,
     ObserveEvent,
     OrphanExecEvent,
     SystemicStepFailureEvent,
@@ -60,11 +62,16 @@ class HaltAction:
     scope: str = "all"
     reason: str = ""
     event_kind: str = ""
+    # True: do not overwrite an existing halt raised by a different event (e.g. a manual or
+    # systemic_step_failure halt must not be narrowed to this action's scope).
+    keep_existing: bool = False
 
 
 @dataclass(frozen=True)
 class ResumeAction:
     reason: str = ""
+    # Non-empty: clear the halt only when it was raised by this event kind.
+    event_kind: str = ""
 
 
 @dataclass(frozen=True)
@@ -209,6 +216,27 @@ def _evaluate_one(event: ObserveEvent, config: "ObserveConfig") -> list[Action]:
             )
         ]
 
+    if isinstance(event, MainRedEvent):
+        sha12 = event.sha[:12]
+        return [
+            HaltAction(
+                scope="phase:develop",
+                reason=f"main red at {sha12}: {event.reason}",
+                event_kind="main_red",
+                keep_existing=True,
+            ),
+            AndonAction(
+                kind="broken",
+                issue=0,
+                summary=f"main is red at {sha12}: {event.reason}",
+                evidence=f"failing: {', '.join(event.failing)}",
+                key="main_red",
+            ),
+        ]
+
+    if isinstance(event, MainGreenEvent):
+        return [ResumeAction(reason=f"main green at {event.sha[:12]}", event_kind="main_red")]
+
     if isinstance(event, AllEnginesPausedEvent):
         return [WaitAction(reason=f"all engines paused: {list(event.roles)}")]
 
@@ -314,10 +342,21 @@ def execute(
 
     for action in actions:
         if isinstance(action, HaltAction):
+            if action.keep_existing:
+                current = store.snapshot()
+                if current.halt and current.halt_event != action.event_kind:
+                    logger.info(
+                        "halt kept: existing event=%s, skipping %s",
+                        current.halt_event, action.event_kind,
+                    )
+                    continue
             store.set_halt(True, action.reason, scope=action.scope, event=action.event_kind)
             logger.info("halt set: scope=%s reason=%s", action.scope, action.reason)
 
         elif isinstance(action, ResumeAction):
+            if action.event_kind and store.snapshot().halt_event != action.event_kind:
+                logger.info("halt not cleared: not raised by %s", action.event_kind)
+                continue
             store.clear_halt()
             logger.info("halt cleared: %s", action.reason)
 
