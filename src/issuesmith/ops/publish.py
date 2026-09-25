@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import os
 import subprocess
 import sys
 import time
@@ -291,6 +292,33 @@ def _discard_runtime_dir_dirt(worktree: Path, allow_paths: list[str]) -> None:
             _run_git(worktree, "restore", "--", path)
 
 
+_CHANGELOG = "CHANGELOG.md"
+_CONFLICT_MARKER_PREFIXES = ("<<<<<<< ", ">>>>>>> ")
+
+
+def _resolve_changelog_conflicts(changelog_path: Path) -> bool:
+    """Drop conflict marker lines, keeping every entry from both sides (#3587).
+
+    Returns False when the file is missing or has no conflict markers.
+    """
+    if not changelog_path.is_file():
+        return False
+    lines = changelog_path.read_text(encoding="utf-8").splitlines(keepends=True)
+    kept: list[str] = []
+    in_base = False  # diff3/zdiff3 base section: drop, both sides already carry it
+    for line in lines:
+        if line.startswith("||||||| "):
+            in_base = True
+        elif line.rstrip("\r\n") == "=======":
+            in_base = False
+        elif not in_base and not line.startswith(_CONFLICT_MARKER_PREFIXES):
+            kept.append(line)
+    if len(kept) == len(lines):
+        return False
+    changelog_path.write_text("".join(kept), encoding="utf-8")
+    return True
+
+
 def _ensure_rebased(
     worktree: Path,
     base_branch: str,
@@ -327,13 +355,27 @@ def _ensure_rebased(
         )
 
     rebase = _run_git(worktree, "rebase", f"origin/{base_branch}", check=False)
-    if rebase.returncode == 0:
-        return None
+    while True:
+        if rebase.returncode == 0:
+            return None
+        unmerged = _run_git(
+            worktree, "diff", "--name-only", "--diff-filter=U", check=False
+        ).stdout
+        conflict_files = [p for p in unmerged.splitlines() if p.strip()]
+        # CHANGELOG.md is appended by every parallel Issue; keep both sides (#3587).
+        # Any other conflicting path aborts the whole rebase (no partial resolve).
+        if conflict_files != [_CHANGELOG] or not _resolve_changelog_conflicts(
+            worktree / _CHANGELOG
+        ):
+            break
+        _run_git(worktree, "add", "--", _CHANGELOG)
+        rebase = subprocess.run(
+            ["git", "-C", str(worktree), "rebase", "--continue"],
+            env={**os.environ, "GIT_EDITOR": "true"},
+            capture_output=True,
+            text=True,
+        )
 
-    unmerged = _run_git(
-        worktree, "diff", "--name-only", "--diff-filter=U", check=False
-    ).stdout
-    conflict_files = [p for p in unmerged.splitlines() if p.strip()]
     _run_git(worktree, "rebase", "--abort", check=False)
     return PublishResult(
         status="REBASE_CONFLICT",
