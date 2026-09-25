@@ -73,13 +73,11 @@ def _is_test_path(path: str) -> bool:
     return any(p.startswith("test") for p in parts)
 
 
-def _is_valid_key(key: str, extra_ignore: tuple[str, ...]) -> bool:
+def _is_valid_key(key: str) -> bool:
     if len(key) <= 3:
         return False
     kl = key.lower()
     if kl in _DEFAULT_IGNORE_SYMBOLS:
-        return False
-    if kl in {s.lower() for s in extra_ignore}:
         return False
     return True
 
@@ -108,7 +106,6 @@ def _extract_search_keys(
     body: str,
     metadata: dict,
     root: Path,
-    extra_ignore: tuple[str, ...],
 ) -> tuple[set[str], set[str]]:
     """Return ``(required, optional)`` search keys (sumipan/nexus#3527).
 
@@ -131,7 +128,7 @@ def _extract_search_keys(
         if _is_test_path(p):
             continue
         base = _basename_no_ext(p)
-        if _is_valid_key(base, extra_ignore):
+        if _is_valid_key(base):
             optional.add(base)
 
     # Basenames of delete/move/rename rows in change table
@@ -142,7 +139,7 @@ def _extract_search_keys(
         ct_lower = change_type.lower()
         if any(kw in ct_lower for kw in _DELETE_MOVE_KEYWORDS):
             base = _basename_no_ext(path)
-            if _is_valid_key(base, extra_ignore):
+            if _is_valid_key(base):
                 required.add(base)
 
     # Basenames of paths_must_not_exist (these are being deleted): declaration → required
@@ -151,14 +148,14 @@ def _extract_search_keys(
         path = str(raw).strip()
         if path:
             base = _basename_no_ext(path)
-            if _is_valid_key(base, extra_ignore):
+            if _is_valid_key(base):
                 required.add(base)
 
     # Backtick-quoted identifiers with a def/class in the target repo: required only when the
     # definition is in a file this Issue changes (its public interface may change).
     for m in _BACKTICK_IDENT_RE.finditer(body):
         ident = m.group(1)
-        if not _is_valid_key(ident, extra_ignore):
+        if not _is_valid_key(ident):
             continue
         defined_in = _git_grep(root, f"def {ident}", "") + _git_grep(root, f"class {ident}", "")
         if not defined_in:
@@ -205,10 +202,7 @@ class ScopeCouplingRules:
         if str(metadata.get("scope_mode") or "").strip().lower() == "internal":
             return []
 
-        cfg = get_config()
-        extra_ignore = cfg.scope_coupling.ignore_symbols
-
-        required, optional = _extract_search_keys(body, metadata, root, extra_ignore)
+        required, optional = _extract_search_keys(body, metadata, root)
         if not required and not optional:
             return []
 
@@ -235,7 +229,7 @@ class ScopeCouplingRules:
             return []
 
         all_missing = missing_tests + missing_srcs
-        max_files = cfg.scope_gate.max_files
+        max_files = get_config().scope_gate.max_files
         merged = list(allow_paths)
         for f in all_missing:
             if f not in merged:

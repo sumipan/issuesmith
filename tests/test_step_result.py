@@ -1,11 +1,10 @@
 """Tests for StepResult 3-value contract (Issue #3505).
 
 Covers: construction, compat layer (old exit_code/pipeline_status → new),
-assert_preflight_parity with all three status values, and irreversible flag.
+construction-time marker acceptance with all three status values (the R3
+preflight-parity check was removed in #3628), and irreversible flag.
 """
 from __future__ import annotations
-
-import pytest
 
 from issuesmith.engine import RetryReason, RetrySignal
 from issuesmith.steps.base import Andon, StepResult, Verdict
@@ -99,13 +98,13 @@ class TestStepResultCompatLayer:
 
 
 # ---------------------------------------------------------------------------
-# assert_preflight_parity with new status values
+# Construction-time marker acceptance (preflight parity removed in #3628)
 # ---------------------------------------------------------------------------
 
 
-class TestAssertPreflightParityWithNewStatus:
-    """assert_preflight_parity is called from __post_init__; these tests verify
-    that all three new status values produce no errors for non-stop markers."""
+class TestMarkerAcceptanceWithNewStatus:
+    """StepResult no longer runs a preflight-parity check in __post_init__;
+    any marker is accepted for all three status values."""
 
     def test_done_status_non_stop_marker_passes(self):
         # "WORKTREE_READY" is not a stop status → no error
@@ -121,20 +120,17 @@ class TestAssertPreflightParityWithNewStatus:
         r = StepResult(status="andon", andon=Andon(kind="broken"))
         assert r.status == "andon"
 
-    def test_stop_marker_without_parity_raises(self):
-        # A stop marker not in PREFLIGHT_PARITY → ValueError
-        with pytest.raises(ValueError, match="preflight parity"):
-            StepResult(status="done", markers=["UNKNOWN_FAILED"])
-
     def test_known_stop_marker_passes(self):
-        # MERGE_FAILED is in PREFLIGHT_PARITY
+        # MERGE_FAILED is a known stop marker
         r = StepResult(status="done", markers=["MERGE_FAILED"])
         assert "MERGE_FAILED" in r.markers
 
-    def test_compat_stop_pipeline_status_checked(self):
-        # Old-style exit_code=1 with stop status: parity check applies
-        with pytest.raises(ValueError, match="preflight parity"):
-            StepResult(exit_code=1, pipeline_status="UNKNOWN_FAILED")
+    def test_unknown_stop_marker_is_accepted(self):
+        # Regression for #3628: unknown stop markers must not raise anymore
+        r = StepResult(status="done", markers=["UNKNOWN_FAILED"])
+        assert "UNKNOWN_FAILED" in r.markers
+        c = StepResult(exit_code=1, pipeline_status="UNKNOWN_FAILED")
+        assert c.pipeline_status == "UNKNOWN_FAILED"
 
     def test_compat_known_stop_pipeline_status_passes(self):
         r = StepResult(exit_code=1, pipeline_status="MERGE_FAILED")

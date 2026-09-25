@@ -78,6 +78,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   via temporary git worktree, fail-safe for collection errors (rc=2), and correct handling of
   parametrized test IDs with spaces (sumipan/nexus#3646)
 
+### Removed
+
+- `gate_rules.PREFLIGHT_PARITY`, `gate_rules.STOP_STATUS_SUFFIXES`,
+  `gate_rules.assert_preflight_parity`, and the `StepResult.__post_init__` stop-status guard
+  were all provisional scaffolding from #3487 / issuesmith#61. Stop-status quality is now
+  guaranteed structurally by the requires-chain validation introduced in sumipan/nexus#3626 /
+  #3627; the one-off parity table is no longer needed (sumipan/nexus#3628).
+- `test_workflow_conventions.py` R3 tests (`test_r3_*`) removed alongside the code they
+  guarded; R1 (contract-parser uniqueness) test is unchanged.
+- `ScopeCouplingConfig.ignore_symbols` (31-word exclusion list) and its YAML parser removed;
+  configs that still carry the `scope_coupling.ignore_symbols` key now raise `ConfigError` so
+  operators remove the dead setting. The requires-chain validation introduced in
+  sumipan/nexus#3626 / #3627 makes per-symbol exclusions structurally unnecessary
+  (sumipan/nexus#3628).
+
 ### Added
 
 - `branch_reuse.is_base_recorded(repo_dir, branch)`: public helper that returns True if
