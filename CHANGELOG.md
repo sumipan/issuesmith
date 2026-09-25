@@ -9,6 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `steps/repair.py` asked the engine for role `implement`; the engine state only has `design` / `implementation`, so the requires repair loop (#3663) crashed with `KeyError` on its first real use and the step exited 1 without a message. Fixed to `implementation`; `tests/conventions/test_run_guarded_roles.py` rejects unknown literal roles.
+
 - `publish` is idempotent after its own version bump: `_bump_commits_on_top` recognizes publish-made `chore: bump version to ...` commits at the top of `origin/<base>..HEAD`; the commit diff gate inspects the diff below them and `_maybe_bump_version` does not bump twice. `pr_list` failures (rate limit, network) return `PublishResult(status="PR_LIST_FAILED")` instead of a traceback. Re-running P3 after a failed PR lookup no longer fails with `P3_GATE_FAILED` on the bump commit.
 - Derived allow_paths for newly failing tests (#3756). `TestsGate(allow_paths=...)` sets
   `derived_allow_paths` to test files under `tests/` that pass on base, fail on the branch and
