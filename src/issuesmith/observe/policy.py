@@ -11,6 +11,8 @@ from issuesmith.observe.events import (
     DagTerminatedEvent,
     DispatchBlockedEvent,
     ForgeUnavailableEvent,
+    GitHubApiLowEvent,
+    GitHubApiRecoveredEvent,
     IssueStallEvent,
     LabelDriftEvent,
     ObserveEvent,
@@ -184,6 +186,27 @@ def _evaluate_one(event: ObserveEvent, config: "ObserveConfig") -> list[Action]:
                 summary=f"forge API unavailable: {event.consecutive} consecutive errors",
                 key="forge_unavailable",
             ),
+        ]
+
+    # GitHub API brake (#3769): notify only; dispatch_one already holds new work back.
+    if isinstance(event, GitHubApiLowEvent):
+        return [
+            AndonAction(
+                kind="blocked",
+                issue=0,
+                summary=f"GitHub API rate limit low: {event.remaining} remaining",
+                key="github_api_low",
+            )
+        ]
+
+    if isinstance(event, GitHubApiRecoveredEvent):
+        return [
+            AndonAction(
+                kind="recovered",
+                issue=0,
+                summary="GitHub API rate limit recovered",
+                key="github_api_recovered",
+            )
         ]
 
     if isinstance(event, AllEnginesPausedEvent):

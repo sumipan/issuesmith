@@ -91,3 +91,14 @@ class DagTerminatedEvent(ObserveEvent):
     failed_step: str = ""
     failed_uuid: str = ""
     result_path: str = ""
+
+
+@dataclass(frozen=True)
+class GitHubApiLowEvent(ObserveEvent):
+    kind: str = "github_api_low"
+    remaining: int = 0
+
+
+@dataclass(frozen=True)
+class GitHubApiRecoveredEvent(ObserveEvent):
+    kind: str = "github_api_recovered"

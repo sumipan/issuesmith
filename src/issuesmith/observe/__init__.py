@@ -1,7 +1,8 @@
 """issuesmith.observe -- pipeline observation layer.
 
 observe() reads queue state, exec records, labels, and metrics to produce
-a list of typed events. It has no side effects.
+a list of typed events. Its only side effect is the api_brake notification flag
+(see github_api_status).
 """
 from __future__ import annotations
 
@@ -17,6 +18,8 @@ from issuesmith.observe.events import (
     AllEnginesPausedEvent,
     ChainHaltedEvent,
     DagTerminatedEvent,
+    GitHubApiLowEvent,
+    GitHubApiRecoveredEvent,
     IssueStallEvent,
     LabelDriftEvent,
     ObserveEvent,
@@ -113,19 +116,38 @@ def observe(
     *,
     metrics_path: Path | None = None,
     now: datetime | None = None,
+    github_api_low: bool | None = None,
 ) -> list[ObserveEvent]:
-    """Collect pipeline events. Read-only; no side effects."""
+    """Collect pipeline events.
+
+    ``github_api_low=True`` runs the reduced mode: no forge calls, only ``dag_terminated``
+    (in_flight candidates, local DAG state) and ``orphan_exec`` (#3769). ``None`` (default)
+    derives it from audit.jsonl via :func:`github_api_status` when ``api_brake`` is enabled
+    — the only side effect of observe(), persisting the low/recovered notification flag.
+    With ``api_brake`` disabled, ``None`` behaves as ``False`` and observe() is read-only.
+    """
     if now is None:
         now = datetime.now(timezone.utc)
 
-    obs = config.observe
-    events: list[ObserveEvent] = []
+    transition_events: list[ObserveEvent] = []
+    if github_api_low is None:
+        github_api_low, transition_events = github_api_status(config, now)
 
     dag_states = load_dag_states(
         config.paths.exec_jsonl,
         config.paths.done_dir,
         config.paths.done_dir.parent / "running",
     )
+
+    if github_api_low:
+        reduced: list[ObserveEvent] = []
+        reduced.extend(_detect_dag_terminated_local(snapshot, config, dag_states))
+        reduced.extend(_detect_orphan_exec(snapshot, config, dag_states))
+        reduced.extend(transition_events)
+        return reduced
+
+    obs = config.observe
+    events: list[ObserveEvent] = []
 
     events.extend(_detect_stall(snapshot, config, now, obs.stall_minutes))
     events.extend(_detect_task_timeout(snapshot, now, obs.task_timeout_minutes))
@@ -143,8 +165,43 @@ def observe(
         now=now,
     ))
     events.extend(_detect_all_engines_paused(config))
+    events.extend(transition_events)
 
     return events
+
+
+def github_api_status(
+    config: "IssuesmithConfig", now: datetime,
+) -> tuple[bool, list[ObserveEvent]]:
+    """Return ``(github_api_low, transition_events)`` for the api_brake (#3769).
+
+    ``GitHubApiLowEvent`` / ``GitHubApiRecoveredEvent`` are emitted only on a state change;
+    the last notified state is kept in quota-gate.json ``resources.github_api_notified`` so
+    consecutive ticks do not repeat them. Disabled brake → ``(False, [])`` without I/O.
+    """
+    from issuesmith.config import ApiBreakConfig
+    from issuesmith.quota_gate import (
+        is_github_api_low,
+        read_github_api_state,
+        write_github_api_notified,
+    )
+
+    brake = getattr(config, "api_brake", None) or ApiBreakConfig()
+    if not brake.enabled:
+        return False, []
+
+    state = read_github_api_state(config.paths.exec_jsonl.parent / "audit.jsonl")
+    low = is_github_api_low(state, brake.min_remaining, now)
+    try:
+        changed = write_github_api_notified(config.paths.quota_state, low)
+    except (OSError, ValueError):
+        logger.warning("observe: failed to persist github_api_notified", exc_info=True)
+        return low, []
+    if not changed:
+        return low, []
+    if low and state is not None:
+        return low, [GitHubApiLowEvent(remaining=state.remaining)]
+    return low, [GitHubApiRecoveredEvent()]
 
 
 # ---------------------------------------------------------------------------
@@ -336,6 +393,39 @@ def _detect_dag_terminated(
             result_path=state.failed_result_path,
         ))
 
+    return events
+
+
+def _detect_dag_terminated_local(
+    snapshot: "QueueSnapshot",
+    config: "IssuesmithConfig",
+    dag_states: "dict",
+) -> list[ObserveEvent]:
+    """API-free ``_detect_dag_terminated`` for the github_api_low reduced mode (#3769).
+
+    Candidates are in_flight only (no ``list_issues``); ``phase`` is empty because the
+    running label is not read from the forge.
+    """
+    from issuesmith.observe.dag_state import DagState
+
+    candidates = sorted({
+        entry["issue"]
+        for entry in snapshot.in_flight
+        if isinstance(entry, dict) and isinstance(entry.get("issue"), int)
+    })
+    events: list[ObserveEvent] = []
+    for issue_num in candidates:
+        state = dag_states.get(issue_num)
+        if not isinstance(state, DagState) or state.status != "failed":
+            continue
+        events.append(DagTerminatedEvent(
+            issue=issue_num,
+            key=state.key,
+            phase="",
+            failed_step=state.failed_step,
+            failed_uuid=state.failed_uuid,
+            result_path=state.failed_result_path,
+        ))
     return events
 
 
