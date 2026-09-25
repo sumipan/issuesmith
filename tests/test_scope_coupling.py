@@ -891,7 +891,7 @@ class TestRemovalNamesUnit:
     def test_backtick_ident_in_removal_heading_extracted(self):
         from issuesmith.gate_rules.scope_coupling import _removal_names
 
-        body = "## `MY_CONST` の廃止\n\n本文に識別子は無い。\n"
+        body = "## Delete `MY_CONST`\n\nNo identifier in the body.\n"
         assert "MY_CONST" in _removal_names(body)
 
     def test_template_var_in_removal_heading_extracted(self):
@@ -903,14 +903,14 @@ class TestRemovalNamesUnit:
     def test_backtick_ident_in_non_removal_heading_ignored(self):
         from issuesmith.gate_rules.scope_coupling import _removal_names
 
-        body = "## `KEEP_CONST` の説明\n\nplain text\n"
+        body = "## About `KEEP_CONST`\n\nplain text\n"
         assert _removal_names(body) == set()
 
     def test_removal_section_closes_at_same_level_heading(self):
         from issuesmith.gate_rules.scope_coupling import _removal_names
 
         body = (
-            "## 削除対象\n\n`GONE_NAME` を消す。\n\n"
-            "## 次の節\n\n`STAY_NAME` は残る。\n"
+            "## Items to delete\n\n`GONE_NAME` goes away.\n\n"
+            "## Next section\n\n`STAY_NAME` stays.\n"
         )
         assert _removal_names(body) == {"GONE_NAME"}

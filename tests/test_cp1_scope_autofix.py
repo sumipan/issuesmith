@@ -12,11 +12,12 @@ to touching.
 from __future__ import annotations
 
 import subprocess
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from issuesmith.b1_verify import collect_violations
-from issuesmith.config import ScopeGateConfig
+from issuesmith.config import ScopeCouplingConfig, ScopeGateConfig
 from issuesmith.cp1_gate import check_gate
 from tests.legacy_text import (
     ACCEPTANCE_CRITERIA,
@@ -107,14 +108,26 @@ def _cfg(tmp_path: Path) -> MagicMock:
     cfg.root = tmp_path / "nexus"
     cfg.paths.external_dir = tmp_path / ".claude" / "external"
     cfg.scope_gate = ScopeGateConfig()
+    cfg.scope_coupling = ScopeCouplingConfig()
     return cfg
+
+
+@contextmanager
+def _patch_cfg(tmp_path: Path):
+    """Point both fail-closed gates (scope_breadth, scope_coupling) at the tmp clone."""
+    cfg = _cfg(tmp_path)
+    with (
+        patch("issuesmith.gate_rules.scope_breadth.get_config", return_value=cfg),
+        patch("issuesmith.gate_rules.scope_coupling.get_config", return_value=cfg),
+    ):
+        yield cfg
 
 
 def test_check_gate_autofixes_and_passes(tmp_path: Path) -> None:
     """AC-2: oversized tests/** narrows to the 3-file union, PASS, note returned."""
     _oversized_clone(tmp_path)
     body = _body_with_table_and_ac(["tests/**"])
-    with patch("issuesmith.gate_rules.scope_breadth.get_config", return_value=_cfg(tmp_path)):
+    with _patch_cfg(tmp_path):
         result = check_gate(body, [])
     assert result["status"] == "PASS"
     assert result["reasons"] == []
@@ -137,7 +150,7 @@ def test_check_gate_fails_when_no_table_or_ac_to_narrow_to(tmp_path: Path) -> No
         "```\n\n"
         "## Overview\n\nNo change table here.\n"
     )
-    with patch("issuesmith.gate_rules.scope_breadth.get_config", return_value=_cfg(tmp_path)):
+    with _patch_cfg(tmp_path):
         result = check_gate(body, [])
     assert result["status"] == "FAIL"
     assert any(
@@ -150,7 +163,7 @@ def test_narrow_allow_paths_already_within_threshold_is_a_plain_pass(tmp_path: P
     """No autofix needed when allow_paths is already within threshold."""
     _oversized_clone(tmp_path)
     body = _body_with_table_and_ac(_NARROW_PATHS)
-    with patch("issuesmith.gate_rules.scope_breadth.get_config", return_value=_cfg(tmp_path)):
+    with _patch_cfg(tmp_path):
         result = check_gate(body, [])
     assert result["status"] == "PASS"
     assert result["autofix_new_allow_paths"] is None
@@ -161,7 +174,7 @@ def test_b1_verify_reaches_the_same_result(tmp_path: Path) -> None:
     """AC-3: b1_verify shares gate_rules.scope_breadth — no separate narrowing logic."""
     _oversized_clone(tmp_path)
     body = _body_with_table_and_ac(["tests/**"])
-    with patch("issuesmith.gate_rules.scope_breadth.get_config", return_value=_cfg(tmp_path)):
+    with _patch_cfg(tmp_path):
         violations = collect_violations(body, [])
     assert violations == []
 
@@ -177,7 +190,7 @@ def test_main_persists_the_narrowed_allow_paths_and_comments(tmp_path: Path) -> 
     forge = MagicMock()
     forge.issue_get.return_value = {"body": body, "labels": []}
     with (
-        patch("issuesmith.gate_rules.scope_breadth.get_config", return_value=_cfg(tmp_path)),
+        _patch_cfg(tmp_path),
         patch.object(cp1_gate, "get_forge", return_value=forge),
         patch.object(sys, "argv", ["issuesmith.cp1_gate", "42"]),
     ):
@@ -204,7 +217,7 @@ def test_main_does_not_touch_the_issue_when_no_autofix(tmp_path: Path) -> None:
     forge = MagicMock()
     forge.issue_get.return_value = {"body": body, "labels": []}
     with (
-        patch("issuesmith.gate_rules.scope_breadth.get_config", return_value=_cfg(tmp_path)),
+        _patch_cfg(tmp_path),
         patch.object(cp1_gate, "get_forge", return_value=forge),
         patch.object(sys, "argv", ["issuesmith.cp1_gate", "42"]),
     ):

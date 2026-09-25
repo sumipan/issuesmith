@@ -11,11 +11,13 @@ _TABLE_HEADER = f"{REPOSITORY} | {FILE_PATH} | {CHANGE_TYPE} | {DESCRIPTION}"
 
 @pytest.fixture(autouse=True)
 def _scope_root(tmp_path):
-    """scope_breadth is fail-closed (#3487); give it an empty measurable root."""
+    """scope_breadth (#3487) and scope_coupling (#3647) are fail-closed; give them an
+    empty measurable root."""
     from unittest.mock import patch
 
-    with patch(
-        "issuesmith.gate_rules.scope_breadth.resolve_scope_root", return_value=tmp_path
+    with (
+        patch("issuesmith.gate_rules.scope_breadth.resolve_scope_root", return_value=tmp_path),
+        patch("issuesmith.gate_rules.scope_coupling.resolve_scope_root", return_value=tmp_path),
     ):
         yield
 
