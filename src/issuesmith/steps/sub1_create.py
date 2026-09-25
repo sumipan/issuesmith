@@ -845,10 +845,10 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
         post = validate_children(parent, state.created_children, client=client)
         if not post.passed:
             details = []
-            for item in post.results:  # type: ignore[assignment]  # TODO(#3611)
-                if not item.passed:  # type: ignore[attr-defined]  # TODO(#3611)
+            for child in post.results:
+                if not child.passed:
                     details.append(
-                        f"#{item.issue}: " + "; ".join(item.failures)  # type: ignore[attr-defined]  # TODO(#3611)
+                        f"#{child.issue}: " + "; ".join(child.failures)
                     )
             return _fail(
                 client,

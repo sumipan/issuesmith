@@ -23,6 +23,7 @@ from ghdag.quota import QuotaGate
 
 from issuesmith.config import get_config
 from issuesmith.dep_extractor import check_dependencies, extract_dependencies
+from issuesmith.forge_api import api_request
 from issuesmith.milestone import advance_milestone_chains, milestone_last_issue_terminal_ok
 from issuesmith.queue_store import (
     DEFAULT_NIGHT_STATE_PATH,
@@ -357,12 +358,12 @@ class _TickCachedForge:
             if method.upper() != "GET":
                 self._issues.clear()
                 self._open_lists.clear()
-            return self._inner.api_request(path, method=method, **kwargs)  # type: ignore[attr-defined]  # TODO(#3611)
+            return api_request(self._inner, path, method=method, **kwargs)
         paginate = bool(kwargs.get("paginate", False))
         cached = self._open_lists.get(paginate)
         if cached is None:
             try:
-                cached = self._inner.api_request(_OPEN_ISSUES_PATH, paginate=paginate)  # type: ignore[attr-defined]  # TODO(#3611)
+                cached = api_request(self._inner, _OPEN_ISSUES_PATH, paginate=paginate)
             except Exception as exc:
                 cached = exc
             self._open_lists[paginate] = cached
@@ -528,9 +529,11 @@ def _find_untracked_running(client: ForgePort, snap: QueueSnapshot) -> list[int]
     if not isinstance(issues, list):
         return []
     untracked = {
-        issue.get("number")
+        num
         for issue in issues
-        if isinstance(issue, dict) and issue.get("number") in candidates
+        if isinstance(issue, dict)
+        and isinstance(num := issue.get("number"), int)
+        and num in candidates
     }
     return sorted(untracked)
 
@@ -738,7 +741,7 @@ def _find_merged_prs_closing_issue(client: ForgePort, issue_number: int) -> list
         detail: dict[str, Any] = dict(pr)
         if not _pr_is_merged(detail):
             try:
-                raw = client.api_request(f"pulls/{number}")  # type: ignore[attr-defined]  # TODO(#3611)
+                raw = api_request(client, f"pulls/{number}")
             except Exception:
                 raw = None
             if isinstance(raw, dict) and _pr_is_merged(raw):
@@ -772,10 +775,10 @@ def _list_open_issues(client: ForgePort) -> list[dict[str, Any]]:
     """
     raw: Any = None
     try:
-        raw = client.api_request("issues?state=open&per_page=100", paginate=True)  # type: ignore[attr-defined]  # TODO(#3611)
+        raw = api_request(client, "issues?state=open&per_page=100", paginate=True)
     except Exception:
         try:
-            raw = client.api_request("issues?state=open&per_page=100")  # type: ignore[attr-defined]  # TODO(#3611)
+            raw = api_request(client, "issues?state=open&per_page=100")
         except Exception:
             return []
     if not isinstance(raw, list):

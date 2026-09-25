@@ -468,13 +468,13 @@ class QueueStore:
             state["active_order"] = order
             state["revision"] = int(state.get("revision", 0)) + 1
             meta = dict(state.get("request_meta") or {})
-            entry: dict = {}  # type: ignore[no-redef]  # TODO(#3611)
+            new_entry: dict[str, Any] = {}
             if force:
-                entry["force"] = True
+                new_entry["force"] = True
             if after:
-                entry["after"] = sorted(set(after))
-            if entry:
-                meta[rid] = entry
+                new_entry["after"] = sorted(set(after))
+            if new_entry:
+                meta[rid] = new_entry
                 state["request_meta"] = meta
             if seed_key:
                 seeded = list(state.get("seeded_keys") or [])

@@ -66,7 +66,7 @@ def _materialize_gate_root(repo_cwd: Path, base_branch: str, issue_number: int, 
 
     max_retry = 3
     backoff = [5, 10, 15]
-    add = None
+    add: subprocess.CompletedProcess[str] | None = None
     for attempt in range(max_retry):
         subprocess.run(["git", "worktree", "prune"], cwd=str(repo_cwd), capture_output=True)
         add = _git(
@@ -82,7 +82,7 @@ def _materialize_gate_root(repo_cwd: Path, base_branch: str, issue_number: int, 
     raise GateMaterializationError(
         f"could not materialize origin/{base_branch} (repo={repo_cwd}) "
         f"after {max_retry} attempts: "
-        f"add_rc={add.returncode} add_stderr={add.stderr!r}"  # type: ignore[union-attr]  # TODO(#3611)
+        f"add_rc={add.returncode if add else None} add_stderr={add.stderr if add else None!r}"
     )
 
 
@@ -396,7 +396,7 @@ def _finalize_merge_done(
         _transition(issue_number, "issuesmith:merge-done")
     except ValueError as exc:
         # get_current_phase 先頭一致失敗やラベル欠落時の fallback (#3221 AC-5 / #3207)
-        removable = [
+        removable: list[str] = [
             name
             for name in (
                 "issuesmith:develop-done",
@@ -411,7 +411,7 @@ def _finalize_merge_done(
             )
         client.issue_update(
             issue_number,
-            labels_remove=removable,  # type: ignore[arg-type]  # TODO(#3611)
+            labels_remove=removable,
             labels_add=["issuesmith:merge-done"],
         )
         print(

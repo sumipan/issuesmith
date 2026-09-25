@@ -272,7 +272,7 @@ def check_post_merge(items: list[dict]) -> list[tuple[bool, str]]:
     results: list[tuple[bool, str]] = []
     for item in items:
         kind = item.get("kind")
-        handler = handlers.get(kind)  # type: ignore[arg-type]  # TODO(#3611)
+        handler = handlers.get(kind) if isinstance(kind, str) else None
         if handler is None:
             results.append((False, f"unknown post_merge kind: {kind}"))
             continue

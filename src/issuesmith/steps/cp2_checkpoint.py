@@ -15,6 +15,7 @@ from issuesmith.config import StepConfig, get_config
 from issuesmith.context_hook import parse_issue_metadata
 from issuesmith.cp2_tier import determine_cp2_tier
 from issuesmith.engine import RetrySignal, resolve, run_guarded
+from issuesmith.forge_api import api_request
 from issuesmith.pr_scope import check_pr_diff_scope, filenames_from_pr_files
 from issuesmith.steps.base import StepContext, StepResult
 
@@ -97,7 +98,7 @@ def _open_pr_number(client: ForgePort, repo: str, branch: str) -> int | None:
         )
         return None
     try:
-        listed = client.api_request(path)  # type: ignore[attr-defined]  # TODO(#3611)
+        listed = api_request(client, path)
     except Exception as exc:
         print(f"CP2: PR list failed ({exc})", file=sys.stderr)
         return None
