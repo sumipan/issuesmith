@@ -199,6 +199,12 @@ a red state emits `main_red` on every tick (halt `phase:develop` with `keep_exis
 `broken` andon `observe:0:main_red:0`), and a green state emits `main_green` while the halt
 was raised by `main_red`, which clears only that halt. Scheduling the command is up to the host.
 
+Optional `external_leak` keys in `issuesmith.yaml` (worktree gate `external_leak`, nexus #3909):
+
+| Key | Default | Description |
+|---|---|---|
+| `cjk_free_external_targets` | `false` | When `true`, a branch whose Issue `target_repo` differs from `repo` must not add lines containing CJK characters (literal or `\uXXXX` escaped). Reported per file as `external_leak.cjk_added_line` (not auto-fixable; the repair step rewrites the lines). Pre-existing CJK on the base branch is never reported. Other keys raise `ConfigError` |
+
 Optional `derived_allow` keys in `issuesmith.yaml` (derived allow_paths for newly failing tests, #3756):
 
 | Key | Default | Description |

@@ -9,6 +9,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `external_leak` gate: CJK added-line check for external targets (nexus #3909). With `external_leak.cjk_free_external_targets: true` in `issuesmith.yaml`, a branch whose Issue `target_repo` differs from the host `repo` fails P1's requires with `external_leak.cjk_added_line` (one violation per file, listing the added line numbers) when `origin/<base>...HEAD` adds lines containing CJK characters, literal or `\uXXXX` escaped; pre-existing CJK is ignored. The repair loop then rewrites the lines inside P1 instead of a later publish-time check stopping the pipeline without repair. New helpers `line_has_cjk`, `cjk_added_lines`, `is_external_target`; `ExternalLeakConfig` on the config.
+
+### Added
+
 - Dependency declarations as list items (nexus #3901 / #3905). `dep_extractor.extract_dependencies` now reads `- ` / `* ` / `+ ` / `1. ` / `1) ` items in the dependencies section in addition to table data rows and `依存:` lines (fenced code blocks are skipped). New `unparsed_dependency_refs(body)` returns `#N` refs that the dependencies section mentions without declaring them; `check_dependencies(..., unparsed_refs=)` / `check_issue` return `decision: BLOCK` with `reason: unparsed_dependency_section` (and `unparsed_refs`) before any forge call, `DepsGate` raises `deps.unparsed_dependency_section`, and the queue's phase preconditions refuse the issue. Previously a hand-written section such as `- #3855 (...)` extracted nothing and the dependency gate passed as "no deps" (fail-open), so P1 started on issues whose prerequisites were still open.
 
 ### Fixed
