@@ -100,6 +100,38 @@ def _load_step_statuses(
         return None
 
 
+def _exec_step_handlers(issue: int) -> list[tuple[str, str]]:
+    """(handler, step_name) of every exec.jsonl row keyed ``issuesmith:<handler>:<issue>[:<gen>]``."""
+    path = get_config().paths.exec_jsonl
+    if not path.exists():
+        return []
+    pairs: list[tuple[str, str]] = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        try:
+            rec = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(rec, dict):
+            continue
+        parts = str(rec.get("idempotency_key", "")).split(":")
+        if len(parts) < 3 or parts[0] != "issuesmith" or parts[2] != str(issue):
+            continue
+        annotations = rec.get("annotations")
+        step = annotations.get("step_name") if isinstance(annotations, dict) else None
+        if isinstance(step, str) and step:
+            pairs.append((parts[1], step))
+    return pairs
+
+
+def _infer_handler_from_exec(issue: int, step: str) -> str | None:
+    """Handler whose DAG ran ``step`` for ``issue`` according to exec.jsonl.
+
+    The workflow YAML table maps m1 / m2 to merge, but nexus runs them inside the
+    impl DAG (sumipan/nexus#3844); the exec record says which DAG actually has the step.
+    """
+    return next((h for h, s in _exec_step_handlers(issue) if s == step), None)
+
+
 def _upstream_blockers(
     steps: list[StepStatus], from_step: str
 ) -> list[StepStatus]:
@@ -340,7 +372,12 @@ def _resume_from_step(
     mark_done: list[str] | None = None,
     force: bool = False,
 ) -> int:
-    handler = handler or handler_for_failed_step(from_step, set())
+    if handler is None:
+        table = handler_for_failed_step(from_step, set())
+        inferred = _infer_handler_from_exec(issue, from_step)
+        if inferred and inferred != table:
+            print(f"handler inferred from exec: {inferred} (table said {table})", file=sys.stderr)
+        handler = inferred or table
     workflow = workflow or _default_workflow_name()
     if not _generation_keys_available():
         print(
@@ -352,6 +389,20 @@ def _resume_from_step(
     steps = _load_step_statuses(issue, handler, workflow)
     if steps is None:
         return 1
+
+    # ghdag recover rejects an unknown step of an existing run, but a handler with no run
+    # for the issue resets 0 steps and exits 0 (sumipan/nexus#3844). An issue with no exec
+    # record at all is left to recover as before: nothing tells the right handler.
+    if not steps:
+        exec_pairs = _exec_step_handlers(issue)
+        if exec_pairs:
+            candidates = sorted({h for h, s in exec_pairs if s == from_step} - {handler})
+            print(
+                f"no steps to reset: step {from_step} not found in handler {handler}"
+                f" (try --handler {'/'.join(candidates) or '…'})",
+                file=sys.stderr,
+            )
+            return 1
 
     if mark_done is not None:
         by_name = {s.step_name: s for s in steps}
