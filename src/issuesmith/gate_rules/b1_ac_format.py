@@ -7,7 +7,14 @@ from ghdag.workflow.gates import GATE_REGISTRY, Violation
 
 from issuesmith.config import get_config
 
-_ALLOWED_KEYS = frozenset({"paths_must_exist", "paths_must_not_exist", "references_must_resolve"})
+_ALLOWED_KEYS = frozenset({
+    "paths_must_exist",
+    "paths_must_not_exist",
+    "references_must_resolve",
+    # scope:migration contract keys (required by b1_migration, read by ac_contract / m2_gate)
+    "post_merge",
+    "removed_trees",
+})
 
 
 def get_ac_section(body: str) -> str | None:

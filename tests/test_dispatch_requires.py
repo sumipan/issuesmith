@@ -835,7 +835,7 @@ class TestAutoFixRoundLimit:
 
         with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"base_freshness": gate}):
             with patch("issuesmith.ops.dispatch.get_forge"):
-                with patch("issuesmith.ops.dispatch._run_repair_step", return_value=1) as mock_repair:
+                with patch("issuesmith.ops.dispatch._run_repair_step", return_value=1):
                     with patch("issuesmith.ops.dispatch._raise_andon"):
                         rc = map_step_result(
                             StepResult(status="done", markers=["IMPL_DONE"]),

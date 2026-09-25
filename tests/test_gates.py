@@ -304,6 +304,42 @@ def test_deps_gate_no_deps_returns_empty() -> None:
     assert result == []
 
 
+def test_deps_gate_prose_only_section_returns_unparsed_violation() -> None:
+    from unittest.mock import patch
+
+    from issuesmith.gates.dep import DepsGate
+
+    gate = DepsGate()
+    body = "## Dependencies\n\nneeds #99 first\n"
+
+    with patch("issuesmith.gates.dep.check_deps") as mock_check:
+        result = gate.check(body, [])
+
+    mock_check.assert_not_called()
+    assert len(result) == 1
+    assert result[0].rule_id == "deps.unparsed_dependency_section"
+    assert result[0].severity == "fail"
+    assert "#99" in result[0].message
+
+
+def test_check_deps_unparsed_reason_is_reported() -> None:
+    from issuesmith.dep_extractor import DepCheckResult
+
+    with patch("issuesmith.gates.dep.check_dependencies") as mock_check:
+        mock_check.return_value = DepCheckResult(
+            decision="BLOCK",
+            deps_found=[],
+            blocking_deps=[],
+            dep_statuses=[],
+            unparsed_refs=[99],
+            reason="unparsed_dependency_section",
+        )
+        result = check_deps([])
+
+    assert result.passed is False
+    assert result.reasons == ["unparsed_dependency_section: #99"]
+
+
 def test_deps_gate_unmerged_dep_returns_violation() -> None:
     from unittest.mock import patch
 

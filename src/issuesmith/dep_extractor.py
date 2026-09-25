@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 from ghdag.forge import ForgePort, get_forge
 from ghdag.markdown.body_editor import count_heading, get_section
@@ -24,6 +24,8 @@ _CHILD_ISSUE_RE = re.compile(r"^子イシュー:\s")
 _DEP_PREFIX_RE = re.compile(r"^依存:\s+(.+)$")
 _TABLE_ROW_RE = re.compile(r"^\|")
 _TABLE_SEPARATOR_RE = re.compile(r"^\|[\s\-:|]+\|$")
+_LIST_ITEM_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+\S")
+UNPARSED_DEPENDENCY_SECTION = "unparsed_dependency_section"
 
 
 @dataclass
@@ -46,6 +48,8 @@ class DepCheckResult:
     deps_found: list[int]
     blocking_deps: list[DepStatus]
     dep_statuses: list[DepStatus]
+    unparsed_refs: list[int] = field(default_factory=list)
+    reason: str = ""
 
 
 def _iter_scannable_lines(body: str):
@@ -79,6 +83,27 @@ def _is_table_data_row(line: str) -> bool:
     return True
 
 
+def _is_list_item(line: str) -> bool:
+    """Return True for Markdown list items (``- ``, ``* ``, ``+ ``, ``1. ``, ``1) ``)."""
+    return bool(_LIST_ITEM_RE.match(line))
+
+
+def _section_dependencies(section: str) -> set[int]:
+    """Issue numbers declared in the dependencies section.
+
+    A declaration is a table data row or a list item. Prose lines are ignored
+    here and reported by :func:`unparsed_dependency_refs`.
+    """
+    deps: set[int] = set()
+    for line in _iter_scannable_lines(section):
+        if _is_excluded_line(line):
+            continue
+        if not (_is_table_data_row(line) or _is_list_item(line)):
+            continue
+        deps.update(_extract_issue_numbers(line))
+    return deps
+
+
 def extract_dependencies(body: str) -> list[int]:
     """Extract dependency issue numbers from an Issue body deterministically."""
     deps: set[int] = set()
@@ -86,12 +111,7 @@ def extract_dependencies(body: str) -> list[int]:
     deps_heading = get_config().sections["dependencies"]
     if count_heading(body, deps_heading) > 0:
         section = get_section(body, deps_heading) or ""
-        for line in section.splitlines():
-            if _is_excluded_line(line):
-                continue
-            if not _is_table_data_row(line):
-                continue
-            deps.update(_extract_issue_numbers(line))
+        deps.update(_section_dependencies(section))
 
     for line in _iter_scannable_lines(body):
         if _is_excluded_line(line):
@@ -101,6 +121,32 @@ def extract_dependencies(body: str) -> list[int]:
             deps.update(_extract_issue_numbers(match.group(1)))
 
     return sorted(deps)
+
+
+def unparsed_dependency_refs(body: str) -> list[int]:
+    """Issue refs in the dependencies section that no declaration line carries.
+
+    A dependencies section that mentions ``#N`` only in prose would otherwise
+    make the dependency gate pass as if nothing were declared (fail-open).
+    Callers treat a non-empty result as BLOCK (``UNPARSED_DEPENDENCY_SECTION``).
+    """
+    deps_heading = get_config().sections["dependencies"]
+    if count_heading(body, deps_heading) == 0:
+        return []
+    section = get_section(body, deps_heading) or ""
+    declared = _section_dependencies(section)
+    for line in _iter_scannable_lines(body):
+        if _is_excluded_line(line):
+            continue
+        match = _DEP_PREFIX_RE.match(line)
+        if match:
+            declared.update(_extract_issue_numbers(match.group(1)))
+    mentioned: set[int] = set()
+    for line in _iter_scannable_lines(section):
+        if _is_excluded_line(line):
+            continue
+        mentioned.update(_extract_issue_numbers(line))
+    return sorted(mentioned - declared)
 
 
 def _has_terminal_label(labels: list[dict], terminal_labels: tuple[str, ...]) -> bool:
@@ -200,9 +246,25 @@ def check_dependencies(
     issue_numbers: list[int],
     *,
     client: ForgePort | None = None,
+    unparsed_refs: list[int] | None = None,
 ) -> DepCheckResult:
-    """Verify that all dependency issues are merged."""
+    """Verify that all dependency issues are merged.
+
+    ``unparsed_refs`` (see :func:`unparsed_dependency_refs`) forces BLOCK with
+    ``reason == UNPARSED_DEPENDENCY_SECTION`` before any forge call: a section
+    that mentions issues without declaring them must not pass as "no deps".
+    """
     deps_found = sorted(set(issue_numbers))
+    unparsed = sorted(set(unparsed_refs or []))
+    if unparsed:
+        return DepCheckResult(
+            decision="BLOCK",
+            deps_found=deps_found,
+            blocking_deps=[],
+            dep_statuses=[],
+            unparsed_refs=unparsed,
+            reason=UNPARSED_DEPENDENCY_SECTION,
+        )
     if not deps_found:
         # Empty list is vacuously PASS; avoid requiring auth / a client.
         return DepCheckResult(
@@ -230,6 +292,8 @@ def _result_to_dict(result: DepCheckResult) -> dict:
         "deps_found": result.deps_found,
         "blocking_deps": [asdict(dep) for dep in result.blocking_deps],
         "dep_statuses": [asdict(dep) for dep in result.dep_statuses],
+        "unparsed_refs": result.unparsed_refs,
+        "reason": result.reason,
     }
 
 
@@ -238,7 +302,7 @@ def check_issue(issue_number: int, *, client: ForgePort | None = None) -> DepChe
     gh = client or get_forge()
     body = gh.issue_get(issue_number, fields=["body"])["body"]
     deps = extract_dependencies(body)
-    return check_dependencies(deps, client=gh)
+    return check_dependencies(deps, client=gh, unparsed_refs=unparsed_dependency_refs(body))
 
 
 def main() -> None:
