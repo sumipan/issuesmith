@@ -301,11 +301,98 @@ def _serial_concurrency() -> bool:
     return concurrency.default <= 1
 
 
-def _issue_is_terminal(client: ForgePort, issue_number: int) -> bool:
-    try:
-        issue = client.issue_get(issue_number, fields=["state", "labels"])
-    except Exception:
-        return False
+_TICK_ISSUE_FIELDS = ("state", "labels", "title", "body", "number", "milestone")
+_OPEN_ISSUES_PATH = "issues?state=open&per_page=100"
+_OPEN_ISSUES_QUERY = re.compile(r"^issues\?(?P<query>[^/]*)$")
+# ForgePort methods that mutate Issue state/labels or the open-issue set.
+_ISSUE_WRITE_METHODS = frozenset({
+    "issue_update", "issue_close", "reopen_issue", "remove_label", "update_label",
+    "issue_create",
+})
+
+
+class _TickCachedForge:
+    """Tick-scoped ForgePort proxy that memoizes Issue reads (#3759).
+
+    ``issue_get`` fetches the union of fields the tick needs once per Issue
+    (errors are memoized too). Open-issue list requests share one unfiltered
+    ``issues?state=open`` fetch and apply ``labels=`` locally. Issue writes
+    drop the affected cache entries; every other call is delegated as-is.
+    """
+
+    def __init__(self, inner: ForgePort) -> None:
+        self._inner = inner
+        self._issues: dict[int, dict[str, Any] | Exception] = {}
+        self._open_lists: dict[bool, Any] = {}
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self._inner, name)
+        if name not in _ISSUE_WRITE_METHODS or not callable(attr):
+            return attr
+
+        def _write(number: int, *args: Any, **kwargs: Any) -> Any:
+            self._issues.pop(number, None)
+            self._open_lists.clear()
+            return attr(number, *args, **kwargs)
+
+        return _write
+
+    def issue_get(self, number: int, fields: list[str] | None = None) -> dict:
+        if fields is None or not set(fields) <= set(_TICK_ISSUE_FIELDS):
+            return self._inner.issue_get(number, fields=fields)
+        cached = self._issues.get(number)
+        if cached is None:
+            try:
+                cached = self._inner.issue_get(number, fields=list(_TICK_ISSUE_FIELDS))
+            except Exception as exc:
+                cached = exc
+            self._issues[number] = cached
+        if isinstance(cached, Exception):
+            raise cached
+        return dict(cached)
+
+    def api_request(self, path: str, *, method: str = "GET", **kwargs: Any) -> Any:
+        labels = self._open_issues_labels(path) if method.upper() == "GET" else None
+        if labels is None or set(kwargs) - {"paginate"}:
+            if method.upper() != "GET":
+                self._issues.clear()
+                self._open_lists.clear()
+            return self._inner.api_request(path, method=method, **kwargs)  # type: ignore[attr-defined]  # TODO(#3611)
+        paginate = bool(kwargs.get("paginate", False))
+        cached = self._open_lists.get(paginate)
+        if cached is None:
+            try:
+                cached = self._inner.api_request(_OPEN_ISSUES_PATH, paginate=paginate)  # type: ignore[attr-defined]  # TODO(#3611)
+            except Exception as exc:
+                cached = exc
+            self._open_lists[paginate] = cached
+        if isinstance(cached, Exception):
+            raise cached
+        if not isinstance(cached, list):
+            return cached
+        return [
+            item for item in cached
+            if not labels or (isinstance(item, dict) and labels <= label_names(item))
+        ]
+
+    @staticmethod
+    def _open_issues_labels(path: str) -> set[str] | None:
+        """Return the ``labels=`` filter for an open-issue list path, else None."""
+        m = _OPEN_ISSUES_QUERY.match(path)
+        if m is None:
+            return None
+        params: dict[str, str] = {}
+        for part in m.group("query").split("&"):
+            key, _, value = part.partition("=")
+            params[key] = value
+        if params.get("state") != "open" or params.get("per_page") != "100":
+            return None
+        if set(params) - {"state", "per_page", "labels"}:
+            return None
+        return {lab for lab in params.get("labels", "").split(",") if lab}
+
+
+def _issue_state_is_terminal(issue: dict[str, Any]) -> bool:
     labels = label_names(issue)
     state = str(issue.get("state", "")).upper()
     merge_done = DONE_LABEL.get("merge", "")
@@ -313,6 +400,14 @@ def _issue_is_terminal(client: ForgePort, issue_number: int) -> bool:
         (bool(merge_done) and merge_done in labels)
         or bool(labels & get_terminal_without_merge())
     )
+
+
+def _issue_is_terminal(client: ForgePort, issue_number: int) -> bool:
+    try:
+        issue = client.issue_get(issue_number, fields=["state", "labels"])
+    except Exception:
+        return False
+    return _issue_state_is_terminal(issue)
 
 
 def _issue_target_meta(issue: dict[str, Any]) -> tuple[str, tuple[str, ...]]:
@@ -383,14 +478,9 @@ def _in_flight_should_release(client: ForgePort, entry: dict[str, Any]) -> bool:
         issue = client.issue_get(issue_num, fields=["state", "labels"])
     except Exception:
         return False
-    labels = label_names(issue)
-    state = str(issue.get("state", "")).upper()
-    _merge_done = DONE_LABEL.get("merge", "")
-    if state == "CLOSED" and (
-        (bool(_merge_done) and _merge_done in labels)
-        or bool(labels & get_terminal_without_merge())
-    ):
+    if _issue_state_is_terminal(issue):
         return True
+    labels = label_names(issue)
     if DONE_LABEL.get("sub", "") in labels and DONE_LABEL.get("sub", "") and not (
         labels & {READY_LABEL.get("sub", ""), RUNNING_LABEL.get("sub", "")} - {""}
     ):
@@ -419,26 +509,29 @@ def _find_untracked_running(client: ForgePort, snap: QueueSnapshot) -> list[int]
     """Return impl-phase running issue numbers absent from ``snap.in_flight`` with a live DAG."""
     from issuesmith.observe.dag_state import load_dag_states
 
+    tracked = {
+        entry.get("issue") for entry in snap.in_flight if isinstance(entry, dict)
+    }
+    dag_states = load_dag_states(EXEC_PATH, DONE_DIR, DONE_DIR.parent / "running")
+    candidates = {
+        num
+        for num, state in dag_states.items()
+        if state.status == "running" and num not in tracked
+    }
+    # Stale running labels without a live DAG never reach the API (#3759).
+    if not candidates:
+        return []
     try:
         issues = client.list_issues(RUNNING_LABEL["develop"], state="open")
     except Exception:
         return []
     if not isinstance(issues, list):
         return []
-    tracked = {
-        entry.get("issue") for entry in snap.in_flight if isinstance(entry, dict)
+    untracked = {
+        issue.get("number")
+        for issue in issues
+        if isinstance(issue, dict) and issue.get("number") in candidates
     }
-    dag_states = load_dag_states(EXEC_PATH, DONE_DIR, DONE_DIR.parent / "running")
-    untracked: list[int] = []
-    for issue in issues:
-        if not isinstance(issue, dict):
-            continue
-        num = issue.get("number")
-        if not isinstance(num, int) or num in tracked:
-            continue
-        state = dag_states.get(num)
-        if state is not None and state.status == "running":
-            untracked.append(num)
     return sorted(untracked)
 
 
@@ -1015,7 +1108,8 @@ def dispatch_one(
 ) -> DispatchResult:
     now = now or _now_jst()
     store = store or QueueStore()
-    client = client or get_forge(repo=REPO)
+    # One tick = one read per Issue / one open-issue list (#3759).
+    client = _TickCachedForge(client or get_forge(repo=REPO))
     start, end, idle_minutes = seed_window(seed_path)
 
     if not skip_seed:
@@ -1259,11 +1353,7 @@ def dispatch_one(
                 return DispatchResult(False, reason=f"last_issue fetch failed: {exc}")
             last_labels = label_names(last)
             last_state = str(last.get("state", "")).upper()
-            _merge_done_lbl = DONE_LABEL.get("merge", "")
-            terminal_ok = last_state == "CLOSED" and (
-                (bool(_merge_done_lbl) and _merge_done_lbl in last_labels)
-                or bool(last_labels & get_terminal_without_merge())
-            )
+            terminal_ok = _issue_state_is_terminal(last)
             if not terminal_ok and milestone_last_issue_terminal_ok(last_labels):
                 terminal_ok = True
             if not terminal_ok:

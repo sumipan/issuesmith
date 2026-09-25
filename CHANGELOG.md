@@ -20,6 +20,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- `queue.dispatch_one` (tick) cuts GitHub API calls: Issue reads go through a tick-scoped
+  cache (`_TickCachedForge`) so each Issue is fetched once per tick with the union of needed
+  fields, and every `issues?state=open` list request (including the milestone
+  `labels=scope:milestone` scan) shares one fetch filtered locally. `_find_untracked_running`
+  consults DAG state first and skips the `develop-running` listing when no untracked DAG is
+  running. Measured scenario (queue 1, in_flight 3, 17 stale running labels): 18 → 8 calls (#3759)
+
 - `scope_coupling` gate now returns `scope_coupling.root_unavailable` (severity `fail`,
   `auto_fixable=False`) when the target repo clone is absent, instead of silently returning
   an empty violation list. This aligns with `scope_breadth.root_unavailable` (#3647)
