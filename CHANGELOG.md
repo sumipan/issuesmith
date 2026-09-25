@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 
+## 0.62.0 - 2026-09-25
+
+### Added
+
+- `run-guarded --requires-step <step>`: pre/post gate evaluation wraps the LLM call. Gates
+  with `pre_llm=True` (`base_freshness`, `scope_breadth`) run before the LLM; the full
+  `requires` list runs after via `run_requires_loop`. Non-repairable gate violations
+  (`scope_breadth`) surface as `andon(decision)` with `widen:<files>`, `split`, `reject`
+  options instead of triggering repair (#3663)
+- `StepConfig.module` is now optional (empty string = LLM-only step). Dispatching a
+  module-less step via `dispatch` raises `andon(broken)` immediately (#3663)
+- `StepConfig.requires_declared`: `requires: []` in YAML is valid and means "explicitly no
+  gates"; a missing `requires:` key in a non-repair step is a `validate_requires_chain`
+  violation (#3663)
+- `run_requires_loop` (renamed from `_check_requires_loop`): fetches a fresh issue body on
+  every evaluation and rebuilds gates from scratch to avoid staleness (#3663)
+- `changed_files(worktree_path, base_branch)`: returns sorted union of committed and
+  uncommitted changes vs `origin/<base>`, excluding `jobs/`, `logs/`, `.pipeline-state/`
+  (#3663)
+- `PrScopeGate.check()` returns one `Violation(rule_id="pr_scope.out_of_allow")` per
+  out-of-scope file; `fix_hint` follows `widen:<file>` pattern (#3663)
+- `LintGate` and `ExternalLeakGate` now target `changed_files()` instead of `allow_paths`
+  globs, eliminating false positives when globs over-match (#3663)
+- `andon.answer("widen:<files>")`: updates `allow_paths` in the issue body YAML block and
+  calls `resume(issue_num, from_step=step)` automatically; posts a comment only when no
+  YAML block is present (#3663)
+
 ## 0.61.2 - 2026-09-25
 
 ### Added
