@@ -304,3 +304,21 @@ def test_ac6_rc2_stays_collection_error(
     violations = TestsGate(tmp_path, base_branch="main").check("", [])
 
     assert [v.rule_id for v in violations] == ["tests.collection_error"]
+
+
+def test_mapped_run_no_tests_collected_runs_full(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """rc=5 (nothing collected, e.g. a helper-only mapped file) is not an error; run full."""
+    clone = _setup_repo(tmp_path, {
+        "src/foo.py": _FOO,
+        "tests/test_foo_data.py": "DATA = 1\n",
+        "tests/test_other.py": _TEST_OTHER,
+    })
+    _commit(clone, {"src/foo.py": _FOO + "\n\ndef extra():\n    return 3\n"})
+    calls = _count_calls(monkeypatch, clone)
+
+    assert TestsGate(clone, base_branch="main").check("", []) == []
+    assert len(calls) == 2
+    assert calls[0] == ["tests/test_foo_data.py", "-x"]
+    assert "--durations=20" in calls[1]

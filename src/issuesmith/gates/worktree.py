@@ -362,6 +362,7 @@ def _mapped_test_paths(root: Path, changed: list[str]) -> list[str]:
 
 # rc of a pytest killed by SIGTERM/SIGKILL: negative from subprocess, 128+N via a shell.
 _INTERRUPTED_RC: frozenset[int] = frozenset({143, 137, -15, -9})
+_NO_TESTS_RC = 5
 _SUMMARY_RE = re.compile(r"\bin \d+(?:\.\d+)?s\b")
 
 
@@ -538,7 +539,8 @@ class TestsGate:
         mapped = _mapped_test_paths(self._root, changed)
         if mapped:
             rc, output = self._run("mapped", [*mapped, "-x"])
-            if rc != 0:
+            # rc=5: nothing collected (helper-only file, all deselected); the full run decides.
+            if rc not in (0, _NO_TESTS_RC):
                 violations = self._judge(rc, output)
                 if violations:
                     return violations
