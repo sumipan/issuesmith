@@ -662,13 +662,13 @@ def triage(
 
     if llm is not None:
         try:
-            result = llm(prompt, engine=engine, model=model, timeout=timeout)  # type: ignore[assignment]  # TODO(#3611)
+            llm_result = llm(prompt, engine=engine, model=model, timeout=timeout)
             raw_output = (
-                getattr(result, "text", None)
-                or getattr(result, "body", None)
-                or str(result)
+                getattr(llm_result, "text", None)
+                or getattr(llm_result, "body", None)
+                or str(llm_result)
             )
-            token_usage = getattr(result, "usage", None)
+            token_usage = getattr(llm_result, "usage", None)
             parsed_order, parsed_decisions = _parse_llm_response(raw_output, expected_ids)
             # Protect human / force from LLM reject.
             protected: set[str] = set()
@@ -804,8 +804,9 @@ def seed_window(path: Path | None = None) -> tuple[str, str, int]:
     data = yaml.safe_load(seed_path.read_text(encoding="utf-8")) or {}
     if not isinstance(data, dict):
         return start, end, idle
-    window = data.get("window") if isinstance(data.get("window"), dict) else {}
-    start = str(window.get("start", start))  # type: ignore[union-attr]  # TODO(#3611)
-    end = str(window.get("end", end))  # type: ignore[union-attr]  # TODO(#3611)
+    raw_window = data.get("window")
+    window: dict[str, Any] = raw_window if isinstance(raw_window, dict) else {}
+    start = str(window.get("start", start))
+    end = str(window.get("end", end))
     idle = int(data.get("idle_minutes", idle))
     return start, end, idle

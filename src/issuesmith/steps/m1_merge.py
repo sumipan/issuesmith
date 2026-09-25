@@ -20,6 +20,7 @@ from typing import Any
 from ghdag.forge import ForgePort, get_forge
 
 from issuesmith.config import StepConfig
+from issuesmith.forge_api import api_request
 from issuesmith.steps.base import StepContext, StepResult
 
 _BACKOFF_SEC = (5, 10, 20)
@@ -65,7 +66,7 @@ def _list_pulls(
     if head:
         path += f"&head={urllib.parse.quote(head, safe='')}"
     try:
-        data = client.api_request(path)  # type: ignore[attr-defined]  # TODO(#3611)
+        data = api_request(client, path)
     except Exception as exc:
         print(f"PR list failed ({exc})", file=sys.stderr)
         return []
@@ -150,7 +151,7 @@ def _is_already_merged(client: ForgePort, repo: str, number: int) -> bool:
     """REST `.merged` (CLAUDE.md §10: true/false rc0; missing → treat as false)."""
     path = f"repos/{repo}/pulls/{number}" if repo else f"pulls/{number}"
     try:
-        detail = client.api_request(path)  # type: ignore[attr-defined]  # TODO(#3611)
+        detail = api_request(client, path)
     except Exception as exc:
         print(f"PR detail failed ({exc})", file=sys.stderr)
         return False
@@ -330,7 +331,7 @@ def _companion_ready(
     """Return (ready, review_decision, ci_ok)."""
     decision = ""
     try:
-        reviews = client.api_request(f"repos/{issue_repo}/pulls/{number}/reviews")  # type: ignore[attr-defined]  # TODO(#3611)
+        reviews = api_request(client, f"repos/{issue_repo}/pulls/{number}/reviews")
         if isinstance(reviews, list):
             for rev in reversed(reviews):
                 if isinstance(rev, dict) and rev.get("state"):

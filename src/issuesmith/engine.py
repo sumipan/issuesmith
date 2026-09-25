@@ -42,6 +42,7 @@ from ruamel.yaml import YAML
 from issuesmith.andon import Andon as _AndonModel
 from issuesmith.andon import raise_andon as _raise_andon
 from issuesmith.config import get_config
+from issuesmith.template_ids import template_identifiers
 
 
 class RetryReason(str, enum.Enum):
@@ -508,7 +509,7 @@ def _render_template(template_path: str, variables: list[str]) -> str:
     path = Path(template_path)
     template = string.Template(path.read_text(encoding="utf-8"))
     parsed_variables = _parse_variables(variables)
-    missing = sorted(set(template.get_identifiers()) - set(parsed_variables))  # type: ignore[attr-defined]  # TODO(#3611)
+    missing = sorted(set(template_identifiers(template)) - set(parsed_variables))
     if missing:
         raise TemplateVariableError(
             f"テンプレート展開エラー ({template_path}): 未定義変数: {missing}"
@@ -567,6 +568,11 @@ def _issuesmith_call(prompt: str, **kwargs):
     return _ghdag_call(prompt, **kwargs)
 
 
+def _failure_class_from_value(value: str) -> FailureClass | None:
+    """Return the FailureClass member whose value is ``value``, or None if unknown."""
+    return next((m for m in FailureClass if m.value == value), None)
+
+
 def _record_task_metrics(
     *,
     role: str,
@@ -587,10 +593,7 @@ def _record_task_metrics(
         tags["failure_class"] = failure_class
     failure_enum: FailureClass | None = None
     if failure_class is not None:
-        try:
-            failure_enum = FailureClass(failure_class)  # type: ignore[call-arg]  # TODO(#3611)
-        except ValueError:
-            failure_enum = None
+        failure_enum = _failure_class_from_value(failure_class)
     _metrics_recorder().record(
         TaskMetrics(
             uuid=str(uuid.uuid4()),

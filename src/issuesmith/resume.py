@@ -469,11 +469,11 @@ def _resume_phase(issue: int, phase: str) -> int:
     client = get_forge(repo=get_config().repo)
     labels_data = client.issue_get(issue, fields=["labels"])
     current_labels = {
-        lab.get("name")
+        name
         for lab in (labels_data.get("labels") or [])
-        if isinstance(lab, dict) and lab.get("name")
+        if isinstance(lab, dict) and isinstance(name := lab.get("name"), str) and name
     }
-    apply_redispatch_labels(client, issue, phase, current_labels)  # type: ignore[arg-type]  # TODO(#3611)
+    apply_redispatch_labels(client, issue, phase, current_labels)
     store = QueueStore()
     result = store.enqueue(
         issue=issue,

@@ -39,6 +39,7 @@ from issuesmith.andon import raise_andon as _raise_andon
 from issuesmith.config import StepConfig, get_config
 from issuesmith.engine import RetrySignal
 from issuesmith.steps.base import Andon, StepContext, StepResult, Verdict
+from issuesmith.template_ids import template_identifiers
 
 _cfg = get_config()
 REPO_ROOT = _cfg.root
@@ -91,7 +92,7 @@ def render(step_id: str, context: dict[str, str], template_dir: Path | None = No
         raise FileNotFoundError(f"テンプレートファイルが見つかりません: {template_path}")
     text = template_path.read_text(encoding="utf-8")
     tmpl = string.Template(text)
-    missing = sorted(set(tmpl.get_identifiers()) - set(context))  # type: ignore[attr-defined]  # TODO(#3611)
+    missing = sorted(set(template_identifiers(tmpl)) - set(context))
     if missing:
         raise KeyError(
             f"テンプレート展開エラー ({template_path}): 未定義変数: {missing}, "

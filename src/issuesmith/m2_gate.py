@@ -69,14 +69,14 @@ def synthesize_contract_failures(
         passes = False
         root_failures: list[str] = []
         for prefix, records in records_by_root.items():
-            record = by_root_key.get((prefix, check, path))  # type: ignore[assignment]  # TODO(#3611)
-            if record is None:
+            rec = by_root_key.get((prefix, check, path))
+            if rec is None:
                 continue
-            if record["result"] == "PASS":
+            if rec["result"] == "PASS":
                 passes = True
                 break
-            if record["result"] == "FAIL":
-                root_failures.append(_fmt_failure(prefix, record))
+            if rec["result"] == "FAIL":
+                root_failures.append(_fmt_failure(prefix, rec))
         if not passes:
             failures.extend(root_failures)
 
