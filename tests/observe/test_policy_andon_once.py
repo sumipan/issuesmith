@@ -80,11 +80,12 @@ def test_condition_cleared_then_recurring_is_raised_again(store, client):
     number = client.issue_create("milestone", "body")
     sink = RecordingSink()
     execute(_halted(number), store, sinks=[sink], client=client)
-    execute([], store, sinks=[sink], client=client)  # condition gone
-    execute(_halted(number), store, sinks=[sink], client=client)  # recurs
+    execute([], store, sinks=[sink], client=client)  # condition gone → auto-resolve answer posted
+    execute(_halted(number), store, sinks=[sink], client=client)  # recurs → raised again
 
     assert len(sink.emitted) == 2
-    assert len(client.get_issue_comments(number)) == 2
+    # 1 raise + 1 auto-resolve answer + 1 re-raise = 3 comments
+    assert len(client.get_issue_comments(number)) == 3
 
 
 def test_issue_less_andon_is_emitted_once_to_sinks(store, client):
@@ -108,6 +109,36 @@ def test_without_client_sink_only_but_still_once(store):
 
 
 def test_store_forgets_ids_that_are_no_longer_active(store):
-    assert store.sync_observe_andons({"a", "b"}) == {"a", "b"}
-    assert store.sync_observe_andons({"a"}) == set()
-    assert store.sync_observe_andons({"a", "b"}) == {"b"}
+    new, resolved = store.sync_observe_andons({"a", "b"})
+    assert new == {"a", "b"} and resolved == set()
+    new, resolved = store.sync_observe_andons({"a"})
+    assert new == set() and resolved == {"b"}
+    new, resolved = store.sync_observe_andons({"a", "b"})
+    assert new == {"b"} and resolved == set()
+
+
+# AC-3: same issue/phase/failed_step dag_terminated produces only 1 andon across generations
+def test_dag_terminated_dedup_across_generations(store, client):
+    from issuesmith.observe.events import DagTerminatedEvent
+    from issuesmith.observe.policy import evaluate, execute
+
+    number = client.issue_create("3628 issue", "body")
+    sink = RecordingSink()
+
+    # Generation 0 fires dag_terminated
+    actions_gen0 = evaluate(
+        [DagTerminatedEvent(issue=number, key=f"{number}:develop:cp1:0", phase="develop", failed_step="cp1")],
+        get_config().observe,
+    )
+    execute(actions_gen0, store, sinks=[sink], client=client)
+
+    # Same issue/phase/step, different generation — should be deduplicated
+    actions_gen3 = evaluate(
+        [DagTerminatedEvent(issue=number, key=f"{number}:develop:cp1:3", phase="develop", failed_step="cp1")],
+        get_config().observe,
+    )
+    execute(actions_gen3, store, sinks=[sink], client=client)
+
+    from issuesmith.andon import list_open
+    open_andons = [a for a in list_open(client) if "dag_terminated" in a.id]
+    assert len(open_andons) == 1, "only 1 dag_terminated andon per issue/phase/step regardless of generation"

@@ -35,9 +35,20 @@ def _cmd_andon(argv: list[str]) -> int:
     sub, *rest = argv
 
     if sub == "list":
+        show_all = "--all" in rest
         from ghdag.forge import get_forge
         client = get_forge()
         andons = list_open(client)
+        if not show_all:
+            def _sort_key(a):
+                if a.kind == "decision":
+                    return 0
+                if a.kind == "broken":
+                    return 1
+                if a.kind == "blocked" and a.step != "observe":
+                    return 2
+                return 3
+            andons = sorted(andons, key=_sort_key)
         if not andons:
             print("no open andons")
         for a in andons:

@@ -610,18 +610,31 @@ class QueueStore:
             ]
             self._save_state_unlocked(state)
 
-    def sync_observe_andons(self, active_ids: set[str]) -> set[str]:
-        """Remember which observe andons are currently raised; return the ids new in this call.
+    def sync_observe_andons(self, active_ids: set[str]) -> tuple[set[str], set[str]]:
+        """Remember which observe andons are currently raised; return (new_ids, resolved_ids).
 
+        new_ids: ids new in this call (active_ids - known)
+        resolved_ids: ids that were known but are no longer active (known - active_ids)
         Ids missing from ``active_ids`` are forgotten so a recurring condition is raised again.
         """
         with self.lock():
             state = self._load_state_unlocked()
             known = set(state.get("observe_andons") or [])
             new_ids = set(active_ids) - known
+            resolved_ids = known - set(active_ids)
             state["observe_andons"] = sorted(active_ids)
             self._save_state_unlocked(state)
-            return new_ids
+            return new_ids, resolved_ids
+
+    def retain_observe_andons(self, ids: set[str]) -> None:
+        """Keep ``ids`` known so they are reported as resolved again on the next sync."""
+        if not ids:
+            return
+        with self.lock():
+            state = self._load_state_unlocked()
+            known = set(state.get("observe_andons") or [])
+            state["observe_andons"] = sorted(known | set(ids))
+            self._save_state_unlocked(state)
 
     def mark_triaged(self, revision: int) -> None:
         with self.lock():

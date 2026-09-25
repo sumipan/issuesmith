@@ -100,7 +100,7 @@ def _evaluate_one(event: ObserveEvent, config: "ObserveConfig") -> list[Action]:
                 issue=event.issue,
                 summary=f"{reason}; in_flight released",
                 evidence=f"uuid={event.failed_uuid} result={event.result_path}",
-                key=f"dag_terminated:{event.key}",
+                key=f"dag_terminated:{_strip_generation(event.key)}",
             ),
         ]
 
@@ -202,6 +202,21 @@ def _evaluate_one(event: ObserveEvent, config: "ObserveConfig") -> list[Action]:
     return [WaitAction(reason=f"unknown event: {event.kind}")]
 
 
+def _strip_generation(key: str) -> str:
+    """Remove trailing :N generation suffix from an idempotency key when present.
+
+    Production keys follow the pattern ``{workflow}:{phase}:{issue}:{gen}`` where
+    ``gen`` is a non-negative integer.  Stripping it yields a stable,
+    generation-independent dedup key (e.g. ``issuesmith:impl:3628:3`` →
+    ``issuesmith:impl:3628``).  Keys without a digit-only last segment are
+    returned unchanged.
+    """
+    parts = key.split(":")
+    if len(parts) >= 4 and parts[-1].isdigit():
+        return ":".join(parts[:-1])
+    return key
+
+
 def _label_namespace() -> str:
     from issuesmith.config import get_config as _get_config
     return _get_config().label_namespace
@@ -238,10 +253,41 @@ def execute(
     ``raise_andon``, sinks included) for actions bound to an Issue; without ``client`` or for
     ``issue == 0`` it is only emitted to ``sinks``. (sumipan/nexus#3621)
     """
-    from issuesmith.andon import Andon, raise_andon
+    from issuesmith.andon import Andon, answer_if_open, raise_andon
 
     andon_actions = [a for a in actions if isinstance(a, AndonAction)]
-    new_ids = store.sync_observe_andons({a.andon_id for a in andon_actions})
+    new_ids, resolved_ids = store.sync_observe_andons({a.andon_id for a in andon_actions})
+
+    if resolved_ids and client is not None:
+        # dag_terminated andons are only auto-resolved when the issue is back in_flight
+        # (the first tick that processes a failure removes in_flight + running label, so
+        # subsequent ticks can't detect the failure anymore — we must wait for re-dispatch).
+        # Deferred ids are retained in the store so they are re-checked on later ticks.
+        deferred: set[str] = set()
+        snap = store.snapshot()
+        in_flight_issues: set[int] = {
+            entry.get("issue")  # type: ignore[misc]
+            for entry in snap.in_flight
+            if isinstance(entry, dict) and isinstance(entry.get("issue"), int)
+        }
+        for resolved_id in resolved_ids:
+            if ":dag_terminated:" in resolved_id:
+                parts = resolved_id.split(":")
+                try:
+                    issue_num: int | None = int(parts[1]) if len(parts) >= 2 else None
+                except (ValueError, IndexError):
+                    issue_num = None
+                if issue_num is None or issue_num not in in_flight_issues:
+                    logger.debug(
+                        "defer auto-resolve: dag_terminated %s, issue not in_flight", resolved_id
+                    )
+                    deferred.add(resolved_id)
+                    continue
+            try:
+                answer_if_open(client, resolved_id, "auto-resolved: condition cleared")
+            except Exception:
+                logger.exception("answer_if_open failed for %s", resolved_id)
+        store.retain_observe_andons(deferred)
 
     for action in actions:
         if isinstance(action, HaltAction):
