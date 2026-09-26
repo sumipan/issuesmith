@@ -21,6 +21,7 @@ _GATES = (
     "scope_breadth",
     "scope_coupling",
     "scope_size",
+    "b1_milestone_subdesign",
 )
 _EXCLUDED_RULE_IDS = frozenset({"cp1.intentional_hold"})
 

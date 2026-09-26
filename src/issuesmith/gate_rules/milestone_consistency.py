@@ -72,6 +72,10 @@ class MilestoneConsistencyRules:
                         "scope:milestone を付与し、"
                         "issuesmith.gate_rules.milestone_consistency.fix_label_missing() "
                         "で milestone オブジェクト（<issue>-<YYYYMMDD>）を作成・紐付け"
+                        ". The label alone is not enough: for every sub plan row, also write "
+                        f"a `#### Sub N: <title>` design block under `## {sections['design']}` "
+                        "(changed files table, acceptance criteria); otherwise verify fails "
+                        "with b1_milestone_subdesign.sub_count_mismatch"
                     ),
                 )
             )

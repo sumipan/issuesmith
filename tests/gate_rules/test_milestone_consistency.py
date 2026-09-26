@@ -153,3 +153,10 @@ def test_label_missing_fix_hint_mentions_milestone_object():
     label_v = next(v for v in vs if v.rule_id == "milestone_consistency.label_missing")
     assert "milestone" in (label_v.fix_hint or "").lower()
     assert "fix_label_missing" in (label_v.fix_hint or "")
+
+
+def test_label_missing_fix_hint_requires_sub_design_blocks():
+    vs = _check(_FIXTURE, [])
+    label_v = next(v for v in vs if v.rule_id == "milestone_consistency.label_missing")
+    assert "fix_label_missing" in (label_v.fix_hint or "")
+    assert "b1_milestone_subdesign" in (label_v.fix_hint or "")

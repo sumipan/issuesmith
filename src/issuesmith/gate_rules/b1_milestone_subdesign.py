@@ -157,7 +157,13 @@ class B1MilestoneSubdesignRules:
                 ),
                 location=None,
                 auto_fixable=False,
-                fix_hint=None,
+                fix_hint=(
+                    f"For every `{sections['sub_plan']}` row N, add `#### Sub N: <title>` "
+                    f"under `## {sections['design']}` with the required subsections "
+                    + " / ".join(
+                        f"**{name}**" for name in get_config().sub_design_subsections
+                    )
+                ),
             )]
         return []
 

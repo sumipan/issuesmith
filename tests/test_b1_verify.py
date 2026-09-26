@@ -81,3 +81,39 @@ def test_scope_size_violations_are_collected(tmp_path, monkeypatch):
     finally:
         reset_config_cache()
     assert any(v.rule_id.startswith("scope_size.") for v in violations)
+
+
+_PROMOTED_MILESTONE_BODY = _VALID_BODY + (
+    "\n## Design\nsingle-issue design written before the milestone promotion\n\n"
+    "## Milestone\n\n"
+    "### Sub-issue Plan\n"
+    "| # | Title | Content | Dependency |\n"
+    "|---|---|---|---|\n"
+    "| 1 | a | scope a | None |\n"
+    "| 2 | b | scope b | 1 |\n"
+    "| 3 | c | scope c | 1 |\n"
+)
+
+
+def test_milestone_subdesign_gate_is_registered():
+    from issuesmith.b1_verify import _GATES
+
+    assert "b1_milestone_subdesign" in _GATES
+
+
+def test_promoted_milestone_without_sub_blocks_fails_verify():
+    """Regression (nexus #4002): 3 plan rows vs 0 sub blocks must not reach draft-done."""
+    rule_ids = {v.rule_id for v in collect_violations(_PROMOTED_MILESTONE_BODY, ["scope:milestone"])}
+    assert "b1_milestone_subdesign.sub_count_mismatch" in rule_ids
+
+
+def test_non_milestone_verify_ignores_milestone_subdesign():
+    rule_ids = {v.rule_id for v in collect_violations(_PROMOTED_MILESTONE_BODY, [])}
+    assert not {r for r in rule_ids if r.startswith("b1_milestone_subdesign.")}, rule_ids
+
+
+def test_complete_milestone_body_passes_milestone_subdesign():
+    from tests.gate_rules.test_b1_milestone_subdesign import _valid_body
+
+    rule_ids = {v.rule_id for v in collect_violations(_valid_body(), ["scope:milestone"])}
+    assert not {r for r in rule_ids if r.startswith("b1_milestone_subdesign.")}, rule_ids
