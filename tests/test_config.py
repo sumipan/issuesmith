@@ -478,3 +478,41 @@ def test_scope_size_overrides(tmp_path, monkeypatch):
 def test_scope_size_invalid_values_raise(tmp_path, monkeypatch, section):
     with pytest.raises(ConfigError, match="scope_size"):
         _load_with(tmp_path, monkeypatch, {"scope_size": section})
+
+
+def test_scope_coupling_data_file_tests_loaded_from_yaml(tmp_path, monkeypatch):
+    """scope_coupling.data_file_tests defaults to true; false is honoured (nexus #3949)."""
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(yaml.safe_dump({"repo": "example/repo"}), encoding="utf-8")
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    assert load_config().scope_coupling.data_file_tests is True
+
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "example/repo", "scope_coupling": {"enabled": True}}),
+        encoding="utf-8",
+    )
+    reset_config_cache()
+    assert load_config().scope_coupling.data_file_tests is True
+
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "example/repo", "scope_coupling": {"data_file_tests": False}}),
+        encoding="utf-8",
+    )
+    reset_config_cache()
+    cfg = load_config()
+    assert cfg.scope_coupling.data_file_tests is False
+    assert cfg.scope_coupling.enabled is True
+
+
+def test_scope_coupling_data_file_tests_via_get_config(tmp_path, monkeypatch):
+    from issuesmith.config import get_config
+
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "example/repo", "scope_coupling": {"data_file_tests": False}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    assert get_config().scope_coupling.data_file_tests is False
