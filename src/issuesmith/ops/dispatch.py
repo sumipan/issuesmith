@@ -386,9 +386,20 @@ def _fetch_fresh_issue_body(context: dict[str, str]) -> str:
     try:
         data = get_forge().issue_get(issue_num, fields=["body"])
         body = str(data.get("body") or "")
-        return body if body else context.get("issue_body", "")
-    except Exception:
-        return context.get("issue_body", "")
+        reason = "empty_body"
+    except Exception as exc:
+        body = ""
+        reason = type(exc).__name__
+    if body:
+        return body
+    fallback = context.get("issue_body", "")
+    if not fallback:
+        print(
+            f"[requires] issue body unavailable (issue={issue_num}, reason={reason}); "
+            "body-dependent gates will report target_unknown",
+            file=sys.stderr,
+        )
+    return fallback
 
 
 def fetch_issue_inputs(context: dict[str, str]) -> tuple[str, list[str]]:
@@ -515,10 +526,16 @@ def _violation_gate_id(rule_id: str, gates: dict[str, object]) -> str | None:
     return None
 
 
+# Violations an LLM repair cannot resolve even though their gate is repairable (nexus #4116).
+_NON_REPAIRABLE_RULE_IDS = frozenset({"external_leak.target_unknown"})
+
+
 def _is_violation_repairable(rule_id: str, gates: dict[str, object]) -> bool:
     """Return True if the gate that produced this violation allows LLM repair."""
     from issuesmith.gates import GATE_REGISTRY
 
+    if rule_id in _NON_REPAIRABLE_RULE_IDS:
+        return False
     gate_id = _violation_gate_id(rule_id, gates)
     if gate_id is None:
         return True
@@ -544,6 +561,16 @@ def _build_andon_options(blocking: list) -> list[str]:
         options.append(f"widen:{','.join(pr_scope_files)}")
     options.extend(["split", "reject"])
     return options
+
+
+def _format_pass_summary(step_id: str, gates: dict[str, object], violations: list) -> str:
+    """One-line per-gate violation counts for a passing requires evaluation."""
+    counts = dict.fromkeys(gates, 0)
+    for v in violations:
+        gate_id = _violation_gate_id(v.rule_id, gates)
+        if gate_id is not None:
+            counts[gate_id] += 1
+    return f"[requires] {step_id} pass: " + " ".join(f"{g}={n}" for g, n in counts.items())
 
 
 _MAX_AUTO_FIX_ROUNDS = 2
@@ -636,6 +663,10 @@ def run_requires_loop(
         _record_preexisting_violations(result.preexisting, step_id, eval_context, issue_num)
 
     if not result.blocking:
+        print(
+            _format_pass_summary(step_id, gates, [*result.blocking, *result.preexisting]),
+            file=sys.stderr,
+        )
         _safe_record_metrics("requires_check", step_id, issue_num)
         return None
 
@@ -662,6 +693,10 @@ def run_requires_loop(
             )
 
     if not result.blocking:
+        print(
+            _format_pass_summary(step_id, gates, [*result.blocking, *result.preexisting]),
+            file=sys.stderr,
+        )
         _safe_record_metrics("requires_check", step_id, issue_num)
         return None
 

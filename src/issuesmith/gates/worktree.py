@@ -17,6 +17,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import Literal
 
 from ghdag.workflow.gates import Violation
 
@@ -713,18 +714,32 @@ def cjk_added_lines(worktree_path: Path, base_branch: str) -> list[tuple[str, in
     return hits
 
 
-def is_external_target(body: str) -> bool:
-    """True when the Issue's ``target_repo`` names a repository other than the host."""
+def external_target_state(body: str) -> Literal["external", "host", "unknown"]:
+    """Classify the Issue's ``target_repo`` against the host repository.
+
+    ``"unknown"`` when the body is blank, its leading metadata block cannot be parsed,
+    or it has no ``target_repo``; ``"host"`` when ``target_repo`` equals the configured
+    host repo; ``"external"`` otherwise.
+    """
     from issuesmith.config import get_config
     from issuesmith.context_hook import parse_issue_metadata
 
+    if not body.strip():
+        return "unknown"
     try:
         target_repo = str(parse_issue_metadata(body).get("target_repo") or "").strip()
     except Exception:
-        return False
+        return "unknown"
     if not target_repo:
-        return False
-    return target_repo != str(get_config().repo or "").strip()
+        return "unknown"
+    if target_repo == str(get_config().repo or "").strip():
+        return "host"
+    return "external"
+
+
+def is_external_target(body: str) -> bool:
+    """True when the Issue's ``target_repo`` names a repository other than the host."""
+    return external_target_state(body) == "external"
 
 
 class ExternalLeakGate:
@@ -781,12 +796,42 @@ class ExternalLeakGate:
         from issuesmith.config import get_config
 
         if not get_config().external_leak.cjk_free_external_targets:
+            print("[external_leak] cjk: skipped (reason=disabled)", file=sys.stderr)
             return []
-        if not is_external_target(body):
+        state = external_target_state(body)
+        if state == "host":
+            print("[external_leak] cjk: skipped (reason=host_target)", file=sys.stderr)
             return []
+        if state == "unknown":
+            # Fail closed: an unreadable body must not look like a clean pass (nexus #4116).
+            print("[external_leak] cjk: skipped (reason=target_unknown)", file=sys.stderr)
+            return [Violation(
+                rule_id="external_leak.target_unknown",
+                severity="fail",
+                message=(
+                    "target_repo could not be determined from the Issue body; "
+                    "the CJK check for external targets was not evaluated"
+                ),
+                location="",
+                auto_fixable=False,
+                fix_hint=(
+                    "Issue body could not be read or has no target_repo; the CJK check "
+                    "for external targets was not evaluated. Retry after the forge is "
+                    "reachable or fix the metadata block"
+                ),
+            )]
+        from issuesmith.context_hook import parse_issue_metadata
+
+        target_repo = str(parse_issue_metadata(body).get("target_repo") or "").strip()
+        hits = cjk_added_lines(self._root, self._base_branch)
         by_file: dict[str, list[tuple[int, str]]] = {}
-        for path, lineno, text in cjk_added_lines(self._root, self._base_branch):
+        for path, lineno, text in hits:
             by_file.setdefault(path, []).append((lineno, text))
+        print(
+            f"[external_leak] cjk: checked (target={target_repo}), "
+            f"{len(hits)} CJK line(s) in {len(by_file)} file(s)",
+            file=sys.stderr,
+        )
         violations: list[Violation] = []
         for path, items in by_file.items():
             lines = ", ".join(str(n) for n, _ in items[:10])
@@ -925,6 +970,7 @@ __all__ = [
     "ExternalLeakGate",
     "line_has_cjk",
     "cjk_added_lines",
+    "external_target_state",
     "is_external_target",
     "BaseFreshnessGate",
     "WORKTREE_GATES",
