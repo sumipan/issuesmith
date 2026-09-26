@@ -845,3 +845,100 @@ class TestAutoFixRoundLimit:
                         )
         assert rc != 0
         assert gate.fix.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# nexus #4116: fail-closed external_leak target + requires observability
+# ---------------------------------------------------------------------------
+
+
+class TestTargetUnknownNotRepairable:
+    def test_is_violation_repairable_excludes_target_unknown(self):
+        from issuesmith.ops.dispatch import _is_violation_repairable
+
+        gates = {"external_leak": object()}
+        assert _is_violation_repairable("external_leak.target_unknown", gates) is False
+        assert _is_violation_repairable("external_leak.cjk_added_line", gates) is True
+
+    def test_target_unknown_raises_decision_andon_without_repair(self):
+        from issuesmith.config import StepConfig
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        cfg = StepConfig(module="issuesmith.steps.test", requires=("external_leak",))
+        gate = _fail_gate("external_leak.target_unknown")
+        with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"external_leak": gate}), \
+             patch("issuesmith.ops.dispatch.get_forge"), \
+             patch("issuesmith.ops.dispatch._raise_andon") as mock_andon, \
+             patch("issuesmith.ops.dispatch._run_repair_step") as mock_repair:
+            rc = run_requires_loop(cfg, "p1", _make_ctx())
+        assert rc == 1
+        mock_repair.assert_not_called()
+        assert mock_andon.call_args[0][1].kind == "decision"
+
+
+class TestFetchFreshIssueBodyLogging:
+    def test_forge_failure_without_context_body_logs(self, capsys):
+        from issuesmith.ops.dispatch import _fetch_fresh_issue_body
+
+        forge = MagicMock()
+        forge.issue_get.side_effect = RuntimeError("403")
+        with patch("issuesmith.ops.dispatch.get_forge", return_value=forge):
+            body = _fetch_fresh_issue_body({"issue_number": "7"})
+        assert body == ""
+        err_lines = capsys.readouterr().err.splitlines()
+        hits = [
+            ln for ln in err_lines
+            if ln.startswith("[requires] issue body unavailable (issue=7, reason=RuntimeError)")
+        ]
+        assert len(hits) == 1
+
+    def test_forge_failure_with_context_body_is_silent(self, capsys):
+        from issuesmith.ops.dispatch import _fetch_fresh_issue_body
+
+        forge = MagicMock()
+        forge.issue_get.side_effect = RuntimeError("403")
+        with patch("issuesmith.ops.dispatch.get_forge", return_value=forge):
+            body = _fetch_fresh_issue_body({"issue_number": "7", "issue_body": "cached"})
+        assert body == "cached"
+        assert "issue body unavailable" not in capsys.readouterr().err
+
+    def test_empty_forge_body_without_context_logs_empty_body(self, capsys):
+        from issuesmith.ops.dispatch import _fetch_fresh_issue_body
+
+        forge = MagicMock()
+        forge.issue_get.return_value = {"body": ""}
+        with patch("issuesmith.ops.dispatch.get_forge", return_value=forge):
+            body = _fetch_fresh_issue_body({"issue_number": "7"})
+        assert body == ""
+        assert "(issue=7, reason=empty_body)" in capsys.readouterr().err
+
+
+class TestPassSummary:
+    def test_format_pass_summary_counts_per_gate(self):
+        from issuesmith.ops.dispatch import _format_pass_summary
+
+        gates = {"lint": object(), "tests": object(), "external_leak": object()}
+        line = _format_pass_summary(
+            "p1", gates, [_v("tests.failed"), _v("tests.other"), _v("unknown.rule")]
+        )
+        assert line == "[requires] p1 pass: lint=0 tests=2 external_leak=0"
+
+    def test_format_pass_summary_all_zero(self):
+        from issuesmith.ops.dispatch import _format_pass_summary
+
+        line = _format_pass_summary("p1", {"lint": object(), "tests": object()}, [])
+        assert line == "[requires] p1 pass: lint=0 tests=0"
+
+    def test_run_requires_loop_logs_pass_summary(self, capsys):
+        from issuesmith.config import StepConfig
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        cfg = StepConfig(module="issuesmith.steps.test", requires=("lint", "external_leak"))
+        gates = {"lint": _pass_gate(), "external_leak": _pass_gate()}
+        with patch("issuesmith.ops.dispatch._build_requires_gates", return_value=gates), \
+             patch("issuesmith.ops.dispatch.get_forge"):
+            rc = run_requires_loop(cfg, "p1", _make_ctx())
+        assert rc is None
+        err_lines = capsys.readouterr().err.splitlines()
+        hits = [ln for ln in err_lines if ln.startswith("[requires] p1 pass:")]
+        assert hits == ["[requires] p1 pass: lint=0 external_leak=0"]

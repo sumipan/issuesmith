@@ -12,6 +12,7 @@ from issuesmith.config import ExternalLeakConfig, get_config, reset_config_cache
 from issuesmith.gates.worktree import (
     ExternalLeakGate,
     cjk_added_lines,
+    external_target_state,
     is_external_target,
     line_has_cjk,
 )
@@ -170,3 +171,80 @@ def test_config_rejects_unknown_external_leak_keys(tmp_path: Path, monkeypatch) 
 def test_config_parses_external_leak(tmp_path: Path, monkeypatch) -> None:
     _write_config(tmp_path, monkeypatch, {"external_leak": {"cjk_free_external_targets": "yes"}})
     assert get_config().external_leak.cjk_free_external_targets is True
+
+
+# --- external_target_state / fail-closed CJK check (nexus #4116) -------------
+
+_ENABLED = {"external_leak": {"cjk_free_external_targets": True}}
+
+
+def test_external_target_state_classifies_bodies(tmp_path: Path, monkeypatch) -> None:
+    _write_config(tmp_path, monkeypatch)
+    assert external_target_state("") == "unknown"
+    assert external_target_state("   \n\t") == "unknown"
+    assert external_target_state("no metadata") == "unknown"
+    assert external_target_state("```yaml\nbase_branch: main\n```\n") == "unknown"
+    assert external_target_state("```yaml\ntarget_repo: ''\n```\n") == "unknown"
+    assert external_target_state(_HOST_BODY) == "host"
+    assert external_target_state(_EXTERNAL_BODY) == "external"
+
+
+def _assert_target_unknown(violations: list) -> None:
+    assert len(violations) == 1
+    v = violations[0]
+    assert v.rule_id == "external_leak.target_unknown"
+    assert v.severity == "fail"
+    assert v.auto_fixable is False
+    assert v.location == ""
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "",
+        "```yaml\ntarget_repo: [unclosed\n```\n",
+        "```yaml\nbase_branch: main\n```\n",
+    ],
+    ids=["empty", "broken_yaml", "no_target_repo"],
+)
+def test_cjk_check_is_fail_closed_when_target_unknown(
+    repo: Path, tmp_path: Path, monkeypatch, capsys, body: str
+) -> None:
+    _write_config(tmp_path, monkeypatch, _ENABLED)
+    _commit(repo, "a.py", "# " + _CJK_WORD + "\n")
+    _assert_target_unknown(ExternalLeakGate(repo, ["a.py"], "main")._cjk_violations(body))
+    assert "[external_leak] cjk: skipped (reason=target_unknown)" in capsys.readouterr().err
+
+
+def test_cjk_check_skips_host_target_with_log(repo: Path, tmp_path: Path, monkeypatch, capsys) -> None:
+    _write_config(tmp_path, monkeypatch, _ENABLED)
+    _commit(repo, "a.py", "# " + _CJK_WORD + "\n")
+    assert ExternalLeakGate(repo, ["a.py"], "main")._cjk_violations(_HOST_BODY) == []
+    assert "[external_leak] cjk: skipped (reason=host_target)" in capsys.readouterr().err
+
+
+def test_cjk_check_skips_when_disabled_with_log(repo: Path, tmp_path: Path, monkeypatch, capsys) -> None:
+    _write_config(tmp_path, monkeypatch)
+    assert ExternalLeakGate(repo, ["a.py"], "main")._cjk_violations("") == []
+    assert "[external_leak] cjk: skipped (reason=disabled)" in capsys.readouterr().err
+
+
+def test_cjk_check_logs_counts_for_external_target(repo: Path, tmp_path: Path, monkeypatch, capsys) -> None:
+    _write_config(tmp_path, monkeypatch, _ENABLED)
+    _commit(repo, "a.py", "# " + _CJK_WORD + "\nx = 1\n# " + _CJK_WORD + "\n")
+    _commit(repo, "b.md", "ok\n" + _FULLWIDTH_PAREN + "\n")
+    violations = ExternalLeakGate(repo, ["a.py", "b.md"], "main")._cjk_violations(_EXTERNAL_BODY)
+    assert {v.location for v in violations} == {"a.py", "b.md"}
+    assert all(v.rule_id == "external_leak.cjk_added_line" for v in violations)
+    err = capsys.readouterr().err
+    assert "[external_leak] cjk: checked (target=sumipan/other), 3 CJK line(s) in 2 file(s)" in err
+
+
+def test_cjk_check_logs_zero_counts_for_clean_external_branch(
+    repo: Path, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    _write_config(tmp_path, monkeypatch, _ENABLED)
+    _commit(repo, "a.py", "# english only\n")
+    assert ExternalLeakGate(repo, ["a.py"], "main")._cjk_violations(_EXTERNAL_BODY) == []
+    err = capsys.readouterr().err
+    assert "[external_leak] cjk: checked (target=sumipan/other), 0 CJK line(s) in 0 file(s)" in err
