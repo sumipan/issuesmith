@@ -230,3 +230,44 @@ def test_delete_words_vocabulary_from_scope_size(repo, tmp_path, monkeypatch):
     assert check_deletion_references(
         _body(["scripts/git-sync.py"], rows=_DELETE_ROW), ["scripts/git-sync.py"], repo
     ) == []
+
+
+# --- Common file names are not deletion search keys (nexus #4076) ---
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "skills/project-summary/README.md",
+        "skills/project-summary/SKILL.md",
+        "src/pkg/__init__.py",
+        "CHANGELOG.md",
+        "pyproject.toml",
+    ],
+)
+def test_common_file_names_yield_no_valid_keys(path):
+    assert all(not scope_coupling._is_valid_key(k) for k in deletion_search_keys(path))
+    assert deletion_search_keys(path) == []
+
+
+def test_readme_keys_are_invalid():
+    assert deletion_search_keys("README.md") == []
+    for key in ("README.md", "README", "readme", "SKILL.md", "skill"):
+        assert not scope_coupling._is_valid_key(key)
+
+
+def test_short_stems_are_dropped_from_deletion_keys():
+    # "fetch" is a common word and "cli" is too short; only the full name remains.
+    assert deletion_search_keys("scripts/fetch.py") == ["fetch.py"]
+    assert deletion_search_keys("scripts/cli.sh") == ["cli.sh"]
+
+
+def test_common_file_name_deletion_has_no_referrers(repo):
+    (repo / "scripts" / "budget-brake.py").write_text("# see README.md and SKILL.md\n")
+    _git(repo, "add", "-A")
+    _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "refs")
+    body = _body(
+        ["src/app.py"],
+        rows="| sumipan/issuesmith | skills/project-summary/SKILL.md | delete | retire |",
+    )
+    assert check_deletion_references(body, ["src/app.py"], repo) == []

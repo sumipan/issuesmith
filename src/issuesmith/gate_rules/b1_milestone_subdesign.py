@@ -5,7 +5,7 @@ import re
 from ghdag.workflow.gates import GATE_REGISTRY, Violation
 
 from issuesmith.config import get_config
-from issuesmith.context_hook import parse_issue_metadata
+from issuesmith.context_hook import parse_issue_metadata_blocks
 from issuesmith.contract import (  # noqa: F401 — re-exported for legacy importers
     SUB_HEADER_RE,
     _normalize_path,
@@ -72,20 +72,27 @@ def _extract_parent_change_paths(body: str) -> set[str]:
 
 
 def _allowed_repos(body: str) -> set[str]:
-    try:
-        metadata = parse_issue_metadata(body)
-    except (ValueError, Exception):
-        return set()
+    """Union of every metadata block's target_repo (+ diary) — one block per repo (#4076)."""
     repos: set[str] = set()
-    target_repo = metadata.get("target_repo")
-    if isinstance(target_repo, str) and target_repo.strip():
-        repos.add(target_repo.strip())
-    diary_paths = metadata.get("diary_allow_paths", [])
-    if isinstance(diary_paths, str):
-        diary_paths = [diary_paths]
-    if diary_paths:
-        repos.add("sumipan/diary")
+    for metadata in parse_issue_metadata_blocks(body):
+        target_repo = metadata.get("target_repo")
+        if isinstance(target_repo, str) and target_repo.strip():
+            repos.add(target_repo.strip())
+        if metadata.get("diary_allow_paths"):
+            repos.add("sumipan/diary")
     return repos
+
+
+def _allow_paths_union(body: str) -> set[str]:
+    paths: set[str] = set()
+    for metadata in parse_issue_metadata_blocks(body):
+        raw = metadata.get("allow_paths") or []
+        if isinstance(raw, str):
+            raw = [raw]
+        if not isinstance(raw, list):
+            continue
+        paths.update(p.strip() for p in raw if isinstance(p, str) and p.strip())
+    return paths
 
 
 def _extract_ac_items(section: str) -> list[str]:
@@ -241,12 +248,17 @@ class B1MilestoneSubdesignRules:
                     rule_id="b1_milestone_subdesign.repo_mismatch",
                     severity="fail",
                     message=(
-                        f"サブ{sub_num} のリポジトリ列 `{repo}` が"
-                        f" target_repo / diary_allow_paths と一致しません（{path}）"
+                        f"Sub {sub_num}: repository column `{repo}` does not match"
+                        f" the target_repo / diary_allow_paths of any metadata block"
+                        f" ({path})"
                     ),
                     location=f"#### サブ{sub_num}",
                     auto_fixable=True,
-                    fix_hint=f"target_repo: {repo}",
+                    fix_hint=(
+                        "add a separate ```yaml metadata block for this repo at the top of the"
+                        " body (keep the existing blocks unchanged):\n"
+                        f"target_repo: {repo}\nbase_branch: main\nallow_paths:\n  - {path}"
+                    ),
                 ))
         return violations
 
@@ -325,6 +337,10 @@ class B1MilestoneSubdesignRules:
         changed = sections["changed_files"]
         design = sections["design"]
         parent_paths = _extract_parent_change_paths(body)
+        if not parent_paths:
+            # Milestone parents may have no changed-files section; the blocks'
+            # allow_paths are then the parent's path set (#4076).
+            parent_paths = _allow_paths_union(body)
         sub_paths: list[str] = []
         for _, block in sub_blocks:
             for _, path, _ in _extract_paths_from_change_table(block):

@@ -1116,3 +1116,60 @@ def test_ac3a_reuse_source_unrecorded(
     ctx = build_context(7, body=body)
     assert ctx["reuse_source"] == "unrecorded"
     assert ctx["pipeline_id"] == "issue-7-bbbb2222"
+
+
+# --- parse_issue_metadata_blocks: every ```yaml block, one per repo (nexus #4076) ---
+
+
+_TWO_REPO_BODY = textwrap.dedent("""\
+    ```yaml
+    target_repo: sumipan/nexus
+    base_branch: main
+    allow_paths:
+      - tools/foo/**
+    ```
+
+    ```yaml
+    target_repo: sumipan/ghdag
+    base_branch: main
+    allow_paths:
+      - src/ghdag/**
+    ```
+
+    ## Purpose
+    two repos
+""")
+
+
+def test_parse_issue_metadata_blocks_returns_every_block():
+    from issuesmith.context_hook import parse_issue_metadata_blocks
+
+    blocks = parse_issue_metadata_blocks(_TWO_REPO_BODY)
+    assert [b["target_repo"] for b in blocks] == ["sumipan/nexus", "sumipan/ghdag"]
+    assert blocks[1]["allow_paths"] == ["src/ghdag/**"]
+
+
+def test_parse_issue_metadata_blocks_skips_non_dict_and_invalid_blocks():
+    from issuesmith.context_hook import parse_issue_metadata_blocks
+
+    body = (
+        "```yaml\ntarget_repo: sumipan/nexus\n```\n\n"
+        "```yaml\n- a\n- b\n```\n\n"
+        "```yaml\n\n```\n\n"
+        "```yaml\nkey: [unclosed\n```\n\n"
+        "```python\nx = {'target_repo': 'sumipan/ghdag'}\n```\n"
+    )
+    assert parse_issue_metadata_blocks(body) == [{"target_repo": "sumipan/nexus"}]
+
+
+def test_parse_issue_metadata_blocks_empty_body():
+    from issuesmith.context_hook import parse_issue_metadata_blocks
+
+    assert parse_issue_metadata_blocks("") == []
+    assert parse_issue_metadata_blocks("## Purpose\nno yaml\n") == []
+
+
+def test_parse_issue_metadata_unchanged_reads_first_block_only():
+    from issuesmith.context_hook import parse_issue_metadata
+
+    assert parse_issue_metadata(_TWO_REPO_BODY)["target_repo"] == "sumipan/nexus"
