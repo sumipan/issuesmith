@@ -303,6 +303,8 @@ All gate ids usable in `steps.<id>.requires` in `issuesmith.yaml`. Issue gates e
 |---|---|---|
 | `b1_ac_format` | issue | gate_rules/b1_ac_format.py |
 | `b1_migration` | issue | gate_rules/b1_migration.py |
+| `b1_migration.post_merge_schema` | issue | gate_rules/b1_migration.py — rule of `b1_migration`: each `post_merge` item must be a dict with a known `kind` (`stable_install` / `tag` / `restart`) and its required fields, not a `requires` id |
+| `b1_migration.removed_trees_schema` | issue | gate_rules/b1_migration.py — rule of `b1_migration`: `removed_trees` items must be strings, not a `requires` id |
 | `b1_milestone_subdesign` | issue | gate_rules/b1_milestone_subdesign.py |
 | `base_freshness` | worktree | gates/worktree.py (BaseFreshnessGate) |
 | `cp1` | issue | gate_rules/cp1.py |
