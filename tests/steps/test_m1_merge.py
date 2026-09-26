@@ -347,3 +347,151 @@ def test_merge_tree_invokes_git_subprocess(tmp_path: Path) -> None:
     assert result == "CLEAN"
     assert verified is True
     assert any("merge-tree" in c.args[0] for c in run.call_args_list)
+
+
+# --- m1.version_behind_base (nexus #3936) ---
+
+
+def _git(cwd: Path, *args: str) -> str:
+    import subprocess
+
+    return subprocess.run(
+        ["git", "-C", str(cwd), *args], capture_output=True, text=True, check=True
+    ).stdout
+
+
+def _set_version(repo: Path, version: str) -> None:
+    (repo / "pyproject.toml").write_text(
+        f'[project]\nname = "demo"\nversion = "{version}"\n', encoding="utf-8"
+    )
+
+
+def _parallel_bump_repo(tmp_path: Path, branch_ver: str, base_ver: str) -> Path:
+    """origin/main and origin/feat both moved 0.80.0 → their own version (parallel publish)."""
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "--bare", "-b", "main", str(origin))
+    seed = tmp_path / "seed"
+    wt = tmp_path / "wt"
+    _git(tmp_path, "clone", str(origin), str(seed))
+    for repo in (seed,):
+        _git(repo, "config", "user.email", "t@t.com")
+        _git(repo, "config", "user.name", "T")
+    _set_version(seed, "0.80.0")
+    _git(seed, "add", ".")
+    _git(seed, "commit", "-m", "init")
+    _git(seed, "push", "origin", "HEAD:main")
+    _git(tmp_path, "clone", str(origin), str(wt))
+    _git(wt, "config", "user.email", "t@t.com")
+    _git(wt, "config", "user.name", "T")
+    _git(wt, "checkout", "-b", "feat/issue-3173-eb3c5291-diary")
+    (wt / "notes.txt").write_text("feature\n", encoding="utf-8")
+    _set_version(wt, branch_ver)
+    _git(wt, "add", ".")
+    _git(wt, "commit", "-m", f"chore: bump version to {branch_ver} (Z: Z)")
+    _git(wt, "push", "-u", "origin", "HEAD")
+    _set_version(seed, base_ver)
+    _git(seed, "commit", "-am", f"chore: bump version to {base_ver} (Z: Z)")
+    _git(seed, "push", "origin", "HEAD:main")
+    return wt
+
+
+def _in_process_bump(worktree: Path, base_branch: str):
+    import contextlib
+    import io
+    import subprocess
+
+    from issuesmith.ops.version_bump import run_bump
+
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        rc = run_bump(worktree, base_branch)
+    return subprocess.CompletedProcess(args=[], returncode=rc, stdout=out.getvalue(), stderr="")
+
+
+def _origin_branch_version(wt: Path) -> str:
+    _git(wt, "fetch", "origin")
+    text = _git(wt, "show", "origin/feat/issue-3173-eb3c5291-diary:pyproject.toml")
+    return text.split('version = "', 1)[1].split('"', 1)[0]
+
+
+def _run_clean(wt: Path, **patches):
+    client = MagicMock()
+    client.api_request.side_effect = [
+        json.loads(PR_LIST_SUCCESS_JSON),
+        json.loads(PR_DETAIL_OPEN_JSON),
+    ]
+    clean = json.loads(GQL_CLEAN_JSON)["data"]["repository"]["pullRequest"]
+    bump = patches.get("bump", _in_process_bump)
+    with (
+        patch.object(m1, "_github_client", return_value=client),
+        patch.object(m1, "_poll_merge_state", return_value=clean) as poll,
+        patch.object(m1, "_m2_gate_preflight", return_value=[]),
+        patch.object(m1, "_post_merge_pytest", return_value=0),
+        patch("issuesmith.gates.m1.run_version_bump", side_effect=bump),
+    ):
+        result = m1.run(_ctx(worktree_path=str(wt)))
+    return client, poll, result
+
+
+def test_version_behind_base_bumps_pushes_then_merges(tmp_path: Path, capsys) -> None:
+    """AC-1: branch 0.81.0 == base 0.81.0 → 0.81.1 pushed, then the PR is merged."""
+    wt = _parallel_bump_repo(tmp_path, "0.81.0", "0.81.0")
+    client, poll, result = _run_clean(wt)
+    assert result.pipeline_status == "MERGE_REPORTED"
+    assert _origin_branch_version(wt) == "0.81.1"
+    client.pr_merge.assert_called_once()
+    assert poll.call_count == 2  # merge state is re-read after the push
+    out = capsys.readouterr().out
+    assert "VERSION_BEHIND_BASE: FIXED" in out
+    assert "MERGE_FAILED_STAGES: (none)" in out
+
+
+def test_version_behind_base_branch_ahead_merges_without_bump(tmp_path: Path, capsys) -> None:
+    """AC-2: branch 0.82.0 > base 0.81.0 → no bump commit, merge as before."""
+    wt = _parallel_bump_repo(tmp_path, "0.82.0", "0.81.0")
+    head = _git(wt, "rev-parse", "HEAD")
+    client, poll, result = _run_clean(wt)
+    assert _git(wt, "rev-parse", "HEAD") == head
+    assert _origin_branch_version(wt) == "0.82.0"
+    client.pr_merge.assert_called_once()
+    assert poll.call_count == 1
+    assert "VERSION_BEHIND_BASE: OK" in capsys.readouterr().out
+
+
+def test_version_behind_base_fix_failure_blocks_merge(tmp_path: Path, capsys) -> None:
+    import subprocess
+
+    wt = _parallel_bump_repo(tmp_path, "0.81.0", "0.81.0")
+    head = _git(wt, "rev-parse", "HEAD")
+
+    def _fail(worktree: Path, base_branch: str):
+        return subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="boom")
+
+    client, _poll, result = _run_clean(wt, bump=_fail)
+    assert result.exit_code == 0
+    assert result.pipeline_status == "MERGE_REPORTED"
+    client.pr_merge.assert_not_called()
+    assert _git(wt, "rev-parse", "HEAD") == head
+    out = capsys.readouterr().out
+    assert "MERGE_FAILED_STAGES:version_behind_base" in out
+
+
+def test_version_behind_base_skipped_when_not_clean(tmp_path: Path, capsys) -> None:
+    """No push for a PR that will not be merged in this run."""
+    wt = _parallel_bump_repo(tmp_path, "0.81.0", "0.81.0")
+    head = _git(wt, "rev-parse", "HEAD")
+    client = MagicMock()
+    client.api_request.side_effect = [
+        json.loads(PR_LIST_SUCCESS_JSON),
+        json.loads(PR_DETAIL_OPEN_JSON),
+    ]
+    blocked = json.loads(GQL_BLOCKED_JSON)["data"]["repository"]["pullRequest"]
+    with (
+        patch.object(m1, "_github_client", return_value=client),
+        patch.object(m1, "_poll_merge_state", return_value=blocked),
+        patch.object(m1, "_m2_gate_preflight", return_value=[]),
+    ):
+        m1.run(_ctx(worktree_path=str(wt)))
+    assert _git(wt, "rev-parse", "HEAD") == head
+    client.pr_merge.assert_not_called()
+    assert "VERSION_BEHIND_BASE: skipped" in capsys.readouterr().out

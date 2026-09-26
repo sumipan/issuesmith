@@ -204,6 +204,10 @@ def _run_version_bump(worktree: Path, base_branch: str) -> subprocess.CompletedP
     )
 
 
+# Public name for callers outside publish (M1 version_behind_base gate, nexus #3936).
+run_version_bump = _run_version_bump
+
+
 _BUMP_SUBJECT_PREFIX = "chore: bump version to "
 
 
@@ -578,6 +582,17 @@ def main(argv: list[str]) -> int:
         print(f"PR_URL: {result.pr_url}")
     print(f"PUBLISH_STATUS: {result.status}")
     return result.exit_code
+
+
+# The bump helpers are shared with the M1 version_behind_base gate (nexus #3936).
+__all__ = [
+    "PublishResult",
+    "_bump_commits_on_top",
+    "_run_version_bump",
+    "main",
+    "publish",
+    "run_version_bump",
+]
 
 
 if __name__ == "__main__":

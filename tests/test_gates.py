@@ -372,3 +372,191 @@ def test_deps_gate_merged_dep_returns_empty() -> None:
         result = gate.check(body, [])
 
     assert result == []
+
+
+# ---------------------------------------------------------------------------
+# m1.version_behind_base: VersionBehindBaseGate (nexus #3936)
+# ---------------------------------------------------------------------------
+
+
+def _git(cwd: Path, *args: str) -> str:
+    import subprocess
+
+    return subprocess.run(
+        ["git", "-C", str(cwd), *args], capture_output=True, text=True, check=True
+    ).stdout
+
+
+def _write_version(repo: Path, version: str) -> None:
+    (repo / "pyproject.toml").write_text(
+        f'[project]\nname = "demo"\nversion = "{version}"\n', encoding="utf-8"
+    )
+
+
+def _version_behind_repo(
+    tmp_path: Path, *, start: str, branch: str | None, base: str | None
+) -> Path:
+    """origin (bare) + a clone on ``feat`` whose pyproject diverged from ``main``.
+
+    ``branch`` / ``base`` are the versions committed on ``feat`` / ``origin/main``
+    after the fork (None = the line is left at ``start``).
+    """
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "--bare", "-b", "main", str(origin))
+    seed = tmp_path / "seed"
+    _git(tmp_path, "clone", str(origin), str(seed))
+    for repo in (seed,):
+        _git(repo, "config", "user.email", "t@t.com")
+        _git(repo, "config", "user.name", "T")
+    _write_version(seed, start)
+    (seed / "CHANGELOG.md").write_text("# Changelog\n", encoding="utf-8")
+    _git(seed, "add", ".")
+    _git(seed, "commit", "-m", "init")
+    _git(seed, "push", "origin", "HEAD:main")
+
+    wt = tmp_path / "wt"
+    _git(tmp_path, "clone", str(origin), str(wt))
+    _git(wt, "config", "user.email", "t@t.com")
+    _git(wt, "config", "user.name", "T")
+    _git(wt, "checkout", "-b", "feat")
+    (wt / "notes.txt").write_text("feature\n", encoding="utf-8")
+    _git(wt, "add", ".")
+    _git(wt, "commit", "-m", "docs: add notes")
+    if branch is not None:
+        _write_version(wt, branch)
+        _git(wt, "commit", "-am", f"chore: bump version to {branch} (Z: Z)")
+    _git(wt, "push", "-u", "origin", "feat")
+
+    if base is not None:
+        _write_version(seed, base)
+        _git(seed, "commit", "-am", f"chore: bump version to {base} (Z: Z)")
+        _git(seed, "push", "origin", "HEAD:main")
+    return wt
+
+
+def _in_process_bump(worktree: Path, base_branch: str):
+    """Stand-in for publish._run_version_bump without the nexus scripts/ shim."""
+    import contextlib
+    import io
+    import subprocess
+
+    from issuesmith.ops.version_bump import run_bump
+
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        rc = run_bump(worktree, base_branch)
+    return subprocess.CompletedProcess(args=[], returncode=rc, stdout=out.getvalue(), stderr="")
+
+
+def _pyproject_version_at(repo: Path, ref: str) -> str:
+    import re
+
+    text = _git(repo, "show", f"{ref}:pyproject.toml")
+    m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
+    assert m
+    return m.group(1)
+
+
+def test_version_behind_base_passes_without_pyproject(tmp_path: Path) -> None:
+    """AC-3: a target without pyproject.toml (nexus) never violates."""
+    from issuesmith.gates.m1 import VersionBehindBaseGate
+
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    _git(tmp_path, "init", "-b", "main", str(wt))
+    assert VersionBehindBaseGate(wt, "main").check("", []) == []
+
+
+def test_version_behind_base_equal_versions_violates(tmp_path: Path) -> None:
+    from issuesmith.gates.m1 import VersionBehindBaseGate
+
+    wt = _version_behind_repo(tmp_path, start="0.80.0", branch="0.81.0", base="0.81.0")
+    violations = VersionBehindBaseGate(wt, "main").check("", [])
+    assert [v.rule_id for v in violations] == ["m1.version_behind_base"]
+    assert violations[0].auto_fixable is True
+    assert "0.81.0" in violations[0].message
+
+
+def test_version_behind_base_branch_ahead_passes(tmp_path: Path) -> None:
+    """AC-2: branch version > base version → no violation, fix() adds no commit."""
+    from issuesmith.gates.base import ContractInput
+    from issuesmith.gates.m1 import VersionBehindBaseGate
+
+    wt = _version_behind_repo(tmp_path, start="0.80.0", branch="0.81.0", base=None)
+    gate = VersionBehindBaseGate(wt, "main")
+    assert gate.check("", []) == []
+    head = _git(wt, "rev-parse", "HEAD")
+    with patch("issuesmith.gates.m1.run_version_bump", side_effect=_in_process_bump) as bump:
+        gate.fix(ContractInput(body=""))
+    bump.assert_not_called()
+    assert _git(wt, "rev-parse", "HEAD") == head
+
+
+def test_version_behind_base_fix_equal_bumps_and_pushes(tmp_path: Path) -> None:
+    """AC-1 / AC-6: 0.81.0 == 0.81.0 → 0.81.1 pushed; check() is clean afterwards."""
+    from issuesmith.gates.base import ContractInput
+    from issuesmith.gates.m1 import VersionBehindBaseGate
+
+    wt = _version_behind_repo(tmp_path, start="0.80.0", branch="0.81.0", base="0.81.0")
+    gate = VersionBehindBaseGate(wt, "main")
+    with patch("issuesmith.gates.m1.run_version_bump", side_effect=_in_process_bump):
+        gate.fix(ContractInput(body=""))
+    assert _pyproject_version_at(wt, "HEAD") == "0.81.1"
+    _git(wt, "fetch", "origin")
+    assert _pyproject_version_at(wt, "origin/feat") == "0.81.1"
+    assert _git(wt, "merge-base", "--is-ancestor", "origin/main", "HEAD") == ""
+    assert gate.check("", []) == []
+
+
+def test_version_behind_base_fix_branch_older_bumps_past_base(tmp_path: Path) -> None:
+    """AC-5: branch 0.80.0 < base 0.81.0 → 0.81.1 (not 0.80.1)."""
+    from issuesmith.gates.base import ContractInput
+    from issuesmith.gates.m1 import VersionBehindBaseGate
+
+    wt = _version_behind_repo(tmp_path, start="0.80.0", branch=None, base="0.81.0")
+    gate = VersionBehindBaseGate(wt, "main")
+    assert [v.rule_id for v in gate.check("", [])] == ["m1.version_behind_base"]
+    with patch("issuesmith.gates.m1.run_version_bump", side_effect=_in_process_bump):
+        gate.fix(ContractInput(body=""))
+    assert _pyproject_version_at(wt, "HEAD") == "0.81.1"
+    assert gate.check("", []) == []
+
+
+def test_version_behind_base_fix_is_idempotent(tmp_path: Path) -> None:
+    """AC-6: a second fix() after a successful one adds no commit."""
+    from issuesmith.gates.base import ContractInput
+    from issuesmith.gates.m1 import VersionBehindBaseGate
+
+    wt = _version_behind_repo(tmp_path, start="0.80.0", branch="0.81.0", base="0.81.0")
+    gate = VersionBehindBaseGate(wt, "main")
+    with patch("issuesmith.gates.m1.run_version_bump", side_effect=_in_process_bump):
+        gate.fix(ContractInput(body=""))
+        head = _git(wt, "rev-parse", "HEAD")
+        gate.fix(ContractInput(body=""))
+    assert _git(wt, "rev-parse", "HEAD") == head
+    assert _pyproject_version_at(wt, "HEAD") == "0.81.1"
+
+
+def test_version_behind_base_fix_failure_rolls_back(tmp_path: Path) -> None:
+    """A failed bump leaves HEAD (and origin/feat) where they were and raises."""
+    import subprocess
+
+    from issuesmith.gates.base import ContractInput
+    from issuesmith.gates.m1 import VersionBehindBaseGate
+
+    wt = _version_behind_repo(tmp_path, start="0.80.0", branch="0.81.0", base="0.81.0")
+    head = _git(wt, "rev-parse", "HEAD")
+    failed = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="boom")
+    with patch("issuesmith.gates.m1.run_version_bump", return_value=failed):
+        with pytest.raises(RuntimeError, match="boom"):
+            VersionBehindBaseGate(wt, "main").fix(ContractInput(body=""))
+    assert _git(wt, "rev-parse", "HEAD") == head
+    assert _git(wt, "rev-parse", "origin/feat") == head
+
+
+def test_publish_exports_bump_helpers() -> None:
+    from issuesmith.ops import publish
+
+    assert "_run_version_bump" in publish.__all__
+    assert "_bump_commits_on_top" in publish.__all__
+    assert publish.run_version_bump is publish._run_version_bump

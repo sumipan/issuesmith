@@ -9,6 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- M1 gate `m1.version_behind_base` (nexus #3936). Before merging a CLEAN PR, the M1 step compares the branch's `pyproject.toml` version with `origin/<base>`'s; when it is not ahead (two Issues on the same repo published the same next version in parallel, so the second merge reused the first one's release tag and never got a release), `VersionBehindBaseGate.fix()` merges `origin/<base>` into the branch, re-runs the deterministic version bump against it (branch 0.81.0 / base 0.81.0 → 0.81.1; branch 0.80.0 / base 0.81.0 → 0.81.1), pushes, and M1 re-reads the merge state before merging. A failed fix resets the branch and reports `MERGE_FAILED_STAGES:version_behind_base` without merging. Targets without `pyproject.toml` (nexus) always pass. `ops.publish` now declares `__all__`, exporting `_run_version_bump` and `_bump_commits_on_top`, plus the public alias `run_version_bump` that the gate imports.
+
 - `external_leak` gate: CJK added-line check for external targets (nexus #3909). With `external_leak.cjk_free_external_targets: true` in `issuesmith.yaml`, a branch whose Issue `target_repo` differs from the host `repo` fails P1's requires with `external_leak.cjk_added_line` (one violation per file, listing the added line numbers) when `origin/<base>...HEAD` adds lines containing CJK characters, literal or `\uXXXX` escaped; pre-existing CJK is ignored. The repair loop then rewrites the lines inside P1 instead of a later publish-time check stopping the pipeline without repair. New helpers `line_has_cjk`, `cjk_added_lines`, `is_external_target`; `ExternalLeakConfig` on the config.
 
 ### Added

@@ -310,6 +310,7 @@ All gate ids usable in `steps.<id>.requires` in `issuesmith.yaml`. Issue gates e
 | `external_leak` | worktree | gates/worktree.py (ExternalLeakGate) |
 | `lint` | worktree | gates/worktree.py (LintGate) |
 | `m2` | issue | gate_rules/m2.py |
+| `m1.version_behind_base` | worktree | gates/m1.py (VersionBehindBaseGate) — run by the M1 merge step before merging, not a `requires` id |
 | `milestone_consistency` | issue | gate_rules/milestone_consistency.py |
 | `pr_scope` | worktree | gates/pr_scope.py (PrScopeGate) |
 | `scope` | worktree | gates/scope.py (ScopeGate) |
