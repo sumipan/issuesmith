@@ -226,6 +226,17 @@ def test_fix_hint_default_vocabulary_is_ascii():
     assert violation.fix_hint.endswith("| none |")
 
 
+def test_fix_hint_requires_sub_design_blocks():
+    from issuesmith.config import get_config
+
+    rows = [("src/a/x.py", _MODIFY), ("src/b/x.py", _MODIFY), ("src/c/x.py", _MODIFY)]
+    (violation,) = ScopeSizeRules().check(_body(rows), [])
+    assert get_config().sections["design"] in violation.fix_hint
+    assert "b1_milestone_subdesign" in violation.fix_hint
+    for name in get_config().sub_design_subsections:
+        assert name in violation.fix_hint
+
+
 def test_config_thresholds_are_honoured(tmp_path, monkeypatch):
     _write_config(
         tmp_path,

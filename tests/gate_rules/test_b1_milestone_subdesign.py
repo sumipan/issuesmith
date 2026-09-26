@@ -172,6 +172,21 @@ def test_sub_count_mismatch():
     assert any(v.rule_id == "b1_milestone_subdesign.sub_count_mismatch" for v in violations)
 
 
+def test_sub_count_mismatch_fix_hint_lists_required_subsections():
+    from issuesmith.config import get_config
+
+    body = _valid_body().replace("| 2 | bar | scope2 | 1 |", "")
+    violation = next(
+        v for v in _check(body, MILESTONE_LABELS)
+        if v.rule_id == "b1_milestone_subdesign.sub_count_mismatch"
+    )
+    assert violation.fix_hint is not None
+    assert get_config().sections["design"] in violation.fix_hint
+    for name in get_config().sub_design_subsections:
+        assert name in violation.fix_hint
+    assert violation.auto_fixable is False
+
+
 def test_subsection_missing():
     # ASCII fixture data.
     body = _valid_body().replace("**Design Policy**: Sub1 c306E_Design Policy", "")

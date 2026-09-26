@@ -1,6 +1,7 @@
 """b1_verify.py — B1 成果物の決定論 Verify（#2541 Verify→Recover→Re-verify 契約）。
 
-既存の gate rules（cp1 / b1_ac_format / b1_migration）を 1 コマンドに束ね、
+既存の gate rules（cp1 / b1_ac_format / b1_migration / milestone_consistency /
+scope_breadth / scope_coupling / scope_size / b1_milestone_subdesign）を 1 コマンドに束ね、
 violations を VERIFY_FAILED_CHECKS 形式のレポートとして出力する。
 新しい検証ロジックは持たない（ルールの単一情報源は gate_rules/）。
 
@@ -21,6 +22,7 @@ _GATES = (
     "scope_breadth",
     "scope_coupling",
     "scope_size",
+    "b1_milestone_subdesign",
 )
 _EXCLUDED_RULE_IDS = frozenset({"cp1.intentional_hold"})
 

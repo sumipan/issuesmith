@@ -9,6 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- B1 Verify now runs `b1_milestone_subdesign` (nexus #4002). `b1_verify._GATES` ends with `b1_milestone_subdesign`, so an Issue that the verify→recover loop promoted to `scope:milestone` (split plan added, label added) but that still has no `#### サブN` sub design blocks fails with `b1_milestone_subdesign.sub_count_mismatch` instead of reaching `draft-done` and stopping SUB1's `_parent_design_gate`. Non-milestone Issues are unaffected (the gate returns `[]` without `scope:milestone`). The fix_hints that drive recovery now ask for the sub design blocks too: `scope_size` (design section and `sub_design_subsections` from config, mentions `b1_milestone_subdesign`), `milestone_consistency.label_missing` (label alone is not enough) and `b1_milestone_subdesign.sub_count_mismatch` (was `None`; lists the required subsections). `cp1.py` is unchanged.
+
 - allow_paths conflicts are phase-aware (nexus, 2026-09-26). `draft` (B1) and `sub` (SUB1) only edit Issue bodies / create child Issues, so a draft / sub candidate no longer waits on overlapping allow_paths, and draft / sub runs in flight no longer block a `develop` candidate. In-flight entries now record `phase` (`QueueStore.add_in_flight(phase=)`); legacy entries with `role: design` and no phase are treated as draft. Before, two brushups touching the same doc waited on each other for nothing.
 
 ### Added

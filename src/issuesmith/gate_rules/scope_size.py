@@ -78,6 +78,11 @@ def _fix_hint(body: str, measure: SizeMeasure, cfg: ScopeSizeConfig) -> str:
     lines = [
         f"Add `## {sections['milestone']}` > `### {sections['sub_plan']}` to the body and "
         "split the work into one sub-issue per concern (parent directory). Example:",
+        f"For every plan row, also write a sub design block under `## {sections['design']}` "
+        "with a `#### ` sub header (SUB_HEADER_RE) containing each of "
+        + ", ".join(f"**{name}**" for name in get_config().sub_design_subsections)
+        + "; b1_milestone_subdesign fails when the plan row count and the sub header "
+        "count differ.",
         "",
         cfg.sub_plan_header,
         "|---|---|---|---|---|",
