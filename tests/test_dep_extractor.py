@@ -132,6 +132,18 @@ def test_unparsed_refs_ignores_refs_declared_by_prefix_line():
     assert unparsed_dependency_refs(body) == []
 
 
+def test_unparsed_refs_ignores_mention_of_own_parent():
+    # ASCII fixture data. SUB1 children say "parallel with sub 2 of the parent" in prose.
+    body = f"{_PARENT_PREFIX}: #3985\n\n## Dependencies\n\nnone (parallel with sub 2 of #3985)\n"
+    assert unparsed_dependency_refs(body) == []
+    assert extract_dependencies(body) == []
+
+
+def test_unparsed_refs_still_reports_other_prose_mentions_with_parent():
+    body = f"{_PARENT_PREFIX}: #3985\n\n## Dependencies\n\nafter #4053 lands, parallel with #3985\n"
+    assert unparsed_dependency_refs(body) == [4053]
+
+
 def test_unparsed_refs_ignores_parent_child_lines_and_code_blocks():
     # ASCII fixture data.
     body = (

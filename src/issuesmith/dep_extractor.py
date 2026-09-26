@@ -20,6 +20,7 @@ _ISSUESMITH_LABEL_PREFIX = "issuesmith:"
 _ANALYSIS_TITLE_PREFIX = "【障害分析】"
 _ISSUE_NUM_RE = re.compile(r"#(\d+)")
 _PARENT_ISSUE_RE = re.compile(r"^親イシュー:\s")
+_PARENT_NUMBER_RE = re.compile(r"^親イシュー:\s*#(\d+)", re.MULTILINE)
 _CHILD_ISSUE_RE = re.compile(r"^子イシュー:\s")
 _DEP_PREFIX_RE = re.compile(r"^依存:\s+(.+)$")
 _TABLE_ROW_RE = re.compile(r"^\|")
@@ -146,6 +147,11 @@ def unparsed_dependency_refs(body: str) -> list[int]:
         if _is_excluded_line(line):
             continue
         mentioned.update(_extract_issue_numbers(line))
+    # A sub-issue may mention its milestone parent in prose ("parallel with sub 2 of #N"):
+    # the parent is never a dependency of its own child, so it is not an unparsed ref.
+    parent = _PARENT_NUMBER_RE.search(body)
+    if parent:
+        mentioned.discard(int(parent.group(1)))
     return sorted(mentioned - declared)
 
 
