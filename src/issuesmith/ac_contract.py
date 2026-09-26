@@ -23,6 +23,15 @@ from issuesmith.config import get_config
 REPO_ROOT = get_config().root
 _PATH_SUFFIXES = (".py", ".yaml", ".yml", ".json", ".toml", ".md", ".sh")
 
+# post_merge kinds (must match the ops/preflight.check_post_merge handlers) and the
+# required keys per kind. Checked early by B1's b1_migration.post_merge_schema.
+KNOWN_POST_MERGE_KINDS: frozenset[str] = frozenset({"stable_install", "tag", "restart"})
+POST_MERGE_REQUIRED_FIELDS: dict[str, list[str]] = {
+    "stable_install": ["repo", "path"],
+    "tag": ["repo", "tag"],
+    "restart": ["processes"],
+}
+
 
 def _git_log(repo_root: Path, path: str) -> str:
     try:

@@ -271,3 +271,116 @@ def test_missing_removed_trees_returns_violation():
     assert v.severity == "fail"
     assert v.auto_fixable is True
     assert "removed_trees" in v.fix_hint
+
+
+def _with_ac_yaml(yaml_text: str) -> str:
+    """Return BODY_COMPLETE with its AC YAML block replaced by yaml_text."""
+    start = BODY_COMPLETE.index("```yaml\n") + len("```yaml\n")
+    end = BODY_COMPLETE.index("```", start)
+    return BODY_COMPLETE[:start] + yaml_text + BODY_COMPLETE[end:]
+
+
+_AC_PATHS = "paths_must_exist:\n  - tests/test_migration.py\n"
+_AC_REMOVED = "removed_trees:\n  - tools/issuesmith\n"
+
+
+def test_post_merge_free_text_item_is_schema_violation():
+    """AC-1: a free-text post_merge item fails B1 with post_merge_schema."""
+    body = _with_ac_yaml(
+        _AC_PATHS
+        + "post_merge:\n"
+        + '  - "run python3 scripts/preflight.py after MG1"\n'
+        + _AC_REMOVED
+    )
+    violations = _check(body, MIGRATION_LABELS)
+    by_id = {v.rule_id: v for v in violations}
+    assert set(by_id) == {"b1_migration.post_merge_schema"}
+    v = by_id["b1_migration.post_merge_schema"]
+    assert v.severity == "fail"
+    assert v.auto_fixable is False
+    assert "post_merge[0]" in v.message
+    assert "each post_merge item must be a dict" in v.message
+    assert "kind: stable_install" in v.fix_hint
+
+
+def test_post_merge_valid_items_of_all_kinds_pass():
+    """AC-2: complete stable_install / tag / restart items yield no violation."""
+    body = _with_ac_yaml(
+        _AC_PATHS
+        + "post_merge:\n"
+        + "  - kind: stable_install\n"
+        + "    repo: sumipan/issuesmith\n"
+        + "    path: /var/tmp/issuesmith\n"
+        + "  - kind: tag\n"
+        + "    repo: sumipan/issuesmith\n"
+        + "    tag: v0.1.0\n"
+        + "  - kind: restart\n"
+        + "    processes: [release_watcher]\n"
+        + _AC_REMOVED
+    )
+    assert _check(body, MIGRATION_LABELS) == []
+
+
+def test_post_merge_unknown_kind_lists_allowed_kinds():
+    """AC-3: an unknown kind fails and the fix_hint lists the allowed kinds."""
+    body = _with_ac_yaml(
+        _AC_PATHS + "post_merge:\n  - kind: manual\n" + _AC_REMOVED
+    )
+    violations = _check(body, MIGRATION_LABELS)
+    by_id = {v.rule_id: v for v in violations}
+    assert set(by_id) == {"b1_migration.post_merge_schema"}
+    v = by_id["b1_migration.post_merge_schema"]
+    assert "unknown kind: manual" in v.message
+    assert "allowed: stable_install, tag, restart" in v.message
+    for kind in ("stable_install", "tag", "restart"):
+        assert kind in v.fix_hint
+
+
+def test_post_merge_missing_required_field_is_violation():
+    body = _with_ac_yaml(
+        _AC_PATHS
+        + "post_merge:\n"
+        + "  - kind: stable_install\n"
+        + "    repo: sumipan/issuesmith\n"
+        + "  - kind: restart\n"
+        + _AC_REMOVED
+    )
+    v = {x.rule_id: x for x in _check(body, MIGRATION_LABELS)}[
+        "b1_migration.post_merge_schema"
+    ]
+    assert "kind stable_install: missing required field: path" in v.message
+    assert "kind restart: missing required field: processes" in v.message
+
+
+def test_post_merge_schema_not_reported_when_key_missing():
+    ids = _rule_ids(BODY_MISSING_POST_MERGE, MIGRATION_LABELS)
+    assert "b1_migration.post_merge_missing" in ids
+    assert "b1_migration.post_merge_schema" not in ids
+
+
+def test_removed_trees_non_string_item_is_schema_violation():
+    """AC-4: a non-string removed_trees item fails with removed_trees_schema."""
+    body = _with_ac_yaml(
+        _AC_PATHS
+        + "post_merge:\n"
+        + "  - kind: tag\n"
+        + "    repo: sumipan/issuesmith\n"
+        + "    tag: v0.1.0\n"
+        + "removed_trees:\n"
+        + "  - tools/issuesmith\n"
+        + "  - path: tools/other\n"
+    )
+    violations = _check(body, MIGRATION_LABELS)
+    by_id = {v.rule_id: v for v in violations}
+    assert set(by_id) == {"b1_migration.removed_trees_schema"}
+    v = by_id["b1_migration.removed_trees_schema"]
+    assert v.severity == "fail"
+    assert v.auto_fixable is False
+    assert "removed_trees items must be strings, got dict" in v.message
+    assert v.fix_hint == "removed_trees:\n  - tools/<package>"
+
+
+def test_removed_trees_schema_not_reported_when_key_missing():
+    ids = _rule_ids(BODY_MISSING_REMOVED_TREES, MIGRATION_LABELS)
+    assert "b1_migration.removed_trees_missing" in ids
+    assert "b1_migration.removed_trees_schema" not in ids

@@ -5,6 +5,7 @@ import re
 import yaml
 from ghdag.workflow.gates import GATE_REGISTRY, Violation
 
+from issuesmith.ac_contract import KNOWN_POST_MERGE_KINDS, POST_MERGE_REQUIRED_FIELDS
 from issuesmith.config import get_config
 from issuesmith.gate_rules.b1_ac_format import extract_yaml_block, get_ac_section
 
@@ -118,6 +119,45 @@ def ac_contract_has_key(body: str, key: str) -> bool:
     return isinstance(data, dict) and key in data
 
 
+# Same order as the ops/preflight handlers (stable_install, tag, restart)
+_ALLOWED_KINDS_TEXT = ", ".join(POST_MERGE_REQUIRED_FIELDS)
+
+
+def post_merge_schema_errors(post_merge: object) -> list[str]:
+    """Return the problems that would make M2 reject post_merge (empty when valid)."""
+    if not isinstance(post_merge, list):
+        return ["post_merge must be a list"]
+    errors: list[str] = []
+    for i, item in enumerate(post_merge):
+        if not isinstance(item, dict):
+            errors.append(f"post_merge[{i}]: each post_merge item must be a dict")
+            continue
+        kind = item.get("kind")
+        if not isinstance(kind, str) or kind not in KNOWN_POST_MERGE_KINDS:
+            errors.append(
+                f"post_merge[{i}]: unknown kind: {kind}; allowed: {_ALLOWED_KINDS_TEXT}"
+            )
+            continue
+        for field in POST_MERGE_REQUIRED_FIELDS[kind]:
+            if field not in item:
+                errors.append(
+                    f"post_merge[{i}]: kind {kind}: missing required field: {field}"
+                )
+    return errors
+
+
+def removed_trees_schema_errors(removed_trees: object) -> list[str]:
+    """Return the problems with removed_trees items (empty when all are strings)."""
+    if not isinstance(removed_trees, list):
+        return [f"removed_trees must be a list, got {type(removed_trees).__name__}"]
+    return [
+        f"removed_trees[{i}]: removed_trees items must be strings, "
+        f"got {type(item).__name__}"
+        for i, item in enumerate(removed_trees)
+        if not isinstance(item, str)
+    ]
+
+
 class B1MigrationRules:
     def check(self, body: str, labels: list[str]) -> list[Violation]:
         if "scope:migration" not in labels:
@@ -197,6 +237,38 @@ class B1MigrationRules:
                 auto_fixable=True,
                 fix_hint=_REMOVED_TREES_SKELETON,
             ))
+
+        contract = _ac_contract_yaml(body) or {}
+
+        if "post_merge" in contract:
+            errors = post_merge_schema_errors(contract["post_merge"])
+            if errors:
+                violations.append(Violation(
+                    rule_id="b1_migration.post_merge_schema",
+                    severity="fail",
+                    message=(
+                        f"## {ac} yaml block: post_merge is not in the form M2 accepts"
+                        f" (allowed kinds: {_ALLOWED_KINDS_TEXT}): " + "; ".join(errors)
+                    ),
+                    location=None,
+                    auto_fixable=False,
+                    fix_hint=_POST_MERGE_SKELETON,
+                ))
+
+        if "removed_trees" in contract:
+            errors = removed_trees_schema_errors(contract["removed_trees"])
+            if errors:
+                violations.append(Violation(
+                    rule_id="b1_migration.removed_trees_schema",
+                    severity="fail",
+                    message=(
+                        f"## {ac} yaml block: removed_trees is malformed: "
+                        + "; ".join(errors)
+                    ),
+                    location=None,
+                    auto_fixable=False,
+                    fix_hint="removed_trees:\n  - tools/<package>",
+                ))
 
         return violations
 
