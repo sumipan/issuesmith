@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Fixed
+
+- allow_paths conflicts are phase-aware (nexus, 2026-09-26). `draft` (B1) and `sub` (SUB1) only edit Issue bodies / create child Issues, so a draft / sub candidate no longer waits on overlapping allow_paths, and draft / sub runs in flight no longer block a `develop` candidate. In-flight entries now record `phase` (`QueueStore.add_in_flight(phase=)`); legacy entries with `role: design` and no phase are treated as draft. Before, two brushups touching the same doc waited on each other for nothing.
+
 ### Added
 
 - `scope_coupling.deletion_reference_uncovered` (nexus #3953). For each change-table row whose change type matches `scope_size.delete_words`, `scope_coupling` runs `git grep` for the file name, stem and module name (`scripts/git-sync.py` -> `git-sync.py` / `git-sync` / `git_sync`) under `tests/` `scripts/` `tools/` of the base checkout and fails (not auto-fixable, one violation per deleted path) when a referrer matches neither `allow_paths` nor `paths_must_not_exist`. B1 Verify, CP1 and P0 requires run it through `ScopeCouplingRules`, also for `scope_mode: internal` and with `scope_coupling.enabled: false` (the flag now turns off only the caller/test coupling check); referrers already added by the coupling autofix are not reported twice. The queue re-runs it before dispatching a `develop` request (comment on the Issue, request stays queued), and when an in-flight Issue is released with `merge-done` it re-checks the open Issues that list it as a dependency and comments on those with uncovered referrers (`gates.dep.dependents_of` / `on_dep_merge_done`, once per dependency). New helpers `deletion_search_keys`, `uncovered_deletion_references`, `check_deletion_references`, `deletion_references_for_body`, `format_deletion_references`. Previously a dependency that merged after the Issue was written could add a test importing the deleted file, and P1's repair stopped on it because the test was outside `allow_paths`.

@@ -199,7 +199,8 @@ def test_allow_paths_conflict_overlapping_same_repo():
         {
             "issue": 2981,
             "engine": "claude",
-            "role": "design",
+            "role": "implementation",
+            "phase": "develop",
             "target_repo": "sumipan/issuesmith",
             "allow_paths": ["tests/**"],
         }
@@ -208,6 +209,29 @@ def test_allow_paths_conflict_overlapping_same_repo():
         _allow_paths_conflict("sumipan/issuesmith", ("tests/test_queue.py",), in_flight)
         == 2981
     )
+
+
+def test_allow_paths_conflict_ignores_draft_and_sub_runs():
+    """draft (B1) / sub (SUB1) only write Issue bodies: they neither conflict nor block."""
+    from issuesmith.queue import _allow_paths_conflict
+
+    develop = {"issue": 1, "engine": "claude", "role": "implementation", "phase": "develop",
+               "target_repo": "sumipan/nexus", "allow_paths": ["docs/DRAFTS.md"]}
+    draft = {"issue": 2, "engine": "claude", "role": "design", "phase": "draft",
+             "target_repo": "sumipan/nexus", "allow_paths": ["docs/DRAFTS.md"]}
+    sub = {"issue": 3, "engine": "claude", "role": "implementation", "phase": "sub",
+           "target_repo": "sumipan/nexus", "allow_paths": ["docs/DRAFTS.md"]}
+    legacy_design = {"issue": 4, "engine": "claude", "role": "design",
+                     "target_repo": "sumipan/nexus", "allow_paths": ["docs/DRAFTS.md"]}
+    paths = ("docs/DRAFTS.md",)
+    # a draft / sub candidate never waits
+    assert _allow_paths_conflict("sumipan/nexus", paths, [develop], candidate_phase="draft") is None
+    assert _allow_paths_conflict("sumipan/nexus", paths, [develop], candidate_phase="sub") is None
+    # a develop candidate only waits for runs that write files
+    assert _allow_paths_conflict("sumipan/nexus", paths, [draft, sub, legacy_design], candidate_phase="develop") is None
+    assert _allow_paths_conflict("sumipan/nexus", paths, [draft, develop], candidate_phase="develop") == 1
+    # without candidate_phase (legacy callers) behaviour is unchanged for develop-like entries
+    assert _allow_paths_conflict("sumipan/nexus", paths, [develop]) == 1
 
 
 def test_allow_paths_conflict_non_overlapping_same_repo():
@@ -267,10 +291,44 @@ def test_dispatch_skips_overlapping_paths(tmp_path, monkeypatch, issuesmith_conf
     from issuesmith import queue as qmod
 
     store = _store(tmp_path)
+    # develop 同士だけが競合する（draft / sub はファイルを書かないので対象外、2026-09-26）
     store.add_in_flight(
         2981,
         "claude",
-        role="design",
+        role="implementation",
+        phase="develop",
+        allow_paths=("tests/**",),
+        target_repo="sumipan/issuesmith",
+    )
+    store.enqueue(
+        issue=2980,
+        phase="develop",
+        source="skill",
+        actor_kind="human",
+        priority="normal",
+        requested_by=["alice"],
+        requested_at=_NOW,
+    )
+    client = _DispatchClient(
+        {2980: {"state": "OPEN", "labels": [{"name": "issuesmith:draft-done"}], "body": _BODY_QUEUE}}
+    )
+    now = datetime(2026, 9, 9, 12, 0, tzinfo=_JST)
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
+    result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
+    assert result.dispatched is False
+
+
+def test_dispatch_draft_ignores_overlapping_paths(tmp_path, monkeypatch, issuesmith_config):
+    """draft（B1）は Issue 本文しか書かないので、同じ allow_paths の develop が走っていても待たない。"""
+    _patch_paths(tmp_path, monkeypatch, issuesmith_config)
+    from issuesmith import queue as qmod
+
+    store = _store(tmp_path)
+    store.add_in_flight(
+        2981,
+        "claude",
+        role="implementation",
+        phase="develop",
         allow_paths=("tests/**",),
         target_repo="sumipan/issuesmith",
     )
@@ -289,7 +347,7 @@ def test_dispatch_skips_overlapping_paths(tmp_path, monkeypatch, issuesmith_conf
     now = datetime(2026, 9, 9, 12, 0, tzinfo=_JST)
     monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
     result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
-    assert result.dispatched is False
+    assert result.dispatched is True
 
 
 def test_dispatch_allows_non_overlapping_or_other_repo(
@@ -616,12 +674,13 @@ def test_status_shows_conflict_waiting(tmp_path, monkeypatch, issuesmith_config,
         2966,
         "cursor",
         role="implementation",
+        phase="develop",
         allow_paths=("tools/secretary/**",),
         target_repo="sumipan/nexus",
     )
     r = store.enqueue(
         issue=2976,
-        phase="draft",
+        phase="develop",
         source="skill",
         actor_kind="human",
         priority="normal",
@@ -631,7 +690,7 @@ def test_status_shows_conflict_waiting(tmp_path, monkeypatch, issuesmith_config,
     client = _DispatchClient(
         {
             2966: {"state": "OPEN", "labels": [], "body": _BODY_SECRETARY},
-            2976: {"state": "OPEN", "labels": [], "body": _BODY_SECRETARY},
+            2976: {"state": "OPEN", "labels": [{"name": "issuesmith:draft-done"}], "body": _BODY_SECRETARY},
         }
     )
     monkeypatch.setattr(qmod, "get_forge", lambda repo=None: client)
@@ -643,7 +702,7 @@ def test_status_shows_conflict_waiting(tmp_path, monkeypatch, issuesmith_config,
     qmod._cmd_status(args)
     out = capsys.readouterr().out
     assert "issue=#2976" in out
-    assert "role=design" in out
+    assert "role=implementation" in out
     assert "waiting:" in out
     assert "#2966" in out
     assert "tools/secretary/**" in out
