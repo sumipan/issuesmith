@@ -244,6 +244,146 @@ def _yaml_list(paths: list[str]) -> str:
     return "\n".join(f"  - {p}" for p in paths)
 
 
+# ---------------------------------------------------------------------------
+# Deletion reference check (nexus #3953)
+# ---------------------------------------------------------------------------
+
+DELETION_RULE_ID = "scope_coupling.deletion_reference_uncovered"
+
+# Directories whose files break when a referenced file is deleted but are not covered by
+# type checks / CI of the runtime code (src/ is intentionally excluded).
+DELETION_SEARCH_DIRS: tuple[str, ...] = ("tests", "scripts", "tools")
+
+
+def deletion_search_keys(path: str) -> list[str]:
+    """Return ``[file name, stem, module name]`` for a deleted path (duplicates removed).
+
+    e.g. ``scripts/git-sync.py`` → ``["git-sync.py", "git-sync", "git_sync"]``.
+    """
+    name = Path(path).name
+    stem = Path(path).stem
+    keys: list[str] = []
+    for key in (name, stem, stem.replace("-", "_")):
+        if key and key not in keys:
+            keys.append(key)
+    return keys
+
+
+def _deleted_paths(body: str, target_repo: str) -> list[str]:
+    # Same change-type vocabulary as scope_size (host config, e.g. nexus adds its own word).
+    delete_words = [w.lower() for w in get_config().scope_size.delete_words]
+    paths: list[str] = []
+    for repo, path, change_type in extract_change_table_rows(body):
+        if repo and target_repo and repo != target_repo:
+            continue
+        ct_lower = change_type.lower()
+        if any(w in ct_lower for w in delete_words) and path not in paths:
+            paths.append(path)
+    return paths
+
+
+def uncovered_deletion_references(
+    body: str,
+    allow_paths: list[str],
+    repo_path: Path,
+) -> dict[str, list[str]]:
+    """Map each deleted path to its referrers outside ``allow_paths`` / ``paths_must_not_exist``.
+
+    For every change-table row whose change type matches ``scope_size.delete_words``, ``git grep``
+    the base checkout at ``repo_path`` under :data:`DELETION_SEARCH_DIRS` for the file name, stem
+    and module name.
+    Deleted paths without uncovered referrers are omitted.
+    """
+    try:
+        metadata = parse_issue_metadata(body)
+    except Exception:
+        metadata = {}
+    target_repo = (metadata.get("target_repo") or "").strip()
+    deleted = _deleted_paths(body, target_repo)
+    if not deleted:
+        return {}
+
+    contract = extract_contract_from_body(body) or {}
+    must_not_exist = sorted(
+        {str(p).strip() for p in (contract.get("paths_must_not_exist") or []) if str(p).strip()}
+    )
+    covered = list(allow_paths) + must_not_exist
+
+    result: dict[str, list[str]] = {}
+    for path in deleted:
+        hits: set[str] = set()
+        for key in deletion_search_keys(path):
+            for d in DELETION_SEARCH_DIRS:
+                hits.update(_git_grep(repo_path, key, d))
+        uncovered = sorted(
+            f for f in hits if f not in deleted and not _in_allow_paths(f, covered)
+        )
+        if uncovered:
+            result[path] = uncovered
+    return result
+
+
+def _deletion_violations(refs: dict[str, list[str]]) -> list[Violation]:
+    return [
+        Violation(
+            rule_id=DELETION_RULE_ID,
+            severity="fail",
+            message=(
+                f"files referencing deleted `{path}` are in neither allow_paths nor "
+                "paths_must_not_exist: " + ", ".join(files)
+            ),
+            location=path,
+            auto_fixable=False,
+            fix_hint=(
+                "add them to allow_paths (to update the reference) or paths_must_not_exist "
+                "(to delete the referrer too):\n" + _yaml_list(files)
+            ),
+        )
+        for path, files in refs.items()
+    ]
+
+
+def check_deletion_references(
+    body: str,
+    allow_paths: list[str],
+    repo_path: Path,
+) -> list[Violation]:
+    """``scope_coupling.deletion_reference_uncovered`` — one violation per deleted path."""
+    return _deletion_violations(uncovered_deletion_references(body, allow_paths, repo_path))
+
+
+def deletion_references_for_body(body: str) -> dict[str, list[str]]:
+    """Resolve allow_paths / base checkout from ``body`` and run the deletion reference check.
+
+    Used at dispatch time and after a dependency merges. Runs even when
+    ``scope_coupling.enabled`` is false (that flag turns off the caller/test coupling check only).
+    Returns ``{}`` when the body has no allow_paths or the target clone is missing.
+    """
+    cfg = get_config()
+    try:
+        metadata = parse_issue_metadata(body)
+    except Exception:
+        return {}
+    allow_paths = _parse_allow_paths(metadata)
+    if not allow_paths:
+        return {}
+    root = resolve_scope_root(metadata, cfg)
+    if root is None:
+        return {}
+    return uncovered_deletion_references(body, allow_paths, root)
+
+
+def format_deletion_references(refs: dict[str, list[str]], lead: str) -> str:
+    """Markdown for Issue comments: ``lead`` + referrer list per deleted path."""
+    blocks: list[str] = []
+    for path, files in refs.items():
+        lines = [f"{lead}the following files reference deleted `{path}`:"]
+        lines.extend(f"- `{f}`" for f in files)
+        blocks.append("\n".join(lines))
+    blocks.append("Add them to `allow_paths` or `paths_must_not_exist`.")
+    return "\n\n".join(blocks)
+
+
 class ScopeCouplingRules:
     def __init__(self) -> None:
         self.autofix_note: str | None = None
@@ -255,7 +395,9 @@ class ScopeCouplingRules:
 
         cfg = get_config()
         if not cfg.scope_coupling.enabled:
-            return []
+            # ``enabled: false`` turns off the caller/test coupling check only; deleted-file
+            # referrers are always checked (nexus #3953).
+            return _deletion_violations(deletion_references_for_body(body))
 
         try:
             metadata = parse_issue_metadata(body)
@@ -287,6 +429,20 @@ class ScopeCouplingRules:
                 )
             ]
 
+        violations = self._coupling_violations(body, metadata, allow_paths, root, cfg)
+        # Referrers already added by the autofix widening are covered (nexus #3953).
+        effective = self.autofix_new_allow_paths or allow_paths
+        violations.extend(check_deletion_references(body, effective, root))
+        return violations
+
+    def _coupling_violations(
+        self,
+        body: str,
+        metadata: dict,
+        allow_paths: list[str],
+        root: Path,
+        cfg,
+    ) -> list[Violation]:
         # scope_mode: internal — the Issue declares its public interface unchanged, so callers
         # and tests need no follow-up. P2 verifies the declaration (public symbol set == base).
         if str(metadata.get("scope_mode") or "").strip().lower() == "internal":
