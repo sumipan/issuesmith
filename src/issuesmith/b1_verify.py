@@ -6,10 +6,11 @@ violations を VERIFY_FAILED_CHECKS 形式のレポートとして出力する�
 
 除外: `cp1.intentional_hold`（cp1_must_fail / scope:milestone による意図的保留）は
 B1 成果物の不備ではなく CP1 判定用のシグナルなので、Verify 失敗として扱わない。
-severity が `fail` 以外（`warn` 等）の violation も Verify 失敗に含めない（#4076）。
+Violations whose severity is not `fail` (e.g. `warn`) are not counted as Verify failures either (#4076).
 
-振動検知: `--prev-report FILE`（`-` で stdin）に前回のレポートを渡すと、rule_id ごとの
-件数が前回より増えた場合に `b1_verify.oscillation_detected` を追加する（#4076）。
+Oscillation detection: when the previous report is passed via `--prev-report FILE` (`-` for stdin),
+a `b1_verify.oscillation_detected` violation is added if the count for any rule_id grew compared
+with the previous run (#4076).
 """
 from __future__ import annotations
 
@@ -64,12 +65,12 @@ def detect_oscillation(violations, prev_report: str) -> Violation | None:
         rule_id="b1_verify.oscillation_detected",
         severity="fail",
         message=(
-            "recovery 後に違反件数が増加しました（振動）。"
+            "Violation count increased after recovery (oscillation). "
             f"rule_id: {', '.join(oscillating)}"
         ),
         location=None,
         auto_fixable=False,
-        fix_hint="recovery を止め、根本原因（ゲートのロジック）を直接修正してください。",
+        fix_hint="Stop the recovery loop and fix the root cause (the gate logic) directly.",
     )
 
 

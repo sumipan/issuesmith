@@ -248,9 +248,9 @@ class B1MilestoneSubdesignRules:
                     rule_id="b1_milestone_subdesign.repo_mismatch",
                     severity="fail",
                     message=(
-                        f"サブ{sub_num} のリポジトリ列 `{repo}` が"
-                        f" どのメタデータブロックの target_repo / diary_allow_paths とも"
-                        f"一致しません（{path}）"
+                        f"Sub {sub_num}: repository column `{repo}` does not match"
+                        f" the target_repo / diary_allow_paths of any metadata block"
+                        f" ({path})"
                     ),
                     location=f"#### サブ{sub_num}",
                     auto_fixable=True,

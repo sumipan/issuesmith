@@ -133,11 +133,11 @@ def parse_issue_metadata(body: str) -> dict:
 
 
 def parse_issue_metadata_blocks(body: str) -> list[dict]:
-    """Issue body 内のすべての ```yaml ... ``` ブロックを順に解析して dict のリストで返す。
+    """Parse every ```yaml ... ``` block in the Issue body, in order, and return them as a list of dicts.
 
-    リポをまたぐマイルストーン親は、リポごとに 1 つずつメタデータブロックを持つ（nexus #4076）。
-    パース失敗・空・dict 以外のブロックはスキップする。例外は送出しない。
-    既存の `parse_issue_metadata`（先頭ブロックのみ）は変更しない。
+    A milestone parent that spans repositories carries one metadata block per repository (nexus #4076).
+    Blocks that fail to parse, are empty, or are not a dict are skipped. No exception is raised.
+    The existing `parse_issue_metadata` (first block only) is unchanged.
     """
     blocks: list[dict] = []
     for m in re.finditer(r"^```yaml\n(.*?)\n```", body or "", re.DOTALL | re.MULTILINE):
