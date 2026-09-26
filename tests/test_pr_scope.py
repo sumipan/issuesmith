@@ -63,6 +63,17 @@ def test_allow_paths_only_returns_empty() -> None:
     assert violations == []
 
 
+def test_nested_fixtures_jsonl_excluded_from_forbidden_patterns() -> None:
+    """tests/<pkg>/fixtures/** (nexus #4035: tests/scripts/fixtures/memory_migrate/legacy_persona.jsonl)."""
+    from issuesmith.pr_scope import check_pr_diff_scope
+
+    files = ["tests/scripts/fixtures/memory_migrate/legacy_persona.jsonl", "tests/a/b/fixtures/x.jsonl"]
+    violations = check_pr_diff_scope(files, ["tests/**"], ["*.jsonl"])
+    assert violations == []
+    # a .jsonl outside any fixtures/ directory is still forbidden
+    assert check_pr_diff_scope(["tests/scripts/data.jsonl"], ["tests/**"], ["*.jsonl"])
+
+
 def test_fixtures_jsonl_excluded_from_forbidden_patterns() -> None:
     filenames = _filenames(_FILE_FIXTURE_JSONL)
     violations = check_pr_diff_scope(

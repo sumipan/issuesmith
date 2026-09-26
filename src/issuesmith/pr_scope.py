@@ -12,7 +12,13 @@ from issuesmith.config import _DEFAULT_FORBIDDEN_PR_PATHS
 
 DEFAULT_FORBIDDEN_PR_PATHS = _DEFAULT_FORBIDDEN_PR_PATHS
 
-_FIXTURE_EXCLUDE = "tests/fixtures/**"
+# Fixture data may live under any tests/**/fixtures/ directory (e.g. tests/scripts/fixtures/x/a.jsonl)
+_FIXTURE_EXCLUDES = ("tests/fixtures/**", "tests/*/fixtures/**", "tests/*/*/fixtures/**", "tests/*/*/*/fixtures/**")
+_FIXTURE_EXCLUDE = _FIXTURE_EXCLUDES[0]  # backward compat
+
+
+def _is_fixture_path(filename: str) -> bool:
+    return any(fnmatch.fnmatch(filename, pat) for pat in _FIXTURE_EXCLUDES)
 _VERSION_LINE_RE = re.compile(r"^[+-]version\s*=")
 
 
@@ -65,7 +71,7 @@ def check_pr_diff_scope(
 ) -> list[Violation]:
     """Return violations for PR files outside allow_paths or matching forbidden patterns.
 
-    ``tests/fixtures/**`` paths skip the forbidden-pattern check (fixture ``.jsonl``
+    ``tests/**/fixtures/**`` paths skip the forbidden-pattern check (fixture ``.jsonl``
     etc. remain allowed) but must still match ``allow_paths``.
 
     When ``file_entries`` is provided, publish-only edits (``pyproject.toml`` version
@@ -82,7 +88,7 @@ def check_pr_diff_scope(
         if _is_publish_only_change(filename, by_name.get(filename)):
             continue
 
-        is_fixture = fnmatch.fnmatch(filename, _FIXTURE_EXCLUDE)
+        is_fixture = _is_fixture_path(filename)
         if not is_fixture:
             matched_forbidden = next(
                 (pat for pat in forbidden_patterns if fnmatch.fnmatch(filename, pat)),
