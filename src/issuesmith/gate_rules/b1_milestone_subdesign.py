@@ -158,12 +158,11 @@ class B1MilestoneSubdesignRules:
                 location=None,
                 auto_fixable=False,
                 fix_hint=(
-                    f"{sections['sub_plan']}の行 N ごとに ## {sections['design']} 配下へ"
-                    " `#### サブN: <タイトル>` を追加し、各ブロックに必須サブセクション "
+                    f"For every `{sections['sub_plan']}` row N, add `#### Sub N: <title>` "
+                    f"under `## {sections['design']}` with the required subsections "
                     + " / ".join(
                         f"**{name}**" for name in get_config().sub_design_subsections
                     )
-                    + " を書く"
                 ),
             )]
         return []
