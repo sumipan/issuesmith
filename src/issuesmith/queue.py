@@ -424,17 +424,40 @@ def _issue_target_meta(issue: dict[str, Any]) -> tuple[str, tuple[str, ...]]:
     return repo, paths
 
 
+# Phases that only write Issue bodies / child Issues, never files of the target repo.
+_NO_FILE_WRITE_PHASES = frozenset({"draft", "sub"})
+
+
+def _writes_files(entry: dict[str, Any]) -> bool:
+    """True unless the in_flight entry is known to be a draft / sub (design) run."""
+    phase = entry.get("phase")
+    if isinstance(phase, str) and phase in _NO_FILE_WRITE_PHASES:
+        return False
+    if entry.get("role") == "design" and phase is None:
+        return False  # legacy entries recorded role only; design == draft (B1)
+    return True
+
+
 def _allow_paths_conflict(
     candidate_repo: str,
     candidate_paths: tuple[str, ...],
     in_flight: list[dict[str, Any]],
+    *,
+    candidate_phase: str | None = None,
 ) -> int | None:
     """Return conflicting in_flight issue number, or None if no conflict.
 
-    Legacy entries without ``target_repo`` / ``allow_paths`` are treated as
-    conflicts (fail closed) until they leave in_flight naturally.
+    allow_paths conflicts only matter between runs that write files of the
+    same target repo: draft (B1) and sub (SUB1) only edit Issue bodies, so a
+    draft / sub candidate never conflicts and draft / sub runs in flight never
+    block anyone. Legacy entries without ``target_repo`` / ``allow_paths`` are
+    treated as conflicts (fail closed) until they leave in_flight naturally.
     """
+    if candidate_phase in _NO_FILE_WRITE_PHASES:
+        return None
     for entry in in_flight:
+        if not _writes_files(entry):
+            continue
         entry_repo = entry.get("target_repo")
         if not isinstance(entry_repo, str) or not entry_repo.strip():
             issue = entry.get("issue")
@@ -1501,7 +1524,7 @@ def dispatch_one(
 
             candidate_repo, candidate_paths = _issue_target_meta(issue)
             conflict = _allow_paths_conflict(
-                candidate_repo, candidate_paths, snap.in_flight
+                candidate_repo, candidate_paths, snap.in_flight, candidate_phase=req.phase
             )
             if conflict is not None:
                 if concurrency.strict_order:
@@ -1536,6 +1559,7 @@ def dispatch_one(
                 req.issue,
                 engine,
                 role=role,
+                phase=req.phase,
                 allow_paths=candidate_paths,
                 target_repo=candidate_repo or None,
             )
@@ -1690,7 +1714,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
             continue
         candidate_repo, candidate_paths = _issue_target_meta(issue)
         conflict = _allow_paths_conflict(
-            candidate_repo, candidate_paths, snap.in_flight
+            candidate_repo, candidate_paths, snap.in_flight, candidate_phase=req.phase
         )
         if conflict is None:
             continue

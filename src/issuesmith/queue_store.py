@@ -577,6 +577,7 @@ class QueueStore:
         role: str | None = None,
         allow_paths: tuple[str, ...] = (),
         target_repo: str | None = None,
+        phase: str | None = None,
     ) -> None:
         with self.lock():
             state = self._load_state_unlocked()
@@ -592,6 +593,8 @@ class QueueStore:
             }
             if role is not None:
                 entry["role"] = role
+            if phase is not None:
+                entry["phase"] = phase
             if allow_paths:
                 entry["allow_paths"] = list(allow_paths)
             if target_repo is not None:
