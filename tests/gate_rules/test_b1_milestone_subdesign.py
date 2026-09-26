@@ -250,3 +250,200 @@ def test_milestone30_drift_detects_multiple_categories():
         "b1_milestone_subdesign.impact_scope_pollution",
     }
     assert expected.issubset(rule_ids)
+
+
+# --- Two-repo milestone parent: one ```yaml block per repo (nexus #4076) ---
+
+
+def _two_repo_body(*, with_parent_changed_files: bool) -> str:
+    parent_changed = f"""\
+## Changed Files
+| {_TABLE_HEADER} |
+|---|---|---|---|
+| `sumipan/nexus` | `tools/foo/a.py` | Add | add a |
+| `sumipan/ghdag` | `src/ghdag/b.py` | Add | add b |
+
+""" if with_parent_changed_files else ""
+    return f"""\
+```yaml
+target_repo: sumipan/nexus
+base_branch: main
+allow_paths:
+  - tools/foo/a.py
+```
+
+```yaml
+target_repo: sumipan/ghdag
+base_branch: main
+allow_paths:
+  - src/ghdag/b.py
+```
+
+## Design
+
+{_sub_block(1, "foo", "tools/foo/a.py")}
+{_sub_block(2, "bar", "src/ghdag/b.py", repo="sumipan/ghdag")}
+
+## Milestone
+
+### Sub-issue Plan
+| # | Title | c5185_c5BB9 | Dependency |
+|---|--------|------|------|
+| 1 | foo | scope1 | None |
+| 2 | bar | scope2 | 1 |
+
+{parent_changed}## Acceptance Criteria
+
+```yaml
+paths_must_exist:
+  - tools/foo/a.py
+```
+"""
+
+
+def test_allowed_repos_unions_every_metadata_block():
+    from issuesmith.gate_rules.b1_milestone_subdesign import _allowed_repos
+
+    body = _two_repo_body(with_parent_changed_files=True)
+    assert _allowed_repos(body) == {"sumipan/nexus", "sumipan/ghdag"}
+
+
+def test_allowed_repos_adds_diary_from_any_block():
+    from issuesmith.gate_rules.b1_milestone_subdesign import _allowed_repos
+
+    body = (
+        "```yaml\ntarget_repo: sumipan/nexus\n```\n\n"
+        "```yaml\ntarget_repo: sumipan/ghdag\ndiary_allow_paths:\n  - notes/a.md\n```\n"
+    )
+    assert _allowed_repos(body) == {"sumipan/nexus", "sumipan/ghdag", "sumipan/diary"}
+
+
+def test_two_repo_milestone_passes():
+    violations = _check(_two_repo_body(with_parent_changed_files=True), MILESTONE_LABELS)
+    assert violations == []
+
+
+def test_two_repo_milestone_has_no_repo_mismatch():
+    violations = _check(_two_repo_body(with_parent_changed_files=False), MILESTONE_LABELS)
+    assert not any(v.rule_id == "b1_milestone_subdesign.repo_mismatch" for v in violations)
+
+
+def test_file_union_falls_back_to_allow_paths_without_parent_changed_files():
+    violations = _check(_two_repo_body(with_parent_changed_files=False), MILESTONE_LABELS)
+    assert not any(
+        v.rule_id == "b1_milestone_subdesign.file_union_missing_in_parent" for v in violations
+    )
+    assert violations == []
+
+
+def test_file_union_fallback_still_reports_paths_outside_allow_paths():
+    body = _two_repo_body(with_parent_changed_files=False).replace(
+        "  - src/ghdag/b.py\n", "  - src/ghdag/other.py\n"
+    )
+    violations = _check(body, MILESTONE_LABELS)
+    [v] = [v for v in violations if v.rule_id.endswith("file_union_missing_in_parent")]
+    assert "src/ghdag/b.py" in v.message
+
+
+def test_repo_mismatch_fix_hint_adds_a_block_instead_of_rewriting():
+    violations = _check(MILESTONE30_DRIFT_BODY, MILESTONE_LABELS)
+    repo_v = next(v for v in violations if v.rule_id == "b1_milestone_subdesign.repo_mismatch")
+    hint = repo_v.fix_hint or ""
+    assert "target_repo: sumipan/mltgnt" in hint
+    assert "add" in hint.lower()
+    assert "keep" in hint.lower()
+
+
+# --- b1_verify oscillation detection (nexus #4076) ---
+
+
+def _violation(rule_id: str, severity: str = "fail"):
+    from ghdag.workflow.gates import Violation
+
+    return Violation(
+        rule_id=rule_id,
+        severity=severity,
+        message="m",
+        location=None,
+        auto_fixable=False,
+        fix_hint=None,
+    )
+
+
+_PREV_REPORT = (
+    "VERIFY_FAILED_CHECKS: b1_milestone_subdesign.repo_mismatch"
+    " b1_milestone_subdesign.repo_mismatch scope_breadth.too_large\n"
+    "\n## b1_milestone_subdesign.repo_mismatch\nmsg\n"
+)
+
+
+def test_parse_prev_counts_reads_the_report_header():
+    from issuesmith.b1_verify import _parse_prev_counts
+
+    counts = _parse_prev_counts(_PREV_REPORT)
+    assert counts == {
+        "b1_milestone_subdesign.repo_mismatch": 2,
+        "scope_breadth.too_large": 1,
+    }
+    assert _parse_prev_counts("VERIFY_FAILED_CHECKS: (none)\n") == {}
+    assert _parse_prev_counts("") == {}
+
+
+def test_oscillation_detected_when_a_rule_count_grows():
+    from issuesmith.b1_verify import detect_oscillation
+
+    current = [_violation("b1_milestone_subdesign.repo_mismatch")] * 3
+    v = detect_oscillation(current, _PREV_REPORT)
+    assert v is not None
+    assert v.rule_id == "b1_verify.oscillation_detected"
+    assert v.severity == "fail"
+    assert "b1_milestone_subdesign.repo_mismatch" in v.message
+
+
+def test_no_oscillation_when_counts_shrink_or_stay():
+    from issuesmith.b1_verify import detect_oscillation
+
+    current = [_violation("b1_milestone_subdesign.repo_mismatch")] * 2
+    assert detect_oscillation(current, _PREV_REPORT) is None
+    assert detect_oscillation([], _PREV_REPORT) is None
+
+
+def test_main_prev_report_appends_oscillation(tmp_path, monkeypatch, capsys):
+    import sys
+    import types
+
+    import issuesmith.b1_verify as b1_verify
+
+    prev = tmp_path / "prev.txt"
+    prev.write_text(_PREV_REPORT, encoding="utf-8")
+    forge = types.SimpleNamespace(
+        issue_get=lambda *_a, **_k: {"body": "x", "labels": [{"name": "scope:milestone"}]}
+    )
+    monkeypatch.setattr("ghdag.forge.get_forge", lambda: forge)
+    monkeypatch.setattr(
+        b1_verify,
+        "collect_violations",
+        lambda body, labels: [_violation("b1_milestone_subdesign.repo_mismatch")] * 5,
+    )
+    monkeypatch.setattr(sys, "argv", ["b1_verify", "4048", "--prev-report", str(prev)])
+    assert b1_verify.main() == 1
+    out = capsys.readouterr().out
+    assert "b1_verify.oscillation_detected" in out.splitlines()[0]
+
+
+def test_main_without_prev_report_has_no_oscillation(monkeypatch, capsys):
+    import sys
+    import types
+
+    import issuesmith.b1_verify as b1_verify
+
+    forge = types.SimpleNamespace(issue_get=lambda *_a, **_k: {"body": "x", "labels": []})
+    monkeypatch.setattr("ghdag.forge.get_forge", lambda: forge)
+    monkeypatch.setattr(
+        b1_verify,
+        "collect_violations",
+        lambda body, labels: [_violation("b1_milestone_subdesign.repo_mismatch")],
+    )
+    monkeypatch.setattr(sys, "argv", ["b1_verify", "4048"])
+    assert b1_verify.main() == 1
+    assert "oscillation" not in capsys.readouterr().out

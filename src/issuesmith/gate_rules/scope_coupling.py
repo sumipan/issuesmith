@@ -45,6 +45,14 @@ _DEFAULT_IGNORE_SYMBOLS: frozenset[str] = frozenset({
     "merge", "rebase", "status", "report", "record", "metric", "trace",
     "verify", "validate", "extract", "convert", "register", "dispatch",
     "collect", "process", "execute", "resolve", "compute", "measure",
+    "readme", "changelog", "license", "makefile", "pyproject", "setup",
+    "skill", "agents", "claude", "cursor", "codex",
+})
+
+# Common file names (extension included) that are never useful as grep keys (#4076).
+_IGNORE_FILENAMES: frozenset[str] = frozenset({
+    "README.md", "CHANGELOG.md", "LICENSE", "Makefile",
+    "pyproject.toml", "__init__.py", "SKILL.md",
 })
 
 # Matches backtick-quoted identifiers of 4+ chars (function names, class names, etc.)
@@ -85,6 +93,8 @@ def _is_test_path(path: str) -> bool:
 
 def _is_valid_key(key: str) -> bool:
     if len(key) <= 3:
+        return False
+    if key in _IGNORE_FILENAMES:
         return False
     kl = key.lower()
     if kl in _DEFAULT_IGNORE_SYMBOLS:
@@ -270,12 +280,16 @@ def deletion_search_keys(path: str) -> list[str]:
     """Return ``[file name, stem, module name]`` for a deleted path (duplicates removed).
 
     e.g. ``scripts/git-sync.py`` → ``["git-sync.py", "git-sync", "git_sync"]``.
+    Common file names (``README.md`` / ``SKILL.md`` / ``__init__.py`` …) and short or
+    common stems are dropped — they hit unrelated files (#4076).
     """
     name = Path(path).name
+    if name in _IGNORE_FILENAMES:
+        return []
     stem = Path(path).stem
     keys: list[str] = []
     for key in (name, stem, stem.replace("-", "_")):
-        if key and key not in keys:
+        if key and key not in keys and _is_valid_key(key):
             keys.append(key)
     return keys
 

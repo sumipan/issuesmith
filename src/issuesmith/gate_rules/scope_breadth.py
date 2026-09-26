@@ -99,7 +99,9 @@ class ScopeBreadthRules:
             return [
                 Violation(
                     rule_id="scope_breadth.root_unavailable",
-                    severity="fail",
+                    # warn, not fail: a multi-repo milestone parent may name repos with
+                    # no local clone; B1 verify only fails on severity == "fail" (#4076).
+                    severity="warn",
                     message=(
                         f"allow_paths scope cannot be measured: no clone for {target_repo!r}"
                         f" under {get_config().paths.external_dir}"

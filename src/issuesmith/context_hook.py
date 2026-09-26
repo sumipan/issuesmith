@@ -132,6 +132,24 @@ def parse_issue_metadata(body: str) -> dict:
     return result
 
 
+def parse_issue_metadata_blocks(body: str) -> list[dict]:
+    """Issue body 内のすべての ```yaml ... ``` ブロックを順に解析して dict のリストで返す。
+
+    リポをまたぐマイルストーン親は、リポごとに 1 つずつメタデータブロックを持つ（nexus #4076）。
+    パース失敗・空・dict 以外のブロックはスキップする。例外は送出しない。
+    既存の `parse_issue_metadata`（先頭ブロックのみ）は変更しない。
+    """
+    blocks: list[dict] = []
+    for m in re.finditer(r"^```yaml\n(.*?)\n```", body or "", re.DOTALL | re.MULTILINE):
+        try:
+            result = yaml.safe_load(m.group(1))
+        except yaml.YAMLError:
+            continue
+        if isinstance(result, dict):
+            blocks.append(result)
+    return blocks
+
+
 # ghdag dispatcher が subprocess で起動する経路では親プロセス（ghdag_runner 等）が
 # .env を sourcing していないため、GITHUB_TOKEN 等が見えない。自前でロードしておく。
 # find_dotenv で __file__ 起点に親方向探索することで、worktree 経由起動でも
