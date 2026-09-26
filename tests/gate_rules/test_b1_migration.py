@@ -384,3 +384,48 @@ def test_removed_trees_schema_not_reported_when_key_missing():
     ids = _rule_ids(BODY_MISSING_REMOVED_TREES, MIGRATION_LABELS)
     assert "b1_migration.removed_trees_missing" in ids
     assert "b1_migration.removed_trees_schema" not in ids
+
+
+def test_post_merge_manual_check_passes():
+    body = _with_ac_yaml(
+        _AC_PATHS
+        + "post_merge:\n"
+        + "  - kind: manual_check\n"
+        + '    description: "run python3 scripts/preflight.py after MG1"\n'
+        + _AC_REMOVED
+    )
+    assert _check(body, MIGRATION_LABELS) == []
+
+
+def test_post_merge_manual_check_without_description_is_violation():
+    body = _with_ac_yaml(
+        _AC_PATHS + "post_merge:\n  - kind: manual_check\n" + _AC_REMOVED
+    )
+    violations = _check(body, MIGRATION_LABELS)
+    by_id = {v.rule_id: v for v in violations}
+    assert set(by_id) == {"b1_migration.post_merge_schema"}
+    assert (
+        "kind manual_check: missing required field: description"
+        in by_id["b1_migration.post_merge_schema"].message
+    )
+
+
+def test_post_merge_manual_check_empty_description_is_violation():
+    body = _with_ac_yaml(
+        _AC_PATHS
+        + "post_merge:\n"
+        + "  - kind: manual_check\n"
+        + '    description: ""\n'
+        + _AC_REMOVED
+    )
+    v = {x.rule_id: x for x in _check(body, MIGRATION_LABELS)}[
+        "b1_migration.post_merge_schema"
+    ]
+    assert "description must be a non-empty string" in v.message
+
+
+def test_post_merge_skeleton_lists_manual_check():
+    v = {x.rule_id: x for x in _check(BODY_MISSING_POST_MERGE, MIGRATION_LABELS)}[
+        "b1_migration.post_merge_missing"
+    ]
+    assert "kind: manual_check" in v.fix_hint
