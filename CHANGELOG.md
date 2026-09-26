@@ -9,6 +9,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `pr_scope`: the fixture exemption from forbidden patterns now covers `tests/**/fixtures/**` (any nested `fixtures/` directory under `tests/`), not only `tests/fixtures/**`. A `.jsonl` fixture under `tests/scripts/fixtures/` failed P1 as `forbidden_path` and the repair loop could not fix it (nexus #4035). 0.84.3
+
+### Fixed
+
 - `unparsed_dependency_refs` no longer treats a prose mention of the Issue's own milestone parent (`親イシュー: #N` + "parallel with sub 2 of #N" in the dependencies section) as an unparsed dependency. SUB1-generated children were blocked at dispatch with `deps unparsed` (nexus #4053 / #4056). 0.84.1
 
 ### Fixed
