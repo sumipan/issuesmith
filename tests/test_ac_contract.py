@@ -4,6 +4,7 @@ from __future__ import annotations
 from issuesmith.ac_contract import (
     contract_failures,
     extract_contract_from_body,
+    pending_manual_checks,
     run_checks,
 )
 
@@ -118,3 +119,57 @@ def test_run_checks_references_invalid_entry_fails_without_raising(tmp_path):
 
     assert [r["result"] for r in records] == ["FAIL", "FAIL"]
     assert all("invalid reference entry" in r["detail"] for r in records)
+
+
+def test_manual_check_is_not_fail_and_is_listed_as_pending(tmp_path):
+    records = run_checks(
+        {"post_merge": [{"kind": "manual_check", "description": "check steps"}]},
+        tmp_path,
+    )
+    assert [r for r in records if r["result"] == "FAIL"] == []
+    assert pending_manual_checks(records) == ["check steps"]
+
+
+def test_manual_check_mixed_with_other_kinds(tmp_path):
+    records = run_checks(
+        {
+            "post_merge": [
+                {"kind": "restart", "processes": ["release_watcher"]},
+                {"kind": "manual_check", "description": "run preflight after MG1"},
+            ]
+        },
+        tmp_path,
+    )
+    assert [r for r in records if r["result"] == "FAIL"] == []
+    assert pending_manual_checks(records) == ["run preflight after MG1"]
+
+
+def test_manual_check_without_description_fails(tmp_path):
+    for item in (
+        {"kind": "manual_check"},
+        {"kind": "manual_check", "description": ""},
+        {"kind": "manual_check", "description": "   "},
+        {"kind": "manual_check", "description": 1},
+    ):
+        records = run_checks({"post_merge": [item]}, tmp_path)
+        schema = [r for r in records if r["check"] == "post_merge_schema"]
+        assert len(schema) == 1, item
+        assert schema[0]["result"] == "FAIL"
+        assert "description" in schema[0]["detail"]
+        assert pending_manual_checks(records) == []
+
+
+def test_post_merge_unknown_kind_fails(tmp_path):
+    records = run_checks({"post_merge": [{"kind": "manual"}]}, tmp_path)
+    schema = [r for r in records if r["check"] == "post_merge_schema"]
+    assert len(schema) == 1
+    assert schema[0]["result"] == "FAIL"
+    assert "unknown kind: manual" in schema[0]["detail"]
+
+
+def test_contract_failures_ignores_manual_check(tmp_path):
+    body = (
+        "## Acceptance Criteria\n\n```yaml\npost_merge:\n"
+        "  - kind: manual_check\n    description: check steps\n```\n"
+    )
+    assert contract_failures(body, repo_root=tmp_path) == []

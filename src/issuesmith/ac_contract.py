@@ -23,14 +23,28 @@ from issuesmith.config import get_config
 REPO_ROOT = get_config().root
 _PATH_SUFFIXES = (".py", ".yaml", ".yml", ".json", ".toml", ".md", ".sh")
 
-# post_merge kinds (must match the ops/preflight.check_post_merge handlers) and the
-# required keys per kind. Checked early by B1's b1_migration.post_merge_schema.
-KNOWN_POST_MERGE_KINDS: frozenset[str] = frozenset({"stable_install", "tag", "restart"})
+# post_merge kinds and the required keys per kind. Checked early by B1's
+# b1_migration.post_merge_schema. stable_install / tag / restart match the
+# ops/preflight.check_post_merge handlers; manual_check is a human verification
+# step that M2 lists as pending instead of failing (nexus #3945).
+KNOWN_POST_MERGE_KINDS: frozenset[str] = frozenset(
+    {"stable_install", "tag", "restart", "manual_check"}
+)
 POST_MERGE_REQUIRED_FIELDS: dict[str, list[str]] = {
     "stable_install": ["repo", "path"],
     "tag": ["repo", "tag"],
     "restart": ["processes"],
+    "manual_check": ["description"],
 }
+MANUAL_CHECK_DESCRIPTION_ERROR = "kind manual_check: description must be a non-empty string"
+
+
+def manual_check_description(item: dict) -> str | None:
+    """Return the description of a manual_check item, or None when it is missing/empty."""
+    description = item.get("description")
+    if not isinstance(description, str) or not description.strip():
+        return None
+    return description
 
 
 def _git_log(repo_root: Path, path: str) -> str:
@@ -137,15 +151,39 @@ def run_checks(contract: dict, repo_root: Path, *, base_ref: str = "HEAD") -> li
         else:
             for i, item in enumerate(post_merge):
                 if not isinstance(item, dict) or not isinstance(item.get("kind"), str):
-                    records.append(
-                        {
-                            "check": "post_merge_schema",
-                            "path": f"post_merge[{i}]",
-                            "result": "FAIL",
-                            "detail": "each post_merge item must be a dict with kind: str",
-                            "git_log": "",
-                        }
+                    detail = "each post_merge item must be a dict with kind: str"
+                elif item["kind"] not in KNOWN_POST_MERGE_KINDS:
+                    detail = (
+                        f"unknown kind: {item['kind']}; allowed: "
+                        + ", ".join(POST_MERGE_REQUIRED_FIELDS)
                     )
+                elif item["kind"] == "manual_check":
+                    description = manual_check_description(item)
+                    if description is None:
+                        detail = MANUAL_CHECK_DESCRIPTION_ERROR
+                    else:
+                        # Not a failure: listed as a pending manual verification
+                        records.append(
+                            {
+                                "check": "post_merge_manual_check",
+                                "path": f"post_merge[{i}]",
+                                "result": "MANUAL",
+                                "detail": description,
+                                "git_log": "",
+                            }
+                        )
+                        continue
+                else:
+                    continue
+                records.append(
+                    {
+                        "check": "post_merge_schema",
+                        "path": f"post_merge[{i}]",
+                        "result": "FAIL",
+                        "detail": detail,
+                        "git_log": "",
+                    }
+                )
 
     for path in contract.get("paths_must_exist", []):
         target = repo_root / path
@@ -290,6 +328,11 @@ def run_checks(contract: dict, repo_root: Path, *, base_ref: str = "HEAD") -> li
         )
 
     return records
+
+
+def pending_manual_checks(records: list[dict]) -> list[str]:
+    """Return the descriptions of the post_merge manual_check items in run_checks records."""
+    return [r["detail"] for r in records if r["check"] == "post_merge_manual_check"]
 
 
 def contract_failures(body: str, repo_root: Path | None = None) -> list[str]:

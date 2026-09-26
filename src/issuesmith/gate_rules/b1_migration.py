@@ -5,7 +5,12 @@ import re
 import yaml
 from ghdag.workflow.gates import GATE_REGISTRY, Violation
 
-from issuesmith.ac_contract import KNOWN_POST_MERGE_KINDS, POST_MERGE_REQUIRED_FIELDS
+from issuesmith.ac_contract import (
+    KNOWN_POST_MERGE_KINDS,
+    MANUAL_CHECK_DESCRIPTION_ERROR,
+    POST_MERGE_REQUIRED_FIELDS,
+    manual_check_description,
+)
 from issuesmith.config import get_config
 from issuesmith.gate_rules.b1_ac_format import extract_yaml_block, get_ac_section
 
@@ -50,6 +55,8 @@ post_merge:
     tag: v0.1.0
   - kind: restart
     processes: [release_watcher, mltgnt_daemon]
+  - kind: manual_check
+    description: "run python3 scripts/preflight.py after MG1; no WARN is reported"
 """
 
 _REMOVED_TREES_SKELETON = """\
@@ -119,7 +126,7 @@ def ac_contract_has_key(body: str, key: str) -> bool:
     return isinstance(data, dict) and key in data
 
 
-# Same order as the ops/preflight handlers (stable_install, tag, restart)
+# Same order as POST_MERGE_REQUIRED_FIELDS (stable_install, tag, restart, manual_check)
 _ALLOWED_KINDS_TEXT = ", ".join(POST_MERGE_REQUIRED_FIELDS)
 
 
@@ -138,11 +145,13 @@ def post_merge_schema_errors(post_merge: object) -> list[str]:
                 f"post_merge[{i}]: unknown kind: {kind}; allowed: {_ALLOWED_KINDS_TEXT}"
             )
             continue
-        for field in POST_MERGE_REQUIRED_FIELDS[kind]:
-            if field not in item:
-                errors.append(
-                    f"post_merge[{i}]: kind {kind}: missing required field: {field}"
-                )
+        missing = [f for f in POST_MERGE_REQUIRED_FIELDS[kind] if f not in item]
+        for field in missing:
+            errors.append(
+                f"post_merge[{i}]: kind {kind}: missing required field: {field}"
+            )
+        if kind == "manual_check" and not missing and manual_check_description(item) is None:
+            errors.append(f"post_merge[{i}]: {MANUAL_CHECK_DESCRIPTION_ERROR}")
     return errors
 
 
