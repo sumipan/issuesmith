@@ -215,10 +215,13 @@ class ScopeCouplingConfig:
 
     ``enabled: false`` turns the gate off entirely (nexus #3527: the gate
     contradicts scope_breadth on core-module changes and is disabled until redesigned).
+    ``data_file_tests`` makes the file name of a modified data / config file a required key
+    so tests pinning its contents join allow_paths (nexus #3949).
     """
 
     enabled: bool = True
     search_dirs: tuple[str, ...] = ("tests", "src")
+    data_file_tests: bool = True
 
 
 @dataclass(frozen=True)
@@ -635,6 +638,8 @@ def _build_scope_coupling(raw: Mapping[str, Any] | None) -> ScopeCouplingConfig:
         )
     enabled_raw = raw.get("enabled")
     enabled = True if enabled_raw is None else bool(enabled_raw)
+    dft_raw = raw.get("data_file_tests")
+    data_file_tests = True if dft_raw is None else bool(dft_raw)
     search_dirs: tuple[str, ...] = ("tests", "src")
     if "search_dirs" in raw:
         sd_raw = raw["search_dirs"]
@@ -651,7 +656,9 @@ def _build_scope_coupling(raw: Mapping[str, Any] | None) -> ScopeCouplingConfig:
         for s in stripped:
             seen[s] = None
         search_dirs = tuple(seen.keys())
-    return ScopeCouplingConfig(enabled=enabled, search_dirs=search_dirs)
+    return ScopeCouplingConfig(
+        enabled=enabled, search_dirs=search_dirs, data_file_tests=data_file_tests
+    )
 
 
 def _build_scope_size(raw: Mapping[str, Any] | None) -> ScopeSizeConfig:

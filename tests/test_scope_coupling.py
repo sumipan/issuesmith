@@ -916,3 +916,167 @@ class TestRemovalNamesUnit:
             "## Next section\n\n`STAY_NAME` stays.\n"
         )
         assert _removal_names(body) == {"GONE_NAME"}
+
+
+# ---------------------------------------------------------------------------
+# nexus #3949 — data / config file modifications require tests that pin them
+# ---------------------------------------------------------------------------
+
+_DATA_FILE_BODY = (
+    "```yaml\n"
+    "target_repo: sumipan/nexus\n"
+    "base_branch: main\n"
+    "allow_paths:\n"
+    "  - configs/vcs.yml\n"
+    "  - scripts/check-vcs-ownership.py\n"
+    "```\n\n"
+    "## Changed Files\n\n"
+    "| Repo | File | Change |\n"
+    "|---|---|---|\n"
+    "| sumipan/nexus | configs/vcs.yml | {change} |\n"
+    "| sumipan/nexus | scripts/check-vcs-ownership.py | modify |\n"
+)
+
+
+def _setup_vcs_repo(tmp_path: Path) -> Path:
+    import subprocess
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
+    for key, value in (("user.email", "test@test.com"), ("user.name", "Test")):
+        subprocess.run(
+            ["git", "-C", str(repo), "config", key, value], check=True, capture_output=True,
+        )
+    files = {
+        "configs/vcs.yml": "rows: []\n",
+        "scripts/check-vcs-ownership.py": "CONFIG = 'configs/vcs.yml'\n",
+        "tests/scripts/test_check_vcs_ownership.py": (
+            "CONFIG = ROOT / 'configs' / 'vcs.yml'\nEXPECTED = {}\n"
+        ),
+        "tests/test_unrelated.py": "X = 1\n",
+    }
+    for rel, content in files.items():
+        p = repo / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-m", "init"], check=True, capture_output=True,
+    )
+    return repo
+
+
+class TestDataFileTests:
+    def test_modified_yml_basename_is_required(self):
+        from issuesmith.context_hook import parse_issue_metadata
+        from issuesmith.gate_rules.scope_coupling import _extract_search_keys
+
+        body = _DATA_FILE_BODY.format(change="modify")
+        with mock.patch("issuesmith.gate_rules.scope_coupling._git_grep", return_value=[]):
+            required, optional = _extract_search_keys(body, parse_issue_metadata(body), _FAKE_ROOT)
+        assert "vcs.yml" in required
+        assert "vcs.yml" not in optional
+
+    @pytest.mark.parametrize("ext", [".yaml", ".json", ".toml", ".txt"])
+    def test_other_data_extensions_are_required(self, ext):
+        from issuesmith.context_hook import parse_issue_metadata
+        from issuesmith.gate_rules.scope_coupling import _extract_search_keys
+
+        body = _DATA_FILE_BODY.format(change="modify").replace("vcs.yml", f"vcs{ext}")
+        with mock.patch("issuesmith.gate_rules.scope_coupling._git_grep", return_value=[]):
+            required, _ = _extract_search_keys(body, parse_issue_metadata(body), _FAKE_ROOT)
+        assert f"vcs{ext}" in required
+
+    def test_code_file_modification_is_not_required(self):
+        from issuesmith.context_hook import parse_issue_metadata
+        from issuesmith.gate_rules.scope_coupling import _extract_search_keys
+
+        body = _DATA_FILE_BODY.format(change="modify")
+        with mock.patch("issuesmith.gate_rules.scope_coupling._git_grep", return_value=[]):
+            required, _ = _extract_search_keys(body, parse_issue_metadata(body), _FAKE_ROOT)
+        assert "check-vcs-ownership.py" not in required
+        assert "check-vcs-ownership" not in required
+
+    def test_data_file_tests_false_skips(self):
+        from issuesmith.context_hook import parse_issue_metadata
+        from issuesmith.gate_rules.scope_coupling import _extract_search_keys
+
+        body = _DATA_FILE_BODY.format(change="modify")
+        with mock.patch("issuesmith.gate_rules.scope_coupling._git_grep", return_value=[]):
+            required, _ = _extract_search_keys(
+                body, parse_issue_metadata(body), _FAKE_ROOT, data_file_tests=False,
+            )
+        assert "vcs.yml" not in required
+
+    def test_deleted_yml_keeps_stem_only(self):
+        from issuesmith.context_hook import parse_issue_metadata
+        from issuesmith.gate_rules.scope_coupling import _extract_search_keys
+
+        body = _DATA_FILE_BODY.format(change="delete").replace("configs/vcs.yml", "configs/vcsmap.yml")
+        with mock.patch("issuesmith.gate_rules.scope_coupling._git_grep", return_value=[]):
+            required, _ = _extract_search_keys(body, parse_issue_metadata(body), _FAKE_ROOT)
+        assert "vcsmap" in required
+        assert "vcsmap.yml" not in required
+
+    def test_check_adds_pinning_test_to_allow_paths(self, tmp_path, monkeypatch):
+        repo = _setup_vcs_repo(tmp_path)
+        cfg_path = tmp_path / "issuesmith.yaml"
+        cfg_path.write_text(
+            yaml.safe_dump({"repo": "sumipan/nexus", "scope_coupling": {"search_dirs": ["tests"]}}),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+        reset_config_cache()
+
+        rule = ScopeCouplingRules()
+        with mock.patch(
+            "issuesmith.gate_rules.scope_coupling.resolve_scope_root", return_value=repo,
+        ):
+            violations = rule.check(_DATA_FILE_BODY.format(change="modify"), [])
+
+        tests_v = [v for v in violations if v.rule_id == "scope_coupling.tests_outside_allow_paths"]
+        assert len(tests_v) == 1
+        assert "tests/scripts/test_check_vcs_ownership.py" in tests_v[0].message
+        assert "tests/test_unrelated.py" not in tests_v[0].message
+        assert tests_v[0].auto_fixable is True
+        assert rule.autofix_new_allow_paths is not None
+        assert "tests/scripts/test_check_vcs_ownership.py" in rule.autofix_new_allow_paths
+
+    def test_check_honours_config_false(self, tmp_path, monkeypatch):
+        repo = _setup_vcs_repo(tmp_path)
+        cfg_path = tmp_path / "issuesmith.yaml"
+        cfg_path.write_text(
+            yaml.safe_dump({
+                "repo": "sumipan/nexus",
+                "scope_coupling": {"search_dirs": ["tests"], "data_file_tests": False},
+            }),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+        reset_config_cache()
+
+        with mock.patch(
+            "issuesmith.gate_rules.scope_coupling.resolve_scope_root", return_value=repo,
+        ):
+            violations = ScopeCouplingRules().check(_DATA_FILE_BODY.format(change="modify"), [])
+        assert [v for v in violations if v.rule_id == "scope_coupling.tests_outside_allow_paths"] == []
+
+    def test_disabled_gate_skips_data_file_tests(self, tmp_path, monkeypatch):
+        repo = _setup_vcs_repo(tmp_path)
+        cfg_path = tmp_path / "issuesmith.yaml"
+        cfg_path.write_text(
+            yaml.safe_dump({
+                "repo": "sumipan/nexus",
+                "scope_coupling": {"enabled": False, "data_file_tests": True},
+            }),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+        reset_config_cache()
+
+        with mock.patch(
+            "issuesmith.gate_rules.scope_coupling.resolve_scope_root", return_value=repo,
+        ):
+            violations = ScopeCouplingRules().check(_DATA_FILE_BODY.format(change="modify"), [])
+        assert violations == []

@@ -52,6 +52,10 @@ _BACKTICK_IDENT_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]{3,})`")
 
 _DELETE_MOVE_KEYWORDS: tuple[str, ...] = ("削除", "移動", "リネーム", "delete", "move", "rename")
 
+# Data / config file extensions whose modification requires the tests that pin their contents
+# (nexus #3949).
+_DATA_FILE_EXTS: frozenset[str] = frozenset({".yml", ".yaml", ".json", ".toml", ".txt"})
+
 # Keywords that mark removal/deprecation context in headings and table rows.
 _REMOVAL_KEYWORDS: tuple[str, ...] = ("削除", "撤去", "廃止", "delete", "remove")
 
@@ -171,11 +175,13 @@ def _extract_search_keys(
     body: str,
     metadata: dict,
     root: Path,
+    data_file_tests: bool = True,
 ) -> tuple[set[str], set[str]]:
     """Return ``(required, optional)`` search keys (sumipan/nexus#3527).
 
     required — derived from declarations: basenames of deleted / moved files (change table,
-        ``paths_must_not_exist``) and public symbols named in the body whose definition lives in
+        ``paths_must_not_exist``), file names with extension of modified data / config files
+        (``_DATA_FILE_EXTS``, when ``data_file_tests``; nexus #3949) and public symbols named in the body whose definition lives in
         a file the Issue changes (allow_paths or change table). Their callers / tests must be in
         allow_paths.
     optional — string-match only: basenames of allow_paths entries and identifiers defined
@@ -206,6 +212,11 @@ def _extract_search_keys(
             base = _basename_no_ext(path)
             if _is_valid_key(base):
                 required.add(base)
+        elif data_file_tests and Path(path).suffix.lower() in _DATA_FILE_EXTS:
+            # Tests may pin the file's contents (e.g. an EXPECTED dict of every row).
+            name = Path(path).name
+            if _is_valid_key(name):
+                required.add(name)
 
     # Basenames of paths_must_not_exist (these are being deleted): declaration → required
     contract = extract_contract_from_body(body) or {}
@@ -448,7 +459,9 @@ class ScopeCouplingRules:
         if str(metadata.get("scope_mode") or "").strip().lower() == "internal":
             return []
 
-        required, optional = _extract_search_keys(body, metadata, root)
+        required, optional = _extract_search_keys(
+            body, metadata, root, data_file_tests=cfg.scope_coupling.data_file_tests
+        )
         if not required and not optional:
             return []
 

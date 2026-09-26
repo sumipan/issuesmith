@@ -195,6 +195,7 @@ Optional `scope_coupling` keys in `issuesmith.yaml` (caller/test coupling check)
 |---|---|---|
 | `enabled` | `true` | When `false`, skip the caller/test coupling check (the deleted-file reference check still runs) |
 | `search_dirs` | `["tests", "src"]` | Directories to grep for callers and tests. Hits from `tests` go to `tests_outside_allow_paths`; all others go to `callers_outside_allow_paths`. Example: `[tests, src, workflows, tools, scripts]` to cover workflow templates and helper scripts |
+| `data_file_tests` | `true` | When a change-table row modifies a data / config file (`.yml` `.yaml` `.json` `.toml` `.txt`; not deleted / moved / renamed), its file name with extension (e.g. `vcs.yml`) becomes a required key, so tests that pin its contents fail `tests_outside_allow_paths` and are added to `allow_paths` by the autofix (nexus #3949). Set `false` to turn off only this part. Not evaluated when `enabled` is `false` |
 
 Optional `scope_size` keys in `issuesmith.yaml` (Issue size gate run by B1 Verify, nexus #3665).
 The gate reads only the Issue's change table: counted files are rows whose path does not start
