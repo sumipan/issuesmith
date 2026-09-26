@@ -312,6 +312,34 @@ def _m2_gate_preflight(body: str, labels: list[str]) -> list[dict[str, Any]]:
         return data if isinstance(data, list) else []
 
 
+def _version_behind_base_check(worktree: str, base_branch: str, merge_state: str) -> str:
+    """Run ``m1.version_behind_base``; return ``OK`` / ``FIXED`` / ``skipped (...)`` / ``FAILED (...)``.
+
+    Only a CLEAN PR is checked: the fix pushes a merge + bump commit, which is
+    pointless when this run will not merge, and CLEAN guarantees the merge of
+    ``origin/<base>`` has no conflicts.
+    """
+    from issuesmith.gates.base import ContractInput
+    from issuesmith.gates.m1 import VersionBehindBaseGate
+
+    if merge_state != "CLEAN":
+        return f"skipped (merge_state={merge_state})"
+    if not worktree or not Path(worktree).is_dir():
+        return "skipped (worktree not present)"
+    gate = VersionBehindBaseGate(Path(worktree), base_branch)
+    violations = gate.check("", [])
+    if not violations:
+        return "OK"
+    for v in violations:
+        print(f"  [{v.rule_id}] {v.message}")
+    try:
+        gate.fix(ContractInput(body=""))
+    except RuntimeError as exc:
+        print(f"version_behind_base fix failed: {exc}", file=sys.stderr)
+        return f"FAILED ({exc})"
+    return "FIXED"
+
+
 def _find_companion_pr(
     client: ForgePort, issue_repo: str, branch: str
 ) -> int | None:
@@ -529,6 +557,22 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
         print("GATE_PREFLIGHT_M2: BLOCKED")
         return _reported(["gate_preflight_m2"])
     print("GATE_PREFLIGHT_M2: OK")
+    print("")
+
+    # ---- version behind base (#3936) ----
+    print("## [version_behind_base_check]")
+    version_status = _version_behind_base_check(_worktree_path(ctx), ctx.base_branch, merge_state)
+    print(f"VERSION_BEHIND_BASE: {version_status}")
+    if version_status.startswith("FAILED"):
+        failed.append("version_behind_base")
+        return _reported(failed, PR_NUMBER=pr_number)
+    if version_status == "FIXED":
+        # The push invalidates the merge state read above.
+        merge_info = _poll_merge_state(client, pr_repo, pr_number)
+        merge_state = merge_info.get("mergeStateStatus") or "UNKNOWN"
+        print(f"MERGE_STATE: {merge_state}")
+        if merge_state == "UNKNOWN" and "merge_state" not in failed:
+            failed.append("merge_state")
     print("")
 
     # ---- merge attempt ----
