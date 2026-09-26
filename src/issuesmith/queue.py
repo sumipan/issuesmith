@@ -24,6 +24,11 @@ from ghdag.quota import QuotaGate
 from issuesmith.config import get_config
 from issuesmith.dep_extractor import check_dependencies, extract_dependencies, unparsed_dependency_refs
 from issuesmith.forge_api import api_request
+from issuesmith.gate_rules.scope_coupling import (
+    deletion_references_for_body,
+    format_deletion_references,
+)
+from issuesmith.gates.dep import dependents_of, on_dep_merge_done
 from issuesmith.milestone import advance_milestone_chains, milestone_last_issue_terminal_ok
 from issuesmith.queue_store import (
     DEFAULT_NIGHT_STATE_PATH,
@@ -504,6 +509,34 @@ def _in_flight_should_release(client: ForgePort, entry: dict[str, Any]) -> bool:
     if role is not None and role != "design":
         return False
     return True
+
+
+def _recheck_dependents_after_merge(
+    client: ForgePort, issue_number: int, open_issues: list[dict[str, Any]]
+) -> None:
+    """When a released in_flight Issue is merge-done, re-run the scope_coupling deletion
+    check on the open Issues that depend on it (nexus #3953)."""
+    merge_done = DONE_LABEL.get("merge", "")
+    if not merge_done:
+        return
+    try:
+        issue = client.issue_get(issue_number, fields=["state", "labels"])
+        if merge_done not in label_names(issue):
+            return
+        on_dep_merge_done(issue_number, dependents_of(issue_number, open_issues), client=client)
+    except Exception as exc:
+        print(f"warning: scope_coupling recheck after #{issue_number} failed: {exc}", file=sys.stderr)
+
+
+def _release_finished_in_flight(
+    store: QueueStore, client: ForgePort, open_issues: list[dict[str, Any]]
+) -> None:
+    for entry in list(store.snapshot().in_flight):
+        if _in_flight_should_release(client, entry):
+            issue_num = entry.get("issue")
+            if isinstance(issue_num, int):
+                store.remove_in_flight(issue_num)
+                _recheck_dependents_after_merge(client, issue_num, open_issues)
 
 
 def _find_untracked_running(client: ForgePort, snap: QueueSnapshot) -> list[int]:
@@ -1331,25 +1364,14 @@ def dispatch_one(
     # Release finished in_flight even when the queue is empty (absorbs milestone C0).
     if snap.in_flight:
         with store.dispatch_lock():
-            snap = store.snapshot()
-            for entry in list(snap.in_flight):
-                if _in_flight_should_release(client, entry):
-                    issue_num = entry.get("issue")
-                    if isinstance(issue_num, int):
-                        store.remove_in_flight(issue_num)
+            _release_finished_in_flight(store, client, open_issues)
             snap = store.snapshot()
 
     if not snap.active_order:
         return DispatchResult(False, reason="empty queue")
 
     with store.dispatch_lock():
-        snap = store.snapshot()
-
-        for entry in list(snap.in_flight):
-            if _in_flight_should_release(client, entry):
-                issue_num = entry.get("issue")
-                if isinstance(issue_num, int):
-                    store.remove_in_flight(issue_num)
+        _release_finished_in_flight(store, client, open_issues)
         snap = store.snapshot()
 
         if snap.halt:
@@ -1460,6 +1482,21 @@ def dispatch_one(
             if after_issues:
                 after_result = check_dependencies(after_issues, client=client)
                 if after_result.decision == "BLOCK":
+                    continue
+
+            if req.phase == "develop":
+                # P0 requires: re-check deletion referrers on the dispatch-time base (#3953).
+                refs = deletion_references_for_body(str(issue.get("body") or ""))
+                if refs:
+                    _ensure_comment(
+                        client,
+                        req.issue,
+                        rid,
+                        "scope_coupling_blocked",
+                        "## Gate: uncovered references to deleted files (before dispatch)\n\n"
+                        + format_deletion_references(refs, "On the base at dispatch time, ")
+                        + "\n\nDispatch stopped. Fix the Issue body; the next tick re-checks it.",
+                    )
                     continue
 
             candidate_repo, candidate_paths = _issue_target_meta(issue)

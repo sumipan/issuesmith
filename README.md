@@ -176,11 +176,24 @@ tests outside `allow_paths` to follow. Without it, `scope_coupling` requires onl
 public symbols defined in the changed files and basenames of deleted / moved files; files that
 match by string only are listed for reference and never widen `allow_paths`.
 
+`scope_coupling` also checks deleted files (nexus #3953), regardless of `scope_mode` and of
+`scope_coupling.enabled` (that flag turns off the caller/test coupling check only): for each
+change-table row whose change type matches `scope_size.delete_words`, it runs `git grep` for the
+file name, the stem and the Python module name (`scripts/git-sync.py` -> `git-sync.py`,
+`git-sync`, `git_sync`) under `tests/` `scripts/` `tools/` of the base checkout. Referrers that
+match neither an `allow_paths` glob nor a `paths_must_not_exist` entry fail with
+`scope_coupling.deletion_reference_uncovered` (one per deleted path, not auto-fixable). The same
+check runs again at dispatch time for `develop` requests (the queue keeps the request and comments
+on the Issue instead of dispatching), and when an in-flight Issue is released with `merge-done`
+the queue re-checks the open Issues that declare it as a dependency and comments on those with
+new referrers (`gates.dep.on_dep_merge_done`). A missing target clone skips the deletion check;
+with `enabled: true`, B1 / CP1 still fail closed with `scope_coupling.root_unavailable`.
+
 Optional `scope_coupling` keys in `issuesmith.yaml` (caller/test coupling check):
 
 | Key | Default | Description |
 |---|---|---|
-| `enabled` | `true` | When `false`, skip coupling check entirely |
+| `enabled` | `true` | When `false`, skip the caller/test coupling check (the deleted-file reference check still runs) |
 | `search_dirs` | `["tests", "src"]` | Directories to grep for callers and tests. Hits from `tests` go to `tests_outside_allow_paths`; all others go to `callers_outside_allow_paths`. Example: `[tests, src, workflows, tools, scripts]` to cover workflow templates and helper scripts |
 
 Optional `scope_size` keys in `issuesmith.yaml` (Issue size gate run by B1 Verify, nexus #3665).
@@ -318,6 +331,7 @@ All gate ids usable in `steps.<id>.requires` in `issuesmith.yaml`. Issue gates e
 | `scope` | worktree | gates/scope.py (ScopeGate) |
 | `scope_breadth` | issue | gate_rules/scope_breadth.py |
 | `scope_coupling` | issue | gate_rules/scope_coupling.py |
+| `scope_coupling.deletion_reference_uncovered` | issue | gate_rules/scope_coupling.py — rule of `scope_coupling`: files under `tests/` `scripts/` `tools/` that reference a deleted file must be in `allow_paths` or `paths_must_not_exist`; also checked at `develop` dispatch and after a dependency merges, not a `requires` id |
 | `scope_size` | issue | gate_rules/scope_size.py |
 | `tests` | worktree | gates/worktree.py (TestsGate) |
 
