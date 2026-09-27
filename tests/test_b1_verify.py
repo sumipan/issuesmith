@@ -107,9 +107,58 @@ def test_promoted_milestone_without_sub_blocks_fails_verify():
     assert "b1_milestone_subdesign.sub_count_mismatch" in rule_ids
 
 
-def test_non_milestone_verify_ignores_milestone_subdesign():
+def test_non_milestone_verify_shows_label_missing_and_subdesign_together():
+    """R1: split-plan body without scope:milestone label shows both label_missing and sub_count_mismatch."""
     rule_ids = {v.rule_id for v in collect_violations(_PROMOTED_MILESTONE_BODY, [])}
-    assert not {r for r in rule_ids if r.startswith("b1_milestone_subdesign.")}, rule_ids
+    assert "milestone_consistency.label_missing" in rule_ids, rule_ids
+    assert "b1_milestone_subdesign.sub_count_mismatch" in rule_ids, rule_ids
+
+
+def test_no_split_plan_body_ignores_milestone_subdesign():
+    """R1: body without a split-plan pattern does not produce milestone violations without a label."""
+    rule_ids = {v.rule_id for v in collect_violations(_VALID_BODY, [])}
+    milestone_ids = {r for r in rule_ids if r.startswith(("b1_milestone_subdesign.", "cp1.milestone."))}
+    assert not milestone_ids, milestone_ids
+
+
+def test_assumed_labels_adds_scope_milestone_when_plan_present():
+    """assumed_labels: split-plan body with no label → returns list with scope:milestone appended."""
+    from issuesmith.b1_verify import assumed_labels
+
+    result = assumed_labels(_PROMOTED_MILESTONE_BODY, [])
+    assert result == ["scope:milestone"]
+
+
+def test_assumed_labels_noop_when_label_already_present():
+    """assumed_labels: already has scope:milestone → returns copy unchanged."""
+    from issuesmith.b1_verify import assumed_labels
+
+    result = assumed_labels(_PROMOTED_MILESTONE_BODY, ["scope:milestone"])
+    assert result == ["scope:milestone"]
+
+
+def test_assumed_labels_noop_when_no_split_plan():
+    """assumed_labels: no split-plan pattern → returns copy of labels unchanged."""
+    from issuesmith.b1_verify import assumed_labels
+
+    result = assumed_labels(_VALID_BODY, ["scope:feature"])
+    assert result == ["scope:feature"]
+
+
+def test_assumed_labels_does_not_mutate_input():
+    """assumed_labels: never modifies the input list."""
+    from issuesmith.b1_verify import assumed_labels
+
+    original = []
+    result = assumed_labels(_PROMOTED_MILESTONE_BODY, original)
+    assert original == [], "input list was mutated"
+    assert result != original
+
+
+def test_cp1_intentional_hold_excluded_with_assumed_labels():
+    """R1: cp1.intentional_hold must not appear even when scope:milestone is assumed."""
+    rule_ids = {v.rule_id for v in collect_violations(_PROMOTED_MILESTONE_BODY, [])}
+    assert "cp1.intentional_hold" not in rule_ids
 
 
 def test_complete_milestone_body_passes_milestone_subdesign():
