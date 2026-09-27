@@ -774,6 +774,25 @@ def test_release_cmd_no_entry(tmp_path, capsys):
     assert store.snapshot().in_flight == []
 
 
+def test_release_cmd_implementation_entry_rejected(tmp_path, capsys):
+    """release: implementation entries remain locked and return exit 1."""
+    from issuesmith import queue as qmod
+
+    store = _store(tmp_path)
+    store.add_in_flight(4163, "claude", role="implementation")
+    args = argparse.Namespace(
+        queue_path=str(store.queue_path),
+        state_path=str(store.state_path),
+        lock_path=str(store.lock_path),
+        issue=4163,
+    )
+    rc = qmod._cmd_release(args)
+    assert rc == 1
+    _out, err = capsys.readouterr()
+    assert "not a design-slot" in err
+    assert {e["issue"] for e in store.snapshot().in_flight} == {4163}
+
+
 def test_release_cmd_dag_running_rejected(tmp_path, monkeypatch, capsys):
     """release: DAG running → exit 1, in_flight entry retained."""
     import json

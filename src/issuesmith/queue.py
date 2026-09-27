@@ -2102,6 +2102,12 @@ def _cmd_release(args: argparse.Namespace) -> int:
     if entry is None:
         print(f"error: no in_flight entry for issue #{issue}", file=sys.stderr)
         return 1
+    if entry.get("role") != "design":
+        print(
+            f"error: issue #{issue} is not a design-slot in_flight entry; cannot release",
+            file=sys.stderr,
+        )
+        return 1
     dag_states = load_dag_states(EXEC_PATH, DONE_DIR, DONE_DIR.parent / "running")
     state = dag_states.get(issue)
     if state is not None and state.status == "running":
@@ -2216,4 +2222,3 @@ def issue_target_meta(issue: dict[str, Any]) -> tuple[str, tuple[str, ...]]:
 def resolve_engine(phase: str) -> str:
     """Public wrapper of ``_resolve_engine``: engine currently assigned to ``phase``'s role."""
     return _resolve_engine(phase)
-
