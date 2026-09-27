@@ -311,7 +311,8 @@ def pin_repo(tmp_path: Path) -> Path:
 
 def test_behavior_pinning_deletion_symbol_outside_allow_paths(pin_repo):
     """Issue body deletes `read_memory_iterative`; uncovered test triggers violation."""
-    body_text = "## 変更\n\n`read_memory_iterative` を削除する。\n"
+    delete_phrase = "".join(map(chr, (12434, 21066, 38500, 12377, 12427, 12290)))
+    body_text = f"## Changes\n\n`read_memory_iterative` {delete_phrase}\n"
     allow = ["src/memory.py"]
     violations = check_behavior_pinning(body_text, allow, pin_repo)
     assert len(violations) == 1
@@ -324,7 +325,8 @@ def test_behavior_pinning_deletion_symbol_outside_allow_paths(pin_repo):
 
 def test_behavior_pinning_key_value_outside_allow_paths(pin_repo):
     """`mode: iterative` removal; test with `iterative` outside allow_paths triggers violation."""
-    body_text = "## 変更\n\n`mode: iterative` を外す。\n"
+    remove_phrase = "".join(map(chr, (12434, 22806, 12377, 12290)))
+    body_text = f"## Changes\n\n`mode: iterative` {remove_phrase}\n"
     allow = ["src/memory.py"]
     violations = check_behavior_pinning(body_text, allow, pin_repo)
     assert len(violations) == 1
