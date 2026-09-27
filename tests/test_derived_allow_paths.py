@@ -6,7 +6,9 @@ Only the TestsGate case runs pytest (condition B); others pass failed_ids direct
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
@@ -380,3 +382,76 @@ def test_ac6_disabled_pr_scope_ignores_derived(mod_repo: Path, _derived_config) 
         derived_allow_paths=["tests/test_uses_mod.py"],
     )
     assert [v.rule_id for v in gate.check("", [])] == ["pr_scope.out_of_allow"]
+
+
+# ---------------------------------------------------------------------------
+# Engine: derived_allow_paths: is on a standalone line after repair (#4159)
+# ---------------------------------------------------------------------------
+
+
+def test_engine_derived_block_on_newline_after_repair_no_trailing_newline(capsys) -> None:
+    """repair stdout ending without newline: derived_allow_paths: must be a standalone line."""
+    from issuesmith.engine import _run_guarded_with_requires
+
+    step_cfg_mock = MagicMock()
+    step_cfg_mock.requires = []
+
+    def fake_run_requires_loop(step_cfg, step_id, context):
+        sys.stdout.write("PIPELINE_STATUS: REPAIR_DONE")  # intentionally no trailing newline
+        context["derived_allow_paths"] = "tests/a.py"
+        return None
+
+    with (
+        patch("issuesmith.ops.dispatch.resolve_step_config", return_value=step_cfg_mock),
+        patch("issuesmith.engine._run_pre_gate_phase", return_value=None),
+        patch("issuesmith.engine._run_emit_order", return_value=(0, "")),
+        patch("issuesmith.ops.dispatch.run_requires_loop", fake_run_requires_loop),
+    ):
+        rc = _run_guarded_with_requires(
+            "implementation", "tpl.md", [],
+            success_statuses=["IMPL_DONE"],
+            failure_status="IMPL_FAILED",
+            cwd=None, tier=None,
+            emit_status="IMPL_DONE",
+            requires_step="p1",
+        )
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "REPAIR_DONEderived_allow_paths:" not in out
+    lines = out.splitlines()
+    assert "derived_allow_paths:" in lines
+    idx = lines.index("derived_allow_paths:")
+    assert lines[idx + 1] == "  - tests/a.py"
+
+
+def test_engine_emit_status_extractable_after_repair_no_trailing_newline(capsys) -> None:
+    """PIPELINE_STATUS: IMPL_DONE is extractable as a standalone line after repair fix."""
+    from issuesmith.engine import _extract_status_values, _run_guarded_with_requires
+
+    step_cfg_mock = MagicMock()
+    step_cfg_mock.requires = []
+
+    def fake_run_requires_loop(step_cfg, step_id, context):
+        sys.stdout.write("PIPELINE_STATUS: REPAIR_DONE")  # intentionally no trailing newline
+        context["derived_allow_paths"] = "tests/a.py"
+        return None
+
+    with (
+        patch("issuesmith.ops.dispatch.resolve_step_config", return_value=step_cfg_mock),
+        patch("issuesmith.engine._run_pre_gate_phase", return_value=None),
+        patch("issuesmith.engine._run_emit_order", return_value=(0, "")),
+        patch("issuesmith.ops.dispatch.run_requires_loop", fake_run_requires_loop),
+    ):
+        rc = _run_guarded_with_requires(
+            "implementation", "tpl.md", [],
+            success_statuses=["IMPL_DONE"],
+            failure_status="IMPL_FAILED",
+            cwd=None, tier=None,
+            emit_status="IMPL_DONE",
+            requires_step="p1",
+        )
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "IMPL_DONE" in _extract_status_values(out)

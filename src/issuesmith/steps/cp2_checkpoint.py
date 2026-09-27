@@ -346,7 +346,7 @@ def _derived_allow_paths_from_p1_result(repo_root: Path, p1_result_filename: str
     derived: list[str] = []
     in_block = False
     for line in lines:
-        if line.strip() == "derived_allow_paths:":
+        if line.rstrip().endswith("derived_allow_paths:"):
             in_block = True
             continue
         if in_block:
@@ -355,6 +355,12 @@ def _derived_allow_paths_from_p1_result(repo_root: Path, p1_result_filename: str
                 derived.append(stripped[2:].strip())
                 continue
             in_block = False
+    print(f"CP2: derived_allow_paths from {p1_result_filename}: {len(derived)}", file=sys.stderr)
+    if not derived and any("derived_allow_paths:" in line for line in lines):
+        print(
+            f"CP2: warn: derived_allow_paths: found in {p1_result_filename} but no entries parsed",
+            file=sys.stderr,
+        )
     return derived
 
 
