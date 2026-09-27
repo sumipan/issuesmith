@@ -16,8 +16,12 @@ import pytest
 from issuesmith.config import reset_config_cache
 from issuesmith.gate_rules import scope_coupling
 from issuesmith.gate_rules.scope_coupling import (
+    BEHAVIOR_PIN_RULE_ID,
     DELETION_RULE_ID,
+    PATH_STRING_RULE_ID,
     ScopeCouplingRules,
+    check_allow_paths_string_references,
+    check_behavior_pinning,
     check_deletion_references,
     deletion_search_keys,
 )
@@ -271,3 +275,146 @@ def test_common_file_name_deletion_has_no_referrers(repo):
         rows="| sumipan/issuesmith | skills/project-summary/SKILL.md | delete | retire |",
     )
     assert check_deletion_references(body, ["src/app.py"], repo) == []
+
+
+# ---------------------------------------------------------------------------
+# check_behavior_pinning and check_allow_paths_string_references (nexus #4134)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def pin_repo(tmp_path: Path) -> Path:
+    """Git repo with test files referencing specific symbols and paths."""
+    root = tmp_path / "pin_repo"
+    files = {
+        "src/memory.py": "def read_memory_iterative(): pass\n",
+        "tests/test_memory.py": (
+            "import memory\n"
+            "def test_read_memory_iterative():\n"
+            "    memory.read_memory_iterative()\n"
+        ),
+        "tests/test_mode.py": (
+            'def test_mode():\n'
+            '    assert config["mode"] == "iterative"\n'
+        ),
+        "tests/test_unrelated.py": "def test_pass(): pass\n",
+    }
+    for rel, text in files.items():
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+    _git(root, "init", "-q")
+    _git(root, "add", "-A")
+    _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+    return root
+
+
+def test_behavior_pinning_deletion_symbol_outside_allow_paths(pin_repo):
+    """Issue body deletes `read_memory_iterative`; uncovered test triggers violation."""
+    body_text = "## 変更内容\n\n`read_memory_iterative` を削除する。\n"
+    allow = ["src/memory.py"]
+    violations = check_behavior_pinning(body_text, allow, pin_repo)
+    assert len(violations) == 1
+    v = violations[0]
+    assert v.rule_id == BEHAVIOR_PIN_RULE_ID
+    assert v.severity == "fail"
+    assert "tests/test_memory.py" in v.message
+    assert "tests/test_memory.py" in (v.fix_hint or "")
+
+
+def test_behavior_pinning_key_value_outside_allow_paths(pin_repo):
+    """`mode: iterative` removal; test with `iterative` outside allow_paths triggers violation."""
+    body_text = "## 変更内容\n\n`mode: iterative` を外す。\n"
+    allow = ["src/memory.py"]
+    violations = check_behavior_pinning(body_text, allow, pin_repo)
+    assert len(violations) == 1
+    v = violations[0]
+    assert v.rule_id == BEHAVIOR_PIN_RULE_ID
+    assert "tests/test_mode.py" in v.message
+
+
+def test_behavior_pinning_covered_test_no_violation(pin_repo):
+    """Test already in allow_paths; no violation."""
+    body_text = "## 変更内容\n\n`read_memory_iterative` を削除する。\n"
+    allow = ["src/memory.py", "tests/test_memory.py"]
+    assert check_behavior_pinning(body_text, allow, pin_repo) == []
+
+
+def test_behavior_pinning_no_replacement_keywords_returns_empty(pin_repo):
+    """No deletion/replacement keywords in body; no violation."""
+    body_text = "## 変更内容\n\nThis is a new feature. Add `read_memory_iterative` here.\n"
+    assert check_behavior_pinning(body_text, [], pin_repo) == []
+
+
+def test_behavior_pinning_no_symbols_in_body_returns_empty(pin_repo):
+    """Deletion keyword present but no backtick-quoted symbols; no violation."""
+    body_text = "## 変更内容\n\n古い機能を削除する。\n"
+    assert check_behavior_pinning(body_text, [], pin_repo) == []
+
+
+def test_allow_paths_string_reference_outside_allow_paths(tmp_path):
+    """Test outside allow_paths references an allow_paths path string → violation."""
+    root = tmp_path / "path_repo"
+    skill_path = "skills/project-todo/SKILL.md"
+    files = {
+        "skills/project-todo/SKILL.md": "# SKILL\n",
+        "tests/test_skill_path.py": f'PATH = "{skill_path}"\n',
+        "tests/test_unrelated.py": "def test_pass(): pass\n",
+    }
+    for rel, text in files.items():
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+    _git(root, "init", "-q")
+    _git(root, "add", "-A")
+    _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+
+    allow = [skill_path, "src/other.py"]
+    violations = check_allow_paths_string_references(allow, root)
+    assert len(violations) == 1
+    v = violations[0]
+    assert v.rule_id == PATH_STRING_RULE_ID
+    assert v.severity == "fail"
+    assert v.location == skill_path
+    assert "tests/test_skill_path.py" in v.message
+    assert "tests/test_skill_path.py" in (v.fix_hint or "")
+
+
+def test_allow_paths_string_reference_covered_no_violation(tmp_path):
+    """Test already in allow_paths; no violation for path string reference."""
+    root = tmp_path / "path_repo2"
+    skill_path = "skills/project-todo/SKILL.md"
+    files = {
+        "skills/project-todo/SKILL.md": "# SKILL\n",
+        "tests/test_skill_path.py": f'PATH = "{skill_path}"\n',
+    }
+    for rel, text in files.items():
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+    _git(root, "init", "-q")
+    _git(root, "add", "-A")
+    _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+
+    allow = [skill_path, "tests/test_skill_path.py"]
+    assert check_allow_paths_string_references(allow, root) == []
+
+
+def test_no_stem_search_from_allow_paths_path(tmp_path):
+    """`foo.py` in allow_paths; test has only `foo` (not the full path) → no violation."""
+    root = tmp_path / "stem_repo"
+    files = {
+        "src/foo.py": "x = 1\n",
+        "tests/test_foo.py": 'x = "foo"\n',
+    }
+    for rel, text in files.items():
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+    _git(root, "init", "-q")
+    _git(root, "add", "-A")
+    _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+
+    allow = ["src/foo.py"]
+    # Searches for exact string "src/foo.py" in tests; "foo" alone does not match.
+    assert check_allow_paths_string_references(allow, root) == []
