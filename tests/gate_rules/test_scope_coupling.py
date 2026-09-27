@@ -94,7 +94,12 @@ _MODIFY_ROW = "| sumipan/issuesmith | src/app.py | update | something |"
 
 
 def test_search_keys_are_file_name_stem_and_module_name():
-    assert deletion_search_keys("scripts/git-sync.py") == ["git-sync.py", "git-sync", "git_sync"]
+    # Without repo_path: name + module-path + slash-path; no bare stem (#4165).
+    assert deletion_search_keys("scripts/git-sync.py") == [
+        "git-sync.py",
+        "scripts.git-sync",
+        "scripts/git-sync.py",
+    ]
 
 
 def test_uncovered_referrers_yield_violation(repo):
@@ -261,9 +266,18 @@ def test_readme_keys_are_invalid():
 
 
 def test_short_stems_are_dropped_from_deletion_keys():
-    # "fetch" is a common word and "cli" is too short; only the full name remains.
-    assert deletion_search_keys("scripts/fetch.py") == ["fetch.py"]
-    assert deletion_search_keys("scripts/cli.sh") == ["cli.sh"]
+    # Without repo_path: bare stems ("fetch" is common, "cli" is short) are excluded.
+    # Module-path and slash-path are always included for subdirectory files (#4165).
+    assert deletion_search_keys("scripts/fetch.py") == [
+        "fetch.py",
+        "scripts.fetch",
+        "scripts/fetch.py",
+    ]
+    assert deletion_search_keys("scripts/cli.sh") == [
+        "cli.sh",
+        "scripts.cli",
+        "scripts/cli.sh",
+    ]
 
 
 def test_common_file_name_deletion_has_no_referrers(repo):
@@ -400,6 +414,92 @@ def test_allow_paths_string_reference_covered_no_violation(tmp_path):
 
     allow = [skill_path, "tests/test_skill_path.py"]
     assert check_allow_paths_string_references(allow, root) == []
+
+
+# ---------------------------------------------------------------------------
+# deletion_search_keys: module-path / slash-path keys and stem uniqueness (#4165)
+# ---------------------------------------------------------------------------
+
+
+def test_deletion_search_keys_no_repo_path_includes_module_and_slash():
+    """Without repo_path, module-path and slash-path keys are included; bare stem is not."""
+    keys = deletion_search_keys("tools/mltgnt_bridge/progress.py")
+    assert "tools.mltgnt_bridge.progress" in keys
+    assert "tools/mltgnt_bridge/progress.py" in keys
+    # No bare stem without repo_path
+    assert "progress" not in keys
+
+
+def test_deletion_search_keys_with_repo_path_nonunique_stem_excluded(tmp_path):
+    """When repo has multiple files with stem 'progress', bare stem is omitted."""
+    root = tmp_path / "multirepo"
+    for rel in (
+        "tools/mltgnt_bridge/progress.py",
+        "src/progress.py",  # second file with same stem
+        "tests/test_prog.py",
+    ):
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("# placeholder\n")
+    _git(root, "init", "-q")
+    _git(root, "add", "-A")
+    _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+
+    keys = deletion_search_keys("tools/mltgnt_bridge/progress.py", root)
+    assert "tools.mltgnt_bridge.progress" in keys
+    assert "tools/mltgnt_bridge/progress.py" in keys
+    assert "progress" not in keys, "non-unique stem must be excluded"
+
+
+def test_deletion_search_keys_with_repo_path_unique_stem_included(tmp_path):
+    """When stem is unique in the repo, bare stem is included as a compat key."""
+    root = tmp_path / "uniqrepo"
+    for rel in (
+        "tools/mltgnt_bridge/progress.py",
+        "tests/test_other.py",
+    ):
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("# placeholder\n")
+    _git(root, "init", "-q")
+    _git(root, "add", "-A")
+    _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+
+    keys = deletion_search_keys("tools/mltgnt_bridge/progress.py", root)
+    assert "tools.mltgnt_bridge.progress" in keys
+    assert "tools/mltgnt_bridge/progress.py" in keys
+    assert "progress" in keys, "unique stem must be included as compat key"
+
+
+def test_uncovered_deletion_references_no_false_positive_from_common_stem(tmp_path):
+    """Unrelated files sharing a common stem are not reported as uncovered referrers."""
+    root = tmp_path / "multirepo"
+    files = {
+        "tools/mltgnt_bridge/progress.py": "# progress tracker\n",
+        "src/progress.py": "# unrelated progress module\n",
+        "tests/test_other_progress.py": "import progress\n",  # unrelated hit
+        "tests/test_bridge.py": "import tools.mltgnt_bridge.progress\n",
+    }
+    for rel, text in files.items():
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text)
+    _git(root, "init", "-q")
+    _git(root, "add", "-A")
+    _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+
+    body = _body(
+        ["tools/mltgnt_bridge/progress.py"],
+        rows="| sumipan/issuesmith | tools/mltgnt_bridge/progress.py | delete | retire |",
+    )
+    from issuesmith.gate_rules.scope_coupling import uncovered_deletion_references
+
+    refs = uncovered_deletion_references(body, ["tools/mltgnt_bridge/progress.py"], root)
+    # test_other_progress.py imports bare `progress` (shared stem) — must NOT be reported
+    referrers = refs.get("tools/mltgnt_bridge/progress.py", [])
+    assert "tests/test_other_progress.py" not in referrers
+    # test_bridge.py uses the module path — must be reported
+    assert "tests/test_bridge.py" in referrers
 
 
 def test_no_stem_search_from_allow_paths_path(tmp_path):
