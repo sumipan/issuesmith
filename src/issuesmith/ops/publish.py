@@ -393,7 +393,7 @@ def _ensure_rebased(
             )
             if log_result.returncode == 0 and log_result.stdout.strip():
                 conflict_msg += (
-                    f"\n\norigin/{base_branch} 側の衝突コミット:\n{log_result.stdout.strip()}"
+                    f"\n\nConflicting commits on origin/{base_branch}:\n{log_result.stdout.strip()}"
                 )
         except Exception:
             pass
