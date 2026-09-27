@@ -128,6 +128,26 @@ def test_root_unavailable_is_not_a_b1_verify_failed_check():
     assert "scope_breadth.root_unavailable" not in format_report(violations)
 
 
+def test_milestone_label_skips_too_large_check():
+    """scope:milestone label bypasses scope_breadth.too_large entirely (#4165)."""
+    with mock.patch(
+        "issuesmith.gate_rules.scope_breadth.measure_scope", return_value=_EXCEEDED_MEASURE
+    ) as mock_m:
+        violations = ScopeBreadthRules().check(_NEXUS_BODY, ["scope:milestone"])
+    assert violations == []
+    mock_m.assert_not_called()
+
+
+def test_milestone_label_with_other_labels_also_skips():
+    """scope:milestone alongside other labels still skips too_large."""
+    with mock.patch(
+        "issuesmith.gate_rules.scope_breadth.measure_scope", return_value=_EXCEEDED_MEASURE
+    ) as mock_m:
+        violations = ScopeBreadthRules().check(_NEXUS_BODY, ["P1", "scope:milestone", "bug"])
+    assert violations == []
+    mock_m.assert_not_called()
+
+
 def test_cross_repo_root_uses_external_dir_repo_layout(tmp_path):
     """Root is paths.external_dir/<repo> — the layout context_hook clones into.
 

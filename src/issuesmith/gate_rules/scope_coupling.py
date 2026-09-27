@@ -337,21 +337,57 @@ DELETION_RULE_ID = "scope_coupling.deletion_reference_uncovered"
 DELETION_SEARCH_DIRS: tuple[str, ...] = ("tests", "scripts", "tools")
 
 
-def deletion_search_keys(path: str) -> list[str]:
-    """Return ``[file name, stem, module name]`` for a deleted path (duplicates removed).
+def _stem_is_unique_in_repo(stem: str, repo_path: Path) -> bool:
+    """Return True if exactly one tracked file in repo_path has this stem."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo_path), "ls-files"],
+            capture_output=True, text=True, check=False,
+        )
+        if proc.returncode != 0:
+            return False
+        return sum(1 for f in proc.stdout.splitlines() if Path(f).stem == stem) == 1
+    except Exception:
+        return False
 
-    e.g. ``scripts/git-sync.py`` → ``["git-sync.py", "git-sync", "git_sync"]``.
-    Common file names (``README.md`` / ``SKILL.md`` / ``__init__.py`` …) and short or
-    common stems are dropped — they hit unrelated files (#4076).
+
+def deletion_search_keys(path: str, repo_path: Path | None = None) -> list[str]:
+    """Return grep keys for a deleted path (duplicates removed).
+
+    Always includes: file name (filtered by ``_is_valid_key``), plus module-path
+    (dot-separated, e.g. ``tools.mltgnt_bridge.progress``) and slash-path
+    (e.g. ``tools/mltgnt_bridge/progress.py``) when the file is in a subdirectory.
+
+    Adds bare stem and its dash→underscore variant only when ``repo_path`` is given
+    and the stem is unique across all tracked files (#4165).
+    Without ``repo_path`` the stem is omitted on the safe side.
     """
     name = Path(path).name
     if name in _IGNORE_FILENAMES:
         return []
-    stem = Path(path).stem
+
     keys: list[str] = []
-    for key in (name, stem, stem.replace("-", "_")):
-        if key and key not in keys and _is_valid_key(key):
-            keys.append(key)
+
+    if _is_valid_key(name):
+        keys.append(name)
+
+    parts = Path(path).with_suffix("").parts
+    if len(parts) > 1:
+        module_path = ".".join(parts)
+        if module_path not in keys:
+            keys.append(module_path)
+        if path not in keys:
+            keys.append(path)
+
+    stem = Path(path).stem
+    if repo_path is not None and _is_valid_key(stem):
+        if _stem_is_unique_in_repo(stem, repo_path):
+            if stem not in keys:
+                keys.append(stem)
+            stem_under = stem.replace("-", "_")
+            if stem_under != stem and stem_under not in keys:
+                keys.append(stem_under)
+
     return keys
 
 
@@ -398,7 +434,7 @@ def uncovered_deletion_references(
     result: dict[str, list[str]] = {}
     for path in deleted:
         hits: set[str] = set()
-        for key in deletion_search_keys(path):
+        for key in deletion_search_keys(path, repo_path):
             for d in DELETION_SEARCH_DIRS:
                 hits.update(_git_grep(repo_path, key, d))
         uncovered = sorted(

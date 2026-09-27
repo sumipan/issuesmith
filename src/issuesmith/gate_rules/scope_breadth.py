@@ -78,6 +78,10 @@ class ScopeBreadthRules:
     def check(self, body: str, labels: list[str]) -> list[Violation]:
         self.autofix_note = None
         self.autofix_new_allow_paths = None
+        # scope:milestone parents contain the union of all sub-issues; applying
+        # per-issue scope limits always fails for them (#4165).
+        if "scope:milestone" in labels:
+            return []
         try:
             metadata = parse_issue_metadata(body)
         except Exception:
