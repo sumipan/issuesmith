@@ -179,6 +179,21 @@ def _issue_has_incomplete_exec(issue_number: int) -> bool:
     return False
 
 
+def _issue_exec_all_done(issue_number: int) -> bool:
+    """True when at least one exec record exists for ``issue_number`` and all are DONE.
+
+    Zero records returns False to avoid releasing a design slot before B1 even starts.
+    """
+    found = False
+    for uuid, issue in _iter_issuesmith_exec_records():
+        if issue != issue_number:
+            continue
+        found = True
+        if not (DONE_DIR / uuid).exists():
+            return False
+    return found
+
+
 def _latest_done_mtime() -> float | None:
     if not DONE_DIR.exists():
         return None
@@ -518,6 +533,24 @@ def _in_flight_should_release(client: ForgePort, entry: dict[str, Any]) -> bool:
         # allow_paths が重なる子の develop が競合ゲートで永久に待つ
         # （2026-09-10、#2934 → #2999 / #3000 で実測）。
         return True
+    # B1-failed design slot: release when the design exec completed but draft-done was
+    # never written (BRUSHUP_FAILED), provided no active phase labels are present (#4178).
+    role = entry.get("role")
+    if role == "design" and DONE_LABEL.get("draft", "") not in labels:
+        _active = {
+            lab
+            for lab in (
+                READY_LABEL.get("draft", ""),
+                RUNNING_LABEL.get("draft", ""),
+                READY_LABEL.get("develop", ""),
+                RUNNING_LABEL.get("develop", ""),
+                READY_LABEL.get("sub", ""),
+                RUNNING_LABEL.get("sub", ""),
+            )
+            if lab
+        }
+        if not (labels & _active) and _issue_exec_all_done(issue_num):
+            return True
     if DONE_LABEL["draft"] not in labels:
         return False
     busy = {
@@ -528,7 +561,6 @@ def _in_flight_should_release(client: ForgePort, entry: dict[str, Any]) -> bool:
         return False
     if _issue_has_incomplete_exec(issue_num):
         return False
-    role = entry.get("role")
     if role is not None and role != "design":
         return False
     return True
@@ -2053,6 +2085,44 @@ def _cmd_migrate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_release(args: argparse.Namespace) -> int:
+    from issuesmith.observe.dag_state import load_dag_states
+
+    store = QueueStore(
+        queue_path=Path(args.queue_path) if args.queue_path else None,
+        state_path=Path(args.state_path) if args.state_path else None,
+        lock_path=Path(args.lock_path) if args.lock_path else None,
+    )
+    issue = int(args.issue)
+    snap = store.snapshot()
+    entry = next(
+        (e for e in snap.in_flight if isinstance(e, dict) and e.get("issue") == issue),
+        None,
+    )
+    if entry is None:
+        print(f"error: no in_flight entry for issue #{issue}", file=sys.stderr)
+        return 1
+    if entry.get("role") != "design":
+        print(
+            f"error: issue #{issue} is not a design-slot in_flight entry; cannot release",
+            file=sys.stderr,
+        )
+        return 1
+    dag_states = load_dag_states(EXEC_PATH, DONE_DIR, DONE_DIR.parent / "running")
+    state = dag_states.get(issue)
+    if state is not None and state.status == "running":
+        print(
+            f"error: issue #{issue} DAG is currently running; cannot release in_flight",
+            file=sys.stderr,
+        )
+        return 1
+    store.remove_in_flight(issue)
+    role = entry.get("role", "unknown")
+    dispatched_at = entry.get("dispatched_at", "unknown")
+    print(f"released in_flight #{issue} (role={role}, dispatched_at={dispatched_at})")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="issuesmith.queue")
     parser.add_argument("--queue-path", default=None)
@@ -2125,6 +2195,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_mig.add_argument("--dry-run", action="store_true")
     p_mig.set_defaults(func=_cmd_migrate)
 
+    p_release = sub.add_parser(
+        "release",
+        help="Explicitly release a design-slot in_flight entry (recovery only)",
+    )
+    p_release.add_argument("--issue", type=int, required=True)
+    p_release.set_defaults(func=_cmd_release)
+
     return parser
 
 
@@ -2145,4 +2222,3 @@ def issue_target_meta(issue: dict[str, Any]) -> tuple[str, tuple[str, ...]]:
 def resolve_engine(phase: str) -> str:
     """Public wrapper of ``_resolve_engine``: engine currently assigned to ``phase``'s role."""
     return _resolve_engine(phase)
-
