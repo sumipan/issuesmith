@@ -12,6 +12,7 @@ from issuesmith.contract import (  # noqa: F401 — re-exported for legacy impor
     change_paths_for_repo,
     extract_change_table_rows,
     get_section,
+    iter_sub_blocks,
     parse_table_rows,
 )
 
@@ -23,16 +24,7 @@ _FILE_REF_RE = re.compile(r"`([^`]+\.[a-zA-Z0-9]+)`|(?:^|[\s(/])([\w./-]+\.[a-zA
 
 def extract_sub_blocks(body: str) -> list[tuple[int, str]]:
     design = get_section(body, get_config().sections["design"])
-    if not design:
-        return []
-    headers = list(_SUB_HEADER_RE.finditer(design))
-    blocks: list[tuple[int, str]] = []
-    for idx, match in enumerate(headers):
-        sub_num = int(match.group(1))
-        start = match.start()
-        end = headers[idx + 1].start() if idx + 1 < len(headers) else len(design)
-        blocks.append((sub_num, design[start:end]))
-    return blocks
+    return iter_sub_blocks(design or "")
 
 
 def _count_sub_plan_rows(body: str) -> int | None:

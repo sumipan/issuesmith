@@ -21,6 +21,7 @@ from issuesmith.config import get_config
 
 _SECTION_END = r"(?=^##(?!#)|\Z)"
 SUB_HEADER_RE = re.compile(r"^####\s+サブ(\d+):", re.MULTILINE)
+_H1_H3_RE = re.compile(r"^#{1,3}\s", re.MULTILINE)
 _TABLE_ROW_RE = re.compile(r"^\|")
 _TABLE_SEP_RE = re.compile(r"^\|[\s\-:|]+\|$")
 
@@ -37,6 +38,7 @@ CONTRACT_EXTRACTORS: frozenset[str] = frozenset(
         "_extract_change_paths",
         "change_paths_for_repo",
         "_change_paths_for_repo",
+        "iter_sub_blocks",
     }
 )
 
@@ -187,19 +189,36 @@ def change_paths_for_repo(text: str, repo: str | None = None) -> list[str]:
     return paths
 
 
+def iter_sub_blocks(text: str) -> list[tuple[int, str]]:
+    """Return (sub_num, block_text) for every SUB_HEADER_RE header in text, in order.
+
+    A block runs from its header to the earliest of: the next SUB_HEADER_RE header,
+    the next heading of level 1-3 (^#{1,3}\\s), or the end of text.
+    ``####`` and deeper headings do not terminate a block.
+    """
+    headers = list(SUB_HEADER_RE.finditer(text))
+    if not headers:
+        return []
+    result: list[tuple[int, str]] = []
+    for idx, match in enumerate(headers):
+        sub_num = int(match.group(1))
+        start = match.start()
+        next_sub_start = headers[idx + 1].start() if idx + 1 < len(headers) else len(text)
+        next_h = _H1_H3_RE.search(text, match.end())
+        next_h_start = next_h.start() if next_h else len(text)
+        end = min(next_sub_start, next_h_start)
+        result.append((sub_num, text[start:end]))
+    return result
+
+
 def sub_block(body: str, sub_num: int) -> str:
-    """Text of ``#### サブ<sub_num>:`` up to the next サブ header or H2 heading ("" if absent).
+    """Text of ``#### サブ<sub_num>:`` block ("" if absent).
 
     Shared by the B1 gate (per-block checks) and SUB1 (child allow_paths) so both
-    look at the same text.
+    look at the same text. Block ends at the next sub header, next H1-H3 heading,
+    or end of body — whichever comes first.
     """
-    headers = list(SUB_HEADER_RE.finditer(body))
-    for idx, match in enumerate(headers):
-        if int(match.group(1)) != sub_num:
-            continue
-        start = match.start()
-        next_sub = headers[idx + 1].start() if idx + 1 < len(headers) else len(body)
-        next_h2 = re.compile(r"^##(?!#)", re.MULTILINE).search(body, match.end())
-        end = min(next_sub, next_h2.start()) if next_h2 else next_sub
-        return body[start:end]
+    for num, block in iter_sub_blocks(body):
+        if num == sub_num:
+            return block
     return ""

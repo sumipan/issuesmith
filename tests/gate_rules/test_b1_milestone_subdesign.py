@@ -354,6 +354,139 @@ def test_repo_mismatch_fix_hint_adds_a_block_instead_of_rewriting():
     assert "keep" in hint.lower()
 
 
+# --- R2: iter_sub_blocks / sub_block / extract_sub_blocks endpoint tests ---
+
+
+def _body_with_parent_section_after_last_sub() -> str:
+    """Milestone parent body where the last sub is followed by a parent ### Changed Files."""
+    from issuesmith.config import get_config
+
+    sections = get_config().sections
+    changed = sections["changed_files"]
+    sub1 = _sub_block(1, "alpha", "tools/foo/a.py")
+    sub2 = _sub_block(2, "beta", "tools/foo/b.py")
+    return f"""\
+```yaml
+target_repo: sumipan/nexus
+base_branch: main
+allow_paths:
+  - tools/foo/**
+```
+
+## {sections["design"]}
+
+{sub1}
+{sub2}
+
+### {changed}
+| {_TABLE_HEADER} |
+|---|---|---|---|
+| `sumipan/nexus` | `tools/foo/a.py` | Add | a |
+| `sumipan/nexus` | `tools/foo/b.py` | Add | b |
+
+## {sections["milestone"]}
+
+### {sections["sub_plan"]}
+| # | Title | Content | Dependency |
+|---|--------|---------|------------|
+| 1 | alpha | scope1 | None |
+| 2 | beta | scope2 | 1 |
+
+## {changed}
+| {_TABLE_HEADER} |
+|---|---|---|---|
+| `sumipan/nexus` | `tools/foo/a.py` | Add | a |
+| `sumipan/nexus` | `tools/foo/b.py` | Add | b |
+
+## {sections["acceptance_criteria"]}
+
+```yaml
+paths_must_exist:
+  - tools/foo/a.py
+  - tools/foo/b.py
+```
+"""
+
+
+def test_r2_file_union_no_duplicate_when_parent_section_follows_last_sub():
+    """Regression: parent ### Changed Files after last sub must not cause file_union_duplicate."""
+    body = _body_with_parent_section_after_last_sub()
+    violations = _check(body, MILESTONE_LABELS)
+    dup_violations = [v for v in violations if v.rule_id == "b1_milestone_subdesign.file_union_duplicate"]
+    assert dup_violations == [], dup_violations
+
+
+def test_iter_sub_blocks_stops_at_h3():
+    """iter_sub_blocks: last block ends before a following ### heading."""
+    from issuesmith.contract import iter_sub_blocks
+
+    text = (
+        f"#### {SUB}1: alpha\n"
+        "content1\n"
+        f"#### {SUB}2: beta\n"
+        "content2\n"
+        "### Parent Section\n"
+        "parent content\n"
+    )
+    blocks = iter_sub_blocks(text)
+    assert len(blocks) == 2
+    _, block2 = blocks[1]
+    assert "Parent Section" not in block2
+
+
+def test_iter_sub_blocks_does_not_cut_on_bold_or_h4_plus():
+    """iter_sub_blocks: bold labels and #### headings do not terminate a block."""
+    from issuesmith.contract import iter_sub_blocks
+
+    sub1 = _sub_block(1, "alpha", "tools/foo/a.py")
+    sub2 = _sub_block(2, "beta", "tools/foo/b.py")
+    text = sub1 + sub2
+    blocks = iter_sub_blocks(text)
+    assert len(blocks) == 2
+    _, block1 = blocks[0]
+    assert "**Changed Files**" in block1
+    assert "tools/foo/a.py" in block1
+
+
+def test_iter_sub_blocks_empty_when_no_subs():
+    """iter_sub_blocks: returns [] when the input contains no sub headers."""
+    from issuesmith.contract import iter_sub_blocks
+
+    assert iter_sub_blocks("") == []
+    assert iter_sub_blocks("## Design\nno subs here\n") == []
+
+
+def test_sub_block_returns_empty_when_no_subs():
+    """sub_block: returns '' when no sub headers exist."""
+    from issuesmith.contract import sub_block
+
+    assert sub_block("## Design\nno subs\n", 1) == ""
+
+
+def test_sub_block_parity_with_extract_sub_blocks():
+    """sub_block(body, N) and extract_sub_blocks(body)[N-1] return identical text."""
+    from issuesmith.contract import sub_block
+    from issuesmith.gate_rules.b1_milestone_subdesign import extract_sub_blocks
+
+    body = _body_with_parent_section_after_last_sub()
+    blocks = extract_sub_blocks(body)
+    assert len(blocks) == 2
+    _, eb2 = blocks[1]
+    sb2 = sub_block(body, 2)
+    assert sb2 == eb2
+
+
+def test_sub_block_parity_excludes_parent_section_paths():
+    """change_paths_for_repo on sub_block(body, 2) must not include parent-only paths."""
+    from issuesmith.contract import change_paths_for_repo, sub_block
+
+    body = _body_with_parent_section_after_last_sub()
+    block2 = sub_block(body, 2)
+    paths = change_paths_for_repo(block2, "sumipan/nexus")
+    assert "tools/foo/a.py" not in paths, "parent-only path leaked into sub2 block"
+    assert "tools/foo/b.py" in paths
+
+
 # --- b1_verify oscillation detection (nexus #4076) ---
 
 

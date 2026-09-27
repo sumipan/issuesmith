@@ -33,12 +33,28 @@ _GATES = (
     "b1_milestone_subdesign",
 )
 _EXCLUDED_RULE_IDS = frozenset({"cp1.intentional_hold"})
+_MILESTONE_LABEL = "scope:milestone"
+_REAL_LABEL_GATES = frozenset({"milestone_consistency"})
+
+
+def assumed_labels(body: str, labels: list[str]) -> list[str]:
+    """Return labels plus scope:milestone when the body has a split-plan pattern but no label."""
+    if _MILESTONE_LABEL in labels:
+        return list(labels)
+    from issuesmith.gate_rules.milestone_consistency import MilestoneConsistencyRules
+
+    mc = MilestoneConsistencyRules().check(body, labels)
+    if any(v.rule_id == "milestone_consistency.label_missing" for v in mc):
+        return [*labels, _MILESTONE_LABEL]
+    return list(labels)
 
 
 def collect_violations(body: str, labels: list[str]):
+    _assumed = assumed_labels(body, labels)
     violations = []
     for gate in _GATES:
-        violations.extend(GATE_REGISTRY[gate]().check(body, labels))
+        gate_labels = labels if gate in _REAL_LABEL_GATES else _assumed
+        violations.extend(GATE_REGISTRY[gate]().check(body, gate_labels))
     return [
         v for v in violations
         if v.rule_id not in _EXCLUDED_RULE_IDS and getattr(v, "severity", "fail") == "fail"
