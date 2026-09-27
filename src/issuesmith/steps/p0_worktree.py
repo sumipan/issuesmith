@@ -67,28 +67,23 @@ def validate_branch(branch: str) -> None:
 
 
 def resolve_base_ref(repo_dir: Path, base: str) -> str:
-    local = subprocess.run(
-        ["git", "-C", str(repo_dir), "show-ref", "--verify", "--quiet", f"refs/heads/{base}"],
-        capture_output=True,
-        check=False,
-    )
-    if local.returncode == 0:
-        return base
-    remote = subprocess.run(
-        [
-            "git",
-            "-C",
-            str(repo_dir),
-            "show-ref",
-            "--verify",
-            "--quiet",
-            f"refs/remotes/origin/{base}",
-        ],
-        capture_output=True,
-        check=False,
-    )
-    if remote.returncode == 0:
-        return f"origin/{base}"
+    """Return the start-point ref for a new branch off *base*.
+
+    ``origin/<base>`` wins so the branch start matches the ``origin/<base>...HEAD``
+    range used by pr_scope; a local base may carry unpushed auto-commits
+    (nexus #4111). ``refs/heads/<base>`` is only a fallback for local-only repos.
+    """
+    for ref, result in (
+        (f"refs/remotes/origin/{base}", f"origin/{base}"),
+        (f"refs/heads/{base}", f"refs/heads/{base}"),
+    ):
+        found = subprocess.run(
+            ["git", "-C", str(repo_dir), "show-ref", "--verify", "--quiet", ref],
+            capture_output=True,
+            check=False,
+        )
+        if found.returncode == 0:
+            return result
     raise WorktreeError(f"base branch not found: {base}")
 
 
