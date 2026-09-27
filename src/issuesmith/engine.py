@@ -1220,6 +1220,7 @@ def _run_guarded_with_requires(
         handle_retry_signal(sig, requires_step, issue_number)
         return 0
 
+    print()  # guarantee line boundary after LLM/repair stdout (#4159)
     if post_rc is None:
         derived = [
             p.strip() for p in context.get("derived_allow_paths", "").splitlines() if p.strip()

@@ -581,3 +581,60 @@ def test_run_passes_p1_result_to_scope_check(tmp_path: Path) -> None:
     assert result.exit_code == 0
     guarded.assert_called_once()
     fail.assert_not_called()
+
+
+# --- #4159: CP2 parses concatenated heading (REPAIR_DONEderived_allow_paths:) ---
+
+_P1_RESULT_CONCATENATED = (
+    "implementation log\n"
+    "PIPELINE_STATUS: REPAIR_DONEderived_allow_paths:\n"
+    "  - tests/test_foo.py\n"
+    "PIPELINE_STATUS: IMPL_DONE\n"
+)
+
+
+def test_derived_allow_paths_from_p1_result_parses_concatenated_line(tmp_path: Path) -> None:
+    (tmp_path / "jobs").mkdir()
+    (tmp_path / "jobs" / "p1.md").write_text(_P1_RESULT_CONCATENATED, encoding="utf-8")
+    assert cp2._derived_allow_paths_from_p1_result(tmp_path, "p1.md") == ["tests/test_foo.py"]
+
+
+def test_cp2_scope_allows_derived_from_concatenated_p1_result(tmp_path: Path) -> None:
+    result, fail = _scope_check(tmp_path, _P1_RESULT_CONCATENATED)
+    assert result is None
+    fail.assert_not_called()
+
+
+def test_derived_allow_paths_from_p1_result_logs_count_to_stderr(
+    tmp_path: Path, capsys
+) -> None:
+    (tmp_path / "jobs").mkdir()
+    (tmp_path / "jobs" / "p1.md").write_text(_P1_RESULT_WITH_DERIVED, encoding="utf-8")
+    result = cp2._derived_allow_paths_from_p1_result(tmp_path, "p1.md")
+    assert result == ["tests/test_foo.py"]
+    assert "CP2: derived_allow_paths from p1.md: 1" in capsys.readouterr().err
+
+
+def test_derived_allow_paths_from_p1_result_warns_on_zero_with_text(
+    tmp_path: Path, capsys
+) -> None:
+    p1_text = "PIPELINE_STATUS: REPAIR_DONEderived_allow_paths:\nPIPELINE_STATUS: IMPL_DONE\n"
+    (tmp_path / "jobs").mkdir()
+    (tmp_path / "jobs" / "p1.md").write_text(p1_text, encoding="utf-8")
+    result = cp2._derived_allow_paths_from_p1_result(tmp_path, "p1.md")
+    assert result == []
+    err = capsys.readouterr().err
+    assert "CP2: derived_allow_paths from p1.md: 0" in err
+    assert "warn" in err
+
+
+def test_cp2_scope_fails_when_non_derived_file_outside_allow_paths(tmp_path: Path) -> None:
+    """A file that is NOT in derived_allow_paths still triggers pr_diff_scope."""
+    p1_text = (
+        "derived_allow_paths:\n"
+        "  - tests/test_other.py\n"
+        "PIPELINE_STATUS: IMPL_DONE\n"
+    )
+    result, fail = _scope_check(tmp_path, p1_text)
+    assert result == "FAILED"
+    assert "tests/test_foo.py" in fail.call_args.kwargs["comment"]
