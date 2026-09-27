@@ -70,6 +70,21 @@ _REMOVAL_KEYWORDS: tuple[str, ...] = ("削除", "撤去", "廃止", "delete", "r
 # Matches ${identifier} template variable syntax inside backticks.
 _BACKTICK_TEMPLATE_VAR_RE = re.compile(r"`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`")
 
+# Keywords indicating a symbol is being removed/replaced in the current Issue.
+_REPLACEMENT_CONTEXT_KEYWORDS: tuple[str, ...] = (
+    "delete", "remove", "replace", "substitute", "deprecate",
+    "".join(map(chr, (21066, 38500))),
+    "".join(map(chr, (22806, 12377))),
+    "".join(map(chr, (32622, 25563))),
+    "".join(map(chr, (32622, 12365, 25563, 12360))),
+    "".join(map(chr, (24259, 27490))),
+)
+
+# Matches key:value tokens within backticks (e.g., `mode: iterative`).
+_BACKTICK_KEY_VALUE_RE = re.compile(
+    r"`([A-Za-z_][A-Za-z0-9_]*\s*:\s*[A-Za-z0-9_]+)`"
+)
+
 
 def _parse_allow_paths(metadata: dict) -> list[str]:
     raw = metadata.get("allow_paths")
@@ -111,6 +126,52 @@ def _git_grep(root: Path, pattern: str, pathspec: str) -> list[str]:
     if proc.returncode not in (0, 1):
         return []
     return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+
+
+def _git_grep_tests_py(
+    root: Path, pattern: str, *, word_boundary: bool = False
+) -> list[str]:
+    """Return .py files under tests/ matching pattern."""
+    flags = ["-rl"]
+    if word_boundary:
+        flags.append("-w")
+    flags.append("--fixed-strings")
+    cmd = ["git", "-C", str(root), "grep"] + flags + ["--", pattern, "tests/"]
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if proc.returncode not in (0, 1):
+        return []
+    return [
+        line.strip()
+        for line in proc.stdout.splitlines()
+        if line.strip() and line.strip().endswith(".py")
+    ]
+
+
+def _extract_replacement_targets(body: str) -> tuple[set[str], set[str]]:
+    """Return (word_boundary_idents, exact_strings) from replacement/deletion context.
+
+    Scans lines containing ``_REPLACEMENT_CONTEXT_KEYWORDS``.  Backtick-quoted
+    key:value tokens (e.g. ``mode: iterative``) are added to exact_strings; their
+    values are also added to word_boundary_idents.  Plain identifier tokens are
+    added to word_boundary_idents.
+    """
+    wb: set[str] = set()
+    exact: set[str] = set()
+    for line in body.splitlines():
+        line_lower = line.lower()
+        if not any(kw in line_lower for kw in _REPLACEMENT_CONTEXT_KEYWORDS):
+            continue
+        for m in _BACKTICK_KEY_VALUE_RE.finditer(line):
+            token = m.group(1).strip()
+            exact.add(token)
+            val = re.split(r"\s*:\s*", token, maxsplit=1)[-1].strip()
+            if val and _is_valid_key(val):
+                wb.add(val)
+        for m in _BACKTICK_IDENT_RE.finditer(line):
+            ident = m.group(1)
+            if _is_valid_key(ident):
+                wb.add(ident)
+    return wb, exact
 
 
 def _in_allow_paths(file_path: str, patterns: list[str]) -> bool:
@@ -409,6 +470,80 @@ def format_deletion_references(refs: dict[str, list[str]], lead: str) -> str:
     return "\n\n".join(blocks)
 
 
+BEHAVIOR_PIN_RULE_ID = "scope_coupling.behavior_pinned_outside_allow_paths"
+PATH_STRING_RULE_ID = "scope_coupling.path_string_outside_allow_paths"
+
+
+def check_behavior_pinning(
+    body: str,
+    allow_paths: list[str],
+    root: Path,
+) -> list[Violation]:
+    """Detect test files outside allow_paths that pin deleted/replaced symbols.
+
+    Extracts backtick-quoted identifiers and key:value tokens from lines that
+    contain deletion/replacement keywords, then searches tests/**/*.py for those
+    patterns.  Hits outside allow_paths are reported as a single Violation.
+    """
+    wb_keys, exact_keys = _extract_replacement_targets(body)
+    if not wb_keys and not exact_keys:
+        return []
+    hits: set[str] = set()
+    for key in sorted(wb_keys):
+        hits.update(_git_grep_tests_py(root, key, word_boundary=True))
+    for key in sorted(exact_keys):
+        hits.update(_git_grep_tests_py(root, key))
+    uncovered = sorted(f for f in hits if not _in_allow_paths(f, allow_paths))
+    if not uncovered:
+        return []
+    return [
+        Violation(
+            rule_id=BEHAVIOR_PIN_RULE_ID,
+            severity="fail",
+            message=(
+                "tests outside allow_paths pin deleted/replaced symbols: "
+                + ", ".join(uncovered)
+            ),
+            location=None,
+            auto_fixable=False,
+            fix_hint="add these test files to allow_paths:\n" + _yaml_list(uncovered),
+        )
+    ]
+
+
+def check_allow_paths_string_references(
+    allow_paths: list[str],
+    root: Path,
+) -> list[Violation]:
+    """Detect tests outside allow_paths that reference allow_paths entries as path strings.
+
+    For each non-test, non-glob entry in allow_paths, searches tests/**/*.py for
+    the exact path string.  One Violation per path that has uncovered referrers.
+    """
+    violations: list[Violation] = []
+    for path in allow_paths:
+        if _is_test_path(path) or "*" in path:
+            continue
+        hits = _git_grep_tests_py(root, path)
+        uncovered = sorted(f for f in hits if not _in_allow_paths(f, allow_paths))
+        if not uncovered:
+            continue
+        violations.append(
+            Violation(
+                rule_id=PATH_STRING_RULE_ID,
+                severity="fail",
+                message=(
+                    f"tests outside allow_paths reference path `{path}`: "
+                    + ", ".join(uncovered)
+                ),
+                location=path,
+                auto_fixable=False,
+                fix_hint="add these test files to allow_paths:\n" + _yaml_list(uncovered),
+            )
+        )
+    return violations
+
+
 class ScopeCouplingRules:
     def __init__(self) -> None:
         self.autofix_note: str | None = None
@@ -458,6 +593,8 @@ class ScopeCouplingRules:
         # Referrers already added by the autofix widening are covered (nexus #3953).
         effective = self.autofix_new_allow_paths or allow_paths
         violations.extend(check_deletion_references(body, effective, root))
+        violations.extend(check_behavior_pinning(body, effective, root))
+        violations.extend(check_allow_paths_string_references(effective, root))
         return violations
 
     def _coupling_violations(
