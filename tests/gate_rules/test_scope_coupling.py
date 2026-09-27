@@ -311,7 +311,7 @@ def pin_repo(tmp_path: Path) -> Path:
 
 def test_behavior_pinning_deletion_symbol_outside_allow_paths(pin_repo):
     """Issue body deletes `read_memory_iterative`; uncovered test triggers violation."""
-    body_text = "## 変更内容\n\n`read_memory_iterative` を削除する。\n"
+    body_text = "## Changes\n\nDelete `read_memory_iterative`.\n"
     allow = ["src/memory.py"]
     violations = check_behavior_pinning(body_text, allow, pin_repo)
     assert len(violations) == 1
@@ -324,7 +324,7 @@ def test_behavior_pinning_deletion_symbol_outside_allow_paths(pin_repo):
 
 def test_behavior_pinning_key_value_outside_allow_paths(pin_repo):
     """`mode: iterative` removal; test with `iterative` outside allow_paths triggers violation."""
-    body_text = "## 変更内容\n\n`mode: iterative` を外す。\n"
+    body_text = "## Changes\n\nRemove `mode: iterative`.\n"
     allow = ["src/memory.py"]
     violations = check_behavior_pinning(body_text, allow, pin_repo)
     assert len(violations) == 1
@@ -335,20 +335,20 @@ def test_behavior_pinning_key_value_outside_allow_paths(pin_repo):
 
 def test_behavior_pinning_covered_test_no_violation(pin_repo):
     """Test already in allow_paths; no violation."""
-    body_text = "## 変更内容\n\n`read_memory_iterative` を削除する。\n"
+    body_text = "## Changes\n\nDelete `read_memory_iterative`.\n"
     allow = ["src/memory.py", "tests/test_memory.py"]
     assert check_behavior_pinning(body_text, allow, pin_repo) == []
 
 
 def test_behavior_pinning_no_replacement_keywords_returns_empty(pin_repo):
     """No deletion/replacement keywords in body; no violation."""
-    body_text = "## 変更内容\n\nThis is a new feature. Add `read_memory_iterative` here.\n"
+    body_text = "## Changes\n\nThis is a new feature. Add `read_memory_iterative` here.\n"
     assert check_behavior_pinning(body_text, [], pin_repo) == []
 
 
 def test_behavior_pinning_no_symbols_in_body_returns_empty(pin_repo):
     """Deletion keyword present but no backtick-quoted symbols; no violation."""
-    body_text = "## 変更内容\n\n古い機能を削除する。\n"
+    body_text = "## Changes\n\nDelete old functionality.\n"
     assert check_behavior_pinning(body_text, [], pin_repo) == []
 
 
