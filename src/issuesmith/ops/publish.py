@@ -381,9 +381,25 @@ def _ensure_rebased(
         )
 
     _run_git(worktree, "rebase", "--abort", check=False)
+    conflict_msg = "\n".join(conflict_files) if conflict_files else (rebase.stderr or "").strip()
+    if conflict_files:
+        try:
+            log_result = _run_git(
+                worktree,
+                "log", "--oneline",
+                f"HEAD..origin/{base_branch}",
+                "--", *conflict_files,
+                check=False,
+            )
+            if log_result.returncode == 0 and log_result.stdout.strip():
+                conflict_msg += (
+                    f"\n\nConflicting commits on origin/{base_branch}:\n{log_result.stdout.strip()}"
+                )
+        except Exception:
+            pass
     return PublishResult(
         status="REBASE_CONFLICT",
-        stderr="\n".join(conflict_files) if conflict_files else (rebase.stderr or "").strip(),
+        stderr=conflict_msg,
         exit_code=1,
     )
 

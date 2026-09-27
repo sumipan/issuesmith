@@ -249,7 +249,7 @@ def test_changelog_conflict_without_markers_falls_back_to_rebase_conflict(
 
     assert result is not None
     assert result.status == "REBASE_CONFLICT"
-    assert result.stderr == "CHANGELOG.md"
+    assert result.stderr.startswith("CHANGELOG.md")
     _assert_rebase_aborted(wt, pre_head)
 
 

@@ -1,4 +1,8 @@
-"""Auto-resolve of observe andons when condition clears (sumipan/nexus#3740)."""
+"""Auto-resolve of observe andons when condition clears (sumipan/nexus#3740).
+
+Fix 1 (nexus #4137): DagTerminatedEvent retains in_flight; andon stays open while
+DAG is still failing (event keeps firing) and auto-resolves when DAG recovers (event clears).
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -50,77 +54,91 @@ def _orphan_actions(uuid: str, issue: int = 0):
     )
 
 
-# AC-1: dag_terminated andon is auto-resolved when issue is re-dispatched (in_flight again)
-def test_dag_terminated_auto_resolved_when_issue_redispatched(store, client):
-    """dag_terminated andon is answered when the issue is back in_flight on the next tick."""
+# AC-1: dag_terminated andon is auto-resolved when DAG recovers (event clears, issue in_flight)
+def test_dag_terminated_auto_resolved_when_dag_recovers(store, client):
+    """dag_terminated andon is answered when the DAG recovers (event stops firing).
+
+    Fix 1 (nexus #4137): in_flight is retained after DagTerminatedEvent. Auto-resolve
+    fires on the first tick where the event is absent (= DAG recovered or new run started),
+    because the issue is still in_flight.
+    """
     number = client.issue_create("my issue", "body")
     store.add_in_flight(number, "claude", role="implementation")
     execute(_dag_terminated_actions(number), store, sinks=[], client=client)
-    # in_flight was cleared by ReleaseInFlightAction; andon is now open
+    # in_flight is RETAINED (RemoveRunningLabelAction only removes the label); andon is now open
 
     dag_id = f"observe:{number}:dag_terminated:{number}:develop:cp1:0"
     assert any(a.id == dag_id for a in list_open(client)), "andon should be open after first tick"
 
-    # Simulate user re-dispatching: issue goes back into in_flight (new run started)
-    store.add_in_flight(number, "claude", role="implementation")
-
-    # Next tick: no dag_terminated events (new run hasn't failed yet)
+    # Next tick: no dag_terminated events (DAG has recovered / new run started)
     execute([], store, sinks=[], client=client)
 
     open_andons = list_open(client)
     assert not any(a.id == dag_id for a in open_andons), (
-        "dag_terminated andon should be auto-resolved when issue is re-dispatched"
+        "dag_terminated andon should be auto-resolved when DAG recovers (event clears)"
     )
 
 
-# AC-1: without re-dispatch, dag_terminated andon stays open across ticks
-def test_dag_terminated_stays_open_without_redispatch(store, client):
-    """Without re-dispatch, dag_terminated andon is NOT prematurely auto-resolved."""
+# AC-1: while DAG is still failing, dag_terminated andon stays open across ticks
+def test_dag_terminated_stays_open_while_dag_still_failing(store, client):
+    """While the DAG is still failed, dag_terminated andon is NOT prematurely auto-resolved.
+
+    Fix 1 (nexus #4137): each tick with a failed DAG re-fires DagTerminatedEvent, keeping
+    the andon in the active set and preventing spurious auto-resolve.
+    """
     number = client.issue_create("stuck issue", "body")
     store.add_in_flight(number, "claude", role="implementation")
     execute(_dag_terminated_actions(number), store, sinks=[], client=client)
-    # in_flight cleared by ReleaseInFlightAction; andon open
+    # in_flight retained; andon open
 
     dag_id = f"observe:{number}:dag_terminated:{number}:develop:cp1:0"
 
-    # Second tick: no events, issue NOT in_flight → should NOT auto-resolve
-    execute([], store, sinks=[], client=client)
+    # Second tick: DAG still failed → DagTerminatedEvent fires again → should NOT auto-resolve
+    execute(_dag_terminated_actions(number), store, sinks=[], client=client)
 
     open_andons = list_open(client)
     assert any(a.id == dag_id for a in open_andons), (
-        "dag_terminated andon should remain open until issue is re-dispatched"
+        "dag_terminated andon should remain open while DAG is still failing"
     )
 
 
-# AC-1: re-dispatch several ticks after the failure still auto-resolves the andon
-def test_dag_terminated_auto_resolved_when_redispatched_after_idle_ticks(store, client):
-    number = client.issue_create("late redispatch", "body")
+# AC-1: after multiple failing ticks, andon resolves when DAG finally recovers
+def test_dag_terminated_auto_resolved_after_multiple_failed_ticks(store, client):
+    """After several failing ticks, andon auto-resolves on the first tick where event clears.
+
+    Fix 1 (nexus #4137): event keeps firing while DAG is still failed, then clears when
+    DAG recovers → auto-resolve (issue is still in_flight throughout).
+    """
+    number = client.issue_create("late recovery", "body")
     store.add_in_flight(number, "claude", role="implementation")
     execute(_dag_terminated_actions(number), store, sinks=[], client=client)
 
     dag_id = f"observe:{number}:dag_terminated:{number}:develop:cp1:0"
 
-    # Idle ticks while the user has not re-dispatched yet
-    execute([], store, sinks=[], client=client)
-    execute([], store, sinks=[], client=client)
+    # Ticks while DAG is still failing
+    execute(_dag_terminated_actions(number), store, sinks=[], client=client)
+    execute(_dag_terminated_actions(number), store, sinks=[], client=client)
     assert any(a.id == dag_id for a in list_open(client))
 
-    store.add_in_flight(number, "claude", role="implementation")
+    # DAG recovers: event clears → auto-resolve fires (issue still in_flight)
     execute([], store, sinks=[], client=client)
 
     assert not any(a.id == dag_id for a in list_open(client))
 
 
-# AC-1: after redispatch and auto-resolve, re-occurrence raises andon again
+# AC-1: after DAG recovery + auto-resolve, a new failure raises the andon again
 def test_dag_terminated_recurs_after_auto_resolve(store, client):
+    """After auto-resolve (DAG recovered), a new DAG failure raises the andon again.
+
+    Fix 1 (nexus #4137): in_flight is retained throughout; no add_in_flight needed
+    between the recovery and the re-failure.
+    """
     number = client.issue_create("recur issue", "body")
     store.add_in_flight(number, "claude", role="implementation")
     execute(_dag_terminated_actions(number, gen=0), store, sinks=[], client=client)
+    # in_flight retained; andon raised
 
-    # Simulate re-dispatch
-    store.add_in_flight(number, "claude", role="implementation")
-
-    # Next tick with no events: auto-resolve fires (issue is in_flight)
+    # DAG recovers: no events → auto-resolve fires (issue still in_flight)
     execute([], store, sinks=[], client=client)
 
     # Issue fails again at same step (e.g. generation 4)

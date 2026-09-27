@@ -81,7 +81,26 @@ class ReleaseInFlightAction:
     reason: str = ""
 
 
-Action = WaitAction | AndonAction | HaltAction | ResumeAction | ReleaseInFlightAction
+@dataclass(frozen=True)
+class RemoveRunningLabelAction:
+    """Remove the -running label without releasing in_flight (nexus #4137 Fix 1).
+
+    Used by DagTerminatedEvent so that the allow_paths lock is preserved until
+    the DAG recovers (dag recover) or is explicitly reset/abandoned.
+    """
+
+    issue: int
+    phase: str = ""
+
+
+Action = (
+    WaitAction
+    | AndonAction
+    | HaltAction
+    | ResumeAction
+    | ReleaseInFlightAction
+    | RemoveRunningLabelAction
+)
 
 
 # ---------------------------------------------------------------------------
@@ -103,11 +122,11 @@ def _evaluate_one(event: ObserveEvent, config: "ObserveConfig") -> list[Action]:
     if isinstance(event, DagTerminatedEvent):
         reason = f"DAG {event.key} terminated at step {event.failed_step}"
         return [
-            ReleaseInFlightAction(issue=event.issue, phase=event.phase, reason=reason),
+            RemoveRunningLabelAction(issue=event.issue, phase=event.phase),
             AndonAction(
                 kind="blocked",
                 issue=event.issue,
-                summary=f"{reason}; in_flight released",
+                summary=f"{reason}; running label removed",
                 evidence=f"uuid={event.failed_uuid} result={event.result_path}",
                 key=f"dag_terminated:{_strip_generation(event.key)}",
             ),
@@ -310,10 +329,14 @@ def execute(
     new_ids, resolved_ids = store.sync_observe_andons({a.andon_id for a in andon_actions})
 
     if resolved_ids and client is not None:
-        # dag_terminated andons are only auto-resolved when the issue is back in_flight
-        # (the first tick that processes a failure removes in_flight + running label, so
-        # subsequent ticks can't detect the failure anymore — we must wait for re-dispatch).
-        # Deferred ids are retained in the store so they are re-checked on later ticks.
+        # dag_terminated andons are auto-resolved when the event clears (DAG recovered) AND
+        # the issue is still in_flight. While the DAG is still failed, _detect_dag_terminated
+        # keeps firing, so the andon stays in the active set and never reaches resolved_ids.
+        # When the DAG recovers (new run started via dag recover), the event stops and the
+        # andon moves to resolved_ids; since in_flight is retained (Fix 1, nexus #4137),
+        # auto-resolve fires immediately. If in_flight was released by reset/abandon,
+        # the id is deferred and retained until in_flight is restored (or the andon is
+        # manually answered). Deferred ids are retained in the store for re-checking.
         deferred: set[str] = set()
         snap = store.snapshot()
         in_flight_issues: set[int] = {
@@ -387,6 +410,19 @@ def execute(
         elif isinstance(action, ReleaseInFlightAction):
             store.remove_in_flight(action.issue)
             logger.info("in_flight released: issue=#%s reason=%s", action.issue, action.reason)
+            if client is not None and action.phase:
+                ns = _label_namespace()
+                try:
+                    client.issue_update(action.issue, labels_remove=[f"{ns}:{action.phase}-running"])
+                except Exception:
+                    logger.exception(
+                        "issue_update failed removing running label for #%s", action.issue
+                    )
+
+        elif isinstance(action, RemoveRunningLabelAction):
+            logger.info(
+                "running label removed (in_flight retained): issue=#%s", action.issue
+            )
             if client is not None and action.phase:
                 ns = _label_namespace()
                 try:

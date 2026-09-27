@@ -139,3 +139,35 @@ def test_real_conflict_returns_rebase_conflict(tmp_path: Path) -> None:
     # rebase --abort leaves a clean worktree (no conflict markers / in-progress rebase).
     assert not (wt / ".git" / "rebase-merge").exists()
     assert not (wt / ".git" / "rebase-apply").exists()
+
+
+def test_rebase_conflict_stderr_includes_commit_info(tmp_path: Path) -> None:
+    """Fix 3 (nexus #4137): REBASE_CONFLICT stderr includes SHA + message of origin commits.
+
+    The conflicting commit on origin/main (SHA + subject) must appear in result.stderr
+    so the operator can identify the cause without running git log manually.
+    """
+    wt = _setup_behind_worktree(tmp_path)
+    seed = tmp_path / "seed"
+    _write(seed, "src/issuesmith/ops/publish.py", "publish-origin-conflict\n")
+    _git(seed, "add", "--", "src/issuesmith/ops/publish.py")
+    _git(seed, "commit", "-m", "feat(ops): add drain gate to publish (#9999)")
+    _git(seed, "push", "origin", "main")
+
+    # Fetch so that origin/main is up-to-date in the worktree, then capture abbreviated SHA
+    # (7 chars — matching git log --oneline default).
+    _git(wt, "fetch", "origin", "main")
+    origin_sha = _git(wt, "rev-parse", "--short=7", "origin/main").stdout.strip()
+
+    result = _ensure_rebased(wt, "main", _ALLOW)
+
+    assert result is not None
+    assert result.status == "REBASE_CONFLICT"
+    assert "src/issuesmith/ops/publish.py" in result.stderr
+    # Fix 3: conflict commit SHA and subject must appear in stderr.
+    assert origin_sha in result.stderr, (
+        f"expected origin SHA {origin_sha!r} in stderr: {result.stderr!r}"
+    )
+    assert "feat(ops): add drain gate to publish (#9999)" in result.stderr, (
+        f"expected commit subject in stderr: {result.stderr!r}"
+    )

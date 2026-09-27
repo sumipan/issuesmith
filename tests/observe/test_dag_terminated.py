@@ -1,4 +1,7 @@
-"""Tests for DagTerminatedEvent detection, evaluate, and execute (AC-1, AC-1b, AC-2, AC-7)."""
+"""Tests for DagTerminatedEvent detection, evaluate, and execute (AC-1, AC-1b, AC-2, AC-7).
+
+Fix 1 (nexus #4137): DagTerminatedEvent retains in_flight and removes only the -running label.
+"""
 from __future__ import annotations
 
 import json
@@ -13,7 +16,12 @@ from issuesmith.config import get_config, reset_config_cache
 from issuesmith.observe import _detect_dag_terminated, _detect_orphan_exec
 from issuesmith.observe.dag_state import DagState, load_dag_states
 from issuesmith.observe.events import DagTerminatedEvent, OrphanExecEvent
-from issuesmith.observe.policy import evaluate, execute
+from issuesmith.observe.policy import (
+    ReleaseInFlightAction,
+    RemoveRunningLabelAction,
+    evaluate,
+    execute,
+)
 from issuesmith.queue_store import QueueStore
 
 
@@ -65,8 +73,13 @@ def _dag_running_states(issue_num: int) -> dict[int, DagState]:
     }
 
 
-def test_ac1_dag_terminated_releases_in_flight_and_raises_andon(env):
-    """AC-1: failed DAG -> in_flight released, running label removed, andon raised."""
+def test_ac1_dag_terminated_retains_in_flight_and_removes_running_label(env):
+    """AC-1: failed DAG -> in_flight retained, running label removed, andon raised.
+
+    Fix 1 (nexus #4137): DagTerminatedEvent must NOT release in_flight.
+    Only the -running label is removed so that the allow_paths lock is preserved
+    until the DAG recovers (dag recover) or is explicitly reset/abandoned.
+    """
     store, client, tmp_path = env
     cfg = get_config()
     ns = cfg.label_namespace
@@ -87,10 +100,18 @@ def test_ac1_dag_terminated_releases_in_flight_and_raises_andon(env):
     assert ev.failed_step == "p2"
 
     actions = evaluate([ev], cfg.observe)
+    assert not any(isinstance(a, ReleaseInFlightAction) for a in actions), (
+        "DagTerminatedEvent must not produce ReleaseInFlightAction"
+    )
+    assert any(isinstance(a, RemoveRunningLabelAction) for a in actions), (
+        "DagTerminatedEvent must produce RemoveRunningLabelAction"
+    )
     execute(actions, store, sinks=[], client=client)
 
     snap2 = store.snapshot()
-    assert not any(e.get("issue") == issue_num for e in snap2.in_flight)
+    assert any(e.get("issue") == issue_num for e in snap2.in_flight), (
+        "in_flight must be retained after DagTerminatedEvent"
+    )
 
     labels_after = {
         lbl["name"] if isinstance(lbl, dict) else str(lbl)
@@ -230,7 +251,9 @@ def test_ac1_end_to_end_with_real_done_markers(env):
     assert len(evts) == 1
     assert evts[0].failed_step == "p2"
     assert evts[0].phase == "develop"
-    assert not any(e.get("issue") == issue_num for e in store.snapshot().in_flight)
+    assert any(e.get("issue") == issue_num for e in store.snapshot().in_flight), (
+        "in_flight must be retained after DagTerminatedEvent (nexus #4137)"
+    )
     labels_after = {
         lbl["name"] if isinstance(lbl, dict) else str(lbl)
         for lbl in client.issue_get(issue_num, fields=["labels"]).get("labels", [])
@@ -241,5 +264,8 @@ def test_ac1_end_to_end_with_real_done_markers(env):
     assert len(list_open(client)) == 1
     comments_first = client.get_issue_comments(issue_num)
 
-    assert _tick() == []
+    # Second tick: DAG still failed, issue still in_flight → event fires again but no new comment.
+    second_evts = _tick()
+    assert len(second_evts) == 1
+    assert isinstance(second_evts[0], DagTerminatedEvent)
     assert len(client.get_issue_comments(issue_num)) == len(comments_first)
