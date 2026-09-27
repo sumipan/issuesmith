@@ -5,6 +5,7 @@ import re
 import yaml
 from ghdag.workflow.gates import GATE_REGISTRY, Violation
 
+from issuesmith.ac_contract import _normalize_reference_entry
 from issuesmith.config import get_config
 
 _ALLOWED_KEYS = frozenset({
@@ -123,7 +124,48 @@ class B1AcFormatRules:
                 fix_hint=None,
             )]
 
-        return []
+        violations: list[Violation] = []
+        refs = data.get("references_must_resolve")
+        if refs is not None:
+            if not isinstance(refs, list):
+                violations.append(Violation(
+                    rule_id="b1_ac_format.reference_entry_invalid",
+                    severity="fail",
+                    message="references_must_resolve はリストである必要があります",
+                    location="references_must_resolve",
+                    auto_fixable=False,
+                    fix_hint=None,
+                ))
+            else:
+                _SYMBOL_HINT = (
+                    "`path::symbol` は非対応。"
+                    "この一覧はファイルパスか `{file, key_path}` のみにし、"
+                    "シンボル存在はチェック付き AC とテストで担保する"
+                )
+                for i, entry in enumerate(refs):
+                    _, _, error_kind = _normalize_reference_entry(entry)
+                    if error_kind == "symbol_form":
+                        violations.append(Violation(
+                            rule_id="b1_ac_format.reference_symbol_form",
+                            severity="fail",
+                            message=f"references_must_resolve[{i}] に `path::symbol` 形式が含まれています",
+                            location=f"references_must_resolve[{i}]",
+                            auto_fixable=True,
+                            fix_hint=_SYMBOL_HINT,
+                        ))
+                    elif error_kind is not None:
+                        violations.append(Violation(
+                            rule_id="b1_ac_format.reference_entry_invalid",
+                            severity="fail",
+                            message=(
+                                f"references_must_resolve[{i}] の形式が不正です"
+                                " (str または {{file, key_path}} が必要)"
+                            ),
+                            location=f"references_must_resolve[{i}]",
+                            auto_fixable=False,
+                            fix_hint=None,
+                        ))
+        return violations
 
 
 GATE_REGISTRY["b1_ac_format"] = B1AcFormatRules

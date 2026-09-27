@@ -173,3 +173,63 @@ def test_contract_failures_ignores_manual_check(tmp_path):
         "  - kind: manual_check\n    description: check steps\n```\n"
     )
     assert contract_failures(body, repo_root=tmp_path) == []
+
+
+# ---------------------------------------------------------------------------
+# references_must_resolve — symbol form fails with unsupported form detail
+# ---------------------------------------------------------------------------
+
+
+def test_run_checks_references_symbol_string_fails_with_unsupported_form(tmp_path):
+    """String path::symbol must fail with unsupported form detail regardless of file existence."""
+    contract = {"references_must_resolve": ["src/x.py::sym"]}
+    records = run_checks(contract, tmp_path)
+    assert len(records) == 1
+    r = records[0]
+    assert r["result"] == "FAIL"
+    assert "unsupported reference form" in r["detail"]
+    assert "path::symbol" in r["detail"]
+    assert "source file not found" not in r["detail"]
+
+
+def test_run_checks_references_symbol_dict_fails_with_unsupported_form(tmp_path):
+    """Dict {file: "path::symbol"} must fail with unsupported form detail."""
+    contract = {"references_must_resolve": [{"file": "src/x.py::sym"}]}
+    records = run_checks(contract, tmp_path)
+    assert len(records) == 1
+    r = records[0]
+    assert r["result"] == "FAIL"
+    assert "unsupported reference form" in r["detail"]
+    assert "path::symbol" in r["detail"]
+    assert "source file not found" not in r["detail"]
+
+
+def test_run_checks_references_symbol_fails_even_when_file_exists(tmp_path):
+    """path::symbol must fail even if the file portion exists."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "x.py").write_text("", encoding="utf-8")
+    contract = {"references_must_resolve": ["src/x.py::sym"]}
+    records = run_checks(contract, tmp_path)
+    assert len(records) == 1
+    assert records[0]["result"] == "FAIL"
+    assert "unsupported reference form" in records[0]["detail"]
+
+
+# ---------------------------------------------------------------------------
+# references_must_resolve — existing normal forms still pass (regression)
+# ---------------------------------------------------------------------------
+
+
+def test_run_checks_references_plain_string_pass_regression(tmp_path):
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "README.md").write_text("# doc\n", encoding="utf-8")
+    contract = {"references_must_resolve": ["docs/README.md"]}
+    records = run_checks(contract, tmp_path)
+    assert records[0]["result"] == "PASS"
+
+
+def test_run_checks_references_dict_file_only_pass_regression(tmp_path):
+    (tmp_path / "config.yaml").write_text("a: 1\n", encoding="utf-8")
+    contract = {"references_must_resolve": [{"file": "config.yaml"}]}
+    records = run_checks(contract, tmp_path)
+    assert records[0]["result"] == "PASS"

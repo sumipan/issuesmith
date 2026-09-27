@@ -82,6 +82,34 @@ def _resolve_reference_path(repo_root: Path, value: str, source_file: str) -> bo
     return False
 
 
+def _normalize_reference_entry(ref: Any) -> tuple[str | None, str | None, str | None]:
+    """Normalize one references_must_resolve entry.
+
+    Returns (file, key_path, error_kind).
+    error_kind is None (valid), 'symbol_form' (path::symbol), or 'invalid'.
+    """
+    if isinstance(ref, str):
+        if not ref:
+            return None, None, "invalid"
+        if "::" in ref:
+            return None, None, "symbol_form"
+        return ref, None, None
+    if isinstance(ref, dict):
+        extra = set(ref.keys()) - {"file", "key_path"}
+        if extra:
+            return None, None, "invalid"
+        file_val = ref.get("file")
+        key_path = ref.get("key_path")
+        if not isinstance(file_val, str) or not file_val:
+            return None, None, "invalid"
+        if key_path is not None and (not isinstance(key_path, str) or not key_path):
+            return None, None, "invalid"
+        if "::" in file_val:
+            return None, None, "symbol_form"
+        return file_val, key_path, None
+    return None, None, "invalid"
+
+
 def extract_key_path_values(data: Any, key_path: str) -> list[Any]:
     """key_path の * を 1 階層のみ展開して値を収集する。"""
     parts = key_path.split(".")
@@ -234,10 +262,22 @@ def run_checks(contract: dict, repo_root: Path, *, base_ref: str = "HEAD") -> li
                 )
 
     for ref in contract.get("references_must_resolve", []):
-        # plain string 形式（"docs/FOO.md"）は「ファイルが存在すること」のみを検査する（#3290）
-        if isinstance(ref, str):
-            ref = {"file": ref, "key_path": None}
-        if not isinstance(ref, dict) or not ref.get("file"):
+        source, key_path, error_kind = _normalize_reference_entry(ref)
+        if error_kind == "symbol_form":
+            records.append(
+                {
+                    "check": "references_must_resolve",
+                    "path": str(ref),
+                    "result": "FAIL",
+                    "detail": (
+                        "unsupported reference form (path::symbol);"
+                        " use a file path or {file, key_path}"
+                    ),
+                    "git_log": "",
+                }
+            )
+            continue
+        if error_kind is not None:
             records.append(
                 {
                     "check": "references_must_resolve",
@@ -248,8 +288,6 @@ def run_checks(contract: dict, repo_root: Path, *, base_ref: str = "HEAD") -> li
                 }
             )
             continue
-        source = ref["file"]
-        key_path = ref.get("key_path")
         source_path = repo_root / source
         if not source_path.exists():
             records.append(

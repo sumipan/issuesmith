@@ -264,3 +264,172 @@ def test_migration_label_section_missing_violation():
 
 def test_migration_label_with_valid_body_returns_empty():
     assert _check(BODY_WITH_AC_AND_YAML, ["scope:migration"]) == []
+
+
+# ---------------------------------------------------------------------------
+# references_must_resolve — symbol form (path::symbol)
+# ---------------------------------------------------------------------------
+
+_BODY_REFS_SYMBOL_STRING = """\
+## Acceptance Criteria
+
+```yaml
+references_must_resolve:
+  - "src/x.py::sym"
+```
+"""
+
+_BODY_REFS_SYMBOL_DICT = """\
+## Acceptance Criteria
+
+```yaml
+references_must_resolve:
+  - file: "src/x.py::sym"
+```
+"""
+
+_BODY_REFS_VALID = """\
+## Acceptance Criteria
+
+```yaml
+references_must_resolve:
+  - "src/x.py"
+  - file: "config.yaml"
+  - file: "configs/a.yml"
+    key_path: "paths"
+```
+"""
+
+
+def test_references_symbol_form_string_detected():
+    violations = _check(_BODY_REFS_SYMBOL_STRING, MILESTONE_LABELS)
+    assert len(violations) == 1
+    v = violations[0]
+    assert v.rule_id == "b1_ac_format.reference_symbol_form"
+    assert v.severity == "fail"
+    assert v.auto_fixable is True
+    assert v.location == "references_must_resolve[0]"
+    assert v.fix_hint is not None
+    assert "path::symbol" in (v.fix_hint or "")
+
+
+def test_references_symbol_form_dict_detected():
+    violations = _check(_BODY_REFS_SYMBOL_DICT, MILESTONE_LABELS)
+    assert len(violations) == 1
+    v = violations[0]
+    assert v.rule_id == "b1_ac_format.reference_symbol_form"
+    assert v.severity == "fail"
+    assert v.auto_fixable is True
+    assert v.location == "references_must_resolve[0]"
+
+
+def test_references_valid_entries_no_violation():
+    violations = _check(_BODY_REFS_VALID, MILESTONE_LABELS)
+    assert violations == []
+
+
+# ---------------------------------------------------------------------------
+# references_must_resolve — invalid entries
+# ---------------------------------------------------------------------------
+
+_BODY_REFS_MISSING_FILE_KEY = """\
+## Acceptance Criteria
+
+```yaml
+references_must_resolve:
+  - key_path: "paths"
+```
+"""
+
+_BODY_REFS_EXTRA_KEY = """\
+## Acceptance Criteria
+
+```yaml
+references_must_resolve:
+  - file: "a.yaml"
+    key_path: "x"
+    extra: bad
+```
+"""
+
+_BODY_REFS_FILE_WRONG_TYPE = """\
+## Acceptance Criteria
+
+```yaml
+references_must_resolve:
+  - file: 123
+```
+"""
+
+_BODY_REFS_NOT_A_LIST = """\
+## Acceptance Criteria
+
+```yaml
+references_must_resolve: "src/x.py"
+```
+"""
+
+_BODY_REFS_MIXED = """\
+## Acceptance Criteria
+
+```yaml
+references_must_resolve:
+  - "src/good.py"
+  - "src/bad.py::sym"
+  - key_path: "x"
+```
+"""
+
+
+def test_references_entry_missing_file_key():
+    violations = _check(_BODY_REFS_MISSING_FILE_KEY, MILESTONE_LABELS)
+    assert len(violations) == 1
+    v = violations[0]
+    assert v.rule_id == "b1_ac_format.reference_entry_invalid"
+    assert v.severity == "fail"
+    assert v.auto_fixable is False
+    assert v.location == "references_must_resolve[0]"
+
+
+def test_references_entry_extra_key_invalid():
+    violations = _check(_BODY_REFS_EXTRA_KEY, MILESTONE_LABELS)
+    assert len(violations) == 1
+    v = violations[0]
+    assert v.rule_id == "b1_ac_format.reference_entry_invalid"
+    assert v.location == "references_must_resolve[0]"
+
+
+def test_references_entry_file_wrong_type():
+    violations = _check(_BODY_REFS_FILE_WRONG_TYPE, MILESTONE_LABELS)
+    assert len(violations) == 1
+    v = violations[0]
+    assert v.rule_id == "b1_ac_format.reference_entry_invalid"
+    assert v.location == "references_must_resolve[0]"
+
+
+def test_references_not_a_list():
+    violations = _check(_BODY_REFS_NOT_A_LIST, MILESTONE_LABELS)
+    assert len(violations) == 1
+    v = violations[0]
+    assert v.rule_id == "b1_ac_format.reference_entry_invalid"
+    assert v.location == "references_must_resolve"
+
+
+def test_references_mixed_valid_and_invalid_returns_each_violation():
+    violations = _check(_BODY_REFS_MIXED, MILESTONE_LABELS)
+    assert len(violations) == 2
+    rule_ids = {v.rule_id for v in violations}
+    assert rule_ids == {"b1_ac_format.reference_symbol_form", "b1_ac_format.reference_entry_invalid"}
+    locations = {v.location for v in violations}
+    assert "references_must_resolve[1]" in locations
+    assert "references_must_resolve[2]" in locations
+
+
+def test_references_invalid_with_no_milestone_label_returns_empty():
+    violations = _check(_BODY_REFS_SYMBOL_STRING, NON_MILESTONE_LABELS)
+    assert violations == []
+
+
+def test_references_invalid_with_no_labels_returns_empty():
+    violations = _check(_BODY_REFS_MISSING_FILE_KEY, [])
+    assert violations == []
