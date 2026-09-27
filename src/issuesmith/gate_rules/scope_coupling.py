@@ -73,6 +73,7 @@ _BACKTICK_TEMPLATE_VAR_RE = re.compile(r"`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`")
 # Keywords indicating a symbol is being removed/replaced in the current Issue.
 _REPLACEMENT_CONTEXT_KEYWORDS: tuple[str, ...] = (
     "delete", "remove", "replace", "substitute", "deprecate",
+    "削除", "外す", "置換", "置き換え", "廃止",
 )
 
 # Matches key:value tokens within backticks (e.g., `mode: iterative`).
