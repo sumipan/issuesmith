@@ -212,7 +212,7 @@ def iter_sub_blocks(text: str) -> list[tuple[int, str]]:
 
 
 def sub_block(body: str, sub_num: int) -> str:
-    """Text of ``#### サブ<sub_num>:`` block ("" if absent).
+    """Text of ``#### Sub<sub_num>:`` block ("" if absent).
 
     Shared by the B1 gate (per-block checks) and SUB1 (child allow_paths) so both
     look at the same text. Block ends at the next sub header, next H1-H3 heading,
