@@ -758,3 +758,129 @@ def test_sub_running_milestone_parent_stays_in_flight(tmp_path, monkeypatch, iss
         {2934: {"state": "OPEN", "labels": [{"name": "issuesmith:sub-running"}], "body": _BODY_SKILLS}}
     )
     assert qmod._in_flight_should_release(client, store.snapshot().in_flight[0]) is False
+
+
+# ---------------------------------------------------------------------------
+# #4178: B1-failed design slot auto-release
+# ---------------------------------------------------------------------------
+
+
+def _write_exec_done(tmp_path: Path, issue_num: int, uuid: str = "b1-uuid"):
+    """Write exec.jsonl + DONE marker for issue_num."""
+    import json as _json
+    exec_path = tmp_path / "exec.jsonl"
+    done_dir = tmp_path / "done"
+    done_dir.mkdir(exist_ok=True)
+    exec_path.write_text(
+        _json.dumps({"uuid": uuid, "idempotency_key": f"issuesmith:brushup:{issue_num}"}) + "\n",
+        encoding="utf-8",
+    )
+    (done_dir / uuid).write_text("0", encoding="utf-8")
+    return exec_path, done_dir
+
+
+def test_b1_failed_design_releases_when_exec_all_done(tmp_path, monkeypatch):
+    """design entry, open Issue, scope:milestone only, exec all DONE → release."""
+    from issuesmith import queue as qmod
+
+    exec_path, done_dir = _write_exec_done(tmp_path, 4163)
+    monkeypatch.setattr(qmod, "EXEC_PATH", exec_path)
+    monkeypatch.setattr(qmod, "DONE_DIR", done_dir)
+
+    class Client:
+        def issue_get(self, number, fields=None):
+            return {"number": number, "state": "OPEN", "labels": [{"name": "scope:milestone"}]}
+
+    entry = {"issue": 4163, "engine": "claude", "role": "design"}
+    assert qmod._in_flight_should_release(Client(), entry) is True
+
+
+@pytest.mark.parametrize("active_label", [
+    "issuesmith:draft-ready",
+    "issuesmith:draft-running",
+    "issuesmith:develop-ready",
+    "issuesmith:develop-running",
+    "issuesmith:sub-ready",
+    "issuesmith:sub-running",
+])
+def test_b1_failed_design_stays_when_active_label(tmp_path, monkeypatch, active_label):
+    """design entry + active phase label → keep in_flight."""
+    from issuesmith import queue as qmod
+
+    exec_path, done_dir = _write_exec_done(tmp_path, 4163)
+    monkeypatch.setattr(qmod, "EXEC_PATH", exec_path)
+    monkeypatch.setattr(qmod, "DONE_DIR", done_dir)
+
+    class Client:
+        def issue_get(self, number, fields=None):
+            return {
+                "number": number,
+                "state": "OPEN",
+                "labels": [{"name": "scope:milestone"}, {"name": active_label}],
+            }
+
+    entry = {"issue": 4163, "engine": "claude", "role": "design"}
+    assert qmod._in_flight_should_release(Client(), entry) is False
+
+
+def test_b1_failed_design_stays_when_exec_incomplete(tmp_path, monkeypatch):
+    """design entry + incomplete exec → keep in_flight."""
+    import json as _json
+
+    from issuesmith import queue as qmod
+
+    exec_path = tmp_path / "exec.jsonl"
+    done_dir = tmp_path / "done"
+    done_dir.mkdir()
+    exec_path.write_text(
+        _json.dumps({"uuid": "b1-uuid", "idempotency_key": "issuesmith:brushup:4163"}) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(qmod, "EXEC_PATH", exec_path)
+    monkeypatch.setattr(qmod, "DONE_DIR", done_dir)
+
+    class Client:
+        def issue_get(self, number, fields=None):
+            return {"number": number, "state": "OPEN", "labels": [{"name": "scope:milestone"}]}
+
+    entry = {"issue": 4163, "engine": "claude", "role": "design"}
+    assert qmod._in_flight_should_release(Client(), entry) is False
+
+
+def test_b1_failed_design_stays_when_no_exec_records(tmp_path, monkeypatch):
+    """design entry + no exec records → keep in_flight (avoid erroneous release)."""
+    from issuesmith import queue as qmod
+
+    exec_path = tmp_path / "exec.jsonl"
+    done_dir = tmp_path / "done"
+    done_dir.mkdir()
+    exec_path.write_text("", encoding="utf-8")
+    monkeypatch.setattr(qmod, "EXEC_PATH", exec_path)
+    monkeypatch.setattr(qmod, "DONE_DIR", done_dir)
+
+    class Client:
+        def issue_get(self, number, fields=None):
+            return {"number": number, "state": "OPEN", "labels": [{"name": "scope:milestone"}]}
+
+    entry = {"issue": 4163, "engine": "claude", "role": "design"}
+    assert qmod._in_flight_should_release(Client(), entry) is False
+
+
+def test_implementation_entry_stays_when_no_draft_done(tmp_path, monkeypatch):
+    """#4137 regression: implementation entry never auto-releases without draft-done."""
+    from issuesmith import queue as qmod
+
+    exec_path, done_dir = _write_exec_done(tmp_path, 4163)
+    monkeypatch.setattr(qmod, "EXEC_PATH", exec_path)
+    monkeypatch.setattr(qmod, "DONE_DIR", done_dir)
+
+    class Client:
+        def issue_get(self, number, fields=None):
+            return {
+                "number": number,
+                "state": "OPEN",
+                "labels": [{"name": "issuesmith:develop-done"}],
+            }
+
+    entry = {"issue": 4163, "engine": "claude", "role": "implementation"}
+    assert qmod._in_flight_should_release(Client(), entry) is False

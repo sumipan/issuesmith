@@ -713,3 +713,97 @@ def test_doctor_reports_untracked_running(tmp_path, monkeypatch, capsys):
     captured = capsys.readouterr()
     assert code == 1
     assert "untracked running issues: #3046" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# #4178: queue release CLI
+# ---------------------------------------------------------------------------
+
+
+def test_release_cmd_success(tmp_path, monkeypatch, capsys):
+    """release: entry found, DAG not running → remove entry, stdout message, exit 0."""
+    import json
+
+    from issuesmith import queue as qmod
+
+    store = _store(tmp_path)
+    store.add_in_flight(4163, "claude", role="design")
+
+    exec_path = tmp_path / "exec.jsonl"
+    done_dir = tmp_path / "done"
+    done_dir.mkdir()
+    running_dir = tmp_path / "running"
+    running_dir.mkdir()
+    exec_path.write_text(
+        json.dumps({"uuid": "b1-4163", "idempotency_key": "issuesmith:brushup:4163"}) + "\n",
+        encoding="utf-8",
+    )
+    (done_dir / "b1-4163").write_text("0", encoding="utf-8")
+    monkeypatch.setattr(qmod, "EXEC_PATH", exec_path)
+    monkeypatch.setattr(qmod, "DONE_DIR", done_dir)
+
+    args = argparse.Namespace(
+        queue_path=str(store.queue_path),
+        state_path=str(store.state_path),
+        lock_path=str(store.lock_path),
+        issue=4163,
+    )
+    rc = qmod._cmd_release(args)
+    assert rc == 0
+    out, _err = capsys.readouterr()
+    assert "released in_flight #4163" in out
+    assert "role=design" in out
+    assert store.snapshot().in_flight == []
+
+
+def test_release_cmd_no_entry(tmp_path, capsys):
+    """release: no entry for issue → exit 1, queue unchanged."""
+    from issuesmith import queue as qmod
+
+    store = _store(tmp_path)
+    args = argparse.Namespace(
+        queue_path=str(store.queue_path),
+        state_path=str(store.state_path),
+        lock_path=str(store.lock_path),
+        issue=9999,
+    )
+    rc = qmod._cmd_release(args)
+    assert rc == 1
+    _out, err = capsys.readouterr()
+    assert "9999" in err
+    assert store.snapshot().in_flight == []
+
+
+def test_release_cmd_dag_running_rejected(tmp_path, monkeypatch, capsys):
+    """release: DAG running → exit 1, in_flight entry retained."""
+    import json
+
+    from issuesmith import queue as qmod
+
+    store = _store(tmp_path)
+    store.add_in_flight(4163, "claude", role="design")
+
+    exec_path = tmp_path / "exec.jsonl"
+    done_dir = tmp_path / "done"
+    done_dir.mkdir()
+    running_dir = tmp_path / "running"
+    running_dir.mkdir()
+    exec_path.write_text(
+        json.dumps({"uuid": "b1-4163", "idempotency_key": "issuesmith:brushup:4163"}) + "\n",
+        encoding="utf-8",
+    )
+    (running_dir / "b1-4163.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(qmod, "EXEC_PATH", exec_path)
+    monkeypatch.setattr(qmod, "DONE_DIR", done_dir)
+
+    args = argparse.Namespace(
+        queue_path=str(store.queue_path),
+        state_path=str(store.state_path),
+        lock_path=str(store.lock_path),
+        issue=4163,
+    )
+    rc = qmod._cmd_release(args)
+    assert rc == 1
+    _out, err = capsys.readouterr()
+    assert "running" in err
+    assert {e["issue"] for e in store.snapshot().in_flight} == {4163}
