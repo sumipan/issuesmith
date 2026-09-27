@@ -291,7 +291,7 @@ def test_dispatch_skips_overlapping_paths(tmp_path, monkeypatch, issuesmith_conf
     from issuesmith import queue as qmod
 
     store = _store(tmp_path)
-    # develop 同士だけが競合する（draft / sub はファイルを書かないので対象外、2026-09-26）
+    # Only develop phases conflict; draft and sub do not write files (2026-09-26).
     store.add_in_flight(
         2981,
         "claude",
@@ -319,7 +319,7 @@ def test_dispatch_skips_overlapping_paths(tmp_path, monkeypatch, issuesmith_conf
 
 
 def test_dispatch_draft_ignores_overlapping_paths(tmp_path, monkeypatch, issuesmith_config):
-    """draft（B1）は Issue 本文しか書かないので、同じ allow_paths の develop が走っていても待たない。"""
+    """Draft (B1) only edits the Issue body, so overlapping develop paths do not block it."""
     _patch_paths(tmp_path, monkeypatch, issuesmith_config)
     from issuesmith import queue as qmod
 
