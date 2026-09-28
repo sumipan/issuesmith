@@ -361,6 +361,16 @@ references_must_resolve:
 ```
 """
 
+_BODY_REFS_KEY_PATH_WRONG_TYPE = """\
+## Acceptance Criteria
+
+```yaml
+references_must_resolve:
+  - file: "config.yaml"
+    key_path: 123
+```
+"""
+
 _BODY_REFS_NOT_A_LIST = """\
 ## Acceptance Criteria
 
@@ -401,6 +411,14 @@ def test_references_entry_extra_key_invalid():
 
 def test_references_entry_file_wrong_type():
     violations = _check(_BODY_REFS_FILE_WRONG_TYPE, MILESTONE_LABELS)
+    assert len(violations) == 1
+    v = violations[0]
+    assert v.rule_id == "b1_ac_format.reference_entry_invalid"
+    assert v.location == "references_must_resolve[0]"
+
+
+def test_references_entry_key_path_wrong_type():
+    violations = _check(_BODY_REFS_KEY_PATH_WRONG_TYPE, MILESTONE_LABELS)
     assert len(violations) == 1
     v = violations[0]
     assert v.rule_id == "b1_ac_format.reference_entry_invalid"
