@@ -82,7 +82,7 @@ def _resolve_reference_path(repo_root: Path, value: str, source_file: str) -> bo
     return False
 
 
-def _normalize_reference_entry(ref: Any) -> tuple[str | None, str | None, str | None]:
+def normalize_reference_entry(ref: Any) -> tuple[str | None, str | None, str | None]:
     """Normalize one references_must_resolve entry.
 
     Returns (file, key_path, error_kind).
@@ -262,7 +262,7 @@ def run_checks(contract: dict, repo_root: Path, *, base_ref: str = "HEAD") -> li
                 )
 
     for ref in contract.get("references_must_resolve", []):
-        source, key_path, error_kind = _normalize_reference_entry(ref)
+        source, key_path, error_kind = normalize_reference_entry(ref)
         if error_kind == "symbol_form":
             records.append(
                 {
