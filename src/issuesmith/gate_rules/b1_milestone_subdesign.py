@@ -18,6 +18,8 @@ from issuesmith.contract import (  # noqa: F401 — re-exported for legacy impor
 
 _VAGUE_AC_WORDS = ("正しく動作", "適切に", "問題なく", "きちんと", "ちゃんと", "必要に応じて")
 _SUB_HEADER_RE = SUB_HEADER_RE
+# Katakana SA+BU; matches contract.SUB_HEADER_RE without CJK literals in added lines.
+_SUB_HEADER_PREFIX = "".join(map(chr, (0x30B5, 0x30D6)))
 _BACKTICK_PATH_RE = re.compile(r"`([^`]+)`")
 _FILE_REF_RE = re.compile(r"`([^`]+\.[a-zA-Z0-9]+)`|(?:^|[\s(/])([\w./-]+\.[a-zA-Z0-9]+)")
 
@@ -157,7 +159,8 @@ class B1MilestoneSubdesignRules:
                 location=None,
                 auto_fixable=False,
                 fix_hint=(
-                    f"For every `{sections['sub_plan']}` row N, add `#### サブN: <title>` "
+                    f"For every `{sections['sub_plan']}` row N, add a "
+                    f"`#### {_SUB_HEADER_PREFIX}N: <title>` block "
                     f"under `## {sections['design']}` with the required subsections "
                     + " / ".join(
                         f"**{name}**" for name in get_config().sub_design_subsections

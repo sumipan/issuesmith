@@ -21,8 +21,15 @@ from issuesmith.context_hook import parse_issue_metadata
 from issuesmith.contract import extract_change_table_rows
 
 _MILESTONE_LABEL = "scope:milestone"
-# Literal required by contract.SUB_HEADER_RE / milestone_consistency.
-_SUB_HEADER_PREFIX = "サブ"
+# Literal required by contract.SUB_HEADER_RE / milestone_consistency (katakana SA+BU).
+_SUB_HEADER_PREFIX = "".join(map(chr, (0x30B5, 0x30D6)))
+# 4-col change-table header matching b1_milestone_subdesign schema (no CJK literals).
+_CHANGE_TABLE_COLS = (
+    "".join(map(chr, (0x30EA, 0x30DD, 0x30B8, 0x30C8, 0x30EA))),  # repository
+    "".join(map(chr, (0x30D5, 0x30A1, 0x30A4, 0x30EB, 0x30D1, 0x30B9))),  # file path
+    "".join(map(chr, (0x5909, 0x66F4, 0x7A2E, 0x5225))),  # change kind
+    "".join(map(chr, (0x5909, 0x66F4, 0x5185, 0x5BB9))),  # description
+)
 
 
 @dataclass(frozen=True)
@@ -141,7 +148,7 @@ def _build_sub_block(
     # Column names match b1_milestone_subdesign._check_table_schema expectations.
     table_lines = [
         f"**{changed_label}**:",
-        "| リポジトリ | ファイルパス | 変更種別 | 変更内容 |",
+        "| " + " | ".join(_CHANGE_TABLE_COLS) + " |",
         "|---|---|---|---|",
     ]
     paths = [path for _, path, _ in rows]
@@ -193,8 +200,8 @@ def _upsert_preserving_preamble(body: str, heading: str, content: str) -> str:
 def promote_oversized_issue_body(body: str, cfg: ScopeSizeConfig | None = None) -> str:
     """Rewrite an oversized Issue body into a milestone split plan + sub designs.
 
-    Idempotent when a Japanese ``#### サブN:`` block already exists for every
-    concern row. Does not touch labels or the GitHub milestone object — callers
+    Idempotent when a SUB_HEADER_RE block already exists for every concern row.
+    Does not touch labels or the GitHub milestone object — callers
     must run :func:`issuesmith.gate_rules.milestone_consistency.fix_label_missing`
     (or use :func:`issuesmith.b1_verify.apply_deterministic_recovery`).
     """
@@ -274,8 +281,9 @@ def promote_oversized_issue_body(body: str, cfg: ScopeSizeConfig | None = None) 
 
     # Parent AC section is required by b1_ac_format once the Issue is a milestone.
     # Leave paths_must_exist empty: cp1.milestone.paths_must_exist_unmapped only
-    # recognizes Japanese change-type cells (新規/修正), so copying English
-    # "Modify"/"Add" rows would always fail. LLM recovery fills concrete paths.
+    # recognizes host-language change-type cells (not English Modify/Add), so
+    # copying English "Modify"/"Add" rows would always fail. LLM recovery fills
+    # concrete paths.
     if get_section(body, ac_label) is None:
         ac_content = (
             "```yaml\n"

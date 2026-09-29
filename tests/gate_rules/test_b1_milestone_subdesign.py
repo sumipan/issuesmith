@@ -193,7 +193,7 @@ def test_sub_count_mismatch_fix_hint_lists_required_subsections():
 
 
 def test_promoted_body_plan_rows_match_sub_headers_and_file_union():
-    """AC (#4191): plan rows, #### サブN count, and parent/sub path union agree."""
+    """AC (#4191): plan rows, SUB_HEADER_RE count, and parent/sub path union agree."""
     from issuesmith.config import get_config
     from issuesmith.contract import SUB_HEADER_RE, extract_change_table_rows, get_section
     from issuesmith.gate_rules.b1_milestone_subdesign import _count_sub_plan_rows

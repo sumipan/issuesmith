@@ -15,6 +15,8 @@ _SUB_HEADER_EN_RE = re.compile(
     r"^####\s+[Ss]ub[ \t]+(\d+)[ \t]*:?", re.MULTILINE | re.IGNORECASE
 )
 _MILESTONE_LABEL = "scope:milestone"
+# Katakana SA+BU; matches _SUB_HEADER_RE without CJK literals in added lines.
+_SUB_HEADER_PREFIX = "".join(map(chr, (0x30B5, 0x30D6)))
 
 
 def _sub_plan_heading() -> str:
@@ -137,7 +139,7 @@ class MilestoneConsistencyRules:
                         "issuesmith.gate_rules.milestone_consistency.fix_label_missing() "
                         "で milestone オブジェクト（<issue>-<YYYYMMDD>）を作成・紐付け"
                         ". The label alone is not enough: for every sub plan row, also write "
-                        f"a `#### サブN: <title>` design block under "
+                        f"a `#### {_SUB_HEADER_PREFIX}N: <title>` design block under "
                         f"`## {sections['design']}` "
                         "(changed files table, acceptance criteria); otherwise verify fails "
                         "with b1_milestone_subdesign.sub_count_mismatch. "

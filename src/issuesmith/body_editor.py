@@ -79,10 +79,7 @@ def get_section_by_keyword(body: str, keyword: str) -> str | None:
 
 
 def normalize_sub_headers(body: str) -> str:
-    """``#### Sub N:`` / ``#### sub N`` を ``#### サブN:`` に正規化する。
-
-    Idempotent: Japanese ``#### サブN:`` headers are left unchanged.
-    """
+    """``#### Sub N:`` / ``#### sub N`` を ``#### サブN:`` に正規化する。"""
     return _SUB_HEADER_EN_RE.sub(r"\g<1>サブ\g<2>:", body)
 
 
