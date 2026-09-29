@@ -1002,12 +1002,12 @@ def milestone_resume(parent: int, *, store: QueueStore | None = None) -> int:
 def milestone_prune(*, dry_run: bool = False, store: QueueStore | None = None) -> int:
     store = store or QueueStore()
     pruned = store.prune_milestone_chains(dry_run=dry_run)
-    label = "除去予定" if dry_run else "除去済み"
+    label = "would prune" if dry_run else "pruned"
     if pruned:
         nums = ", ".join(f"#{n}" for n in pruned)
         print(f"milestone prune: {label} {nums} ({len(pruned)})")
     else:
-        print(f"milestone prune: {label} 0 件")
+        print(f"milestone prune: {label} 0")
     return 0
 
 

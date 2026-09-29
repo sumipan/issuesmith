@@ -174,7 +174,7 @@ def test_milestone_prune_dry_run(tmp_path, capsys, monkeypatch):
     code = main(["prune", "--dry-run"])
     assert code == 0
     out = capsys.readouterr().out
-    assert "除去予定" in out
+    assert "would prune" in out
     assert "#100" in out
     assert "#200" in out
     assert "2" in out
@@ -190,7 +190,7 @@ def test_milestone_prune_applies(tmp_path, capsys, monkeypatch):
     code = main(["prune"])
     assert code == 0
     out = capsys.readouterr().out
-    assert "除去済み" in out
+    assert "pruned" in out
     assert "#100" in out
     assert "100" not in store.snapshot().milestone_chains
     assert "150" in store.snapshot().milestone_chains
