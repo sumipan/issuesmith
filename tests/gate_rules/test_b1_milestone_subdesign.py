@@ -630,7 +630,17 @@ def test_main_prev_report_appends_oscillation(tmp_path, monkeypatch, capsys):
         "collect_violations",
         lambda body, labels: [_violation("b1_milestone_subdesign.repo_mismatch")] * 5,
     )
-    monkeypatch.setattr(sys, "argv", ["b1_verify", "4048", "--prev-report", str(prev)])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "b1_verify",
+            "4048",
+            "--no-apply-deterministic",
+            "--prev-report",
+            str(prev),
+        ],
+    )
     assert b1_verify.main() == 1
     out = capsys.readouterr().out
     assert "b1_verify.oscillation_detected" in out.splitlines()[0]
@@ -649,6 +659,8 @@ def test_main_without_prev_report_has_no_oscillation(monkeypatch, capsys):
         "collect_violations",
         lambda body, labels: [_violation("b1_milestone_subdesign.repo_mismatch")],
     )
-    monkeypatch.setattr(sys, "argv", ["b1_verify", "4048"])
+    monkeypatch.setattr(
+        sys, "argv", ["b1_verify", "4048", "--no-apply-deterministic"]
+    )
     assert b1_verify.main() == 1
     assert "oscillation" not in capsys.readouterr().out

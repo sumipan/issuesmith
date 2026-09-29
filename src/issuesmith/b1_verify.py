@@ -225,13 +225,17 @@ def main() -> int:
     parser.add_argument("--prev-report", default=None, metavar="FILE")
     parser.add_argument(
         "--apply-deterministic",
-        action="store_true",
-        help="Apply deterministic recovery helpers before reporting (nexus #4191)",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Apply deterministic recovery helpers before reporting "
+            "(default: enabled; nexus #4191)"
+        ),
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="With --apply-deterministic, do not persist body/label/milestone changes",
+        help="Do not persist deterministic body/label/milestone changes",
     )
     args = parser.parse_args(sys.argv[1:])
 

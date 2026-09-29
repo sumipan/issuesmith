@@ -287,6 +287,44 @@ def test_deterministic_recovery_promotes_oversized_issue_in_one_pass(tmp_path, m
         v.rule_id.startswith("b1_milestone_subdesign.") for v in result.remaining
     )
 
+
+def test_verify_b1_cli_applies_deterministic_recovery_by_default(
+    tmp_path, monkeypatch, capsys
+):
+    """The production ``verify b1`` path runs helpers before LLM recovery."""
+    import sys
+
+    import yaml
+
+    from issuesmith.cli import _cmd_verify
+    from issuesmith.config import reset_config_cache
+    from tests.legacy_text import SUB
+
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "sumipan/nexus", "scope_gate": {"enabled": False}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+
+    client = _FakeForge(body=_oversized_body())
+    monkeypatch.setattr("ghdag.forge.get_forge", lambda: client)
+    monkeypatch.setattr(sys, "argv", list(sys.argv))
+    try:
+        _cmd_verify(["b1", "4191"])
+    finally:
+        reset_config_cache()
+
+    output = capsys.readouterr().out
+    assert "DETERMINISTIC_APPLIED:" in output
+    assert "scope_size.promote_to_milestone" in output
+    assert "scope:milestone" in client.labels
+    assert client.issue_milestone is not None
+    assert f"#### {SUB}" in client.body
+    assert "#### Sub " not in client.body
+
+
 def test_deterministic_recovery_is_idempotent(tmp_path, monkeypatch):
     """AC (#4191): re-running recovery does not duplicate body/label/milestone."""
     import yaml
