@@ -654,7 +654,7 @@ def advance_milestone_chains(
     if not chain_cfg.enabled:
         return
 
-    pruned = store.prune_milestone_chains()
+    pruned = set(store.prune_milestone_chains())
     snap = store.snapshot()
     # C0 (design-phase in_flight release) moved to queue.dispatch_one generic path (#2980).
     parents = _candidate_parents(store, snap, client)
@@ -664,7 +664,7 @@ def advance_milestone_chains(
         chain = store.get_milestone_chain(parent_num)
         if chain.get("stage") == "halted":
             continue
-        if chain.get("closed_parent"):
+        if parent_num in pruned or chain.get("closed_parent"):
             skipped_closed += 1
             continue
         try:

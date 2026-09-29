@@ -1051,6 +1051,9 @@ class TestClosedParentPrune:
                 "closed_parent": True,
             },
         )
+        # Even if another candidate source retains the parent, prune must prevent
+        # all forge calls during this tick.
+        store.add_in_flight(100, "claude")
         child = _child_issue(101, state="CLOSED", labels=["issuesmith:merge-done"])
         client = FakeClient(
             issues={100: _parent_issue(state="CLOSED"), 101: child},
