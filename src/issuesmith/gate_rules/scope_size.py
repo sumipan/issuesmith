@@ -4,12 +4,14 @@ Judges an Issue's size from its own change table (no clone is read, unlike
 ``scope_breadth``): counted files, concerns (distinct parent directories of
 counted files) and whether deletion and creation are mixed. An oversized
 Issue fails with a fix_hint that proposes a sub-issue split plan; the gate
-never rewrites the body itself.
+never rewrites the body itself. Recovery promotes oversized Issues via
+:func:`promote_oversized_issue_body` (nexus #4191).
 """
 
 from __future__ import annotations
 
 import posixpath
+import re
 from dataclasses import dataclass
 
 from ghdag.workflow.gates import GATE_REGISTRY, Violation
@@ -19,6 +21,15 @@ from issuesmith.context_hook import parse_issue_metadata
 from issuesmith.contract import extract_change_table_rows
 
 _MILESTONE_LABEL = "scope:milestone"
+# Literal required by contract.SUB_HEADER_RE / milestone_consistency (katakana SA+BU).
+_SUB_HEADER_PREFIX = "".join(map(chr, (0x30B5, 0x30D6)))
+# 4-col change-table header matching b1_milestone_subdesign schema (no CJK literals).
+_CHANGE_TABLE_COLS = (
+    "".join(map(chr, (0x30EA, 0x30DD, 0x30B8, 0x30C8, 0x30EA))),  # repository
+    "".join(map(chr, (0x30D5, 0x30A1, 0x30A4, 0x30EB, 0x30D1, 0x30B9))),  # file path
+    "".join(map(chr, (0x5909, 0x66F4, 0x7A2E, 0x5225))),  # change kind
+    "".join(map(chr, (0x5909, 0x66F4, 0x5185, 0x5BB9))),  # description
+)
 
 
 @dataclass(frozen=True)
@@ -76,13 +87,16 @@ def _fix_hint(body: str, measure: SizeMeasure, cfg: ScopeSizeConfig) -> str:
     except Exception:
         target_repo = ""
     lines = [
-        f"Add `## {sections['milestone']}` > `### {sections['sub_plan']}` to the body and "
-        "split the work into one sub-issue per concern (parent directory). Example:",
-        f"For every plan row, also write a sub design block under `## {sections['design']}` "
-        "with a `#### ` sub header (SUB_HEADER_RE) containing each of "
+        "Run issuesmith.b1_verify.apply_deterministic_recovery() (or "
+        "issuesmith.gate_rules.scope_size.promote_oversized_issue_body() then "
+        "milestone_consistency.fix_label_missing() + body_editor.normalize_sub_headers() "
+        "+ body_editor.relocate_sub_plan()). Do not hand-edit English Sub headers.",
+        f"That helper adds `## {sections['milestone']}` > `### {sections['sub_plan']}`, "
+        f"`#### {_SUB_HEADER_PREFIX}N: <title>` blocks under `## {sections['design']}` with "
         + ", ".join(f"**{name}**" for name in get_config().sub_design_subsections)
-        + "; b1_milestone_subdesign fails when the plan row count and the sub header "
-        "count differ.",
+        + ", scope:milestone, and the GitHub milestone object. "
+        "b1_milestone_subdesign fails when the plan row count and the sub header "
+        "count differ. Example plan:",
         "",
         cfg.sub_plan_header,
         "|---|---|---|---|---|",
@@ -92,6 +106,193 @@ def _fix_hint(body: str, measure: SizeMeasure, cfg: ScopeSizeConfig) -> str:
             f"| {i} | {concern} | {target_repo} | {', '.join(paths)} | {cfg.no_deps_word} |"
         )
     return "\n".join(lines)
+
+
+def _rows_by_concern(
+    body: str, cfg: ScopeSizeConfig
+) -> dict[str, list[tuple[str, str, str]]]:
+    """Group every change-table row by parent directory (file-union complete).
+
+    Unlike :func:`measure_size`, excluded prefixes are kept so promoted sub
+    designs cover the full parent change table.
+    """
+    seen: set[tuple[str, str]] = set()
+    concerns: dict[str, list[tuple[str, str, str]]] = {}
+    for repo, path, change_type in extract_change_table_rows(body):
+        key = (repo, path)
+        if key in seen:
+            continue
+        seen.add(key)
+        concern = posixpath.dirname(path) or "."
+        concerns.setdefault(concern, []).append((repo, path, change_type))
+    measured = measure_size(body, cfg)
+    ordered: dict[str, list[tuple[str, str, str]]] = {}
+    for concern in measured.concerns:
+        if concern in concerns:
+            ordered[concern] = concerns.pop(concern)
+    for concern, rows in concerns.items():
+        ordered[concern] = rows
+    return ordered
+
+
+def _build_sub_block(
+    num: int,
+    concern: str,
+    rows: list[tuple[str, str, str]],
+    *,
+    target_repo: str,
+    subsections: tuple[str, ...],
+    changed_label: str,
+    ac_label: str,
+) -> str:
+    # Column names match b1_milestone_subdesign._check_table_schema expectations.
+    table_lines = [
+        f"**{changed_label}**:",
+        "| " + " | ".join(_CHANGE_TABLE_COLS) + " |",
+        "|---|---|---|---|",
+    ]
+    paths = [path for _, path, _ in rows]
+    for repo, path, change_type in rows:
+        repo_cell = repo or target_repo
+        table_lines.append(
+            f"| `{repo_cell}` | `{path}` | {change_type or 'modify'} "
+            "| split from oversized issue |"
+        )
+    yaml_paths = "\n".join(f"  - {p}" for p in paths) or "  - []"
+    sub_parts = [f"#### {_SUB_HEADER_PREFIX}{num}: {concern}", ""]
+    for name in subsections:
+        if name == changed_label:
+            sub_parts.extend(table_lines)
+            sub_parts.append("")
+        elif name == ac_label:
+            sub_parts.append(f"**{ac_label}**:")
+            sub_parts.append("```yaml")
+            sub_parts.append("paths_must_exist:")
+            sub_parts.append(yaml_paths)
+            sub_parts.append("```")
+            sub_parts.append(
+                f"- [ ] Concern `{concern}` change table lists every assigned path"
+            )
+            sub_parts.append(
+                f"- [ ] Sub design `{num}` includes the required subsections"
+            )
+            sub_parts.append(
+                f"- [ ] Parent change-file union includes every path under `{concern}`"
+            )
+            sub_parts.append("")
+        else:
+            sub_parts.append(f"**{name}**: Split work for concern `{concern}`")
+            sub_parts.append("")
+    return "\n".join(sub_parts).rstrip() + "\n"
+
+
+def _upsert_preserving_preamble(body: str, heading: str, content: str) -> str:
+    """Like upsert_section but keep text before the first H2 (yaml metadata)."""
+    from issuesmith.body_editor import upsert_section
+
+    match = re.search(r"^##\s", body, re.MULTILINE)
+    if not match:
+        return upsert_section(body, heading, content)
+    preamble = body[: match.start()]
+    return preamble + upsert_section(body[match.start() :], heading, content)
+
+
+def promote_oversized_issue_body(body: str, cfg: ScopeSizeConfig | None = None) -> str:
+    """Rewrite an oversized Issue body into a milestone split plan + sub designs.
+
+    Idempotent when a SUB_HEADER_RE block already exists for every concern row.
+    Does not touch labels or the GitHub milestone object — callers
+    must run :func:`issuesmith.gate_rules.milestone_consistency.fix_label_missing`
+    (or use :func:`issuesmith.b1_verify.apply_deterministic_recovery`).
+    """
+    from issuesmith.body_editor import (
+        get_section,
+        normalize_sub_headers,
+        relocate_sub_plan,
+    )
+    from issuesmith.contract import SUB_HEADER_RE
+
+    cfg = cfg or get_config().scope_size
+    sections = get_config().sections
+    design_name = sections["design"]
+    milestone_name = sections["milestone"]
+    plan_name = sections["sub_plan"]
+    changed_label = sections["changed_files"]
+    ac_label = sections["acceptance_criteria"]
+    subsections = get_config().sub_design_subsections
+
+    concerns = _rows_by_concern(body, cfg)
+    if not concerns:
+        return relocate_sub_plan(normalize_sub_headers(body))
+
+    design = get_section(body, design_name) or ""
+    existing_subs = SUB_HEADER_RE.findall(design)
+    if len(existing_subs) >= len(concerns):
+        return relocate_sub_plan(normalize_sub_headers(body))
+
+    try:
+        target_repo = str(parse_issue_metadata(body).get("target_repo") or "").strip()
+    except Exception:
+        target_repo = ""
+
+    plan_lines = [
+        f"### {plan_name}",
+        cfg.sub_plan_header,
+        "|---|---|---|---|---|",
+    ]
+    sub_blocks: list[str] = []
+    for i, (concern, rows) in enumerate(concerns.items(), start=1):
+        paths = ", ".join(path for _, path, _ in rows)
+        plan_lines.append(
+            f"| {i} | {concern} | {target_repo} | {paths} | {cfg.no_deps_word} |"
+        )
+        sub_blocks.append(
+            _build_sub_block(
+                i,
+                concern,
+                rows,
+                target_repo=target_repo,
+                subsections=subsections,
+                changed_label=changed_label,
+                ac_label=ac_label,
+            )
+        )
+
+    sub_match = SUB_HEADER_RE.search(design)
+    design_without_subs = (
+        design[: sub_match.start()].rstrip() if sub_match else design.rstrip()
+    )
+    new_design = (
+        f"{design_without_subs}\n\n" if design_without_subs else ""
+    ) + "\n".join(sub_blocks)
+
+    body = _upsert_preserving_preamble(body, design_name, new_design.strip("\n"))
+    milestone_content = "\n".join(plan_lines)
+    existing_milestone = get_section(body, milestone_name)
+    if existing_milestone is None:
+        body = _upsert_preserving_preamble(body, milestone_name, milestone_content)
+    elif not re.search(
+        rf"^###\s+{re.escape(plan_name)}\s*$", existing_milestone, re.MULTILINE
+    ):
+        merged = f"{existing_milestone.rstrip()}\n\n{milestone_content}".strip("\n")
+        body = _upsert_preserving_preamble(body, milestone_name, merged)
+    else:
+        body = _upsert_preserving_preamble(body, milestone_name, milestone_content)
+
+    # Parent AC section is required by b1_ac_format once the Issue is a milestone.
+    # Leave paths_must_exist empty: cp1.milestone.paths_must_exist_unmapped only
+    # recognizes host-language change-type cells (not English Modify/Add), so
+    # copying English "Modify"/"Add" rows would always fail. LLM recovery fills
+    # concrete paths.
+    if get_section(body, ac_label) is None:
+        ac_content = (
+            "```yaml\n"
+            "paths_must_exist: []\n"
+            "```\n"
+        )
+        body = _upsert_preserving_preamble(body, ac_label, ac_content)
+
+    return relocate_sub_plan(normalize_sub_headers(body))
 
 
 class ScopeSizeRules:

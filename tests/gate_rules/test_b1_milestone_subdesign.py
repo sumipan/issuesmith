@@ -174,6 +174,7 @@ def test_sub_count_mismatch():
 
 def test_sub_count_mismatch_fix_hint_lists_required_subsections():
     from issuesmith.config import get_config
+    from tests.legacy_text import SUB
 
     body = _valid_body().replace("| 2 | bar | scope2 | 1 |", "")
     violation = next(
@@ -185,6 +186,77 @@ def test_sub_count_mismatch_fix_hint_lists_required_subsections():
     for name in get_config().sub_design_subsections:
         assert name in violation.fix_hint
     assert violation.auto_fixable is False
+    assert f"#### {SUB}N:" in violation.fix_hint
+    assert "add `#### Sub" not in (violation.fix_hint or "")
+    assert "#### Sub N:" not in violation.fix_hint
+    assert "#### Sub " not in violation.fix_hint
+
+
+def test_promoted_body_plan_rows_match_sub_headers_and_file_union():
+    """AC (#4191): plan rows, SUB_HEADER_RE count, and parent/sub path union agree."""
+    from issuesmith.config import get_config
+    from issuesmith.contract import SUB_HEADER_RE, extract_change_table_rows, get_section
+    from issuesmith.gate_rules.b1_milestone_subdesign import _count_sub_plan_rows
+    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
+
+    body = _oversized_non_milestone_body()
+    promoted = promote_oversized_issue_body(body)
+    sections = get_config().sections
+    plan_count = _count_sub_plan_rows(promoted)
+    design = get_section(promoted, sections["design"]) or ""
+    header_count = len(SUB_HEADER_RE.findall(design))
+    assert plan_count == header_count
+    assert plan_count is not None and plan_count >= 3
+    parent = {
+        path
+        for _, path, _ in extract_change_table_rows(
+            get_section(promoted, sections["changed_files"]) or ""
+        )
+    }
+    sub_paths: set[str] = set()
+    from issuesmith.gate_rules.b1_milestone_subdesign import extract_sub_blocks
+
+    for _, block in extract_sub_blocks(promoted):
+        sub_paths.update(path for _, path, _ in extract_change_table_rows(block))
+    assert parent == sub_paths
+    assert "#### Sub " not in promoted
+
+
+def _oversized_non_milestone_body() -> str:
+    """Non-milestone body that trips scope_size (3+ concerns, many files)."""
+    from tests.legacy_text import CHANGE_TYPE, DESCRIPTION, FILE_PATH, REPOSITORY
+
+    header = f"| {REPOSITORY} | {FILE_PATH} | {CHANGE_TYPE} | {DESCRIPTION} |"
+    rows = [
+        ("src/a/f1.py", "Modify"),
+        ("src/a/f2.py", "Modify"),
+        ("src/a/f3.py", "Modify"),
+        ("src/b/f1.py", "Modify"),
+        ("src/b/f2.py", "Modify"),
+        ("src/b/f3.py", "Modify"),
+        ("src/c/f1.py", "Modify"),
+        ("src/c/f2.py", "Modify"),
+        ("src/c/f3.py", "Modify"),
+    ]
+    table = "\n".join(
+        f"| `sumipan/nexus` | `{path}` | {kind} | x |" for path, kind in rows
+    )
+    return f"""\
+```yaml
+target_repo: sumipan/nexus
+base_branch: main
+allow_paths:
+  - src/**
+```
+
+## Design
+single-issue design before promotion
+
+## Changed Files
+{header}
+|---|---|---|---|
+{table}
+"""
 
 
 def test_subsection_missing():
@@ -558,7 +630,17 @@ def test_main_prev_report_appends_oscillation(tmp_path, monkeypatch, capsys):
         "collect_violations",
         lambda body, labels: [_violation("b1_milestone_subdesign.repo_mismatch")] * 5,
     )
-    monkeypatch.setattr(sys, "argv", ["b1_verify", "4048", "--prev-report", str(prev)])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "b1_verify",
+            "4048",
+            "--no-apply-deterministic",
+            "--prev-report",
+            str(prev),
+        ],
+    )
     assert b1_verify.main() == 1
     out = capsys.readouterr().out
     assert "b1_verify.oscillation_detected" in out.splitlines()[0]
@@ -577,6 +659,8 @@ def test_main_without_prev_report_has_no_oscillation(monkeypatch, capsys):
         "collect_violations",
         lambda body, labels: [_violation("b1_milestone_subdesign.repo_mismatch")],
     )
-    monkeypatch.setattr(sys, "argv", ["b1_verify", "4048"])
+    monkeypatch.setattr(
+        sys, "argv", ["b1_verify", "4048", "--no-apply-deterministic"]
+    )
     assert b1_verify.main() == 1
     assert "oscillation" not in capsys.readouterr().out

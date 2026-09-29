@@ -27,6 +27,7 @@ __all__ = [
     "get_subsections",
     "normalize_sub_headers",
     "relocate_sub_plan",
+    "apply_milestone_normalizers",
     "replace_allow_paths",
     "split_h2_sections",
     "upsert_section",
@@ -135,3 +136,8 @@ def relocate_sub_plan(body: str) -> str:
     existing = get_section(body_without_plan, milestone_name) or ""
     merged = f"{existing.rstrip()}\n\n{plan_content}".strip("\n")
     return upsert_section(body_without_plan, milestone_name, merged)
+
+
+def apply_milestone_normalizers(body: str) -> str:
+    """Apply ``normalize_sub_headers`` then ``relocate_sub_plan`` (idempotent)."""
+    return relocate_sub_plan(normalize_sub_headers(body))

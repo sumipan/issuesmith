@@ -166,3 +166,258 @@ def test_complete_milestone_body_passes_milestone_subdesign():
 
     rule_ids = {v.rule_id for v in collect_violations(_valid_body(), ["scope:milestone"])}
     assert not {r for r in rule_ids if r.startswith("b1_milestone_subdesign.")}, rule_ids
+
+
+class _FakeForge:
+    """Minimal ForgePort stand-in for deterministic recovery tests."""
+
+    def __init__(self, body: str = "", labels: list[str] | None = None):
+        self.body = body
+        self.labels: set[str] = set(labels or [])
+        self.milestones: list[dict] = []
+        self.issue_milestone = None
+        self.updates: list[dict] = []
+        self._next = 90
+
+    def issue_get(self, number, fields=None):
+        return {
+            "number": number,
+            "body": self.body,
+            "labels": [{"name": n} for n in sorted(self.labels)],
+            "milestone": self.issue_milestone,
+        }
+
+    def issue_update(self, number, **kwargs):
+        self.updates.append({"number": number, **kwargs})
+        if kwargs.get("body") is not None:
+            self.body = kwargs["body"]
+        for lab in kwargs.get("labels_add") or []:
+            self.labels.add(lab)
+        if kwargs.get("milestone") is not None:
+            self.issue_milestone = {
+                "number": kwargs["milestone"],
+                "title": f"{number}-attached",
+            }
+
+    def milestone_list(self):
+        return list(self.milestones)
+
+    def milestone_create(self, title, description=""):
+        num = self._next
+        self._next += 1
+        self.milestones.append({"number": num, "title": title})
+        return num
+
+
+def _oversized_body() -> str:
+    from tests.legacy_text import CHANGE_TYPE, DESCRIPTION, FILE_PATH, REPOSITORY
+
+    header = f"| {REPOSITORY} | {FILE_PATH} | {CHANGE_TYPE} | {DESCRIPTION} |"
+    rows = [
+        ("src/a/f1.py", "Modify"),
+        ("src/a/f2.py", "Modify"),
+        ("src/a/f3.py", "Modify"),
+        ("src/b/f1.py", "Modify"),
+        ("src/b/f2.py", "Modify"),
+        ("src/b/f3.py", "Modify"),
+        ("src/c/f1.py", "Modify"),
+        ("src/c/f2.py", "Modify"),
+        ("src/c/f3.py", "Modify"),
+    ]
+    table = "\n".join(
+        f"| `sumipan/nexus` | `{path}` | {kind} | x |" for path, kind in rows
+    )
+    return (
+        '```yaml\n'
+        "target_repo: sumipan/nexus\n"
+        "base_branch: main\n"
+        "allow_paths:\n"
+        "  - src/**\n"
+        "scope_gate:\n"
+        "  enabled: false\n"
+        "```\n\n"
+        "## Design\nsingle-issue design before promotion\n\n"
+        f"## Changed Files\n{header}\n|---|---|---|---|\n{table}\n"
+    )
+
+
+def test_deterministic_recovery_promotes_oversized_issue_in_one_pass(tmp_path, monkeypatch):
+    """AC (#4191): scope_size overflow → milestone contract in one recovery."""
+    import yaml
+
+    from issuesmith.b1_verify import apply_deterministic_recovery
+    from issuesmith.config import reset_config_cache
+    from tests.legacy_text import SUB
+
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "sumipan/nexus", "scope_gate": {"enabled": False}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+
+    body = _oversized_body()
+    client = _FakeForge(body=body)
+    try:
+        result = apply_deterministic_recovery(client, 4191, body, [], persist=True)
+    finally:
+        reset_config_cache()
+
+    assert "scope:milestone" in result.labels
+    assert "scope:milestone" in client.labels
+    assert client.issue_milestone is not None
+    assert "scope_size.promote_to_milestone" in result.applied
+    assert "milestone_consistency.fix_label_missing" in result.applied
+    assert f"#### {SUB}" in result.body
+    assert "#### Sub " not in result.body
+    assert result.body.lstrip().startswith("```yaml")
+    assert "target_repo: sumipan/nexus" in result.body
+    assert "Milestone" in result.body or "milestone" in result.body.lower()
+    # Auto-fixable helpers ran; only non-auto remain for LLM (may be empty).
+    assert all(not v.auto_fixable for v in result.llm_violations)
+    assert not any(v.rule_id.startswith("scope_size.") for v in result.remaining)
+    assert not any(
+        v.rule_id == "milestone_consistency.sub_header_english" for v in result.remaining
+    )
+    assert not any(
+        v.rule_id == "milestone_consistency.label_missing" for v in result.remaining
+    )
+    assert not any(
+        v.rule_id.startswith("b1_milestone_subdesign.") for v in result.remaining
+    )
+
+
+def test_verify_b1_cli_applies_deterministic_recovery_by_default(
+    tmp_path, monkeypatch, capsys
+):
+    """The production ``verify b1`` path runs helpers before LLM recovery."""
+    import sys
+
+    import yaml
+
+    from issuesmith.cli import _cmd_verify
+    from issuesmith.config import reset_config_cache
+    from tests.legacy_text import SUB
+
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "sumipan/nexus", "scope_gate": {"enabled": False}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+
+    client = _FakeForge(body=_oversized_body())
+    monkeypatch.setattr("ghdag.forge.get_forge", lambda: client)
+    monkeypatch.setattr(sys, "argv", list(sys.argv))
+    try:
+        _cmd_verify(["b1", "4191"])
+    finally:
+        reset_config_cache()
+
+    output = capsys.readouterr().out
+    assert "DETERMINISTIC_APPLIED:" in output
+    assert "scope_size.promote_to_milestone" in output
+    assert "scope:milestone" in client.labels
+    assert client.issue_milestone is not None
+    assert f"#### {SUB}" in client.body
+    assert "#### Sub " not in client.body
+
+
+def test_deterministic_recovery_is_idempotent(tmp_path, monkeypatch):
+    """AC (#4191): re-running recovery does not duplicate body/label/milestone."""
+    import yaml
+
+    from issuesmith.b1_verify import apply_deterministic_recovery
+    from issuesmith.config import reset_config_cache
+
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "sumipan/nexus", "scope_gate": {"enabled": False}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+
+    body = _oversized_body()
+    client = _FakeForge(body=body)
+    try:
+        first = apply_deterministic_recovery(client, 4191, body, [], persist=True)
+        label_updates = sum(
+            1 for u in client.updates if u.get("labels_add") == ["scope:milestone"]
+        )
+        body_after = first.body
+        milestone_count = len(client.milestones)
+        second = apply_deterministic_recovery(
+            client, 4191, body_after, first.labels, persist=True
+        )
+    finally:
+        reset_config_cache()
+
+    assert second.body == body_after
+    assert second.labels == first.labels
+    assert len(client.milestones) == milestone_count
+    # Second pass should not add another scope:milestone label write that grows state.
+    assert sum(
+        1 for u in client.updates if u.get("labels_add") == ["scope:milestone"]
+    ) >= label_updates
+
+
+def test_deterministic_recovery_skips_normal_sized_issue(tmp_path, monkeypatch):
+    """AC (#4191): scope_size-ineligible Issues are unchanged by promotion."""
+    import yaml
+
+    from issuesmith.b1_verify import apply_deterministic_recovery
+    from issuesmith.config import reset_config_cache
+
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "sumipan/nexus", "scope_gate": {"enabled": False}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+
+    client = _FakeForge(body=_VALID_BODY)
+    try:
+        result = apply_deterministic_recovery(
+            client, 4191, _VALID_BODY, [], persist=True
+        )
+    finally:
+        reset_config_cache()
+
+    assert "scope_size.promote_to_milestone" not in result.applied
+    assert result.body == _VALID_BODY
+    assert "scope:milestone" not in result.labels
+
+
+def test_deterministic_recovery_reports_unresolved_when_same_rule_remains(
+    tmp_path, monkeypatch
+):
+    """AC (#4191): can_done is False and reason lists remaining rule_ids."""
+    import yaml
+
+    from issuesmith.b1_verify import apply_deterministic_recovery
+    from issuesmith.config import reset_config_cache
+
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "sumipan/nexus", "scope_gate": {"enabled": False}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+
+    # Missing yaml → cp1 violation that deterministic recovery cannot fix.
+    body = "## Overview\nno yaml\n"
+    client = _FakeForge(body=body)
+    try:
+        result = apply_deterministic_recovery(client, 4191, body, [], persist=True)
+    finally:
+        reset_config_cache()
+
+    assert result.can_done is False
+    assert result.unresolved_reason is not None
+    assert "cp1.yaml_contract.missing_block" in result.unresolved_reason
+    assert any(v.rule_id == "cp1.yaml_contract.missing_block" for v in result.remaining)
