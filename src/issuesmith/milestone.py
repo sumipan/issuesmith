@@ -591,7 +591,9 @@ def _candidate_parents(
     client: ForgePort,
 ) -> set[int]:
     candidates: set[int] = set()
-    for key in snap.milestone_chains:
+    for key, entry in snap.milestone_chains.items():
+        if isinstance(entry, dict) and entry.get("closed_parent"):
+            continue
         try:
             candidates.add(int(key))
         except ValueError:
@@ -652,13 +654,18 @@ def advance_milestone_chains(
     if not chain_cfg.enabled:
         return
 
+    pruned = store.prune_milestone_chains()
     snap = store.snapshot()
     # C0 (design-phase in_flight release) moved to queue.dispatch_one generic path (#2980).
     parents = _candidate_parents(store, snap, client)
+    skipped_closed = 0
 
     for parent_num in sorted(parents):
         chain = store.get_milestone_chain(parent_num)
         if chain.get("stage") == "halted":
+            continue
+        if chain.get("closed_parent"):
+            skipped_closed += 1
             continue
         try:
             parent = client.issue_get(
@@ -804,6 +811,12 @@ def advance_milestone_chains(
                 "<!-- issuesmith:milestone-chain:all-done -->",
             )
             store.update_milestone_chain(parent_num, {"notified_all_done": True})
+
+    print(
+        f"[tick] milestone chains candidates={len(parents)} "
+        f"skipped_closed={skipped_closed} pruned={len(pruned)}",
+        file=sys.stderr,
+    )
 
 
 def _child_phase_label(labels: set[str]) -> str:
@@ -986,10 +999,24 @@ def milestone_resume(parent: int, *, store: QueueStore | None = None) -> int:
     return 1
 
 
+def milestone_prune(*, dry_run: bool = False, store: QueueStore | None = None) -> int:
+    store = store or QueueStore()
+    pruned = store.prune_milestone_chains(dry_run=dry_run)
+    label = "除去予定" if dry_run else "除去済み"
+    if pruned:
+        nums = ", ".join(f"#{n}" for n in pruned)
+        print(f"milestone prune: {label} {nums} ({len(pruned)})")
+    else:
+        print(f"milestone prune: {label} 0 件")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if not args or args[0] in {"-h", "--help"}:
-        print("usage: issuesmith milestone status <parent> | resume <parent>")
+        print(
+            "usage: issuesmith milestone status <parent> | resume <parent> | prune [--dry-run]"
+        )
         return 0 if args else 1
     cmd, *rest = args
     if cmd == "status":
@@ -1002,5 +1029,14 @@ def main(argv: list[str] | None = None) -> int:
             print("error: parent issue number required", file=sys.stderr)
             return 2
         return milestone_resume(int(rest[0]))
+    if cmd == "prune":
+        dry_run = False
+        for arg in rest:
+            if arg == "--dry-run":
+                dry_run = True
+            else:
+                print(f"Unknown prune option: {arg}", file=sys.stderr)
+                return 2
+        return milestone_prune(dry_run=dry_run)
     print(f"Unknown milestone command: {cmd}", file=sys.stderr)
     return 2

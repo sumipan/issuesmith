@@ -1,10 +1,11 @@
-"""CLI tests for milestone status / resume."""
+"""CLI tests for milestone status / resume / prune."""
 
 from __future__ import annotations
 
 import re
 
-from issuesmith.milestone import milestone_resume, milestone_status
+from issuesmith.milestone import main, milestone_resume, milestone_status
+from issuesmith.queue_store import QueueStore
 
 
 class FakeClient:
@@ -153,3 +154,65 @@ def test_milestone_resume_not_halted(capsys):
     code = milestone_resume(100, store=FakeStore())
     assert code == 1
     assert "not halted" in capsys.readouterr().err
+
+
+def _cli_store(tmp_path):
+    return QueueStore(
+        queue_path=tmp_path / "queue.jsonl",
+        state_path=tmp_path / "state.json",
+        lock_path=tmp_path / "lock",
+    )
+
+
+def test_milestone_prune_dry_run(tmp_path, capsys, monkeypatch):
+    store = _cli_store(tmp_path)
+    store.update_milestone_chain(200, {"stage": "children_validated", "closed_parent": True})
+    store.update_milestone_chain(100, {"stage": "children_validated", "closed_parent": True})
+    store.update_milestone_chain(150, {"stage": "active"})
+    before = store.state_path.read_bytes()
+    monkeypatch.setattr("issuesmith.milestone.QueueStore", lambda: store)
+    code = main(["prune", "--dry-run"])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "除去予定" in out
+    assert "#100" in out
+    assert "#200" in out
+    assert "2" in out
+    assert store.state_path.read_bytes() == before
+    assert "100" in store.snapshot().milestone_chains
+
+
+def test_milestone_prune_applies(tmp_path, capsys, monkeypatch):
+    store = _cli_store(tmp_path)
+    store.update_milestone_chain(100, {"stage": "children_validated", "closed_parent": True})
+    store.update_milestone_chain(150, {"stage": "active"})
+    monkeypatch.setattr("issuesmith.milestone.QueueStore", lambda: store)
+    code = main(["prune"])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "除去済み" in out
+    assert "#100" in out
+    assert "100" not in store.snapshot().milestone_chains
+    assert "150" in store.snapshot().milestone_chains
+
+
+def test_milestone_prune_empty(tmp_path, capsys, monkeypatch):
+    store = _cli_store(tmp_path)
+    store.update_milestone_chain(150, {"stage": "active"})
+    before = store.state_path.read_bytes()
+    monkeypatch.setattr("issuesmith.milestone.QueueStore", lambda: store)
+    code = main(["prune"])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "0" in out
+    assert store.state_path.read_bytes() == before
+
+
+def test_milestone_prune_unknown_option(tmp_path, capsys, monkeypatch):
+    store = _cli_store(tmp_path)
+    store.update_milestone_chain(100, {"stage": "children_validated", "closed_parent": True})
+    before = store.state_path.read_bytes()
+    monkeypatch.setattr("issuesmith.milestone.QueueStore", lambda: store)
+    code = main(["prune", "--unknown"])
+    assert code == 2
+    assert store.state_path.read_bytes() == before

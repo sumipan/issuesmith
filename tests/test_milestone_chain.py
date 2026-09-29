@@ -143,15 +143,19 @@ class FakeClient:
         self.sub_issue_links: list[tuple[int, int]] = []
         self.list_sub_issues_calls: list[int] = []
         self.api_request_calls: list[str] = []
+        self.issue_get_calls: list[int] = []
+        self.get_issue_comments_calls: list[int] = []
         self.add_sub_issue_error = add_sub_issue_error
         self.add_sub_issue_return = add_sub_issue_return
 
     def issue_get(self, number, fields=None):
+        self.issue_get_calls.append(number)
         if number not in self.issues:
             raise RuntimeError(f"missing issue #{number}")
         return dict(self.issues[number])
 
     def get_issue_comments(self, number):
+        self.get_issue_comments_calls.append(number)
         return list(self.comments.get(number, []))
 
     def issue_comment(self, number, body):
@@ -200,7 +204,8 @@ class FakeClient:
             return [
                 issue
                 for issue in self.issues.values()
-                if any(
+                if str(issue.get("state", "")).upper() == "OPEN"
+                and any(
                     (label.get("name") if isinstance(label, dict) else label) == "scope:milestone"
                     for label in (issue.get("labels") or [])
                 )
@@ -1031,3 +1036,151 @@ class TestIssue3130Fixes:
         assert code == 0
         out = capsys.readouterr().out
         assert f"chain: sub_enqueued (sub request {rid[:8]} active, waiting for sub-done)" in out
+
+
+class TestClosedParentPrune:
+    """#4216: skip/prune completed milestone chains before forge calls."""
+
+    def test_closed_parent_chain_makes_zero_forge_calls(self, tmp_path):
+        store = _store(tmp_path)
+        store.update_milestone_chain(
+            100,
+            {
+                "stage": "children_validated",
+                "notified_all_done": True,
+                "closed_parent": True,
+            },
+        )
+        child = _child_issue(101, state="CLOSED", labels=["issuesmith:merge-done"])
+        client = FakeClient(
+            issues={100: _parent_issue(state="CLOSED"), 101: child},
+            children={1: [child]},
+            sub_issues={100: [child]},
+        )
+        advance_milestone_chains(store, client, _chain_config())
+        assert client.issue_get_calls.count(100) == 0
+        assert client.list_sub_issues_calls.count(100) == 0
+        assert client.get_issue_comments_calls.count(100) == 0
+
+    def test_notified_all_done_without_closed_parent_still_evaluated(self, tmp_path):
+        store = _store(tmp_path)
+        store.update_milestone_chain(
+            100,
+            {"stage": "children_validated", "notified_all_done": True},
+        )
+        child = _child_issue(101, state="CLOSED", labels=["issuesmith:merge-done"])
+        client = FakeClient(
+            issues={100: _parent_issue(), 101: child},
+            children={1: [child]},
+            sub_issues={100: [child]},
+        )
+        advance_milestone_chains(store, client, _chain_config())
+        assert client.issue_get_calls.count(100) >= 1
+        assert 100 in client.closed
+        chain = store.get_milestone_chain(100)
+        assert chain.get("closed_parent") is True
+
+    def test_prune_dry_run_returns_sorted_and_preserves_bytes(self, tmp_path):
+        store = _store(tmp_path)
+        store.update_milestone_chain(200, {"stage": "children_validated", "closed_parent": True})
+        store.update_milestone_chain(100, {"stage": "children_validated", "closed_parent": True})
+        store.update_milestone_chain(150, {"stage": "active"})
+        before = store.state_path.read_bytes()
+        pruned = store.prune_milestone_chains(dry_run=True)
+        assert pruned == [100, 200]
+        assert store.state_path.read_bytes() == before
+
+    def test_prune_removes_only_closed_parent_chains(self, tmp_path):
+        store = _store(tmp_path)
+        store.update_milestone_chain(100, {"stage": "children_validated", "closed_parent": True})
+        store.update_milestone_chain(101, {"stage": "active"})
+        store.update_milestone_chain(102, {"stage": "halted", "halted_reason": "x"})
+        store.update_milestone_chain(
+            103, {"stage": "children_validated", "notified_all_done": True}
+        )
+        store.enqueue(
+            issue=50,
+            phase="develop",
+            source="test",
+            actor_kind="human",
+            priority="normal",
+            requested_by=["t"],
+            requested_at=_NOW,
+        )
+        before_snap = store.snapshot()
+        pruned = store.prune_milestone_chains()
+        assert pruned == [100]
+        snap = store.snapshot()
+        assert "100" not in snap.milestone_chains
+        assert snap.milestone_chains["101"]["stage"] == "active"
+        assert snap.milestone_chains["102"]["stage"] == "halted"
+        assert snap.milestone_chains["103"].get("notified_all_done") is True
+        assert snap.active_order == before_snap.active_order
+        assert snap.halt == before_snap.halt
+        assert snap.revision == before_snap.revision
+
+    def test_prune_empty_returns_empty_without_save(self, tmp_path):
+        store = _store(tmp_path)
+        store.update_milestone_chain(101, {"stage": "active"})
+        before = store.state_path.read_bytes()
+        assert store.prune_milestone_chains() == []
+        assert store.state_path.read_bytes() == before
+
+    def test_close_tick_keeps_chain_next_tick_prunes(self, tmp_path):
+        store = _store(tmp_path)
+        store.update_milestone_chain(100, {"stage": "children_validated"})
+        child = _child_issue(101, state="CLOSED", labels=["issuesmith:merge-done"])
+        client = FakeClient(
+            issues={100: _parent_issue(), 101: child},
+            children={1: [child]},
+            sub_issues={100: [child]},
+        )
+        advance_milestone_chains(store, client, _chain_config())
+        assert store.get_milestone_chain(100).get("closed_parent") is True
+        assert "100" in store.snapshot().milestone_chains
+
+        client2 = FakeClient(
+            issues={100: dict(client.issues[100]), 101: child},
+            children={1: [child]},
+            sub_issues={100: [child]},
+        )
+        advance_milestone_chains(store, client2, _chain_config())
+        assert "100" not in store.snapshot().milestone_chains
+        assert client2.issue_get_calls.count(100) == 0
+
+    def test_tick_stderr_reports_candidates_skipped_pruned(self, tmp_path, capsys):
+        store = _store(tmp_path)
+        store.update_milestone_chain(
+            100,
+            {
+                "stage": "children_validated",
+                "notified_all_done": True,
+                "closed_parent": True,
+            },
+        )
+        store.update_milestone_chain(200, {"stage": "children_validated", "closed_parent": True})
+        # Keep #300 open with sub-done so it stays a candidate after prune.
+        store.update_milestone_chain(300, {"stage": "children_validated"})
+        open_parent = _parent_issue(number=300)
+        open_parent_child = _child_issue(
+            301, state="OPEN", labels=["issuesmith:draft-done"]
+        )
+        client = FakeClient(
+            issues={
+                300: open_parent,
+                301: open_parent_child,
+            },
+            children={1: [open_parent_child]},
+            sub_issues={300: [open_parent_child]},
+        )
+        advance_milestone_chains(store, client, _chain_config())
+        err = capsys.readouterr().err
+        lines = [
+            ln
+            for ln in err.splitlines()
+            if ln.startswith("[tick] milestone chains candidates=")
+        ]
+        assert len(lines) == 1
+        assert "candidates=1" in lines[0]
+        assert "skipped_closed=0" in lines[0]
+        assert "pruned=2" in lines[0]

@@ -704,3 +704,30 @@ class QueueStore:
             state["milestone_chains"] = chains
             self._save_state_unlocked(state)
             return True
+
+    def prune_milestone_chains(self, *, dry_run: bool = False) -> list[int]:
+        """Remove milestone chains whose parent was already closed.
+
+        Returns parent Issue numbers with ``closed_parent: true``, sorted
+        ascending. When ``dry_run`` is True, or when there are no targets,
+        state is left unchanged.
+        """
+        with self.lock():
+            state = self._load_state_unlocked()
+            chains = dict(state.get("milestone_chains") or {})
+            to_prune: list[int] = []
+            for key, entry in chains.items():
+                if not isinstance(entry, dict) or not entry.get("closed_parent"):
+                    continue
+                try:
+                    to_prune.append(int(key))
+                except (TypeError, ValueError):
+                    continue
+            to_prune.sort()
+            if dry_run or not to_prune:
+                return to_prune
+            for parent in to_prune:
+                chains.pop(str(parent), None)
+            state["milestone_chains"] = chains
+            self._save_state_unlocked(state)
+            return to_prune
