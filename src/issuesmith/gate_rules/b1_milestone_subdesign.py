@@ -157,11 +157,13 @@ class B1MilestoneSubdesignRules:
                 location=None,
                 auto_fixable=False,
                 fix_hint=(
-                    f"For every `{sections['sub_plan']}` row N, add `#### Sub N: <title>` "
+                    f"For every `{sections['sub_plan']}` row N, add `#### サブN: <title>` "
                     f"under `## {sections['design']}` with the required subsections "
                     + " / ".join(
                         f"**{name}**" for name in get_config().sub_design_subsections
                     )
+                    + ". Do not use English Sub headers "
+                    "(milestone_consistency.sub_header_english rejects them)."
                 ),
             )]
         return []

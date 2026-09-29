@@ -27,6 +27,7 @@ __all__ = [
     "get_subsections",
     "normalize_sub_headers",
     "relocate_sub_plan",
+    "apply_milestone_normalizers",
     "replace_allow_paths",
     "split_h2_sections",
     "upsert_section",
@@ -78,7 +79,10 @@ def get_section_by_keyword(body: str, keyword: str) -> str | None:
 
 
 def normalize_sub_headers(body: str) -> str:
-    """``#### Sub N:`` / ``#### sub N`` を ``#### サブN:`` に正規化する。"""
+    """``#### Sub N:`` / ``#### sub N`` を ``#### サブN:`` に正規化する。
+
+    Idempotent: Japanese ``#### サブN:`` headers are left unchanged.
+    """
     return _SUB_HEADER_EN_RE.sub(r"\g<1>サブ\g<2>:", body)
 
 
@@ -135,3 +139,8 @@ def relocate_sub_plan(body: str) -> str:
     existing = get_section(body_without_plan, milestone_name) or ""
     merged = f"{existing.rstrip()}\n\n{plan_content}".strip("\n")
     return upsert_section(body_without_plan, milestone_name, merged)
+
+
+def apply_milestone_normalizers(body: str) -> str:
+    """Apply ``normalize_sub_headers`` then ``relocate_sub_plan`` (idempotent)."""
+    return relocate_sub_plan(normalize_sub_headers(body))

@@ -228,13 +228,32 @@ def test_fix_hint_default_vocabulary_is_ascii():
 
 def test_fix_hint_requires_sub_design_blocks():
     from issuesmith.config import get_config
+    from tests.legacy_text import SUB
 
     rows = [("src/a/x.py", _MODIFY), ("src/b/x.py", _MODIFY), ("src/c/x.py", _MODIFY)]
     (violation,) = ScopeSizeRules().check(_body(rows), [])
     assert get_config().sections["design"] in violation.fix_hint
     assert "b1_milestone_subdesign" in violation.fix_hint
+    assert "apply_deterministic_recovery" in violation.fix_hint
+    assert f"#### {SUB}N:" in violation.fix_hint
+    assert "#### Sub N:" not in violation.fix_hint
     for name in get_config().sub_design_subsections:
         assert name in violation.fix_hint
+
+
+def test_promote_oversized_issue_body_writes_japanese_sub_headers():
+    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
+    from tests.legacy_text import SUB
+
+    rows = [(f"src/a/f{i}.py", _MODIFY) for i in range(4)]
+    rows += [(f"src/b/f{i}.py", _MODIFY) for i in range(4)]
+    rows += [(f"src/c/f{i}.py", _MODIFY) for i in range(2)]
+    body = _body(rows)
+    promoted = promote_oversized_issue_body(body)
+    assert f"#### {SUB}1:" in promoted
+    assert "#### Sub " not in promoted
+    # Idempotent
+    assert promote_oversized_issue_body(promoted) == promoted
 
 
 def test_config_thresholds_are_honoured(tmp_path, monkeypatch):

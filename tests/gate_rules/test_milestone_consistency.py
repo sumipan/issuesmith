@@ -156,7 +156,76 @@ def test_label_missing_fix_hint_mentions_milestone_object():
 
 
 def test_label_missing_fix_hint_requires_sub_design_blocks():
+    from tests.legacy_text import SUB
+
     vs = _check(_FIXTURE, [])
     label_v = next(v for v in vs if v.rule_id == "milestone_consistency.label_missing")
     assert "fix_label_missing" in (label_v.fix_hint or "")
     assert "b1_milestone_subdesign" in (label_v.fix_hint or "")
+    assert f"#### {SUB}N:" in (label_v.fix_hint or "")
+    assert "#### Sub N:" not in (label_v.fix_hint or "")
+
+
+def test_apply_body_autofixes_normalizes_english_and_relocates_plan():
+    from issuesmith.gate_rules.milestone_consistency import apply_body_autofixes
+    from tests.legacy_text import SUB
+
+    body, applied = apply_body_autofixes(_FIXTURE)
+    assert "milestone_consistency.sub_header_english" in applied
+    assert "milestone_consistency.sub_plan_misplaced" in applied
+    assert "#### Sub " not in body
+    assert f"#### {SUB}" in body
+    # Idempotent
+    again, applied2 = apply_body_autofixes(body)
+    assert again == body
+    assert applied2 == []
+
+
+def test_apply_auto_fixable_helpers_adds_label_before_llm():
+    from issuesmith.gate_rules.milestone_consistency import (
+        MilestoneConsistencyRules,
+        apply_auto_fixable_helpers,
+    )
+
+    class _Client:
+        def __init__(self):
+            self.labels: set[str] = set()
+            self.milestones: list[dict] = []
+            self.issue_milestone = None
+            self._next = 50
+
+        def issue_get(self, number, fields=None):
+            return {
+                "number": number,
+                "labels": [{"name": n} for n in sorted(self.labels)],
+                "milestone": self.issue_milestone,
+            }
+
+        def issue_update(self, number, **kwargs):
+            for lab in kwargs.get("labels_add") or []:
+                self.labels.add(lab)
+            if kwargs.get("milestone") is not None:
+                self.issue_milestone = {
+                    "number": kwargs["milestone"],
+                    "title": f"{number}-attached",
+                }
+
+        def milestone_list(self):
+            return list(self.milestones)
+
+        def milestone_create(self, title, description=""):
+            num = self._next
+            self._next += 1
+            self.milestones.append({"number": num, "title": title})
+            return num
+
+    client = _Client()
+    vs = MilestoneConsistencyRules().check(_FIXTURE, [])
+    body, labels, applied = apply_auto_fixable_helpers(
+        client, 4191, _FIXTURE, [], vs
+    )
+    assert "milestone_consistency.label_missing" in applied
+    assert "scope:milestone" in labels
+    assert "scope:milestone" in client.labels
+    assert client.issue_milestone is not None
+    assert "#### Sub " not in body
