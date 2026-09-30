@@ -15,8 +15,8 @@ import yaml
 from ghdag.llm import call_text
 from packaging.version import InvalidVersion, Version
 
-# parse_frontmatter_fields は contract.py に移設（#4238）。milestone.py など既存の import 先を保つ
-# 再エクスポート。ruff --fix の F401 に消されないよう noqa を付ける（上流 #4259）。
+# parse_frontmatter_fields moved to contract.py (#4238). Re-export for existing callers.
+# noqa F401 keeps ruff --fix from stripping the re-export (upstream #4259).
 from issuesmith.contract import parse_frontmatter_fields, validate_frontmatter  # noqa: F401
 from issuesmith.queue_store import (
     DEFAULT_SEED_PATH,
