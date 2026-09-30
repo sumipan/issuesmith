@@ -27,8 +27,8 @@ _CHANGED_FILES_EXCLUDE_PREFIXES: tuple[str, ...] = ("jobs/", "logs/", ".pipeline
 
 _LINT_NO_AUTOFIX_RULES: frozenset[str] = frozenset({"F401", "F811", "F841"})
 _LINT_NO_AUTOFIX_HINT = (
-    "（自動修正しません。他モジュールから import される再エクスポートなら __all__ に載せるか"
-    "行末に # noqa: {code} を付け、本当に不要なら削除してください）"
+    " (Not auto-fixed. For re-exports imported by other modules, add to __all__ "
+    "or append # noqa: {code} at line end; remove only if truly unused.)"
 )
 
 
