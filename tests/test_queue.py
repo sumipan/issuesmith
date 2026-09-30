@@ -454,8 +454,7 @@ class TestDeterministicDecision:
             "automation", "low", _NOW, ("bot",),
         )
         d = deterministic_decision(req, {"state": "OPEN", "title": "x", "body": "no yaml", "labels": []})
-        assert d.kind == "rejected"
-        assert d.add_rejected_label is True
+        assert d.kind == "keep"
 
     def test_superseded_newer_semver(self):
         from issuesmith.queue_store import QueueRequest
@@ -546,6 +545,226 @@ class TestDeterministicDecision:
             ],
         )
         assert d.kind == "keep"
+
+
+_EMPTY_ALLOW_PATHS_BODY = (
+    "```yaml\n"
+    "target_repo: sumipan/nexus\n"
+    "base_branch: main\n"
+    "allow_paths: []\n"
+    "```\n"
+)
+
+
+class TestQueueRepair:
+    @staticmethod
+    def _tracking_client(client: _ProdShapeClient) -> _ProdShapeClient:
+        original_update = client.issue_update
+
+        def tracking_update(number, labels_add=None, labels_remove=None):
+            original_update(number, labels_add=labels_add, labels_remove=labels_remove)
+            labels = list(client.issues[number].get("labels") or [])
+            remove = set(labels_remove or [])
+            labels = [lab for lab in labels if lab.get("name") not in remove]
+            for lab in labels_add or []:
+                if not any(existing.get("name") == lab for existing in labels):
+                    labels.append({"name": lab})
+            client.issues[number]["labels"] = labels
+
+        client.issue_update = tracking_update  # type: ignore[method-assign]
+        return client
+
+    def test_dispatch_repair_enqueues_draft_and_keeps_request_active(self, tmp_path, monkeypatch):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from issuesmith import queue as qmod
+        from issuesmith.queue_triage import comment_marker
+
+        store = _store(tmp_path)
+        r = store.enqueue(
+            issue=50,
+            phase="develop",
+            source="skill",
+            actor_kind="human",
+            priority="normal",
+            requested_by=["alice"],
+            requested_at=_NOW,
+        )
+        client = self._tracking_client(
+            _ProdShapeClient(
+                issues={
+                    50: {
+                        "state": "OPEN",
+                        "title": "t",
+                        "body": _EMPTY_ALLOW_PATHS_BODY,
+                        "labels": [{"name": "issuesmith:draft-done"}],
+                    },
+                },
+                open_issue_rows=[
+                    {
+                        "number": 50,
+                        "title": "t",
+                        "state": "open",
+                        "body": _EMPTY_ALLOW_PATHS_BODY,
+                        "labels": [{"name": "issuesmith:draft-done"}],
+                    }
+                ],
+            )
+        )
+        monkeypatch.setattr(qmod, "advance_milestone_chains", lambda *a, **k: None)
+        monkeypatch.setattr(qmod, "_dispatch_pipeline_ready", lambda snap, idle, now: True)
+        monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
+        now = datetime(2026, 9, 3, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+        result = qmod.dispatch_one(
+            now=now,
+            client=client,
+            store=store,
+            skip_seed=True,
+            call_llm=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")),
+        )
+        assert result.dispatched is True
+        assert result.label == "issuesmith:draft-ready"
+        snap = store.snapshot()
+        assert r.request_id in snap.active_order
+        assert (snap.request_meta.get(r.request_id) or {}).get("repair_count") == 1
+        rejected_updates = [
+            u for u in client.updates if u[1] and "issuesmith:rejected" in u[1]
+        ]
+        assert rejected_updates == []
+        draft_removes = [
+            u for u in client.updates
+            if u[2] and "issuesmith:draft-done" in u[2]
+        ]
+        assert draft_removes
+        draft_requests = [
+            req for req in snap.requests.values()
+            if req.issue == 50 and req.phase == "draft" and req.source == "queue-repair"
+        ]
+        assert len(draft_requests) == 1
+        repair_comments = [
+            body for _, body in client.comments
+            if comment_marker(r.request_id, "repair") in body
+        ]
+        assert len(repair_comments) == 1
+
+    def test_dispatch_repair_limit_rejects(self, tmp_path, monkeypatch):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from issuesmith import queue as qmod
+
+        store = _store(tmp_path)
+        r = store.enqueue(
+            issue=50,
+            phase="develop",
+            source="skill",
+            actor_kind="human",
+            priority="normal",
+            requested_by=["alice"],
+            requested_at=_NOW,
+        )
+        store.update_meta(r.request_id, {"repair_count": 1})
+        client = self._tracking_client(
+            _ProdShapeClient(
+                issues={
+                    50: {
+                        "state": "OPEN",
+                        "title": "t",
+                        "body": _EMPTY_ALLOW_PATHS_BODY,
+                        "labels": [{"name": "issuesmith:draft-done"}],
+                    },
+                },
+                open_issue_rows=[
+                    {
+                        "number": 50,
+                        "title": "t",
+                        "state": "open",
+                        "body": _EMPTY_ALLOW_PATHS_BODY,
+                        "labels": [{"name": "issuesmith:draft-done"}],
+                    }
+                ],
+            )
+        )
+        monkeypatch.setattr(qmod, "advance_milestone_chains", lambda *a, **k: None)
+        monkeypatch.setattr(qmod, "_dispatch_pipeline_ready", lambda snap, idle, now: True)
+        monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
+        now = datetime(2026, 9, 3, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+        qmod.dispatch_one(
+            now=now,
+            client=client,
+            store=store,
+            skip_seed=True,
+            call_llm=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")),
+        )
+        rejected_updates = [
+            u for u in client.updates if u[1] and "issuesmith:rejected" in u[1]
+        ]
+        assert rejected_updates
+        assert rejected_updates[0][0] == 50
+        assert r.request_id not in store.snapshot().active_order
+
+    def test_dispatch_repair_comment_is_idempotent(self, tmp_path, monkeypatch):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from issuesmith import queue as qmod
+        from issuesmith.queue_triage import comment_marker
+
+        store = _store(tmp_path)
+        r = store.enqueue(
+            issue=50,
+            phase="develop",
+            source="skill",
+            actor_kind="human",
+            priority="normal",
+            requested_by=["alice"],
+            requested_at=_NOW,
+        )
+        client = self._tracking_client(
+            _ProdShapeClient(
+                issues={
+                    50: {
+                        "state": "OPEN",
+                        "title": "t",
+                        "body": _EMPTY_ALLOW_PATHS_BODY,
+                        "labels": [{"name": "issuesmith:draft-done"}],
+                    },
+                },
+                open_issue_rows=[
+                    {
+                        "number": 50,
+                        "title": "t",
+                        "state": "open",
+                        "body": _EMPTY_ALLOW_PATHS_BODY,
+                        "labels": [{"name": "issuesmith:draft-done"}],
+                    }
+                ],
+            )
+        )
+        marker = comment_marker(r.request_id, "repair")
+
+        def get_comments(number):
+            return [{"body": body} for _, body in client.comments if marker in body]
+
+        client.get_issue_comments = get_comments  # type: ignore[method-assign]
+        monkeypatch.setattr(qmod, "advance_milestone_chains", lambda *a, **k: None)
+        monkeypatch.setattr(qmod, "_dispatch_pipeline_ready", lambda snap, idle, now: True)
+        monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
+        now = datetime(2026, 9, 3, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+        for _ in range(2):
+            qmod.dispatch_one(
+                now=now,
+                client=client,
+                store=store,
+                skip_seed=True,
+                call_llm=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")),
+            )
+        repair_comments = [
+            body for _, body in client.comments
+            if marker in body
+        ]
+        assert len(repair_comments) == 1
 
 
 class TestTriage:

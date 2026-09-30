@@ -15,6 +15,7 @@ import yaml
 from ghdag.llm import call_text
 from packaging.version import InvalidVersion, Version
 
+from issuesmith.contract import parse_frontmatter_fields, validate_frontmatter
 from issuesmith.queue_store import (
     DEFAULT_SEED_PATH,
     DEFAULT_TRIAGE_LOG_PATH,
@@ -31,6 +32,7 @@ DecisionKind = Literal[
     "superseded",
     "rejected",
     "duplicate",
+    "repair",
 ]
 
 LLMDecision = Literal["keep", "reject"]
@@ -98,11 +100,23 @@ _DEPS_REJECT_REASON_RE = re.compile(
     r"|(dependencies?\s+(not\s+)?(met|resolved|ready))",
     re.IGNORECASE,
 )
+_YAML_REJECT_REASON_RE = re.compile(
+    r"yaml|allow_paths|target_repo|base_branch",
+    re.IGNORECASE,
+)
 
 
 def is_deps_waiting_reject_reason(reason: str) -> bool:
     """True when an LLM reject reason is really a normal deps-wait (must keep)."""
     return bool(_DEPS_REJECT_REASON_RE.search(reason or ""))
+
+
+def is_yaml_reject_reason(reason: str) -> bool:
+    """True when an LLM reject reason targets YAML intake (must keep; deterministic repair)."""
+    return bool(_YAML_REJECT_REASON_RE.search(reason or ""))
+
+
+missing_yaml_fields = validate_frontmatter
 
 
 @dataclass
@@ -174,38 +188,6 @@ def normalize_similar_title(title: str) -> tuple[str, Version] | None:
         kind = f"readme|{m.group('repo').strip().lower()}"
         return kind, ver
     return None
-
-
-def parse_frontmatter_fields(body: str) -> dict[str, Any]:
-    """Extract leading YAML block fields used by issuesmith."""
-    text = body or ""
-    # Support both ```yaml ... ``` and --- ... --- (legacy). Prefer ```yaml.
-    m = re.match(r"^\s*```ya?ml\s*\n(.*?)\n```", text, re.DOTALL | re.IGNORECASE)
-    if m:
-        raw = m.group(1)
-    else:
-        m = re.match(r"^\s*---\s*\n(.*?)\n---", text, re.DOTALL)
-        raw = m.group(1) if m else ""
-    if not raw.strip():
-        return {}
-    try:
-        data = yaml.safe_load(raw) or {}
-    except yaml.YAMLError:
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def missing_yaml_fields(body: str) -> list[str]:
-    data = parse_frontmatter_fields(body)
-    missing: list[str] = []
-    if not data.get("target_repo"):
-        missing.append("target_repo")
-    if not data.get("base_branch"):
-        missing.append("base_branch")
-    allow = data.get("allow_paths")
-    if not isinstance(allow, list) or not allow:
-        missing.append("allow_paths")
-    return missing
 
 
 def comment_marker(request_id: str, outcome: str) -> str:
@@ -304,14 +286,16 @@ def deterministic_decision(
                 comment=True,
             )
 
-    missing = missing_yaml_fields(str(issue.get("body") or ""))
-    if missing:
-        return Decision(
-            kind="rejected",
-            reason=f"missing YAML fields: {', '.join(missing)}",
-            comment=True,
-            add_rejected_label=True,
-        )
+    draft_done = DONE_LABEL.get("draft", "")
+    if phase != "draft" and draft_done and draft_done in labels:
+        missing = validate_frontmatter(str(issue.get("body") or ""))
+        if missing:
+            return Decision(
+                kind="repair",
+                reason=f"missing YAML fields: {', '.join(missing)}",
+                comment=True,
+                add_rejected_label=False,
+            )
 
     return Decision(kind="keep", reason="ok", comment=False)
 
@@ -629,7 +613,8 @@ def triage(
         "Return ONLY a JSON object with keys order and decisions.\n"
         "order must be a permutation of all request_id values.\n"
         "Each decision: request_id, decision(keep|reject), reason(non-empty), uncertain_flag(bool).\n"
-        "Reject ONLY for permanent problems (duplicate, obsolete, unsupported repo, missing YAML).\n"
+        "Reject ONLY for permanent problems (duplicate, obsolete, unsupported repo).\n"
+        "Do NOT reject for missing YAML — deterministic intake sends those to repair; use keep.\n"
         "Do NOT reject for unresolved dependencies / deps waiting — that is normal queue wait; use keep.\n"
         f"requests={json.dumps(payload_requests, ensure_ascii=False)}\n"
     )
@@ -693,6 +678,15 @@ def triage(
                             request_id=d.request_id,
                             decision="keep",
                             reason=f"LLM deps reject ignored: {d.reason}",
+                            uncertain_flag=d.uncertain_flag,
+                        )
+                    )
+                elif d.decision == "reject" and is_yaml_reject_reason(d.reason):
+                    fixed.append(
+                        TriageDecision(
+                            request_id=d.request_id,
+                            decision="keep",
+                            reason=f"LLM yaml reject ignored: {d.reason}",
                             uncertain_flag=d.uncertain_flag,
                         )
                     )

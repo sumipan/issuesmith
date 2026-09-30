@@ -34,6 +34,7 @@ from issuesmith.queue_store import (
     DEFAULT_NIGHT_STATE_PATH,
     DEFAULT_SEED_PATH,
     DEFAULT_TRIAGE_LOG_PATH,
+    QueueRequest,
     QueueSnapshot,
     QueueStore,
     QueueValidationError,
@@ -892,6 +893,7 @@ def _list_open_issues(client: ForgePort) -> list[dict[str, Any]]:
 
 
 WORKFLOW_NAME = "issuesmith"
+MAX_REPAIR_PER_REQUEST = 1
 _PHASE_HANDLER: dict[str, str] = {
     "draft": "brushup",
     "develop": "impl",
@@ -1138,6 +1140,51 @@ def _ensure_comment(
     client.issue_comment(issue_number, f"{body}\n\n{marker}")
 
 
+def _apply_repair(
+    store: QueueStore,
+    client: ForgePort,
+    request_id: str,
+    req: QueueRequest,
+    issue: dict[str, Any],
+    reason: str,
+) -> None:
+    snap = store.snapshot()
+    count = int((snap.request_meta.get(request_id) or {}).get("repair_count", 0))
+    if count >= MAX_REPAIR_PER_REQUEST:
+        _apply_terminal(
+            store,
+            client,
+            request_id,
+            req.issue,
+            "rejected",
+            f"{reason} (repair limit reached)",
+            add_rejected_label=True,
+            comment=True,
+        )
+        return
+
+    body = (
+        "## Intake check: asked B1 to fix the Issue body\n\n"
+        f"{reason}\n\n"
+        "The queue will re-run draft (B1) to fix the Issue body, then re-check this request "
+        "after draft completes."
+    )
+    _ensure_comment(client, req.issue, request_id, "repair", body)
+    apply_redispatch_labels(client, req.issue, "draft", label_names(issue))
+    store.enqueue(
+        issue=req.issue,
+        phase="draft",
+        source="queue-repair",
+        actor_kind="automation",
+        priority=req.priority,
+        requested_by=[f"queue-repair:{request_id}"],
+    )
+    store.update_meta(
+        request_id,
+        {"repair_count": count + 1, "repair_reason": reason},
+    )
+
+
 def _apply_terminal(
     store: QueueStore,
     client: ForgePort,
@@ -1290,6 +1337,9 @@ def dispatch_one(
             req, issue, open_issues=open_issues, force=store.is_force(snap, rid)
         )
         if decision.kind == "keep":
+            continue
+        if decision.kind == "repair":
+            _apply_repair(store, client, rid, req, issue, decision.reason)
             continue
         _apply_terminal(
             store,
@@ -1516,6 +1566,9 @@ def dispatch_one(
             decision = deterministic_decision(
                 req, issue, open_issues=open_issues, force=store.is_force(snap, rid)
             )
+            if decision.kind == "repair":
+                _apply_repair(store, client, rid, req, issue, decision.reason)
+                continue
             if decision.kind != "keep":
                 _apply_terminal(
                     store,
