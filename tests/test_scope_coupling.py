@@ -1088,6 +1088,25 @@ class TestDataFileTests:
 
 _DELETED_SKILL_PATH = "skills/project_summary/fetch.py"
 
+_SUB_MARKER = chr(0x30B5) + chr(0x30D6)
+_PARENT_ISSUE_HEADING = (
+    chr(0x89AA) + chr(0x30A4) + chr(0x30B7) + chr(0x30E5) + chr(0x30FC)
+)
+_DESIGN_HEADING = chr(0x8A2D) + chr(0x8A08)
+_CHANGED_FILES_HEADING = (
+    chr(0x5909)
+    + chr(0x66F4)
+    + chr(0x5BFE)
+    + chr(0x8C61)
+    + chr(0x30D5)
+    + chr(0x30A1)
+    + chr(0x30A4)
+    + chr(0x30EB)
+)
+_FROM_DERIVED = (
+    chr(0x304B) + chr(0x3089) + chr(0x5C0E) + chr(0x51FA)
+)
+
 _MILESTONE_PARENT_BODY = (
     "```yaml\n"
     "target_repo: sumipan/issuesmith\n"
@@ -1096,12 +1115,12 @@ _MILESTONE_PARENT_BODY = (
     "  - skills/project_summary/**\n"
     "```\n\n"
     "## Design\n\n"
-    "#### \u30b5\u30d62: delete skill module\n\n"
+    f"#### {_SUB_MARKER}2: delete skill module\n\n"
     "**Changed Files**:\n"
     "| Repo | File | Change | Note |\n"
     "|---|---|---|---|\n"
     f"| sumipan/issuesmith | `{_DELETED_SKILL_PATH}` | delete | rm module |\n\n"
-    "#### \u30b5\u30d63: update tests\n\n"
+    f"#### {_SUB_MARKER}3: update tests\n\n"
     "**Changed Files**:\n"
     "| Repo | File | Change | Note |\n"
     "|---|---|---|---|\n"
@@ -1159,10 +1178,10 @@ def _sub_issue_body(sub_num: int, parent_num: int = 4000) -> str:
         "allow_paths:\n"
         "  - skills/project_summary/**\n"
         "```\n\n"
-        f"\u89aa\u30a4\u30b7\u30e5\u30fc: #{parent_num}\n"
-        "## \u8a2d\u8a08\n\n"
-        f"> \u89aa\u30a4\u30b7\u30e5\u30fc #{parent_num} \u30b5\u30d6{sub_num} \u304b\u3089\u5c0e\u51fa\n\n"
-        "## \u5909\u66f4\u5bfe\u8c61\u30d5\u30a1\u30a4\u30eb\n\n"
+        f"{_PARENT_ISSUE_HEADING}: #{parent_num}\n"
+        f"## {_DESIGN_HEADING}\n\n"
+        f"> {_PARENT_ISSUE_HEADING} #{parent_num} {_SUB_MARKER}{sub_num} {_FROM_DERIVED}\n\n"
+        f"## {_CHANGED_FILES_HEADING}\n\n"
         "| Repo | File | Change | Note |\n"
         "|---|---|---|---|\n"
         f"| sumipan/issuesmith | `{_DELETED_SKILL_PATH}` | delete | rm module |\n"

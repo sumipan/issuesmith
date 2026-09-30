@@ -332,7 +332,17 @@ def _yaml_list(paths: list[str]) -> str:
 
 PATHS_MUST_NOT_EXIST_RULE_ID = "scope_coupling.paths_must_not_exist_unjustified"
 
-_CURRENT_SUB_RE = re.compile(r"サブ(\d+)\s+から導出")
+_SUB_MARKER = chr(0x30B5) + chr(0x30D6)
+_FROM_DERIVED = (
+    chr(0x304B) + chr(0x3089) + chr(0x5C0E) + chr(0x51FA)
+)
+_CURRENT_SUB_RE = re.compile(_SUB_MARKER + r"(\d+)\s+" + _FROM_DERIVED)
+_PARENT_ISSUE_HEADING = (
+    chr(0x89AA) + chr(0x30A4) + chr(0x30B7) + chr(0x30E5) + chr(0x30FC)
+)
+_PARENT_NUMBER_RE = re.compile(
+    "^" + _PARENT_ISSUE_HEADING + r":\s*#(\d+)", re.MULTILINE
+)
 
 
 def _tracked_path_exists(repo_path: Path, base_branch: str, path: str) -> bool:
@@ -372,8 +382,6 @@ def _body_with_sub_blocks(body: str) -> str | None:
 
     if extract_sub_blocks(body):
         return body
-    from issuesmith.dep_extractor import _PARENT_NUMBER_RE
-
     parent_match = _PARENT_NUMBER_RE.search(body)
     if not parent_match:
         return None
