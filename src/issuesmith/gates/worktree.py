@@ -25,6 +25,39 @@ from issuesmith.gates.base import ContractInput
 
 _CHANGED_FILES_EXCLUDE_PREFIXES: tuple[str, ...] = ("jobs/", "logs/", ".pipeline-state/")
 
+_LINT_NO_AUTOFIX_RULES: frozenset[str] = frozenset({"F401", "F811", "F841"})
+_LINT_NO_AUTOFIX_HINT = (
+    " (Not auto-fixed. For re-exports imported by other modules, add to __all__ "
+    "or append # noqa: {code} at line end; remove only if truly unused.)"
+)
+
+
+def _lint_auto_fixable(e: dict) -> bool:
+    code = e.get("code", "")
+    if code in _LINT_NO_AUTOFIX_RULES:
+        return False
+    fix = e.get("fix")
+    if not fix:
+        return False
+    return fix.get("applicability") == "safe"
+
+
+def _lint_violation_message(e: dict) -> str:
+    base = f"{e.get('filename', '')}:{e.get('row', '')}: {e.get('message', '')}"
+    code = e.get("code", "")
+    if code in _LINT_NO_AUTOFIX_RULES:
+        return base + _LINT_NO_AUTOFIX_HINT.format(code=code)
+    return base
+
+
+def _lint_fix_hint(e: dict, auto_fixable: bool) -> str | None:
+    if auto_fixable:
+        return "ruff check --fix"
+    code = e.get("code", "")
+    if code in _LINT_NO_AUTOFIX_RULES:
+        return _LINT_NO_AUTOFIX_HINT.format(code=code)
+    return None
+
 
 def changed_files(worktree_path: Path, base_branch: str) -> list[str]:
     """Return sorted changed files vs origin/<base_branch> plus uncommitted/untracked.
@@ -109,25 +142,28 @@ class LintGate:
                 auto_fixable=True,
                 fix_hint="ruff check --fix",
             )]
-        return [
-            Violation(
+        violations: list[Violation] = []
+        for e in errors:
+            auto_fixable = _lint_auto_fixable(e)
+            violations.append(Violation(
                 rule_id=f"lint.{e.get('code', 'unknown')}",
                 severity="fail",
-                message=(
-                    f"{e.get('filename', '')}:{e.get('row', '')}: {e.get('message', '')}"
-                ),
+                message=_lint_violation_message(e),
                 location=e.get("filename"),
-                auto_fixable=True,
-                fix_hint="ruff check --fix",
-            )
-            for e in errors
-        ]
+                auto_fixable=auto_fixable,
+                fix_hint=_lint_fix_hint(e, auto_fixable),
+            ))
+        return violations
 
     def fix(self, inp: ContractInput) -> ContractInput:
         targets = self._targets()
         if targets:
             subprocess.run(
-                ["ruff", "check", "--fix", *targets],
+                [
+                    "ruff", "check", "--fix",
+                    "--unfixable", ",".join(sorted(_LINT_NO_AUTOFIX_RULES)),
+                    *targets,
+                ],
                 capture_output=True, check=False,
             )
         return inp
