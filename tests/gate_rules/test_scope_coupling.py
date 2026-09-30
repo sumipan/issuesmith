@@ -126,13 +126,13 @@ def test_uncovered_referrers_yield_violation(repo):
 def test_git_grep_runs_all_three_patterns(repo):
     body = _body(["scripts/git-sync.py"], rows=_DELETE_ROW)
     calls: list[str] = []
-    real = scope_coupling._git_grep
+    real = scope_coupling._git_grep_lines
 
     def spy(root, pattern, pathspec):
         calls.append(pattern)
         return real(root, pattern, pathspec)
 
-    with mock.patch.object(scope_coupling, "_git_grep", side_effect=spy):
+    with mock.patch.object(scope_coupling, "_git_grep_lines", side_effect=spy):
         check_deletion_references(body, ["scripts/git-sync.py"], repo)
     assert {"git-sync.py", "git-sync", "git_sync"} <= set(calls)
 
@@ -500,6 +500,143 @@ def test_uncovered_deletion_references_no_false_positive_from_common_stem(tmp_pa
     assert "tests/test_other_progress.py" not in referrers
     # test_bridge.py uses the module path — must be reported
     assert "tests/test_bridge.py" in referrers
+
+
+def _init_repo(root: Path, files: dict[str, str]) -> Path:
+    for rel, text in files.items():
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+    _git(root, "init", "-q")
+    _git(root, "add", "-A")
+    _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+    return root
+
+
+def test_nonunique_fetch_name_skips_partial_filename_hits(tmp_path):
+    """Non-unique fetch.py: partial filename matches are ignored (#4245)."""
+    root = tmp_path / "fetch_repo"
+    files = {
+        "skills/a/scripts/fetch.py": "# target\n",
+        "other/skill/scripts/fetch.py": "# other fetch\n",
+        "scripts/x-fetch.py": 'CMD = "x-fetch only"\n',
+        "tools/ref.py": 'PATH = "skills/a/scripts/fetch.py"\n',
+    }
+    _init_repo(root, files)
+    body = _body(
+        ["skills/a/scripts/fetch.py"],
+        rows="| sumipan/issuesmith | skills/a/scripts/fetch.py | delete | retire |",
+    )
+    refs = scope_coupling.uncovered_deletion_references(
+        body, ["skills/a/scripts/fetch.py"], root
+    )
+    referrers = refs.get("skills/a/scripts/fetch.py", [])
+    assert "scripts/x-fetch.py" not in referrers
+    assert "other/skill/scripts/fetch.py" not in referrers
+    assert "tools/ref.py" in referrers
+
+
+def test_unique_fetch_name_requires_filename_boundary(tmp_path):
+    root = tmp_path / "solo_fetch"
+    files = {
+        "scripts/solo/fetch.py": "# solo\n",
+        "scripts/x-fetch.py": 'CMD = "1on1-slack-fetch.py"\n',
+        "tools/quote.py": 'NAME = "fetch.py"\n',
+        "tools/path.py": 'PATH = "scripts/solo/fetch.py"\n',
+    }
+    _init_repo(root, files)
+    body = _body(
+        ["scripts/solo/fetch.py"],
+        rows="| sumipan/issuesmith | scripts/solo/fetch.py | delete | retire |",
+    )
+    refs = scope_coupling.uncovered_deletion_references(
+        body, ["scripts/solo/fetch.py"], root
+    )
+    referrers = refs.get("scripts/solo/fetch.py", [])
+    assert "scripts/x-fetch.py" not in referrers
+    assert "tools/quote.py" in referrers
+    assert "tools/path.py" in referrers
+
+
+def test_unique_compaction_stem_requires_identifier_boundary(tmp_path):
+    root = tmp_path / "compaction_repo"
+    files = {
+        "tools/secretary/_compaction.py": "# module\n",
+        "tools/needs.py": "def needs_compaction():\n    pass\n",
+        "tools/import_mod.py": "from tools.secretary import _compaction\n",
+        "tools/import_dot.py": "tools.secretary._compaction\n",
+        "tools/import_bare.py": "import _compaction\n",
+    }
+    _init_repo(root, files)
+    body = _body(
+        ["tools/secretary/_compaction.py"],
+        rows="| sumipan/issuesmith | tools/secretary/_compaction.py | delete | retire |",
+    )
+    refs = scope_coupling.uncovered_deletion_references(
+        body, ["tools/secretary/_compaction.py"], root
+    )
+    referrers = refs.get("tools/secretary/_compaction.py", [])
+    assert "tools/needs.py" not in referrers
+    assert "tools/import_mod.py" in referrers
+    assert "tools/import_dot.py" in referrers
+    assert "tools/import_bare.py" in referrers
+
+
+def test_memory_dream_stem_boundary(tmp_path):
+    root = tmp_path / "dream_py"
+    files = {
+        "scripts/memory-dream.py": "# module\n",
+        "tools/fail.py": '"memory_dream_2026-09-27.failed"\n',
+        "tools/import.py": "import memory_dream\n",
+    }
+    _init_repo(root, files)
+    body = _body(
+        ["scripts/memory-dream.py"],
+        rows="| sumipan/issuesmith | scripts/memory-dream.py | delete | retire |",
+    )
+    refs = scope_coupling.uncovered_deletion_references(
+        body, ["scripts/memory-dream.py"], root
+    )
+    referrers = refs.get("scripts/memory-dream.py", [])
+    assert "tools/fail.py" not in referrers
+    assert "tools/import.py" in referrers
+
+
+def test_non_py_json_deletion_skips_prose_dream(tmp_path):
+    root = tmp_path / "dream_json"
+    files = {
+        "chat/dream/dream.json": "{}\n",
+        "scripts/prose.py": "text about a dream here\n",
+        "scripts/mltgnt.py": "from mltgnt.memory.dream import x\n",
+    }
+    _init_repo(root, files)
+    body = _body(
+        ["chat/dream/dream.json"],
+        rows="| sumipan/issuesmith | chat/dream/dream.json | delete | retire |",
+    )
+    refs = scope_coupling.uncovered_deletion_references(
+        body, ["chat/dream/dream.json"], root
+    )
+    assert refs == {}
+
+
+def test_check_deletion_references_fix_hint_includes_kind_and_line(tmp_path):
+    root = tmp_path / "hint_repo"
+    files = {
+        "scripts/solo/fetch.py": "# solo\n",
+        "tools/path.py": 'PATH = "scripts/solo/fetch.py"\n',
+    }
+    _init_repo(root, files)
+    body = _body(
+        ["scripts/solo/fetch.py"],
+        rows="| sumipan/issuesmith | scripts/solo/fetch.py | delete | retire |",
+    )
+    [v] = check_deletion_references(body, ["scripts/solo/fetch.py"], root)
+    hint = v.fix_hint or ""
+    assert "tools/path.py:" in hint
+    assert "`fetch.py`" in hint or "`scripts/solo/fetch.py`" in hint
+    assert "name `" in hint or "path `" in hint
+    assert 'PATH = "scripts/solo/fetch.py"' in hint
 
 
 def test_no_stem_search_from_allow_paths_path(tmp_path):

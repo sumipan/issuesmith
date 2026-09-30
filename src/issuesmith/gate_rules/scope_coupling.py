@@ -351,6 +351,56 @@ def _stem_is_unique_in_repo(stem: str, repo_path: Path) -> bool:
         return False
 
 
+def _filename_is_unique_in_repo(name: str, repo_path: Path) -> bool:
+    """Return True if exactly one tracked file in repo_path has this basename."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo_path), "ls-files"],
+            capture_output=True, text=True, check=False,
+        )
+        if proc.returncode != 0:
+            return False
+        return sum(1 for f in proc.stdout.splitlines() if Path(f).name == name) == 1
+    except Exception:
+        return False
+
+
+def _deletion_search_key_kinds(
+    path: str, repo_path: Path | None = None
+) -> list[tuple[str, str]]:
+    """Return ``(key, kind)`` pairs for a deleted path (duplicate keys removed, order preserved)."""
+    name = Path(path).name
+    if name in _IGNORE_FILENAMES:
+        return []
+
+    kinds: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    def add(key: str, kind: str) -> None:
+        if key not in seen:
+            seen.add(key)
+            kinds.append((key, kind))
+
+    if _is_valid_key(name):
+        if repo_path is None or _filename_is_unique_in_repo(name, repo_path):
+            add(name, "name")
+
+    parts = Path(path).with_suffix("").parts
+    if len(parts) > 1:
+        add(".".join(parts), "module")
+        add(path, "path")
+
+    if Path(path).suffix == ".py" and repo_path is not None:
+        stem = Path(path).stem
+        if _is_valid_key(stem) and _stem_is_unique_in_repo(stem, repo_path):
+            add(stem, "stem")
+            stem_under = stem.replace("-", "_")
+            if stem_under != stem:
+                add(stem_under, "stem")
+
+    return kinds
+
+
 def deletion_search_keys(path: str, repo_path: Path | None = None) -> list[str]:
     """Return grep keys for a deleted path (duplicates removed).
 
@@ -358,37 +408,46 @@ def deletion_search_keys(path: str, repo_path: Path | None = None) -> list[str]:
     (dot-separated, e.g. ``tools.mltgnt_bridge.progress``) and slash-path
     (e.g. ``tools/mltgnt_bridge/progress.py``) when the file is in a subdirectory.
 
-    Adds bare stem and its dash→underscore variant only when ``repo_path`` is given
-    and the stem is unique across all tracked files (#4165).
+    Adds bare stem and its dash→underscore variant only when ``repo_path`` is given,
+    the path is ``.py``, and the stem is unique across all tracked files (#4165).
     Without ``repo_path`` the stem is omitted on the safe side.
     """
-    name = Path(path).name
-    if name in _IGNORE_FILENAMES:
+    return [key for key, _kind in _deletion_search_key_kinds(path, repo_path)]
+
+
+def _git_grep_lines(root: Path, pattern: str, pathspec: str) -> list[tuple[str, str]]:
+    """Return ``(relative_path, line_body)`` from ``git grep -n --fixed-strings``."""
+    cmd = ["git", "-C", str(root), "grep", "-n", "--fixed-strings", "--", pattern]
+    if pathspec:
+        cmd.append(pathspec)
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if proc.returncode not in (0, 1):
         return []
+    rows: list[tuple[str, str]] = []
+    for raw in proc.stdout.splitlines():
+        if not raw.strip():
+            continue
+        rel, _, line_body = raw.partition(":")
+        if not rel or not line_body:
+            continue
+        _, _, content = line_body.partition(":")
+        rows.append((rel.strip(), content if content else line_body))
+    return rows
 
-    keys: list[str] = []
 
-    if _is_valid_key(name):
-        keys.append(name)
-
-    parts = Path(path).with_suffix("").parts
-    if len(parts) > 1:
-        module_path = ".".join(parts)
-        if module_path not in keys:
-            keys.append(module_path)
-        if path not in keys:
-            keys.append(path)
-
-    stem = Path(path).stem
-    if repo_path is not None and _is_valid_key(stem):
-        if _stem_is_unique_in_repo(stem, repo_path):
-            if stem not in keys:
-                keys.append(stem)
-            stem_under = stem.replace("-", "_")
-            if stem_under != stem and stem_under not in keys:
-                keys.append(stem_under)
-
-    return keys
+def _key_matches_line(key: str, kind: str, line: str) -> bool:
+    if kind == "path":
+        return True
+    escaped = re.escape(key)
+    if kind == "module":
+        pattern = rf"(?<![A-Za-z0-9_]){escaped}(?![A-Za-z0-9_])"
+    elif kind == "name":
+        pattern = rf"(?<![A-Za-z0-9_.\-]){escaped}(?![A-Za-z0-9_])"
+    elif kind == "stem":
+        pattern = rf"(?<![A-Za-z0-9_]){escaped}(?![A-Za-z0-9_])"
+    else:
+        return False
+    return re.search(pattern, line) is not None
 
 
 def _deleted_paths(body: str, target_repo: str) -> list[str]:
@@ -404,18 +463,12 @@ def _deleted_paths(body: str, target_repo: str) -> list[str]:
     return paths
 
 
-def uncovered_deletion_references(
+def _deletion_hits(
     body: str,
     allow_paths: list[str],
     repo_path: Path,
-) -> dict[str, list[str]]:
-    """Map each deleted path to its referrers outside ``allow_paths`` / ``paths_must_not_exist``.
-
-    For every change-table row whose change type matches ``scope_size.delete_words``, ``git grep``
-    the base checkout at ``repo_path`` under :data:`DELETION_SEARCH_DIRS` for the file name, stem
-    and module name.
-    Deleted paths without uncovered referrers are omitted.
-    """
+) -> dict[str, list[tuple[str, str, str, str]]]:
+    """Map each deleted path to uncovered ``(referrer, key, kind, line)`` tuples."""
     try:
         metadata = parse_issue_metadata(body)
     except Exception:
@@ -431,38 +484,72 @@ def uncovered_deletion_references(
     )
     covered = list(allow_paths) + must_not_exist
 
-    result: dict[str, list[str]] = {}
+    result: dict[str, list[tuple[str, str, str, str]]] = {}
     for path in deleted:
-        hits: set[str] = set()
-        for key in deletion_search_keys(path, repo_path):
+        by_referrer: dict[str, tuple[str, str, str, str]] = {}
+        for key, kind in _deletion_search_key_kinds(path, repo_path):
             for d in DELETION_SEARCH_DIRS:
-                hits.update(_git_grep(repo_path, key, d))
-        uncovered = sorted(
-            f for f in hits if f not in deleted and not _in_allow_paths(f, covered)
-        )
-        if uncovered:
-            result[path] = uncovered
+                for rel_path, line in _git_grep_lines(repo_path, key, d):
+                    if rel_path in deleted or _in_allow_paths(rel_path, covered):
+                        continue
+                    if not _key_matches_line(key, kind, line):
+                        continue
+                    if rel_path not in by_referrer:
+                        by_referrer[rel_path] = (rel_path, key, kind, line)
+        if by_referrer:
+            result[path] = sorted(by_referrer.values(), key=lambda row: row[0])
     return result
 
 
-def _deletion_violations(refs: dict[str, list[str]]) -> list[Violation]:
-    return [
-        Violation(
-            rule_id=DELETION_RULE_ID,
-            severity="fail",
-            message=(
-                f"files referencing deleted `{path}` are in neither allow_paths nor "
-                "paths_must_not_exist: " + ", ".join(files)
-            ),
-            location=path,
-            auto_fixable=False,
-            fix_hint=(
-                "add them to allow_paths (to update the reference) or paths_must_not_exist "
-                "(to delete the referrer too):\n" + _yaml_list(files)
-            ),
+def uncovered_deletion_references(
+    body: str,
+    allow_paths: list[str],
+    repo_path: Path,
+) -> dict[str, list[str]]:
+    """Map each deleted path to its referrers outside ``allow_paths`` / ``paths_must_not_exist``.
+
+    For every change-table row whose change type matches ``scope_size.delete_words``, ``git grep``
+    the base checkout at ``repo_path`` under :data:`DELETION_SEARCH_DIRS` for the file name, stem
+    and module name, then re-check each matching line with kind-specific boundary rules.
+    Deleted paths without uncovered referrers are omitted.
+    """
+    hits = _deletion_hits(body, allow_paths, repo_path)
+    return {
+        path: [referrer for referrer, _key, _kind, _line in rows]
+        for path, rows in hits.items()
+    }
+
+
+def _deletion_violations(
+    hits: dict[str, list[tuple[str, str, str, str]]],
+) -> list[Violation]:
+    violations: list[Violation] = []
+    for path, rows in hits.items():
+        files = [referrer for referrer, _key, _kind, _line in rows]
+        detail_lines = "\n".join(
+            f"- {referrer}: {kind} `{key}` → {line.strip()[:120]}"
+            for referrer, key, kind, line in rows
         )
-        for path, files in refs.items()
-    ]
+        violations.append(
+            Violation(
+                rule_id=DELETION_RULE_ID,
+                severity="fail",
+                message=(
+                    f"files referencing deleted `{path}` are in neither allow_paths nor "
+                    "paths_must_not_exist: " + ", ".join(files)
+                ),
+                location=path,
+                auto_fixable=False,
+                fix_hint=(
+                    "add them to allow_paths (to update the reference) or paths_must_not_exist "
+                    "(to delete the referrer too):\n"
+                    + _yaml_list(files)
+                    + "\n"
+                    + detail_lines
+                ),
+            )
+        )
+    return violations
 
 
 def check_deletion_references(
@@ -471,7 +558,7 @@ def check_deletion_references(
     repo_path: Path,
 ) -> list[Violation]:
     """``scope_coupling.deletion_reference_uncovered`` — one violation per deleted path."""
-    return _deletion_violations(uncovered_deletion_references(body, allow_paths, repo_path))
+    return _deletion_violations(_deletion_hits(body, allow_paths, repo_path))
 
 
 def deletion_references_for_body(body: str) -> dict[str, list[str]]:
@@ -593,7 +680,17 @@ class ScopeCouplingRules:
         if not cfg.scope_coupling.enabled:
             # ``enabled: false`` turns off the caller/test coupling check only; deleted-file
             # referrers are always checked (nexus #3953).
-            return _deletion_violations(deletion_references_for_body(body))
+            try:
+                metadata = parse_issue_metadata(body)
+            except Exception:
+                return []
+            allow_paths = _parse_allow_paths(metadata)
+            if not allow_paths:
+                return []
+            root = resolve_scope_root(metadata, cfg)
+            if root is None:
+                return []
+            return _deletion_violations(_deletion_hits(body, allow_paths, root))
 
         try:
             metadata = parse_issue_metadata(body)
