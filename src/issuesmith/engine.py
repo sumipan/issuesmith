@@ -904,12 +904,107 @@ def exec_file(
 # 独立行であれば、LLM が付けがちなバッククォート / 太字 / アンダースコアの装飾は許容する
 # （2026-09-09、codex が `PIPELINE_STATUS: CP2_PASS` をバッククォートで囲んで出力し、
 # 実体は PASS なのに CP2 FAIL ハンドラが発火した）。箇条書きや文中の埋め込みは従来どおり不可。
-_STATUS_LINE_RE = re.compile(r"^[`*_]*PIPELINE_STATUS: (\S+?)[`*_]*\s*$", re.MULTILINE)
+_STATUS_LINE_PREFIX_RE = re.compile(r"^[`*_]*PIPELINE_STATUS: ")
+_STATUS_TRAILING_DECORATION_RE = re.compile(r"^[`*_]+$")
+_STATUS_CHARS = frozenset(string.ascii_uppercase + string.digits)
+
+
+def _read_status_segment(raw: str, start: int) -> int:
+    """Read one [A-Z0-9] segment; return index after the segment."""
+    if start >= len(raw) or raw[start] not in _STATUS_CHARS:
+        return start
+    index = start + 1
+    while index < len(raw) and raw[index] in _STATUS_CHARS:
+        index += 1
+    return index
+
+
+def _trim_over_consumed_status_tail(status: str, remainder: str) -> tuple[str, str]:
+    """Move a glued English word's first letter back out of the last segment."""
+    if not remainder or "_" not in status or not remainder[0].isascii() or not remainder[0].islower():
+        return status, remainder
+    last_us = status.rfind("_")
+    segment = status[last_us + 1 :]
+    if len(segment) < 5 or not segment[-1].isascii() or not segment[-1].isupper():
+        return status, remainder
+    if not segment[-2].isascii() or not segment[-2].isupper():
+        return status, remainder
+    trial_remainder = segment[-1] + remainder
+    if not (
+        len(trial_remainder) > 1
+        and "A" <= trial_remainder[0] <= "Z"
+        and "a" <= trial_remainder[1] <= "z"
+    ):
+        return status, remainder
+    return status[: last_us + 1] + segment[:-1], trial_remainder
+
+
+def _parse_status_identifier(raw: str) -> tuple[str | None, int]:
+    """Return (status, end_index) when raw starts with a status identifier."""
+    if not raw or not ("A" <= raw[0] <= "Z"):
+        return None, 0
+    index = _read_status_segment(raw, 0)
+    while index < len(raw) and raw[index] == "_":
+        next_index = _read_status_segment(raw, index + 1)
+        if next_index == index + 1:
+            break
+        index = next_index
+    if index < len(raw) and raw[index] == ":":
+        next_index = _read_status_segment(raw, index + 1)
+        if next_index == index + 1:
+            return None, 0
+        index = next_index
+        while index < len(raw) and raw[index] == "_":
+            further = _read_status_segment(raw, index + 1)
+            if further == index + 1:
+                break
+            index = further
+    status, remainder = _trim_over_consumed_status_tail(raw[:index], raw[index:])
+    return status, len(status)
+
+
+def _parse_status_token(raw: str) -> tuple[str | None, str | None]:
+    """Parse a status identifier and optional trailing text from raw marker payload.
+
+    Returns (status, trailing) when the line is a valid standalone marker, else (None, None).
+    trailing is non-empty only when glued prose was stripped from the identifier.
+    """
+    status, end = _parse_status_identifier(raw)
+    if status is None:
+        return None, None
+    remainder = raw[end:]
+    if not remainder:
+        return status, None
+    if remainder[0].isspace():
+        if not remainder.strip():
+            return status, None
+        return None, None
+    decoration = _STATUS_TRAILING_DECORATION_RE.match(remainder)
+    if decoration is not None and decoration.end() == len(remainder):
+        return status, None
+    return status, remainder
 
 
 def _extract_status_values(stdout: str) -> list[str]:
     """独立行の PIPELINE_STATUS マーカー値を出現順に返す。"""
-    return _STATUS_LINE_RE.findall(stdout)
+    values: list[str] = []
+    for line in stdout.splitlines():
+        prefix = _STATUS_LINE_PREFIX_RE.match(line)
+        if prefix is None:
+            continue
+        raw = line[prefix.end() :]
+        raw = re.sub(r"^[`*_]+|[`*_]+$", "", raw).rstrip()
+        status, trailing = _parse_status_token(raw)
+        if status is None:
+            continue
+        if trailing is not None:
+            print(
+                f'[issuesmith-engine] marker line had trailing text after {status}: '
+                f'"{trailing}"',
+                file=sys.stderr,
+            )
+        values.append(status)
+    return values
 
 
 def _has_inline_marker(stdout: str, statuses: list[str]) -> bool:
