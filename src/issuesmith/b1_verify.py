@@ -57,6 +57,27 @@ def assumed_labels(body: str, labels: list[str]) -> list[str]:
     return list(labels)
 
 
+def check_paths_must_not_exist_validity(body: str, labels: list[str] | None = None):
+    """B1 helper: reject ``paths_must_not_exist`` this Issue cannot satisfy (#4257).
+
+    Gate logic lives in ``gate_rules.scope_coupling``; this wrapper resolves the
+    target clone and delegates so callers outside the gate registry can reuse it.
+    """
+    from issuesmith.config import get_config
+    from issuesmith.context_hook import parse_issue_metadata
+    from issuesmith.gate_rules.scope_coupling import check_paths_must_not_exist_contract
+    from issuesmith.steps.scope_gate import resolve_scope_root
+
+    try:
+        metadata = parse_issue_metadata(body)
+    except Exception:
+        return []
+    root = resolve_scope_root(metadata, get_config())
+    if root is None:
+        return []
+    return check_paths_must_not_exist_contract(body, root)
+
+
 def collect_violations(body: str, labels: list[str]):
     _assumed = assumed_labels(body, labels)
     violations = []

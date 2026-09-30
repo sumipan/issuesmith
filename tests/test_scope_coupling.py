@@ -1080,3 +1080,174 @@ class TestDataFileTests:
         ):
             violations = ScopeCouplingRules().check(_DATA_FILE_BODY.format(change="modify"), [])
         assert violations == []
+
+
+# ---------------------------------------------------------------------------
+# #4257 — sibling sub coverage for deletion references
+# ---------------------------------------------------------------------------
+
+_DELETED_SKILL_PATH = "skills/project_summary/fetch.py"
+
+_SUB_MARKER = chr(0x30B5) + chr(0x30D6)
+_PARENT_ISSUE_HEADING = (
+    chr(0x89AA) + chr(0x30A4) + chr(0x30B7) + chr(0x30E5) + chr(0x30FC)
+)
+_DESIGN_HEADING = chr(0x8A2D) + chr(0x8A08)
+_CHANGED_FILES_HEADING = (
+    chr(0x5909)
+    + chr(0x66F4)
+    + chr(0x5BFE)
+    + chr(0x8C61)
+    + chr(0x30D5)
+    + chr(0x30A1)
+    + chr(0x30A4)
+    + chr(0x30EB)
+)
+_FROM_DERIVED = (
+    chr(0x304B) + chr(0x3089) + chr(0x5C0E) + chr(0x51FA)
+)
+
+_MILESTONE_PARENT_BODY = (
+    "```yaml\n"
+    "target_repo: sumipan/issuesmith\n"
+    "base_branch: main\n"
+    "allow_paths:\n"
+    "  - skills/project_summary/**\n"
+    "```\n\n"
+    "## Design\n\n"
+    f"#### {_SUB_MARKER}2: delete skill module\n\n"
+    "**Changed Files**:\n"
+    "| Repo | File | Change | Note |\n"
+    "|---|---|---|---|\n"
+    f"| sumipan/issuesmith | `{_DELETED_SKILL_PATH}` | delete | rm module |\n\n"
+    f"#### {_SUB_MARKER}3: update tests\n\n"
+    "**Changed Files**:\n"
+    "| Repo | File | Change | Note |\n"
+    "|---|---|---|---|\n"
+    "| sumipan/issuesmith | `tests/skills/project_summary/test_fetch.py` | modify | update |\n"
+    "| sumipan/issuesmith | `tests/skills/project_summary/test_skill_md.py` | modify | update |\n"
+)
+
+
+def _setup_deletion_repo(tmp_path):
+    import subprocess
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    files = {
+        _DELETED_SKILL_PATH: "def fetch():\n    return 1\n",
+        "tests/skills/project_summary/test_fetch.py": (
+            'from skills.project_summary.fetch import fetch\n'
+        ),
+        "tests/skills/project_summary/test_skill_md.py": (
+            "import skills.project_summary.fetch\n"
+        ),
+        "tests/other/test_uncovered.py": (
+            "from skills.project_summary.fetch import fetch\n"
+        ),
+    }
+    for rel, content in files.items():
+        p = repo / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+    subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "user.email", "t@t.com"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "user.name", "Test"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-m", "init"],
+        check=True,
+        capture_output=True,
+    )
+    return repo
+
+
+def _sub_issue_body(sub_num: int, parent_num: int = 4000) -> str:
+    return (
+        "```yaml\n"
+        "target_repo: sumipan/issuesmith\n"
+        "base_branch: main\n"
+        "allow_paths:\n"
+        "  - skills/project_summary/**\n"
+        "```\n\n"
+        f"{_PARENT_ISSUE_HEADING}: #{parent_num}\n"
+        f"## {_DESIGN_HEADING}\n\n"
+        f"> {_PARENT_ISSUE_HEADING} #{parent_num} {_SUB_MARKER}{sub_num} {_FROM_DERIVED}\n\n"
+        f"## {_CHANGED_FILES_HEADING}\n\n"
+        "| Repo | File | Change | Note |\n"
+        "|---|---|---|---|\n"
+        f"| sumipan/issuesmith | `{_DELETED_SKILL_PATH}` | delete | rm module |\n"
+    )
+
+
+class TestSiblingDeletionReferences:
+    def test_sibling_owned_referrer_is_not_uncovered(self, tmp_path):
+        from issuesmith.gate_rules.scope_coupling import check_deletion_references
+
+        repo = _setup_deletion_repo(tmp_path)
+        body = _sub_issue_body(2)
+        with mock.patch(
+            "issuesmith.gate_rules.scope_coupling._body_with_sub_blocks",
+            return_value=_MILESTONE_PARENT_BODY,
+        ):
+            with mock.patch(
+                "issuesmith.gate_rules.scope_coupling.resolve_scope_root",
+                return_value=repo,
+            ):
+                violations = check_deletion_references(
+                    body,
+                    [_DELETED_SKILL_PATH],
+                    repo,
+                )
+        uncovered = {
+            ref
+            for v in violations
+            for ref in (v.message or "").split(": ", 1)[-1].split(", ")
+        }
+        assert "tests/skills/project_summary/test_fetch.py" not in uncovered
+        assert "tests/skills/project_summary/test_skill_md.py" not in uncovered
+        assert any(
+            "tests/other/test_uncovered.py" in v.message for v in violations
+        )
+
+    def test_uncovered_referrer_still_reported(self, tmp_path):
+        from issuesmith.gate_rules.scope_coupling import check_deletion_references
+
+        repo = _setup_deletion_repo(tmp_path)
+        body = _sub_issue_body(2)
+        with mock.patch(
+            "issuesmith.gate_rules.scope_coupling._body_with_sub_blocks",
+            return_value=_MILESTONE_PARENT_BODY,
+        ):
+            violations = check_deletion_references(
+                body,
+                [_DELETED_SKILL_PATH],
+                repo,
+            )
+        assert violations
+        assert any("tests/other/test_uncovered.py" in v.message for v in violations)
+
+    def test_sibling_note_mentions_sub_number(self, tmp_path):
+        from issuesmith.gate_rules.scope_coupling import check_deletion_references
+
+        repo = _setup_deletion_repo(tmp_path)
+        body = _sub_issue_body(2)
+        with mock.patch(
+            "issuesmith.gate_rules.scope_coupling._body_with_sub_blocks",
+            return_value=_MILESTONE_PARENT_BODY,
+        ):
+            violations = check_deletion_references(
+                body,
+                [_DELETED_SKILL_PATH],
+                repo,
+            )
+        combined = "\n".join((v.message or "") + (v.fix_hint or "") for v in violations)
+        assert "sibling sub #3" in combined.lower()
