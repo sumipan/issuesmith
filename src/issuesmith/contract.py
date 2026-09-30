@@ -16,6 +16,9 @@ Sections covered here:
 from __future__ import annotations
 
 import re
+from typing import Any
+
+import yaml
 
 from issuesmith.config import get_config
 
@@ -209,6 +212,39 @@ def iter_sub_blocks(text: str) -> list[tuple[int, str]]:
         end = min(next_sub_start, next_h_start)
         result.append((sub_num, text[start:end]))
     return result
+
+
+def parse_frontmatter_fields(body: str) -> dict[str, Any]:
+    """Extract leading YAML block fields used by issuesmith."""
+    text = body or ""
+    # Support both ```yaml ... ``` and --- ... --- (legacy). Prefer ```yaml.
+    m = re.match(r"^\s*```ya?ml\s*\n(.*?)\n```", text, re.DOTALL | re.IGNORECASE)
+    if m:
+        raw = m.group(1)
+    else:
+        m = re.match(r"^\s*---\s*\n(.*?)\n---", text, re.DOTALL)
+        raw = m.group(1) if m else ""
+    if not raw.strip():
+        return {}
+    try:
+        data = yaml.safe_load(raw) or {}
+    except yaml.YAMLError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def validate_frontmatter(body: str) -> list[str]:
+    """Return missing YAML contract field names (empty list when valid)."""
+    data = parse_frontmatter_fields(body)
+    missing: list[str] = []
+    if not data.get("target_repo"):
+        missing.append("target_repo")
+    if not data.get("base_branch"):
+        missing.append("base_branch")
+    allow = data.get("allow_paths")
+    if not isinstance(allow, list) or not allow:
+        missing.append("allow_paths")
+    return missing
 
 
 def sub_block(body: str, sub_num: int) -> str:

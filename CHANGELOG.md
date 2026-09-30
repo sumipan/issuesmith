@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Changed
+
+- Queue intake YAML validation now returns `repair` instead of terminal `rejected` for post-draft requests (nexus #4238). `contract.validate_frontmatter()` centralizes the check; `deterministic_decision()` runs it only when `phase != draft` and `issuesmith:draft-done` is present. `_apply_repair()` redispatches draft via `queue-repair`, keeps the original request active with `repair_count`, and rejects only after `MAX_REPAIR_PER_REQUEST` (1). Draft requests with missing YAML are kept so B1 can fix the body. LLM triage no longer rejects for YAML reasons (`is_yaml_reject_reason` downgrades to keep).
+
 ### Fixed
 
 - B1 brushup recovery promotes oversized non-milestone Issues deterministically (nexus #4191). `scope_size.too_many_files` / `too_many_concerns` no longer rely on LLM recovery alone: `b1_verify.apply_deterministic_recovery()` rewrites the body via `scope_size.promote_oversized_issue_body()` (split plan + SUB_HEADER_RE sub designs + parent AC stub), applies `milestone_consistency.fix_label_missing()` (label + milestone object), then `normalize_sub_headers` / `relocate_sub_plan`, re-verifies, and only emits `B1_RECOVERY: DONE` when Verify is clean — otherwise reports unresolved `rule_id`s. `auto_fixable=True` milestone_consistency helpers run before any LLM hand-off; remaining non-auto violations are returned as `llm_violations`. FIX_HINT for `b1_milestone_subdesign.sub_count_mismatch` / `milestone_consistency.label_missing` / `scope_size` now asks for SUB_HEADER_RE form (not English `#### Sub N:`), ending the #4189 recovery oscillation. Promotion preserves the leading yaml metadata block (`upsert_section` alone dropped it).
