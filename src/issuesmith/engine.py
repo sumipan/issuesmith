@@ -130,6 +130,12 @@ TIMEOUT_ENV_VAR = "ISSUESMITH_TIMEOUT_SEC"
 # ghdag classify_common_failure が RATE_LIMIT を持つまでの nexus 側ワークアラウンド（#2798）。
 _RATE_LIMIT_PATTERNS = ("resource_exhausted", "rate limit", "ratelimit", "429")
 
+# 失敗時 stderr 診断の上限（#4239）。行数とバイトの両方で末尾を切り詰める。
+_FAILURE_STDERR_MAX_LINES = 40
+_FAILURE_STDERR_MAX_BYTES = 4096
+# _issuesmith_call が直近の LLM 子プロセス stderr を退避する（call_managed 再試行で上書き）。
+_LAST_LLM_STDERR: list[str] = [""]
+
 _RETRY_WAIT_MAX_SECONDS: int = 1800
 _WAIT_MAX_SEC_DEFAULT: int = 21600  # 6h — budget brake 5h 枠を超えて待つ既定上限 (#3091)
 _RETRY_INTERVAL_SEC_DEFAULT: int = 3600  # 旧 INTERVAL 既定（互換参照用・#3091）
@@ -169,6 +175,19 @@ def _wait_poll_sec() -> int:
 def _is_rate_limited(text: str) -> bool:
     lower = text.lower()
     return any(p in lower for p in _RATE_LIMIT_PATTERNS)
+
+
+def _truncate_failure_stderr(stderr: str) -> str:
+    """Keep the tail of stderr for failure diagnostics (#4239)."""
+    if not stderr:
+        return ""
+    lines = stderr.splitlines()
+    if len(lines) > _FAILURE_STDERR_MAX_LINES:
+        stderr = "\n".join(lines[-_FAILURE_STDERR_MAX_LINES :])
+    encoded = stderr.encode("utf-8", errors="replace")
+    if len(encoded) > _FAILURE_STDERR_MAX_BYTES:
+        stderr = encoded[-_FAILURE_STDERR_MAX_BYTES :].decode("utf-8", errors="replace")
+    return stderr
 
 
 @dataclass(frozen=True)
@@ -565,7 +584,9 @@ def _issuesmith_call(prompt: str, **kwargs):
         kwargs["capabilities"] = _ISSUESMITH_CAPABILITIES
     else:
         kwargs["capabilities"] = _DEFAULT_CAPABILITIES
-    return _ghdag_call(prompt, **kwargs)
+    result = _ghdag_call(prompt, **kwargs)
+    _LAST_LLM_STDERR[0] = result.stderr or ""
+    return result
 
 
 def _failure_class_from_value(value: str) -> FailureClass | None:
@@ -584,6 +605,7 @@ def _record_task_metrics(
     finished_at: float,
     usage,
     failure_class: str | None = None,
+    failure_detail: str | None = None,
 ) -> None:
     tags: dict[str, str] = {
         "role": role,
@@ -591,6 +613,8 @@ def _record_task_metrics(
     }
     if failure_class is not None:
         tags["failure_class"] = failure_class
+    if failure_detail:
+        tags["failure_detail"] = failure_detail
     failure_enum: FailureClass | None = None
     if failure_class is not None:
         failure_enum = _failure_class_from_value(failure_class)
@@ -740,6 +764,8 @@ def _execute(
         file=sys.stderr,
     )
 
+    _LAST_LLM_STDERR[0] = ""
+
     additional_tags = {
         "role": role,
         "template": template or "",
@@ -766,7 +792,10 @@ def _execute(
         if (
             result.returncode != 0
             and result.failure_class is None
-            and _is_rate_limited(result.body)
+            and (
+                _is_rate_limited(result.body)
+                or _is_rate_limited(_LAST_LLM_STDERR[0])
+            )
         ):
             quota_gate.report(
                 engine=result.engine_used,
@@ -836,6 +865,10 @@ def _execute(
     else:
         status = "failed"
 
+    diagnostic_stderr = ""
+    if result.returncode != 0:
+        diagnostic_stderr = _truncate_failure_stderr(_LAST_LLM_STDERR[0])
+
     _record_task_metrics(
         role=role,
         engine=result.engine_used,
@@ -846,12 +879,13 @@ def _execute(
         finished_at=finished_at,
         usage=result.usage,
         failure_class=result.failure_class,
+        failure_detail=diagnostic_stderr or None,
     )
     return subprocess.CompletedProcess(
         args=[],
         returncode=result.returncode,
         stdout=result.body,
-        stderr="",
+        stderr=diagnostic_stderr,
     )
 
 
