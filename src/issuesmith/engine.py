@@ -130,10 +130,10 @@ TIMEOUT_ENV_VAR = "ISSUESMITH_TIMEOUT_SEC"
 # ghdag classify_common_failure が RATE_LIMIT を持つまでの nexus 側ワークアラウンド（#2798）。
 _RATE_LIMIT_PATTERNS = ("resource_exhausted", "rate limit", "ratelimit", "429")
 
-# 失敗時 stderr 診断の上限（#4239）。行数とバイトの両方で末尾を切り詰める。
+# Failure stderr diagnostic limits (#4239); tail-truncate by line count and bytes.
 _FAILURE_STDERR_MAX_LINES = 40
 _FAILURE_STDERR_MAX_BYTES = 4096
-# _issuesmith_call が直近の LLM 子プロセス stderr を退避する（call_managed 再試行で上書き）。
+# _issuesmith_call stashes the latest LLM child stderr (overwritten on call_managed retry).
 _LAST_LLM_STDERR: list[str] = [""]
 
 _RETRY_WAIT_MAX_SECONDS: int = 1800
