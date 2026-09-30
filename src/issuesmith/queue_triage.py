@@ -15,7 +15,7 @@ import yaml
 from ghdag.llm import call_text
 from packaging.version import InvalidVersion, Version
 
-from issuesmith.contract import parse_frontmatter_fields, validate_frontmatter
+from issuesmith.contract import validate_frontmatter
 from issuesmith.queue_store import (
     DEFAULT_SEED_PATH,
     DEFAULT_TRIAGE_LOG_PATH,
