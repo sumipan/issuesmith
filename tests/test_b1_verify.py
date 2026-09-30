@@ -421,3 +421,188 @@ def test_deterministic_recovery_reports_unresolved_when_same_rule_remains(
     assert result.unresolved_reason is not None
     assert "cp1.yaml_contract.missing_block" in result.unresolved_reason
     assert any(v.rule_id == "cp1.yaml_contract.missing_block" for v in result.remaining)
+
+
+def _setup_contract_repo(tmp_path):
+    import subprocess
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    test_file = repo / "tests/skills/project_summary/test_fetch.py"
+    test_file.parent.mkdir(parents=True, exist_ok=True)
+    test_file.write_text("def test_fetch():\n    pass\n", encoding="utf-8")
+    skill = repo / "skills/project-summary/SKILL.md"
+    skill.parent.mkdir(parents=True, exist_ok=True)
+    skill.write_text("# skill\n", encoding="utf-8")
+    subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "user.email", "t@t.com"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "user.name", "Test"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-m", "init"],
+        check=True,
+        capture_output=True,
+    )
+    return repo
+
+
+def _paths_must_not_exist_body(*, change_row: str, must_not_exist: list[str]) -> str:
+    mne = "\n".join(f"  - {p}" for p in must_not_exist)
+    return (
+        "```yaml\n"
+        "target_repo: sumipan/issuesmith\n"
+        "base_branch: main\n"
+        "allow_paths:\n"
+        "  - skills/project-summary/**\n"
+        "```\n\n"
+        "## Changed Files\n\n"
+        "| Repo | File | Change | Note |\n"
+        "|---|---|---|---|\n"
+        f"{change_row}\n\n"
+        "## Acceptance Criteria\n\n"
+        "```yaml\n"
+        "paths_must_exist: []\n"
+        f"paths_must_not_exist:\n{mne}\n"
+        "references_must_resolve: []\n"
+        "```\n"
+    )
+
+
+def test_paths_must_not_exist_rejects_existing_path_without_deletion_row(
+    tmp_path, monkeypatch,
+):
+    """#4257: cannot require deletion of a base-existing file this Issue does not delete."""
+    import unittest.mock as mock
+
+    import yaml
+
+    from issuesmith.config import reset_config_cache
+
+    repo = _setup_contract_repo(tmp_path)
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "sumipan/issuesmith", "scope_gate": {"enabled": False}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    body = _paths_must_not_exist_body(
+        change_row="| sumipan/issuesmith | `skills/project-summary/SKILL.md` | delete | rm |",
+        must_not_exist=["tests/skills/project_summary/test_fetch.py"],
+    )
+    try:
+        with mock.patch(
+            "issuesmith.gate_rules.scope_coupling.resolve_scope_root",
+            return_value=repo,
+        ):
+            violations = collect_violations(body, [])
+    finally:
+        reset_config_cache()
+    rule_ids = {v.rule_id for v in violations}
+    assert "scope_coupling.paths_must_not_exist_unjustified" in rule_ids
+
+
+def test_paths_must_not_exist_allows_deletion_row(tmp_path, monkeypatch):
+    import unittest.mock as mock
+
+    import yaml
+
+    from issuesmith.config import reset_config_cache
+
+    repo = _setup_contract_repo(tmp_path)
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "sumipan/issuesmith", "scope_gate": {"enabled": False}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    path = "tests/skills/project_summary/test_fetch.py"
+    body = _paths_must_not_exist_body(
+        change_row=f"| sumipan/issuesmith | `{path}` | delete | rm tests |",
+        must_not_exist=[path],
+    )
+    try:
+        with mock.patch(
+            "issuesmith.gate_rules.scope_coupling.resolve_scope_root",
+            return_value=repo,
+        ):
+            violations = collect_violations(body, [])
+    finally:
+        reset_config_cache()
+    assert "scope_coupling.paths_must_not_exist_unjustified" not in {
+        v.rule_id for v in violations
+    }
+
+
+def test_paths_must_not_exist_allows_missing_on_base(tmp_path, monkeypatch):
+    import unittest.mock as mock
+
+    import yaml
+
+    from issuesmith.config import reset_config_cache
+
+    repo = _setup_contract_repo(tmp_path)
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "sumipan/issuesmith", "scope_gate": {"enabled": False}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    body = _paths_must_not_exist_body(
+        change_row="| sumipan/issuesmith | `skills/project-summary/SKILL.md` | delete | rm |",
+        must_not_exist=["tests/skills/project_summary/test_missing.py"],
+    )
+    try:
+        with mock.patch(
+            "issuesmith.gate_rules.scope_coupling.resolve_scope_root",
+            return_value=repo,
+        ):
+            violations = collect_violations(body, [])
+    finally:
+        reset_config_cache()
+    assert "scope_coupling.paths_must_not_exist_unjustified" not in {
+        v.rule_id for v in violations
+    }
+
+
+def test_check_paths_must_not_exist_validity_wrapper(tmp_path, monkeypatch):
+    import unittest.mock as mock
+
+    import yaml
+
+    from issuesmith.b1_verify import check_paths_must_not_exist_validity
+    from issuesmith.config import reset_config_cache
+
+    repo = _setup_contract_repo(tmp_path)
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "sumipan/issuesmith"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    body = _paths_must_not_exist_body(
+        change_row="| sumipan/issuesmith | `skills/project-summary/SKILL.md` | delete | rm |",
+        must_not_exist=["tests/skills/project_summary/test_fetch.py"],
+    )
+    try:
+        with mock.patch(
+            "issuesmith.steps.scope_gate.resolve_scope_root",
+            return_value=repo,
+        ):
+            violations = check_paths_must_not_exist_validity(body)
+    finally:
+        reset_config_cache()
+    assert any(
+        v.rule_id == "scope_coupling.paths_must_not_exist_unjustified" for v in violations
+    )

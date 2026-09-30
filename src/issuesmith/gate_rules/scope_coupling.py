@@ -18,7 +18,7 @@ from ghdag.workflow.gates import GATE_REGISTRY, Violation
 from issuesmith.ac_contract import extract_contract_from_body
 from issuesmith.config import get_config
 from issuesmith.context_hook import parse_issue_metadata
-from issuesmith.contract import extract_change_table_rows
+from issuesmith.contract import change_paths_for_repo, extract_change_table_rows
 from issuesmith.steps.scope_gate import parse_allow_paths_from_ctx, resolve_scope_root
 
 # Python builtins and common verbs that generate too many false-positive grep hits.
@@ -327,6 +327,147 @@ def _yaml_list(paths: list[str]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# paths_must_not_exist contract validity (#4257)
+# ---------------------------------------------------------------------------
+
+PATHS_MUST_NOT_EXIST_RULE_ID = "scope_coupling.paths_must_not_exist_unjustified"
+
+_CURRENT_SUB_RE = re.compile(r"サブ(\d+)\s+から導出")
+
+
+def _tracked_path_exists(repo_path: Path, base_branch: str, path: str) -> bool:
+    """Return True when ``path`` is tracked at ``base_branch`` in ``repo_path``."""
+    for ref in (f"origin/{base_branch}", base_branch, "HEAD"):
+        proc = subprocess.run(
+            ["git", "-C", str(repo_path), "cat-file", "-e", f"{ref}:{path}"],
+            capture_output=True,
+            check=False,
+        )
+        if proc.returncode == 0:
+            return True
+    return False
+
+
+def _deleted_paths_in_body(body: str, target_repo: str) -> set[str]:
+    """Paths declared as deletion rows in the Issue body's change table(s)."""
+    delete_words = [w.lower() for w in get_config().scope_size.delete_words]
+    deleted: set[str] = set()
+    for repo, path, change_type in extract_change_table_rows(body):
+        if repo and target_repo and repo != target_repo:
+            continue
+        ct_lower = change_type.lower()
+        if any(w in ct_lower for w in delete_words):
+            deleted.add(path)
+    return deleted
+
+
+def _current_sub_number(body: str) -> int | None:
+    match = _CURRENT_SUB_RE.search(body)
+    return int(match.group(1)) if match else None
+
+
+def _body_with_sub_blocks(body: str) -> str | None:
+    """Return a body that contains milestone sub blocks (self or fetched parent)."""
+    from issuesmith.gate_rules.b1_milestone_subdesign import extract_sub_blocks
+
+    if extract_sub_blocks(body):
+        return body
+    from issuesmith.dep_extractor import _PARENT_NUMBER_RE
+
+    parent_match = _PARENT_NUMBER_RE.search(body)
+    if not parent_match:
+        return None
+    try:
+        from ghdag.forge import get_forge
+
+        parent = get_forge().issue_get(int(parent_match.group(1)), fields=["body"])
+        parent_body = parent.get("body") or ""
+        return parent_body if extract_sub_blocks(parent_body) else None
+    except Exception:
+        return None
+
+
+def _sibling_change_path_owners(body: str, target_repo: str) -> dict[str, int]:
+    """Map change-table paths to the sub number that owns them in a milestone design."""
+    from issuesmith.gate_rules.b1_milestone_subdesign import extract_sub_blocks
+
+    parent_like = _body_with_sub_blocks(body)
+    if not parent_like:
+        return {}
+    owners: dict[str, int] = {}
+    for sub_num, block in extract_sub_blocks(parent_like):
+        for path in change_paths_for_repo(block, target_repo or None):
+            owners[path] = sub_num
+    return owners
+
+
+def _sibling_owner_sub(
+    referrer: str,
+    sibling_paths: dict[str, int],
+    current_sub: int | None,
+) -> int | None:
+    owner = sibling_paths.get(referrer)
+    if owner is None:
+        return None
+    if current_sub is not None and owner == current_sub:
+        return None
+    return owner
+
+
+def check_paths_must_not_exist_contract(
+    body: str,
+    repo_path: Path,
+    *,
+    base_branch: str = "main",
+) -> list[Violation]:
+    """Reject ``paths_must_not_exist`` entries this Issue cannot satisfy (#4257).
+
+    Each path is allowed when it appears as a deletion row in the change table,
+    or when it is absent on the base branch checkout.
+    """
+    contract = extract_contract_from_body(body) or {}
+    raw_paths = contract.get("paths_must_not_exist") or []
+    must_not_exist = sorted(
+        {str(p).strip() for p in raw_paths if str(p).strip()}
+    )
+    if not must_not_exist:
+        return []
+
+    try:
+        metadata = parse_issue_metadata(body)
+    except Exception:
+        metadata = {}
+    target_repo = (metadata.get("target_repo") or "").strip()
+    branch = str(metadata.get("base_branch") or base_branch).strip() or base_branch
+    deleted = _deleted_paths_in_body(body, target_repo)
+
+    violations: list[Violation] = []
+    for path in must_not_exist:
+        if path in deleted:
+            continue
+        if not _tracked_path_exists(repo_path, branch, path):
+            continue
+        violations.append(
+            Violation(
+                rule_id=PATHS_MUST_NOT_EXIST_RULE_ID,
+                severity="fail",
+                message=(
+                    f"paths_must_not_exist lists `{path}` but this Issue does not "
+                    "delete it and the path exists on the base branch"
+                ),
+                location=path,
+                auto_fixable=False,
+                fix_hint=(
+                    "add a deletion row for this path in the change table, remove it "
+                    "from paths_must_not_exist, or move it to a sibling sub-issue "
+                    "that deletes it"
+                ),
+            )
+        )
+    return violations
+
+
+# ---------------------------------------------------------------------------
 # Deletion reference check (nexus #3953)
 # ---------------------------------------------------------------------------
 
@@ -467,8 +608,11 @@ def _deletion_hits(
     body: str,
     allow_paths: list[str],
     repo_path: Path,
-) -> dict[str, list[tuple[str, str, str, str]]]:
-    """Map each deleted path to uncovered ``(referrer, key, kind, line)`` tuples."""
+) -> tuple[
+    dict[str, list[tuple[str, str, str, str]]],
+    dict[str, list[tuple[str, int]]],
+]:
+    """Map each deleted path to uncovered referrers and sibling-owned referrers."""
     try:
         metadata = parse_issue_metadata(body)
     except Exception:
@@ -476,17 +620,21 @@ def _deletion_hits(
     target_repo = (metadata.get("target_repo") or "").strip()
     deleted = _deleted_paths(body, target_repo)
     if not deleted:
-        return {}
+        return {}, {}
 
     contract = extract_contract_from_body(body) or {}
     must_not_exist = sorted(
         {str(p).strip() for p in (contract.get("paths_must_not_exist") or []) if str(p).strip()}
     )
     covered = list(allow_paths) + must_not_exist
+    sibling_paths = _sibling_change_path_owners(body, target_repo)
+    current_sub = _current_sub_number(body)
 
-    result: dict[str, list[tuple[str, str, str, str]]] = {}
+    uncovered: dict[str, list[tuple[str, str, str, str]]] = {}
+    sibling_handled: dict[str, list[tuple[str, int]]] = {}
     for path in deleted:
         by_referrer: dict[str, tuple[str, str, str, str]] = {}
+        by_sibling: dict[str, tuple[str, int]] = {}
         for key, kind in _deletion_search_key_kinds(path, repo_path):
             for d in DELETION_SEARCH_DIRS:
                 for rel_path, line in _git_grep_lines(repo_path, key, d):
@@ -494,11 +642,18 @@ def _deletion_hits(
                         continue
                     if not _key_matches_line(key, kind, line):
                         continue
+                    owner_sub = _sibling_owner_sub(rel_path, sibling_paths, current_sub)
+                    if owner_sub is not None:
+                        if rel_path not in by_sibling:
+                            by_sibling[rel_path] = (rel_path, owner_sub)
+                        continue
                     if rel_path not in by_referrer:
                         by_referrer[rel_path] = (rel_path, key, kind, line)
         if by_referrer:
-            result[path] = sorted(by_referrer.values(), key=lambda row: row[0])
-    return result
+            uncovered[path] = sorted(by_referrer.values(), key=lambda row: row[0])
+        if by_sibling:
+            sibling_handled[path] = sorted(by_sibling.values(), key=lambda row: row[0])
+    return uncovered, sibling_handled
 
 
 def uncovered_deletion_references(
@@ -513,7 +668,7 @@ def uncovered_deletion_references(
     and module name, then re-check each matching line with kind-specific boundary rules.
     Deleted paths without uncovered referrers are omitted.
     """
-    hits = _deletion_hits(body, allow_paths, repo_path)
+    hits, _sibling = _deletion_hits(body, allow_paths, repo_path)
     return {
         path: [referrer for referrer, _key, _kind, _line in rows]
         for path, rows in hits.items()
@@ -522,14 +677,26 @@ def uncovered_deletion_references(
 
 def _deletion_violations(
     hits: dict[str, list[tuple[str, str, str, str]]],
+    sibling_handled: dict[str, list[tuple[str, int]]] | None = None,
 ) -> list[Violation]:
     violations: list[Violation] = []
+    sibling_handled = sibling_handled or {}
     for path, rows in hits.items():
         files = [referrer for referrer, _key, _kind, _line in rows]
         detail_lines = "\n".join(
             f"- {referrer}: {kind} `{key}` → {line.strip()[:120]}"
             for referrer, key, kind, line in rows
         )
+        sibling_lines = sibling_handled.get(path) or []
+        sibling_note = ""
+        if sibling_lines:
+            sibling_note = (
+                "\nSibling sub handles (do not add to paths_must_not_exist on this Issue):\n"
+                + "\n".join(
+                    f"- `{referrer}` — sibling sub #{sub_num} handles it"
+                    for referrer, sub_num in sibling_lines
+                )
+            )
         violations.append(
             Violation(
                 rule_id=DELETION_RULE_ID,
@@ -537,6 +704,7 @@ def _deletion_violations(
                 message=(
                     f"files referencing deleted `{path}` are in neither allow_paths nor "
                     "paths_must_not_exist: " + ", ".join(files)
+                    + sibling_note
                 ),
                 location=path,
                 auto_fixable=False,
@@ -546,6 +714,7 @@ def _deletion_violations(
                     + _yaml_list(files)
                     + "\n"
                     + detail_lines
+                    + sibling_note
                 ),
             )
         )
@@ -558,7 +727,8 @@ def check_deletion_references(
     repo_path: Path,
 ) -> list[Violation]:
     """``scope_coupling.deletion_reference_uncovered`` — one violation per deleted path."""
-    return _deletion_violations(_deletion_hits(body, allow_paths, repo_path))
+    hits, sibling = _deletion_hits(body, allow_paths, repo_path)
+    return _deletion_violations(hits, sibling)
 
 
 def deletion_references_for_body(body: str) -> dict[str, list[str]]:
@@ -690,7 +860,10 @@ class ScopeCouplingRules:
             root = resolve_scope_root(metadata, cfg)
             if root is None:
                 return []
-            return _deletion_violations(_deletion_hits(body, allow_paths, root))
+            hits, sibling = _deletion_hits(body, allow_paths, root)
+            violations = _deletion_violations(hits, sibling)
+            violations.extend(check_paths_must_not_exist_contract(body, root))
+            return violations
 
         try:
             metadata = parse_issue_metadata(body)
@@ -725,7 +898,9 @@ class ScopeCouplingRules:
         violations = self._coupling_violations(body, metadata, allow_paths, root, cfg)
         # Referrers already added by the autofix widening are covered (nexus #3953).
         effective = self.autofix_new_allow_paths or allow_paths
-        violations.extend(check_deletion_references(body, effective, root))
+        hits, sibling = _deletion_hits(body, effective, root)
+        violations.extend(_deletion_violations(hits, sibling))
+        violations.extend(check_paths_must_not_exist_contract(body, root))
         violations.extend(check_behavior_pinning(body, effective, root))
         violations.extend(check_allow_paths_string_references(effective, root))
         return violations
