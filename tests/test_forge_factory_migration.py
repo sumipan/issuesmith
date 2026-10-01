@@ -44,7 +44,6 @@ def test_get_forge_imported_where_clients_are_built():
         "ops/smoke.py",
         "ops/publish.py",
         "context_hook.py",
-        "steps/m2_finalize.py",
     ]
     for rel in modules:
         text = (SRC_ROOT / rel).read_text(encoding="utf-8")

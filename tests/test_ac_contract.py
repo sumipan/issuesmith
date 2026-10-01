@@ -1,8 +1,14 @@
 """test_ac_contract.py — unit tests for acceptance-criteria YAML contract extract/run."""
 from __future__ import annotations
 
+from unittest.mock import patch
+
+import pytest
+
 from issuesmith.ac_contract import (
+    GateMaterializationError,
     contract_failures,
+    dual_gate_roots,
     extract_contract_from_body,
     pending_manual_checks,
     run_checks,
@@ -233,6 +239,41 @@ def test_run_checks_references_dict_file_only_pass_regression(tmp_path):
     contract = {"references_must_resolve": [{"file": "config.yaml"}]}
     records = run_checks(contract, tmp_path)
     assert records[0]["result"] == "PASS"
+
+
+def test_dual_gate_roots_runs_checks_on_both_materialized_roots(tmp_path, monkeypatch):
+    primary = tmp_path / "primary"
+    secondary = tmp_path / "secondary"
+    for root in (primary, secondary):
+        (root / "src").mkdir(parents=True)
+        (root / "src" / "helper.py").write_text("", encoding="utf-8")
+
+    contract = {"paths_must_exist": ["src/helper.py"]}
+
+    with (
+        patch("issuesmith.ac_contract.materialize_gate_root", side_effect=[primary, secondary]),
+        patch("issuesmith.ac_contract.cleanup_gate_root") as mock_cleanup,
+    ):
+        with dual_gate_roots(primary, secondary, "main") as (left, right):
+            left_records = run_checks(contract, left)
+            right_records = run_checks(contract, right)
+
+    assert all(r["result"] == "PASS" for r in left_records)
+    assert all(r["result"] == "PASS" for r in right_records)
+    assert mock_cleanup.call_count == 2
+
+
+def test_dual_gate_roots_cleanup_on_materialize_failure(tmp_path):
+    primary = tmp_path / "primary"
+    primary.mkdir()
+    with (
+        patch("issuesmith.ac_contract.materialize_gate_root", side_effect=[primary, GateMaterializationError("fail")]),
+        patch("issuesmith.ac_contract.cleanup_gate_root") as mock_cleanup,
+    ):
+        with pytest.raises(GateMaterializationError):
+            with dual_gate_roots(primary, primary, "main"):
+                pass
+    mock_cleanup.assert_called_once_with(primary, primary)
 
 
 def test_run_checks_references_none_source_fails_without_raising(tmp_path, monkeypatch):

@@ -11,13 +11,92 @@ paths_must_exist / paths_must_not_exist / references_must_resolve を
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
+import tempfile
+import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import yaml
 
 from issuesmith.config import get_config
+
+
+class GateMaterializationError(RuntimeError):
+    """origin/base temporary worktree could not be materialized."""
+
+
+def _git(cmd: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, check=False)
+
+
+def materialize_gate_root(repo_cwd: Path, base_branch: str, prefix: str) -> Path:
+    """Create a detached worktree at ``origin/<base_branch>`` for contract checks."""
+    gate_root = Path(tempfile.mkdtemp(prefix=prefix))
+    fetch = _git(["git", "fetch", "-q", "origin", base_branch], cwd=repo_cwd)
+    if fetch.returncode != 0:
+        shutil.rmtree(gate_root, ignore_errors=True)
+        raise GateMaterializationError(
+            f"fetch failed (repo={repo_cwd}): "
+            f"fetch_rc={fetch.returncode} fetch_stderr={fetch.stderr!r}"
+        )
+
+    max_retry = 3
+    backoff = [5, 10, 15]
+    add: subprocess.CompletedProcess[str] | None = None
+    for attempt in range(max_retry):
+        subprocess.run(["git", "worktree", "prune"], cwd=str(repo_cwd), capture_output=True)
+        add = _git(
+            ["git", "worktree", "add", "--detach", "-q", str(gate_root), f"origin/{base_branch}"],
+            cwd=repo_cwd,
+        )
+        if add.returncode == 0:
+            return gate_root
+        shutil.rmtree(gate_root, ignore_errors=True)
+        if attempt < max_retry - 1:
+            time.sleep(backoff[attempt])
+
+    raise GateMaterializationError(
+        f"could not materialize origin/{base_branch} (repo={repo_cwd}) "
+        f"after {max_retry} attempts: "
+        f"add_rc={add.returncode if add else None} add_stderr={add.stderr if add else None!r}"
+    )
+
+
+def cleanup_gate_root(repo_cwd: Path, gate_root: Path) -> None:
+    """Remove a temporary gate worktree created by :func:`materialize_gate_root`."""
+    remove = _git(["git", "worktree", "remove", "--force", str(gate_root)], cwd=repo_cwd)
+    if remove.returncode != 0:
+        shutil.rmtree(gate_root, ignore_errors=True)
+
+
+@contextmanager
+def dual_gate_roots(
+    primary_repo_cwd: Path,
+    secondary_repo_cwd: Path,
+    base_branch: str,
+    *,
+    primary_prefix: str = "gate-primary-",
+    secondary_prefix: str = "gate-secondary-",
+) -> Iterator[tuple[Path, Path]]:
+    """Materialize both roots and always cleanup, even on exceptions."""
+    primary_root = materialize_gate_root(primary_repo_cwd, base_branch, primary_prefix)
+    secondary_root: Path | None = None
+    try:
+        secondary_root = materialize_gate_root(
+            secondary_repo_cwd, base_branch, secondary_prefix
+        )
+    except GateMaterializationError:
+        cleanup_gate_root(primary_repo_cwd, primary_root)
+        raise
+    try:
+        yield primary_root, secondary_root
+    finally:
+        cleanup_gate_root(primary_repo_cwd, primary_root)
+        if secondary_root is not None:
+            cleanup_gate_root(secondary_repo_cwd, secondary_root)
 
 # リポジトリ（worktree）ルート — 互換のためモジュール定数として公開
 REPO_ROOT = get_config().root

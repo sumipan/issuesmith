@@ -1,18 +1,68 @@
-"""cleanup_worktrees / cleanup_branches / close_issue verbs — public extraction from steps.m2_finalize."""
+"""cleanup_worktrees / cleanup_branches / close_issue verbs."""
 
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 from ghdag.forge import ForgePort
 
-from issuesmith.steps.m2_finalize import (
-    _cleanup_branches,
-    _close_issue_if_open,
-    _list_worktrees,
-    _remove_worktree,
-)
+
+def _git(cmd: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, check=False)
+
+
+def _list_worktrees(repo_cwd: Path) -> list[Path]:
+    proc = _git(["git", "worktree", "list", "--porcelain"], cwd=repo_cwd)
+    if proc.returncode != 0:
+        return []
+    worktrees: list[Path] = []
+    for line in proc.stdout.splitlines():
+        if line.startswith("worktree "):
+            worktrees.append(Path(line.split(" ", 1)[1]))
+    return worktrees
+
+
+def _remove_worktree(repo_cwd: Path, worktree: Path) -> None:
+    removed = _git(["git", "worktree", "remove", "--force", str(worktree)], cwd=repo_cwd)
+    if removed.returncode == 0:
+        print(f"CLEANUP: removed worktree {worktree}")
+    else:
+        print(f"CLEANUP: skip worktree {worktree}")
+
+
+def _cleanup_branches(repo_cwd: Path, issue_number: str, *, external: bool = False) -> None:
+    proc = _git(
+        [
+            "git",
+            "branch",
+            "--list",
+            f"feat/issue-{issue_number}-*",
+            f"docs/issue-{issue_number}-*",
+            f"issuesmith/issue-{issue_number}-*",
+        ],
+        cwd=repo_cwd,
+    )
+    if proc.returncode != 0:
+        return
+    prefix = "external " if external else ""
+    for line in proc.stdout.splitlines():
+        branch = line.lstrip("* ").strip()
+        if not branch:
+            continue
+        deleted = _git(["git", "branch", "-D", branch], cwd=repo_cwd)
+        if deleted.returncode == 0:
+            print(f"CLEANUP: removed {prefix}branch {branch}")
+
+
+def _close_issue_if_open(client: ForgePort, issue_number: int) -> None:
+    state = client.issue_get(issue_number, fields=["state"])["state"]
+    if state == "OPEN":
+        client.issue_close(issue_number)
+        print(f"FINALIZER: closed issue {issue_number}")
+    else:
+        print(f"FINALIZER: issue {issue_number} already {state} (noop close)")
 
 
 def cleanup_worktrees(
