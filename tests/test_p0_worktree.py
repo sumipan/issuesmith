@@ -1,8 +1,8 @@
-"""Tests for resolve_base_ref origin-first resolution (nexus #4111).
+"""Tests for issuesmith.worktree public helpers (#4274 / nexus #4111).
 
-P0 must branch from ``origin/<base>`` when it exists so the branch start point
-matches the ``origin/<base>...HEAD`` range that pr_scope uses. A local base that
-is ahead of origin (unpushed auto-commits) must not leak into the branch.
+Covers local/cross-repo preparation, fetch retry, existing worktree reuse, and
+branch mismatch rejection. Step orchestration (milestone, scope gate, notify)
+is intentionally out of scope here.
 """
 from __future__ import annotations
 
@@ -11,10 +11,27 @@ from pathlib import Path
 
 import pytest
 
-from issuesmith.steps.p0_worktree import (
-    WorktreeError,
-    prepare_worktree,
-    resolve_base_ref,
+from issuesmith import worktree as wt
+
+# --- Real git strings (verbatim captures; values unchanged) ---
+
+CLONE_FAIL_STDERR = (
+    "Cloning into 'clone_fail'...\n"
+    "remote: Repository not found.\n"
+    "fatal: repository 'https://github.com/sumipan/does-not-exist-zzzz-3168.git/' not found\n"
+)
+
+CANNOT_LOCK_REF_STDERR = (
+    "fatal: update_ref failed for ref 'refs/heads/main': cannot lock ref "
+    "'refs/heads/main': Unable to create "
+    "'/var/folders/bh/wdg0sj9x21xd0z1c_89fmjvr0000gn/T/tmp.97SSFTMDiW/r/"
+    ".git/refs/heads/main.lock': File exists.\n"
+    "\n"
+    "Another git process seems to be running in this repository, e.g.\n"
+    "an editor opened by 'git commit'. Please make sure all processes\n"
+    "are terminated then try again. If it still fails, a git process\n"
+    "may have crashed in this repository earlier:\n"
+    "remove the file manually to continue.\n"
 )
 
 
@@ -50,27 +67,47 @@ def _clone(src: Path, dst: Path) -> Path:
     return dst
 
 
+def _git_init_with_main(repo: Path) -> None:
+    subprocess.run(["git", "init", "-b", "main", str(repo)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "user.email", "t@t"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "user.name", "t"],
+        check=True,
+        capture_output=True,
+    )
+    (repo / "README").write_text("x\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "README"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-m", "init"],
+        check=True,
+        capture_output=True,
+    )
+
+
 def test_prefers_origin_when_both_exist(tmp_path: Path) -> None:
     upstream = _init_repo(tmp_path / "upstream")
     clone = _clone(upstream, tmp_path / "clone")
-    assert resolve_base_ref(clone, "main") == "origin/main"
+    assert wt.resolve_base_ref(clone, "main") == "origin/main"
 
 
 def test_falls_back_to_local_when_origin_missing(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path / "local-only")
-    assert resolve_base_ref(repo, "main") == "refs/heads/main"
+    assert wt.resolve_base_ref(repo, "main") == "refs/heads/main"
 
 
 def test_raises_when_neither_exists(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path / "local-only")
-    with pytest.raises(WorktreeError):
-        resolve_base_ref(repo, "develop")
+    with pytest.raises(wt.WorktreeError):
+        wt.resolve_base_ref(repo, "develop")
 
 
 def test_unpushed_local_commit_not_in_branch(tmp_path: Path) -> None:
     upstream = _init_repo(tmp_path / "upstream")
     clone = _clone(upstream, tmp_path / "clone")
-    # Simulate a daemon auto-commit on local main that is not pushed yet.
     memory = clone / "chat" / "memory"
     memory.mkdir(parents=True)
     (memory / "log.jsonl").write_text("{}\n", encoding="utf-8")
@@ -78,18 +115,222 @@ def test_unpushed_local_commit_not_in_branch(tmp_path: Path) -> None:
     _git(clone, "commit", "-q", "-m", "memory append")
     assert _git(clone, "rev-parse", "main") != _git(clone, "rev-parse", "origin/main")
 
-    wt = tmp_path / "wt"
-    prepare_worktree(clone, wt, "feat/x", resolve_base_ref(clone, "main"))
+    worktree_dir = tmp_path / "wt"
+    wt.prepare_worktree(clone, worktree_dir, "feat/x", wt.resolve_base_ref(clone, "main"))
 
-    assert _git(wt, "rev-parse", "HEAD") == _git(clone, "rev-parse", "origin/main")
-    changed = _git(wt, "diff", "--name-only", "origin/main...HEAD")
+    assert _git(worktree_dir, "rev-parse", "HEAD") == _git(clone, "rev-parse", "origin/main")
+    changed = _git(worktree_dir, "diff", "--name-only", "origin/main...HEAD")
     assert changed == ""
-    assert not (wt / "chat" / "memory" / "log.jsonl").exists()
+    assert not (worktree_dir / "chat" / "memory" / "log.jsonl").exists()
 
 
 def test_local_only_ref_is_usable_as_start_point(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path / "local-only")
-    wt = tmp_path / "wt"
-    prepare_worktree(repo, wt, "feat/y", resolve_base_ref(repo, "main"))
-    assert _git(wt, "rev-parse", "HEAD") == _git(repo, "rev-parse", "main")
-    assert _git(wt, "branch", "--show-current") == "feat/y"
+    worktree_dir = tmp_path / "wt"
+    wt.prepare_worktree(repo, worktree_dir, "feat/y", wt.resolve_base_ref(repo, "main"))
+    assert _git(worktree_dir, "rev-parse", "HEAD") == _git(repo, "rev-parse", "main")
+    assert _git(worktree_dir, "branch", "--show-current") == "feat/y"
+
+
+def test_validate_branch_rejects_invalid_name() -> None:
+    with pytest.raises(wt.WorktreeError, match="invalid branch name"):
+        wt.validate_branch("bad branch")
+
+
+def test_prepare_worktree_creates_new_branch(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_init_with_main(repo)
+    worktree_dir = tmp_path / "worktrees" / "issue-3168"
+    wt.prepare_worktree(repo, worktree_dir, "feat/issue-3168-aabb", "main")
+    assert (worktree_dir / ".git").exists() or (worktree_dir / ".git").is_file()
+    branch = subprocess.check_output(
+        ["git", "-C", str(worktree_dir), "branch", "--show-current"], text=True
+    ).strip()
+    assert branch == "feat/issue-3168-aabb"
+
+
+def test_prepare_worktree_reuses_existing_matching_branch(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_init_with_main(repo)
+    worktree_dir = tmp_path / "worktrees" / "issue-3168"
+    wt.prepare_worktree(repo, worktree_dir, "feat/reuse", "main")
+    wt.prepare_worktree(repo, worktree_dir, "feat/reuse", "main")
+    branch = subprocess.check_output(
+        ["git", "-C", str(worktree_dir), "branch", "--show-current"], text=True
+    ).strip()
+    assert branch == "feat/reuse"
+
+
+def test_prepare_worktree_rejects_branch_mismatch(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_init_with_main(repo)
+    worktree_dir = tmp_path / "worktrees" / "issue-3168"
+    wt.prepare_worktree(repo, worktree_dir, "feat/one", "main")
+    with pytest.raises(wt.WorktreeError, match="branch mismatch"):
+        wt.prepare_worktree(repo, worktree_dir, "feat/other", "main")
+
+
+def test_fetch_base_retries_transient_lock_at_most_three_times(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "clone"
+    _git_init_with_main(repo)
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin", str(repo)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "update-ref", "refs/remotes/origin/main", "HEAD"],
+        check=True,
+        capture_output=True,
+    )
+
+    monkeypatch.setenv("P0_FETCH_LOCK_WAIT", "0")
+    sleeps: list[float] = []
+    monkeypatch.setattr(wt, "_sleep", lambda s: sleeps.append(s))
+
+    calls: list[str] = []
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        if cmd[:3] == ["git", "-C", str(repo)] and "fetch" in cmd:
+            calls.append("fetch")
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr=CANNOT_LOCK_REF_STDERR)
+        if "update-ref" in cmd and "-d" in cmd:
+            calls.append("delete-ref")
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(wt.subprocess, "run", fake_run)
+
+    ok = wt.fetch_base_with_retry(repo, "main")
+    assert ok is False
+    assert calls.count("fetch") == 3
+    assert sleeps == [1, 2, 3]
+
+
+def test_fetch_base_or_raise_includes_remote_and_ref(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "clone"
+    _git_init_with_main(repo)
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin", str(repo)],
+        check=True,
+        capture_output=True,
+    )
+
+    def always_fail(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        if "fetch" in cmd:
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="network down")
+        return subprocess.run(cmd, **kwargs)
+
+    monkeypatch.setenv("P0_FETCH_LOCK_WAIT", "0")
+    monkeypatch.setattr(wt, "_sleep", lambda _s: None)
+    monkeypatch.setattr(wt.subprocess, "run", always_fail)
+    with pytest.raises(wt.WorktreeError, match="failed to fetch sumipan/issuesmith:main"):
+        wt.fetch_base_or_raise(repo, "main", remote="sumipan/issuesmith")
+
+
+def test_prepare_local_worktree_returns_path(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "local")
+    worktree_dir = tmp_path / "wt-local"
+    result = wt.prepare_local_worktree(repo, worktree_dir, "feat/local", "main")
+    assert result == worktree_dir
+    assert worktree_dir.is_dir()
+    assert _git(worktree_dir, "branch", "--show-current") == "feat/local"
+
+
+def test_clone_if_missing_skips_existing_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    existing = tmp_path / "external" / "issuesmith"
+    _git_init_with_main(existing)
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        calls.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(wt.subprocess, "run", fake_run)
+    wt.clone_if_missing(existing, "sumipan/issuesmith", "main")
+    assert calls == []
+
+
+def test_clone_if_missing_clones_when_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clone_path = tmp_path / "external" / "issuesmith"
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        calls.append(list(cmd))
+        if cmd[0:2] == ["git", "clone"]:
+            clone_path.mkdir(parents=True)
+            _git_init_with_main(clone_path)
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(wt.subprocess, "run", fake_run)
+    wt.clone_if_missing(clone_path, "sumipan/issuesmith", "main")
+    clone_calls = [c for c in calls if c[0:2] == ["git", "clone"]]
+    assert len(clone_calls) == 1
+    assert "https://github.com/sumipan/issuesmith.git" in clone_calls[0]
+    assert str(clone_path) in clone_calls[0]
+
+
+def test_clone_if_missing_raises_on_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    clone_path = tmp_path / "missing" / "repo"
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        return subprocess.CompletedProcess(cmd, 128, stdout="", stderr=CLONE_FAIL_STDERR)
+
+    monkeypatch.setattr(wt.subprocess, "run", fake_run)
+    with pytest.raises(wt.WorktreeError, match="failed to clone sumipan/does-not-exist"):
+        wt.clone_if_missing(clone_path, "sumipan/does-not-exist-zzzz-3168", "main")
+
+
+def test_prepare_cross_repo_worktree_reuses_existing_clone(tmp_path: Path) -> None:
+    clone = _init_repo(tmp_path / "clone")
+    subprocess.run(
+        ["git", "-C", str(clone), "remote", "add", "origin", str(clone)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(clone), "update-ref", "refs/remotes/origin/main", "HEAD"],
+        check=True,
+        capture_output=True,
+    )
+    worktree_dir = tmp_path / "worktrees" / "issue-cross"
+    result = wt.prepare_cross_repo_worktree(
+        clone,
+        worktree_dir,
+        target_repo="sumipan/issuesmith",
+        base_branch="main",
+        branch="feat/issue-cross",
+    )
+    assert result == worktree_dir
+    assert worktree_dir.is_dir()
+    assert _git(worktree_dir, "branch", "--show-current") == "feat/issue-cross"
+
+
+def test_transient_fetch_markers_detected() -> None:
+    assert wt._is_transient_fetch_error(CANNOT_LOCK_REF_STDERR) is True
+    assert wt._is_transient_fetch_error("network down") is False
+
+
+def test_worktree_module_has_no_pipeline_imports() -> None:
+    """Public worktree helpers must not import step / workflow modules."""
+    import importlib
+
+    mod = importlib.import_module("issuesmith.worktree")
+    source_path = Path(mod.__file__).read_text(encoding="utf-8")
+    import_block = source_path.split("class WorktreeError", 1)[0]
+    forbidden = (
+        "issuesmith.steps",
+        "scope_gate",
+        "state_machine",
+        "get_forge",
+        "issue_comment",
+    )
+    for token in forbidden:
+        assert token not in import_block

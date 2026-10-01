@@ -19,7 +19,7 @@ _CHANGE_TABLE_HEADER = f"{REPOSITORY} | {FILE_PATH} | {CHANGE_TYPE} | {DESCRIPTI
 
 _CHILD_PATHS = [
     "src/issuesmith/gate_rules/scope_breadth.py",
-    "src/issuesmith/steps/p0_worktree.py",
+    "src/issuesmith/worktree.py",
     "src/issuesmith/steps/sub1_create.py",
 ]
 
