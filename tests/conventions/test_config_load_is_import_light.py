@@ -27,7 +27,7 @@ def _write_config(tmp_path: Path, requires: list[str], input_kind: str) -> Path:
             {
                 "repo": "example/repo",
                 "steps": {
-                    "s1": {"module": "issuesmith.steps.p0_worktree", "requires": requires, "input_kind": input_kind}
+                    "s1": {"module": "issuesmith.worktree", "requires": requires, "input_kind": input_kind}
                 },
             }
         ),

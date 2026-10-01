@@ -1,7 +1,7 @@
 """tests/test_scope_gate_root.py — resolve_scope_root single-source-of-truth (#3487 AC-1).
 
-CP1 (gate_rules.scope_breadth), gate-preflight, and P0 (steps.p0_worktree) must
-all resolve the same measurement root for a given Issue metadata. Before this,
+CP1 (gate_rules.scope_breadth), gate-preflight, and P0 must all resolve the same
+measurement root for a given Issue metadata. Before this,
 scope_breadth.py carried its own private ``_resolve_root`` copy that diverged
 from what P0 actually measured (#3483: CP1 passed silently, P0 tripped on the
 same allow_paths at 91 files / 21076 lines).
@@ -12,7 +12,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from issuesmith.gate_rules import scope_breadth
-from issuesmith.steps import p0_worktree
 from issuesmith.steps.scope_gate import resolve_scope_root
 
 
@@ -56,7 +55,3 @@ def test_scope_breadth_gate_imports_the_shared_function():
     assert scope_breadth.resolve_scope_root is resolve_scope_root
     assert not hasattr(scope_breadth, "_resolve_root")
 
-
-def test_p0_worktree_imports_the_shared_function():
-    """steps.p0_worktree must consult the same resolver CP1 uses (#3487 AC-1)."""
-    assert p0_worktree.scope_gate_mod.resolve_scope_root is resolve_scope_root

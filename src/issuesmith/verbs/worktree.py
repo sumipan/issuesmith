@@ -1,15 +1,11 @@
-"""prepare_worktree verb — public extraction from steps.p0_worktree."""
+"""prepare_worktree verb — public extraction from issuesmith.worktree."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from issuesmith.steps.p0_worktree import (
-    prepare_worktree as _prepare_worktree,
-)
-from issuesmith.steps.p0_worktree import (
-    resolve_base_ref,
-)
+from issuesmith.worktree import prepare_worktree as _prepare_worktree
+from issuesmith.worktree import resolve_base_ref
 
 
 def prepare_worktree(
