@@ -1,4 +1,4 @@
-"""Canonical extractors for Issue-body contract sections (#3487).
+"""Canonical contract types and extractors for issuesmith (#3487, #4272).
 
 Workflow design rule (nexus docs/ISSUESMITH.md "ワークフロー設計規約" R1):
 every gate that validates a contract section and every step that consumes it
@@ -11,16 +11,25 @@ Sections covered here:
 * ``変更対象ファイル`` (change table) — bold-label form ``**変更対象ファイル**:``
   used inside ``#### サブN`` blocks and the H2/H3 heading form used at Issue top
   level. Both forms resolve through :func:`extract_change_table_rows`.
+
+Step contract types (:class:`StepContext`, :class:`StepResult`, :class:`Andon`,
+:class:`Verdict`) are the canonical definitions for dispatch and step runners.
+Import them from this module; ``issuesmith.steps.base`` re-exports them for one
+release only.
 """
 
 from __future__ import annotations
 
 import re
-from typing import Any
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Literal
 
 import yaml
 
 from issuesmith.config import get_config
+
+if TYPE_CHECKING:
+    from issuesmith.engine import RetrySignal
 
 _SECTION_END = r"(?=^##(?!#)|\Z)"
 SUB_HEADER_RE = re.compile(r"^####\s+サブ(\d+):", re.MULTILINE)
@@ -258,3 +267,76 @@ def sub_block(body: str, sub_num: int) -> str:
         if num == sub_num:
             return block
     return ""
+
+
+# ---------------------------------------------------------------------------
+# Step contract types (#4272) — canonical definitions for dispatch / runners
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class StepContext:
+    issue_number: str
+    base_branch: str
+    handler_name: str
+    is_cross_repo: str  # "true" | "false"
+    target_clone_path: str
+    source: str
+    workflow_name: str
+    m1_result_filename: str
+    m1r_result_filename: str
+    # context_hook / workflow vars (defaults keep m2_finalize callers compatible)
+    worktree_path: str = ""
+    target_worktree_path: str = ""
+    branch: str = ""
+    target_repo: str = ""
+    allow_paths: str = ""
+    diary_worktree_path: str = ""
+    has_diary_changes: str = ""
+    pipeline_id: str = ""
+    diary_allow_paths: str = ""
+    issue_repo: str = ""
+    p1_result_filename: str = ""
+    p2_result_filename: str = ""
+    p3_result_filename: str = ""
+    execution_constraints: str = ""
+    repair_violations: str = ""
+    repair_step_origin: str = ""
+
+
+@dataclass
+class Andon:
+    """Lightweight Andon spec returned from step implementations.
+
+    Dispatch constructs the full issuesmith.andon.Andon from context fields.
+    """
+    kind: str  # "decision" | "blocked" | "broken"
+    summary: str = ""
+
+
+@dataclass
+class Verdict:
+    """Gate verdict for irreversible step pre-checks."""
+    passed: bool
+    reason: str = ""
+
+
+@dataclass
+class StepResult:
+    # New primary contract (3-value status)
+    status: Literal["done", "retry", "andon"] = "done"
+    markers: list[str] = field(default_factory=list)
+    retry: RetrySignal | None = None
+    andon: Andon | None = None
+    artifacts: dict = field(default_factory=dict)
+    irreversible: bool = False
+
+    # 1-release compat: old-style fields (removed next release)
+    exit_code: int | None = None
+    pipeline_status: str | None = None
+    recovery: str | None = None
+
+    def __post_init__(self) -> None:
+        # Compat: old exit_code=0 / pipeline_status → new markers
+        if self.exit_code == 0 and self.pipeline_status and not self.markers:
+            self.markers = [self.pipeline_status]
