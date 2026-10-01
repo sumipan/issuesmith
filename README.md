@@ -1,41 +1,35 @@
 # issuesmith
 
-参照版: v0.10.0 / 確認日: 2026-09-10
-
-issuesmith is a GitHub Issue label-driven workflow framework that runs on [ghdag](https://github.com/sumipan/ghdag). It provides gates, queue triage, context hooks, and a unified CLI for pipelines that advance Issues through design → implementation → merge via labels — not CI YAML alone.
+issuesmith is a GitHub Issue label-driven workflow toolkit that runs on [ghdag](https://github.com/sumipan/ghdag). ghdag owns DAG execution, polling, and label transitions; issuesmith supplies Issue-domain gates, queue triage, context hooks, and a unified CLI that templates invoke.
 
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.10.0-blue)
+![version](https://img.shields.io/badge/version-v0.98.0-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-Current release is **v0.10.0** (pre-1.0). Interfaces may evolve before `1.0.0`.
+Current release is **v0.98.0** (pre-1.0). Public interfaces may change before `1.0.0`.
 
 ## Installation
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.10.0"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.98.0"
 ```
 
-With ghdag (required for gate-preflight and most runtime paths):
+With ghdag (required for `gate-preflight`, dispatch, and most runtime paths):
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.10.0"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.98.0"
 ```
 
 | Item | Value |
 |---|---|
 | Python requirement | `>=3.10` |
 | Runtime dependencies | `pyyaml`, `ruamel.yaml`, `packaging`, `python-dotenv` |
-| Optional / recommended | `ghdag @ git+https://github.com/sumipan/ghdag.git@v0.44.0` (`[ghdag]` or `[dev]`) |
+| Optional / recommended | `ghdag @ git+https://github.com/sumipan/ghdag.git@v0.72.0` (`[ghdag]` or `[dev]`) |
 | Dev dependencies | `pip install "issuesmith[dev]"` |
-
-### Usage from nexus
-
-nexus consumes this package via a stable editable install at `/var/tmp/issuesmith` and pins the dependency in its root `pyproject.toml`. Configure the host repository with a root `issuesmith.yaml` (paths, engines, supported repos). Development clones live under `.claude/external/issuesmith/`; do not editable-install from worktree paths.
 
 ## Quick Start
 
@@ -65,312 +59,239 @@ engines:
     timeout_sec: 3600
 ```
 
-Run the CLI:
+Run preflight and engine checks:
 
 ```bash
-export ISSUESMITH_CONFIG=/path/to/issuesmith.yaml   # optional if yaml is at cwd or above
+export ISSUESMITH_CONFIG=/path/to/issuesmith.yaml   # optional when yaml is at cwd or above
 python3 -m issuesmith doctor
-python3 -m issuesmith gate cp1 --body-file body.md
+python3 -m issuesmith gate-preflight --gate cp1 --body-file body.md
 python3 -m issuesmith engine show
 ```
+
+Common entry points: `python3 -m issuesmith doctor`, `python3 -m issuesmith gate-preflight --gate cp1 --body-file body.md`, `python3 -m issuesmith resume <issue> --from <step>`, and `python3 -m issuesmith config show`.
 
 ## CLI Reference
 
 Entry points: `issuesmith` / `python3 -m issuesmith`.
 
+Top-level commands are registered in `issuesmith.cli._HANDLERS`. `andon` and `labels` are dispatched from `issuesmith.__main__` before the main handler table.
+
 | Command | Description |
 |---|---|
 | `context` / `context_hook` / `context-hook` | Generate ghdag context for impl/merge handlers |
-| `gate` / `gate-preflight` | Run a named gate (e.g. `gate cp1 --body-file ...`) |
+| `gate` / `gate-preflight` | Run a named gate (`gate cp1 --body-file ...` aliases `gate-preflight`) |
 | `cp1-gate` / `m2-gate` | Direct CP1 / M2 gate entry points |
 | `verify` / `b1-verify` | B1 verification (`verify b1 ...`) |
 | `queue` | Night / draft queue tick and status (`draft`, `sub`, `develop`, `merge` phases) |
-| `milestone` | Milestone chain status / resume (`milestone status <parent>`, `milestone resume <parent>`) |
 | `deps` | Extract Issue dependencies |
 | `tier` | Choose B1 / CP2 model tier (`tier b1` / `tier cp2`) |
 | `comments` | Pipeline comment helpers |
 | `gh` | GitHub Issue/PR helpers via ghdag client (not the `gh` CLI) |
-| `engine` | LLM role switcher / runner |
-| `run-guarded --requires-step <step>` | Run pre/post gate evaluation around an LLM call for a module-less step |
+| `engine` | LLM role switcher / runner (see subcommands below) |
 | `dispatch` | Render and enqueue a workflow template |
 | `publish` | Publish / version-bump orchestration |
-| `labels reconcile [--fix] [--json]` | report (or fix) managed-label divergences |
-| `andon list [--all] [--json]` | List open (unanswered) andons; `--json` prints an array of `asdict(Andon)` plus `raised_at` (andon comment `created_at`) and `notes` (`[]` when none) |
-| `andon show <id>` / `andon answer <id> <action>` | Show an open andon / post the answer, remove the label and call the resume hook |
-| `andon note <id> --key <k> --value <v>` | Post an `<!-- andon-note -->` comment on an open andon (no label / metrics / resume change); later notes with the same key win in `list --json`. Exit 1 when the andon is not open, 2 on missing arguments |
+| `labels reconcile [--fix] [--json]` | Report (or fix) managed-label divergences |
 | `doctor` | Preflight / environment checks |
 | `smoke` | Template smoke against live Issue bodies |
 | `gen-live` | Generate live dispatch payloads |
 | `version-bump` | Deterministic package version bump |
-| `observe [--apply] [--json]` | Collect observe events; `--apply` executes the policy actions |
-| `main-health` | Run `observe.main_health.command` on the latest base branch and write `issuesmith-main-health.json` (prints `main_health: <green\|red> <sha12>`; `disabled` when unset; exit 2 on git / timeout errors) |
+| `resume <issue> --from <step>` / `--phase <phase>` | Resume a workflow from a step or phase |
+| `recover` | Deprecated; use `resume --from <step>` instead |
+| `redispatch` | Deprecated; use `resume --phase <phase>` instead |
+| `convert-to-milestone` | Convert an Issue into a milestone chain |
+| `milestone` | Milestone chain status / resume (`milestone status <parent>`, `milestone resume <parent>`) |
+| `config show` | Print resolved `issuesmith.yaml` as JSON and validate `steps.*.requires` |
+| `observe [--apply] [--json]` | Collect observe events; `--apply` executes policy actions |
+| `main-health` | Run `observe.main_health.command` on the latest base branch and write state |
 | `apply` / `ingest-review` | Moved to host `tools/stash/`; exits 2 |
+
+### `engine` subcommands
+
+| Subcommand | Description |
+|---|---|
+| `engine show` | Show effective role assignments |
+| `engine check` | Validate commands, models, and workflow drift |
+| `engine switch <role> <engine> [--model] [--light-model]` | Switch one role |
+| `engine run-guarded <role> <template> [--cwd] [--tier] [--success ...] [--requires-step <id>] [vars...]` | Run an LLM template with pre/post gate evaluation |
+| `engine run-verified` | Run with verify/recover loop (internal) |
+| `engine run` / `engine exec` / `engine resolve` | Internal dispatch helpers |
+
+`run-guarded` is **not** a top-level command. Module-less LLM steps must be invoked as `engine run-guarded --requires-step <step_id>`.
+
+### `andon` subcommands (`python3 -m issuesmith andon ...`)
+
+| Subcommand | Description |
+|---|---|
+| `andon list [--all] [--json]` | List open (unanswered) andons |
+| `andon show <id>` | Show a specific andon |
+| `andon answer <id> <action>` | Post answer, remove label, call resume hook |
+| `andon note <id> --key <k> --value <v>` | Record a note on an open andon (no label change) |
 
 ## Public API
 
-Top-level `__all__` is empty; import modules directly. Notable symbols:
+Top-level `issuesmith.__all__` is empty; import modules directly.
 
-| Symbol | Module |
-|---|---|
-| `get_config` / `load_config` / `reset_config_cache` | `issuesmith.config` |
-| `QueueStore` / `QueueValidationError` | `issuesmith.queue_store` |
-| `parse_issue_metadata` / `validate_issue_metadata` / `MetadataViolation` | `issuesmith.context_hook` |
-| `run_checks` / `extract_key_path_values` | `issuesmith.ac_contract` |
-| `main` | `issuesmith.cli` |
+| Symbol | Module | Notes |
+|---|---|---|
+| `get_config` / `load_config` / `reset_config_cache` | `issuesmith.config` | Load and cache `issuesmith.yaml` |
+| `ConfigError` | `issuesmith.config` | Invalid configuration |
+| `QueueStore` / `QueueValidationError` | `issuesmith.queue_store` | Persistent queue state |
+| `parse_issue_metadata` / `validate_issue_metadata` | `issuesmith.context_hook` | Issue YAML metadata |
+| `MetadataViolation` | `issuesmith.context_hook` | Dataclass (not an exception) for metadata violations |
+| `run_checks` / `extract_key_path_values` | `issuesmith.ac_contract` | Acceptance-criteria contract DSL |
+| `GATE_REGISTRY` / `Verdict` / `GateBuildError` | `issuesmith.gates` | Unified gate registry |
+| `main` | `issuesmith.cli` | CLI entry point |
+
+`TemplateVariableError` is defined in `ghdag.pipeline.order` and may be raised by `issuesmith.engine` when template variables are missing.
 
 ## Architecture
 
-```
-src/issuesmith/
-  cli.py              Unified CLI dispatcher
-  config.py           issuesmith.yaml resolution
-  context_hook.py     Issue YAML metadata + ghdag context
-  contract.py         Canonical parsers for Issue-body contract sections (one per section)
-  engine.py           LLM role switcher / metrics
-  queue.py            Queue dispatch loop
-  queue_store.py      Persistent queue state
-  queue_triage.py     LLM triage / title normalization
-  milestone.py        Milestone chain automation (sub phase + child develop)
-  ac_contract.py      Acceptance-criteria contract DSL
-  b1_tier.py / b1_verify.py
-  cp1_gate.py / cp2_tier.py / m2_gate.py
-  dep_extractor.py    Dependency extraction
-  github_api.py       Issue API wrappers
-  pipeline_comments.py
-  body_editor.py      Issue body edit helpers
-  gate_rules/         Named gate rule modules
-  ops/                dispatch, publish, doctor, smoke, version-bump, ...
-```
+Orchestration (polling, DAG construction, label transitions, idempotency) lives in **ghdag** `WorkflowDispatcher`. issuesmith provides Issue-domain tools, gates, and steps that workflow templates call.
 
-Workflow design conventions (one parser per contract section, runtime stop ↔ preflight parity)
-are enforced by `tests/test_workflow_conventions.py`; see nexus `docs/ISSUESMITH.md` for the rules.
-
-Orchestration (polling, DAG, label transitions) remains in **ghdag** `WorkflowDispatcher`. This package supplies the Issue-domain tools and gates that templates invoke.
+| Module | Role |
+|---|---|
+| `issuesmith/__init__.py` | Package docstring; empty `__all__` |
+| `issuesmith/__main__.py` | Dispatches `andon` / `labels` before `cli.main` |
+| `issuesmith/ac_contract.py` | Acceptance-criteria contract DSL helpers |
+| `issuesmith/andon.py` | Andon list/answer/note |
+| `issuesmith/b1_tier.py` | B1 model tier selection |
+| `issuesmith/b1_verify.py` | B1 verification runner |
+| `issuesmith/body_editor.py` | Issue body edit helpers |
+| `issuesmith/branch_reuse.py` | Branch reuse detection for worktrees |
+| `issuesmith/cli.py` | Unified CLI (`_HANDLERS`) |
+| `issuesmith/config.py` | `issuesmith.yaml` resolution and defaults |
+| `issuesmith/context_hook.py` | Issue YAML metadata and ghdag context |
+| `issuesmith/contract.py` | Canonical parsers for Issue-body contract sections |
+| `issuesmith/convert_to_milestone.py` | Convert Issue to milestone chain |
+| `issuesmith/cp1_gate.py` | CP1 gate CLI entry |
+| `issuesmith/cp2_tier.py` | CP2 model tier selection |
+| `issuesmith/dep_extractor.py` | Dependency extraction from Issue bodies |
+| `issuesmith/engine.py` | LLM role switcher, `run-guarded`, metrics |
+| `issuesmith/forge_api.py` | ghdag forge client wrappers |
+| `issuesmith/github_api.py` | Issue API wrappers |
+| `issuesmith/m2_gate.py` | M2 gate CLI entry |
+| `issuesmith/milestone.py` | Milestone chain status and resume |
+| `issuesmith/pipeline_comments.py` | Pipeline comment helpers |
+| `issuesmith/pr_scope.py` | PR diff scope helpers |
+| `issuesmith/queue.py` | Queue dispatch loop |
+| `issuesmith/queue_store.py` | Persistent queue state |
+| `issuesmith/queue_triage.py` | LLM triage / title normalization |
+| `issuesmith/quota_gate.py` | Quota gate state |
+| `issuesmith/recovery.py` | Deprecated recover/redispatch implementation |
+| `issuesmith/repair.py` | Repair-step helpers |
+| `issuesmith/resume.py` | Resume workflow from step or phase |
+| `issuesmith/targets.py` | Target repository resolution |
+| `issuesmith/template_ids.py` | Template id constants |
+| `issuesmith/gate_rules/__init__.py` | Re-exports ghdag gate types |
+| `issuesmith/gate_rules/b1_ac_format.py` | B1 acceptance-criteria format rules |
+| `issuesmith/gate_rules/b1_migration.py` | B1 migration plan rules |
+| `issuesmith/gate_rules/b1_milestone_subdesign.py` | B1 milestone sub-design rules |
+| `issuesmith/gate_rules/cp1.py` | CP1 design gate rules |
+| `issuesmith/gate_rules/m2.py` | M2 merge gate rules |
+| `issuesmith/gate_rules/milestone_consistency.py` | Milestone consistency rules |
+| `issuesmith/gate_rules/scope_breadth.py` | Scope breadth (pre-LLM) rules |
+| `issuesmith/gate_rules/scope_coupling.py` | Scope coupling rules |
+| `issuesmith/gate_rules/scope_size.py` | Issue size rules |
+| `issuesmith/gates/__init__.py` | Unified `GATE_REGISTRY` and `Verdict` |
+| `issuesmith/gates/base.py` | Shared gate base types |
+| `issuesmith/gates/dep.py` | Dependency gate (`DepsGate`) |
+| `issuesmith/gates/m1.py` | M1 version-behind-base gate |
+| `issuesmith/gates/m2.py` | M2 merge checks |
+| `issuesmith/gates/pr_scope.py` | PR scope gate |
+| `issuesmith/gates/scope.py` | Scope gate |
+| `issuesmith/gates/worktree.py` | Lint, tests, external_leak, base_freshness gates |
+| `issuesmith/observe/__init__.py` | Observe package |
+| `issuesmith/observe/dag_state.py` | DAG state readers |
+| `issuesmith/observe/events.py` | Observe event types |
+| `issuesmith/observe/main_health.py` | Base-branch health check |
+| `issuesmith/observe/policy.py` | Observe policy actions |
+| `issuesmith/ops/__init__.py` | Ops package |
+| `issuesmith/ops/dispatch.py` | Template render and enqueue |
+| `issuesmith/ops/doctor.py` | Preflight / environment checks |
+| `issuesmith/ops/gen_live_dispatch.py` | Live dispatch payload generation |
+| `issuesmith/ops/labels.py` | Managed-label reconciliation |
+| `issuesmith/ops/preflight.py` | Gate preflight helpers |
+| `issuesmith/ops/publish.py` | Publish / version-bump orchestration |
+| `issuesmith/ops/smoke.py` | Template smoke tests |
+| `issuesmith/ops/version_bump.py` | Deterministic version bump |
+| `issuesmith/steps/__init__.py` | Steps package |
+| `issuesmith/steps/base.py` | Step base types |
+| `issuesmith/steps/cp2_checkpoint.py` | CP2 checkpoint step |
+| `issuesmith/steps/m1_merge.py` | M1 merge step |
+| `issuesmith/steps/m2_finalize.py` | M2 finalize step |
+| `issuesmith/steps/p0_worktree.py` | P0 worktree creation |
+| `issuesmith/steps/repair.py` | Repair step wrapper |
+| `issuesmith/steps/scope_gate.py` | Scope root resolver for P0/CP1 |
+| `issuesmith/steps/sub1_create.py` | Sub-issue creation step |
+| `issuesmith/verbs/__init__.py` | Workflow verb package |
+| `issuesmith/verbs/finalize.py` | Finalize verb |
+| `issuesmith/verbs/merge.py` | Merge verb |
+| `issuesmith/verbs/publish.py` | Publish verb |
+| `issuesmith/verbs/worktree.py` | Worktree verb |
 
 ## Configuration
 
-| Name | Kind | Description |
-|---|---|---|
-| `ISSUESMITH_CONFIG` | env | Absolute path to `issuesmith.yaml` |
-| `ISSUESMITH_QUEUE_DIR` | env | Override directory for queue / triage files |
-| `AGENT_SKILLS_DIR` | env | Skills directory for doctor/preflight (default `~/.agents/skills`) |
-| `METRICS_JSONL_PATH` | env | Override metrics JSONL path for `issuesmith.engine` |
-| `ISSUESMITH_TIMEOUT_SEC` | env | Override engine timeout seconds. Total wall budget for wait + LLM (`call_managed`); waiting time is not added on top |
-| `ISSUESMITH_ENGINE_WAIT_POLL_SEC` | env | While all engines are paused, re-check quota every N seconds (default `60`, clamped to 1–60). Prefer this over `ISSUESMITH_ENGINE_WAIT_INTERVAL_SEC` |
-| `ISSUESMITH_ENGINE_WAIT_INTERVAL_SEC` | env | Legacy alias for the pause re-check interval when `ISSUESMITH_ENGINE_WAIT_POLL_SEC` is unset (same 1–60 clamp) |
-| `ISSUESMITH_ENGINE_WAIT_MAX_SEC` | env | Max seconds to wait for an engine to leave pause (default `21600`). Wait also stops early to leave ≥300s for the LLM within `ISSUESMITH_TIMEOUT_SEC` |
-| `issuesmith.yaml` | file | Repo / paths / engines / supported_repos / scope_gate (see Quick Start) |
+### Environment variables
 
-Optional `scope_gate` keys in `issuesmith.yaml` (allow_paths size check, #3349):
+| Name | Default | Description |
+|---|---|---|
+| `ISSUESMITH_CONFIG` | (none) | Absolute path to `issuesmith.yaml` |
+| `ISSUESMITH_QUEUE_DIR` | (none) | Override directory for queue / triage files |
+| `ISSUESMITH_ENGINE_WAIT_POLL_SEC` | `60` | While all engines are paused, re-check quota every N seconds (clamped 1–60) |
+| `ISSUESMITH_ENGINE_WAIT_INTERVAL_SEC` | `60` | Legacy alias for `ISSUESMITH_ENGINE_WAIT_POLL_SEC` when unset |
+| `ISSUESMITH_ENGINE_WAIT_MAX_SEC` | `21600` | Max seconds to wait for an engine to leave pause |
+| `ISSUESMITH_PYTEST_TIMEOUT_SEC` | (none) | Per-invocation pytest timeout for worktree `tests` gate |
+| `ISSUESMITH_TIMEOUT_SEC` | role `timeout_sec` from config | Total wall budget for engine wait + LLM call |
+| `ISSUESMITH_REPAIR_ACTIVE` | (unset) | Set internally during repair dispatch to prevent nested repair |
+| `GHDAG_TASK_UUID` | (none) | Current DAG task UUID for dispatch correlation |
+| `AGENT_SKILLS_DIR` | `~/.agents/skills` | Skills directory for doctor/preflight |
+
+Config file resolution order: explicit path argument → `ISSUESMITH_CONFIG` → walk up from cwd → package repo-root `issuesmith.yaml` → builtin defaults.
+
+### `issuesmith.yaml` top-level keys
 
 | Key | Default | Description |
 |---|---|---|
-| `enabled` | `true` | When `false`, skip measurement and always proceed |
-| `max_files` | `80` | Max tracked files matching `allow_paths` |
-| `max_lines` | `20000` | Max text lines (excludes `*.jsonl` and binaries) |
-| `hard_max_files` | `200` | Ceiling for Issue YAML `scope_gate.max_files` overrides (CP1 enforces) |
+| `repo` | (required) | Primary GitHub repository (`owner/name`) |
+| `label_namespace` | (required) | Managed label prefix |
+| `timezone` | (required) | IANA timezone (e.g. `Asia/Tokyo`) |
+| `supported_repos` | `[]` | Repositories allowed for cross-repo Issues |
+| `paths` | see `PathsConfig` | Queue, workflow, template, metrics, and worktree paths |
+| `engines` | design + implementation roles | Allowed engines, models, and timeouts per role |
+| `concurrency` | `default: 1` | Per-engine concurrency limits |
+| `milestone_chain` | `enabled: false` | Milestone chain automation |
+| `triage` | `enabled: true` | Queue tick LLM reorder |
+| `phases` | draft/sub/develop/merge | Phase → role → entry step mapping |
+| `sections` | Japanese section headings | Issue body section name map |
+| `sub_design_subsections` | fixed tuple | Required sub-design subsections |
+| `steps` | `m2-role-dispatch` | Step definitions (`module`, `template`, `requires`) |
+| `forbidden_pr_paths` | `jobs/**`, `logs/**`, … | Paths excluded from PR scope |
+| `scope_gate` | `enabled: true`, `max_files: 80`, … | P0 allow_paths size gate |
+| `scope_coupling` | `enabled: true` | Caller/test coupling gate |
+| `scope_size` | `enabled: true`, `max_files: 8`, … | B1 Issue size gate |
+| `derived_allow` | `enabled: true` | Derived allow_paths for newly failing tests |
+| `external_leak` | `cjk_free_external_targets: false` | Cross-repo CJK leak gate |
+| `terminal_labels` | `issuesmith:merge-done`, `bump:done` | Labels that mark terminal state |
+| `observe` | stall/task timeouts, `main_health` | Observe layer configuration |
+| `api_brake` | `enabled: false` | GitHub API rate-limit brake |
 
-Issue YAML may also declare `scope_mode: internal` (sumipan/nexus#3527): the change keeps the
-public interface of the listed files, so the `scope_coupling` gate does not require callers or
-tests outside `allow_paths` to follow. Without it, `scope_coupling` requires only callers of
-public symbols defined in the changed files and basenames of deleted / moved files; files that
-match by string only are listed for reference and never widen `allow_paths`.
+Nested `paths` keys (relative to config root unless absolute): `queue`, `queue_state`, `queue_lock`, `triage_log`, `seed`, `night_state`, `exec_jsonl`, `done_dir`, `quota_state`, `metrics`, `worktrees_dir`, `external_dir`, `workflow`, `template_dir`, `engine_state`, `brake_state` (defaults to `quota_state`).
 
-`scope_coupling` also checks deleted files (nexus #3953), regardless of `scope_mode` and of
-`scope_coupling.enabled` (that flag turns off the caller/test coupling check only): for each
-change-table row whose change type matches `scope_size.delete_words`, it runs `git grep` for the
-file name, the stem and the Python module name (`scripts/git-sync.py` -> `git-sync.py`,
-`git-sync`, `git_sync`) under `tests/` `scripts/` `tools/` of the base checkout. Referrers that
-match neither an `allow_paths` glob nor a `paths_must_not_exist` entry fail with
-`scope_coupling.deletion_reference_uncovered` (one per deleted path, not auto-fixable). The same
-check runs again at dispatch time for `develop` requests (the queue keeps the request and comments
-on the Issue instead of dispatching), and when an in-flight Issue is released with `merge-done`
-the queue re-checks the open Issues that declare it as a dependency and comments on those with
-new referrers (`gates.dep.on_dep_merge_done`). A missing target clone skips the deletion check;
-with `enabled: true`, B1 / CP1 still fail closed with `scope_coupling.root_unavailable`.
-
-Optional `scope_coupling` keys in `issuesmith.yaml` (caller/test coupling check):
-
-| Key | Default | Description |
-|---|---|---|
-| `enabled` | `true` | When `false`, skip the caller/test coupling check (the deleted-file reference check still runs) |
-| `search_dirs` | `["tests", "src"]` | Directories to grep for callers and tests. Hits from `tests` go to `tests_outside_allow_paths`; all others go to `callers_outside_allow_paths`. Example: `[tests, src, workflows, tools, scripts]` to cover workflow templates and helper scripts |
-| `data_file_tests` | `true` | When a change-table row modifies a data / config file (`.yml` `.yaml` `.json` `.toml` `.txt`; not deleted / moved / renamed), its file name with extension (e.g. `vcs.yml`) becomes a required key, so tests that pin its contents fail `tests_outside_allow_paths` and are added to `allow_paths` by the autofix (nexus #3949). Set `false` to turn off only this part. Not evaluated when `enabled` is `false` |
-
-Optional `scope_size` keys in `issuesmith.yaml` (Issue size gate run by B1 Verify, nexus #3665).
-The gate reads only the Issue's change table: counted files are rows whose path does not start
-with an `exclude_prefixes` entry, concerns are their distinct parent directories, and change types
-are normalized to `delete` / `new` / `modify`. Issues labelled `scope:milestone` are skipped. Each
-violation (`scope_size.too_many_files`, `scope_size.too_many_concerns`,
-`scope_size.delete_with_new`) carries a fix_hint with a sub-issue split plan (one row per concern);
-the body is never rewritten.
-
-| Key | Default | Description |
-|---|---|---|
-| `enabled` | `true` | When `false`, skip the size check entirely |
-| `max_files` | `8` | Max counted files (integer >= 1, else `ConfigError`) |
-| `max_concerns` | `2` | Max distinct parent directories of counted files (integer >= 1, else `ConfigError`) |
-| `delete_with_new` | `false` | When `false`, deletion and creation in one Issue fail |
-| `exclude_prefixes` | `["tests/", "docs/", "README.md", "CHANGELOG.md", "pyproject.toml"]` | Path prefixes not counted (list of strings, else `ConfigError`) |
-| `delete_words` | `["delete"]` | Change-type cell substrings (case-insensitive) that mean deletion; hosts writing Issues in another language set their own words |
-| `new_words` | `["new", "add"]` | Change-type cell substrings that mean creation |
-| `sub_plan_header` | `\| # \| Title \| Target repo \| Content \| Depends on \|` | Header row of the sub-issue split plan in the fix_hint |
-| `no_deps_word` | `none` | Dependency cell of the split plan rows |
-
-Optional `observe.main_health` keys in `issuesmith.yaml` (base-branch health check, #3664).
-Without the section the feature is disabled:
-
-| Key | Default | Description |
-|---|---|---|
-| `worktree` | (required) | Detached worktree of the base branch (create it beforehand) |
-| `command` | (required) | Health command; a string is split with `shlex`, a list is used as-is (no shell) |
-| `base_branch` | `main` | Branch fetched from `origin` and checked out detached |
-| `timeout_seconds` | `1800` | Command timeout; a timeout leaves the state file unchanged |
-
-`issuesmith main-health` skips the command while `origin/<base_branch>` has the SHA already
-recorded in `<queue_state dir>/issuesmith-main-health.json`. `observe()` only reads that file:
-a red state emits `main_red` on every tick (halt `phase:develop` with `keep_existing`, one
-`broken` andon `observe:0:main_red:0`), and a green state emits `main_green` while the halt
-was raised by `main_red`, which clears only that halt. Scheduling the command is up to the host.
-
-Optional `external_leak` keys in `issuesmith.yaml` (worktree gate `external_leak`, nexus #3909):
-
-| Key | Default | Description |
-|---|---|---|
-| `cjk_free_external_targets` | `false` | When `true`, a branch whose Issue `target_repo` differs from `repo` must not add lines containing CJK characters (literal or `\uXXXX` escaped). Reported per file as `external_leak.cjk_added_line` (not auto-fixable; the repair step rewrites the lines). Pre-existing CJK on the base branch is never reported. Other keys raise `ConfigError` |
-
-Optional `derived_allow` keys in `issuesmith.yaml` (derived allow_paths for newly failing tests, #3756):
-
-| Key | Default | Description |
-|---|---|---|
-| `enabled` | `true` | When `false`, `TestsGate` never derives paths and `pr_scope` checks `allow_paths` only. Other keys raise `ConfigError` |
-
-When a body's change table row or section heading contains a removal keyword (`delete`, `remove`, `削除`, `撤去`, `廃止`), backtick identifiers and `` `${template_var}` `` names in that row, in the heading text, or in the section body under that heading are unconditionally treated as required search keys — even if they have no `def`/`class` definition in the changed files. This catches constants, YAML keys, and dataclass fields being removed. Bare (non-backticked) words are not extracted. Example:
-
-```markdown
-## Items to remove: `MY_CONST`
-
-The `${old_step_result}` template variable is no longer used.
-```
-
-Both `MY_CONST` and `old_step_result` become required keys; any file outside `allow_paths` that references them generates a violation.
-
-**CP1 narrows automatically, P0 is a safety net (#3487).** `steps.scope_gate.resolve_scope_root`
-is the single root resolver both CP1 (`gate_rules.scope_breadth`) and P0 (`steps.p0_worktree`) call,
-so both measure the same tree. When CP1 finds allow_paths over threshold, it deterministically
-narrows to the union of the change table and the AC `paths_must_exist` list, posts a comment with
-the before/after, and continues — it never falls back to the parent's allow_paths and never passes
-silently when the root can't be measured (`scope_breadth.root_unavailable` fails closed). P0 runs
-the same check again after the worktree exists; because CP1 is declared as the preflight-parity rule
-for `SCOPE_TOO_LARGE` (`gate_rules.PREFLIGHT_PARITY`), a trip at P0 means CP1 already should have
-caught it — the comment says so explicitly and `scope_gate.p0_trip` is recorded to `jobs/metrics.jsonl`.
-
-Optional `milestone_chain` keys in `issuesmith.yaml`:
-
-| Key | Default | Description |
-|---|---|---|
-| `enabled` | `false` | Enable milestone chain automation |
-| `auto_develop` | `true` | After child validation, enqueue `develop` for each child |
-| `auto_close_parent` | `true` | When every child is `CLOSED` with `issuesmith:merge-done`, comment once and close the parent. Set `false` to keep notify-only behavior. Children closed via `TERMINAL_WITHOUT_MERGE` (e.g. rejected) halt the chain for human review instead of closing the parent |
-
-Optional `triage` keys in `issuesmith.yaml` (queue tick LLM reorder):
-
-| Key | Default | Description |
-|---|---|---|
-| `enabled` | `true` | When `false`, skip LLM and apply deterministic priority order only |
-| `engine` | `claude` | LLM engine passed to ghdag `call_text` |
-| `model` | `claude-sonnet-4-6` | Model id for triage |
-| `timeout` | `60` | LLM timeout seconds |
-| `body_chars` | `500` | Max Issue body characters included as `body_head` (use `0` for title-only) |
-| `circuit_breaker_threshold` | `3` | Consecutive LLM timeout entries that open the circuit |
-| `circuit_breaker_reset_seconds` | `1800` | After this many seconds from the oldest timeout in the window, allow LLM again |
-
-Resolution order for the config file: explicit path → `ISSUESMITH_CONFIG` → walk up from cwd → package repo-root fallback → builtin defaults.
-
-### LLM-only (module-less) steps and `run-guarded --requires-step`
-
-A step whose `module` key is absent (or empty) is an **LLM-only step**. Attempting to dispatch it via `dispatch` raises `andon(broken)` immediately; run it instead with `run-guarded --requires-step <step_id>`, which wraps the LLM call with gate evaluation:
-
-- **Pre-phase**: gates whose `pre_llm=True` flag is set (`base_freshness`, `scope_breadth`) run before the LLM. A non-repairable violation (e.g. `scope_breadth`) raises `andon(decision)` with `widen:<files>`, `split`, and `reject` options.
-- **Post-phase**: the full `requires` gate list runs after the LLM via `run_requires_loop`, which fetches a fresh issue body and rebuilds gates from scratch on every evaluation.
-
-`requires: []` (explicit empty list) is valid and means "no gates for this step." A step that omits the `requires:` key entirely is a `validate_requires_chain` violation (except for `repair`).
-
-`andon.answer("widen:<file1>,<file2>")` merges the listed files into `allow_paths` in the issue body YAML block and calls `resume(issue_num, from_step=step)` automatically. If the body has no YAML block, a comment is posted and no resume is triggered.
-
-## Milestone chain (multi-repo)
-
-`validate_children()` checks child Issues before C2 enqueues `develop`:
-
-| Check | Rule |
-|---|---|
-| V1 `target_repo` | If the parent `### サブイシュー分割計画` table has a `対象リポジトリ` column, each child's YAML `target_repo` must match the plan row whose `タイトル` equals the child title. Values must be in `supported_repos`. Without that column (legacy 4-column plan), children are compared to the parent YAML `target_repo` as before. |
-| V2 `allow_paths` | Only change-table rows whose `リポジトリ` equals the child's `target_repo` are required to be covered by the child's `allow_paths`. Rows for other repositories are ignored. |
-
-`issuesmith milestone status <parent>` lists each child's `target_repo` (blank when unset).
-
-## Gates
-
-All gate ids usable in `steps.<id>.requires` in `issuesmith.yaml`. Issue gates evaluate the issue body / labels; worktree gates evaluate the checked-out worktree.
-
-| id | input_kind | implementation |
-|---|---|---|
-| `b1_ac_format` | issue | gate_rules/b1_ac_format.py |
-| `b1_migration` | issue | gate_rules/b1_migration.py |
-| `b1_migration.post_merge_schema` | issue | gate_rules/b1_migration.py — rule of `b1_migration`: each `post_merge` item must be a dict with a known `kind` (`stable_install` / `tag` / `restart`) and its required fields, not a `requires` id |
-| `b1_migration.removed_trees_schema` | issue | gate_rules/b1_migration.py — rule of `b1_migration`: `removed_trees` items must be strings, not a `requires` id |
-| `b1_milestone_subdesign` | issue | gate_rules/b1_milestone_subdesign.py |
-| `base_freshness` | worktree | gates/worktree.py (BaseFreshnessGate) |
-| `cp1` | issue | gate_rules/cp1.py |
-| `deps` | issue | gates/dep.py (DepsGate) |
-| `external_leak` | worktree | gates/worktree.py (ExternalLeakGate) |
-| `lint` | worktree | gates/worktree.py (LintGate) |
-| `m2` | issue | gate_rules/m2.py |
-| `m1.version_behind_base` | worktree | gates/m1.py (VersionBehindBaseGate) — run by the M1 merge step before merging, not a `requires` id |
-| `milestone_consistency` | issue | gate_rules/milestone_consistency.py |
-| `pr_scope` | worktree | gates/pr_scope.py (PrScopeGate) |
-| `scope` | worktree | gates/scope.py (ScopeGate) |
-| `scope_breadth` | issue | gate_rules/scope_breadth.py |
-| `scope_coupling` | issue | gate_rules/scope_coupling.py |
-| `scope_coupling.deletion_reference_uncovered` | issue | gate_rules/scope_coupling.py — rule of `scope_coupling`: files under `tests/` `scripts/` `tools/` that reference a deleted file must be in `allow_paths` or `paths_must_not_exist`; also checked at `develop` dispatch and after a dependency merges, not a `requires` id |
-| `scope_size` | issue | gate_rules/scope_size.py |
-| `tests` | worktree | gates/worktree.py (TestsGate) |
-
-### Derived allow_paths for newly failing tests (#3756)
-
-In the `run-guarded --requires-step` loop, `TestsGate` computes `derived_allow_paths`: test files
-the repair step may edit even though they are outside `allow_paths`. A file qualifies only when
-all of the following hold (deterministic; see `gates.worktree.derive_test_allow_paths`):
-
-- it is under `tests/` and does not already match `allow_paths`;
-- it has a test that passes on `origin/<base>` but fails on the branch (collection errors
-  included), and the file exists on `origin/<base>`. No baseline → nothing is derived;
-- its text references a changed file: the path itself, the dotted module name of a changed
-  `src/**.py`, the file stem, or a public `def`/`class` name on a `+`/`-` diff line.
-
-`run_requires_loop` keeps the union for the generation in `context["derived_allow_paths"]`,
-`pr_scope` accepts those files, and the repair instruction lists them. On success
-`run-guarded` prints a `derived_allow_paths:` block before the `PIPELINE_STATUS:` line, and CP2
-reads it from `jobs/<p1_result_filename>` when checking the PR scope. The Issue body's
-`allow_paths` and the queue's overlap check are unchanged.
-
-Guard: `pr_scope` runs `check_derived_test_guard` on derived files. Fewer test functions or
-`assert` statements than on base (or a file that no longer parses) is
-`derived_allow.test_weakened`; more `skip` / `skipif` / `xfail` / `skipTest` references is
-`derived_allow.test_skipped`. Both are repairable failures that end in andon(decision) after
-`max_repairs`.
+Nested `observe.main_health` keys: `worktree` (required when enabled), `command`, `base_branch` (`main`), `timeout_seconds` (`1800`).
 
 ## Error Reference
 
-| Type | Module | When |
-|---|---|---|
-| `QueueValidationError` | `issuesmith.queue_store` | Invalid queue request payload |
-| `MetadataViolation` | `issuesmith.context_hook` | Issue YAML metadata fails validation |
-| `ValueError` | various | Config / gate / engine argument errors |
-| `TemplateVariableError` | `issuesmith.engine` | Missing template variables at render time |
-| `RuntimeError` | `issuesmith.engine` | Engine pause / agent list-models failures |
-| `FileNotFoundError` / `KeyError` | `issuesmith.ops.dispatch` | Missing template or substitution key |
+| Type | Module | Base | When |
+|---|---|---|---|
+| `ConfigError` | `issuesmith.config` | `ValueError` | Invalid `issuesmith.yaml` or gate `requires` chain |
+| `QueueValidationError` | `issuesmith.queue_store` | `ValueError` | Invalid queue request payload |
+| `GateBuildError` | `issuesmith.gates` | `ValueError` | Gate cannot be instantiated (e.g. missing worktree) |
+| `MainHealthError` | `issuesmith.observe.main_health` | `RuntimeError` | Base-branch health command failed |
+| `GateMaterializationError` | `issuesmith.steps.m2_finalize` | `RuntimeError` | M2 gate materialization failed |
+| `WorktreeError` | `issuesmith.steps.p0_worktree` | `Exception` | P0 worktree creation failed |
+
+`TemplateVariableError` (`ghdag.pipeline.order`) may propagate from `issuesmith.engine` when a template variable is missing at render time.
 
 ## License
 
-MIT (`MIT` SPDX). See [LICENSE](./LICENSE).
+MIT. See [LICENSE](./LICENSE).
