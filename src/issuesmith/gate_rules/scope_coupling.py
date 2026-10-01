@@ -486,6 +486,15 @@ DELETION_RULE_ID = "scope_coupling.deletion_reference_uncovered"
 DELETION_SEARCH_DIRS: tuple[str, ...] = ("tests", "scripts", "tools")
 
 
+def _deletion_search_pathspecs(deleted_path: str) -> tuple[str, ...]:
+    """Return grep pathspecs for a deleted path, including its parent directory."""
+    parent = str(Path(deleted_path).parent)
+    specs = list(DELETION_SEARCH_DIRS)
+    if parent and parent not in (".", "") and parent not in specs:
+        specs.append(parent)
+    return tuple(specs)
+
+
 def _stem_is_unique_in_repo(stem: str, repo_path: Path) -> bool:
     """Return True if exactly one tracked file in repo_path has this stem."""
     try:
@@ -584,6 +593,64 @@ def _git_grep_lines(root: Path, pattern: str, pathspec: str) -> list[tuple[str, 
     return rows
 
 
+def _deleted_parent_module(deleted_path: str) -> str:
+    parts = Path(deleted_path).with_suffix("").parts
+    if len(parts) <= 1:
+        return parts[0] if parts else ""
+    return ".".join(parts[:-1])
+
+
+_DYNAMIC_IMPORT_FUNCS: tuple[str, ...] = ("spec_from_file_location",)
+
+
+def _stem_import_list_pattern(key: str) -> re.Pattern[str]:
+    escaped = re.escape(key)
+    return re.compile(rf"(?<![A-Za-z0-9_]){escaped}(?![A-Za-z0-9_])")
+
+
+def _stem_match_context(
+    key: str,
+    line: str,
+    deleted_path: str,
+    referrer_path: str,
+) -> str | None:
+    """Return stem reference context (import/file/dynamic) or None for non-references."""
+    deleted = Path(deleted_path)
+    deleted_dir = str(deleted.parent)
+    referrer_dir = str(Path(referrer_path).parent)
+    parent_module = _deleted_parent_module(deleted_path)
+    escaped_key = re.escape(key)
+    import_token = _stem_import_list_pattern(key)
+
+    if deleted_dir == referrer_dir:
+        if re.search(rf"(?<![A-Za-z0-9_])import\s+{escaped_key}\b", line):
+            return "import"
+        relative = re.search(r"from\s+\.\s+import\s+(.+)", line)
+        if relative and import_token.search(relative.group(1)):
+            return "import"
+
+    from_match = re.search(r"from\s+([A-Za-z_][A-Za-z0-9_.]*)\s+import\s+(.+)", line)
+    if from_match and from_match.group(1) == parent_module and import_token.search(from_match.group(2)):
+        return "import"
+
+    deleted_name = deleted.name
+    if re.search(
+        rf"(?<![A-Za-z0-9_.\-]){re.escape(deleted_name)}(?![A-Za-z0-9_])",
+        line,
+    ):
+        return "file"
+    if deleted_path in line:
+        return "file"
+
+    if any(fn in line for fn in _DYNAMIC_IMPORT_FUNCS):
+        if re.search(rf"""['"]{escaped_key}['"]""", line):
+            return "dynamic"
+        if deleted_name in line or deleted_path in line:
+            return "dynamic"
+
+    return None
+
+
 def _key_matches_line(key: str, kind: str, line: str) -> bool:
     if kind == "path":
         return True
@@ -644,19 +711,25 @@ def _deletion_hits(
         by_referrer: dict[str, tuple[str, str, str, str]] = {}
         by_sibling: dict[str, tuple[str, int]] = {}
         for key, kind in _deletion_search_key_kinds(path, repo_path):
-            for d in DELETION_SEARCH_DIRS:
+            for d in _deletion_search_pathspecs(path):
                 for rel_path, line in _git_grep_lines(repo_path, key, d):
                     if rel_path in deleted or _in_allow_paths(rel_path, covered):
                         continue
                     if not _key_matches_line(key, kind, line):
                         continue
+                    effective_kind = kind
+                    if kind == "stem":
+                        stem_context = _stem_match_context(key, line, path, rel_path)
+                        if stem_context is None:
+                            continue
+                        effective_kind = f"stem:{stem_context}"
                     owner_sub = _sibling_owner_sub(rel_path, sibling_paths, current_sub)
                     if owner_sub is not None:
                         if rel_path not in by_sibling:
                             by_sibling[rel_path] = (rel_path, owner_sub)
                         continue
                     if rel_path not in by_referrer:
-                        by_referrer[rel_path] = (rel_path, key, kind, line)
+                        by_referrer[rel_path] = (rel_path, key, effective_kind, line)
         if by_referrer:
             uncovered[path] = sorted(by_referrer.values(), key=lambda row: row[0])
         if by_sibling:
