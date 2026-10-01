@@ -777,4 +777,3 @@ def test_stem_violation_fix_hint_includes_context_suffix(tmp_path):
     hint = v.fix_hint or ""
     assert "tools/import_pkg.py:" in hint
     assert "stem:import" in hint
-
