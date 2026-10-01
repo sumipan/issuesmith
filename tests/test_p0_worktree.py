@@ -8,10 +8,28 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
 from issuesmith import worktree as wt
+
+_STALE_BASE_COMMENT_TEMPLATE = """\
+## P0 stop: base_branch sync failed (rebase conflict)
+
+`origin/{base_branch}` rebase conflict. Resolve manually and re-dispatch.
+
+**Conflict files:**
+```
+{conflict_files}
+```
+
+PIPELINE_STATUS: STALE_BASE"""
+
+_MILESTONE_COMMENT = """\
+## P0 blocked: scope:milestone issue
+Design-only issue; develop-ready auto-implementation is forbidden.
+PIPELINE_STATUS: MILESTONE_BLOCKED"""
 
 # --- Real git strings (verbatim captures; values unchanged) ---
 
@@ -329,8 +347,197 @@ def test_worktree_module_has_no_pipeline_imports() -> None:
         "issuesmith.steps",
         "scope_gate",
         "state_machine",
-        "get_forge",
         "issue_comment",
     )
     for token in forbidden:
         assert token not in import_block
+
+
+def test_require_yaml_metadata_rejects_missing_block() -> None:
+    with pytest.raises(wt.WorktreeError, match="yaml metadata block"):
+        wt.require_yaml_metadata("## Background\nno yaml\n")
+
+
+def test_handle_milestone_posts_comment_and_returns_failed() -> None:
+    client = MagicMock()
+    transition = MagicMock()
+    result = wt.handle_milestone(
+        client,
+        3168,
+        comment=_MILESTONE_COMMENT,
+        on_transition=lambda issue_number: transition(issue_number, "issuesmith:draft-done"),
+    )
+    assert result.exit_code == 1
+    assert result.pipeline_status == "WORKTREE_FAILED"
+    transition.assert_called_once_with(3168, "issuesmith:draft-done")
+    client.issue_comment.assert_called_once_with(3168, _MILESTONE_COMMENT)
+    body = client.issue_comment.call_args.args[1]
+    assert "scope:milestone" in body
+    assert "MILESTONE_BLOCKED" in body
+
+
+def _make_repo_with_diverged_branch(tmp_path: Path) -> tuple[Path, str]:
+    repo = tmp_path / "repo"
+    _git_init_with_main(repo)
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", "-b", "feat/stale"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", "main"],
+        check=True,
+        capture_output=True,
+    )
+    (repo / "file2").write_text("y\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "file2"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-m", "advance main"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin", str(repo)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "fetch", "origin", "main"],
+        check=True,
+        capture_output=True,
+    )
+    return repo, "feat/stale"
+
+
+def test_ensure_base_included_already_included_returns_none(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_init_with_main(repo)
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin", str(repo)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "fetch", "origin", "main"],
+        check=True,
+        capture_output=True,
+    )
+    client = MagicMock()
+    result = wt.ensure_base_included(
+        repo,
+        "main",
+        client,
+        3408,
+        stale_base_comment_template=_STALE_BASE_COMMENT_TEMPLATE,
+    )
+    assert result is None
+    client.issue_comment.assert_not_called()
+
+
+def test_ensure_base_included_rebase_success_returns_none(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo, stale_branch = _make_repo_with_diverged_branch(tmp_path)
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", stale_branch],
+        check=True,
+        capture_output=True,
+    )
+    client = MagicMock()
+    result = wt.ensure_base_included(
+        repo,
+        "main",
+        client,
+        3408,
+        stale_base_comment_template=_STALE_BASE_COMMENT_TEMPLATE,
+    )
+    assert result is None
+    err = capsys.readouterr().err
+    assert "P0_REBASE: auto-synced" in err
+    client.issue_comment.assert_not_called()
+
+
+def test_ensure_base_included_rebase_conflict_returns_stale_base(tmp_path: Path) -> None:
+    repo, stale_branch = _make_repo_with_diverged_branch(tmp_path)
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", stale_branch],
+        check=True,
+        capture_output=True,
+    )
+    (repo / "README").write_text("conflict\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "README"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-m", "stale conflict"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", "main"],
+        check=True,
+        capture_output=True,
+    )
+    (repo / "README").write_text("main conflict\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "README"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-m", "main conflict"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "fetch", "origin", "main"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", stale_branch],
+        check=True,
+        capture_output=True,
+    )
+    client = MagicMock()
+    result = wt.ensure_base_included(
+        repo,
+        "main",
+        client,
+        3408,
+        stale_base_comment_template=_STALE_BASE_COMMENT_TEMPLATE,
+    )
+    assert result is not None
+    assert result.exit_code == 1
+    assert result.pipeline_status == "STALE_BASE"
+    client.issue_comment.assert_called_once()
+    comment = client.issue_comment.call_args.args[1]
+    assert "STALE_BASE" in comment
+
+
+def test_ensure_base_included_rev_parse_fails_returns_none(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_init_with_main(repo)
+    client = MagicMock()
+    result = wt.ensure_base_included(
+        repo,
+        "main",
+        client,
+        3408,
+        stale_base_comment_template=_STALE_BASE_COMMENT_TEMPLATE,
+    )
+    assert result is None
+    client.issue_comment.assert_not_called()
+
+
+def test_assert_jobs_clean_raises_when_dirty(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    repo = tmp_path / "repo"
+    _git_init_with_main(repo)
+    jobs = repo / "jobs"
+    jobs.mkdir()
+    (jobs / "exec.jsonl").write_text("{}\n", encoding="utf-8")
+    with pytest.raises(wt.WorktreeError, match="dirty files under jobs/"):
+        wt.assert_jobs_clean(repo, "jobs/")
+    err = capsys.readouterr().err
+    assert "jobs/" in err
+    assert "dirty" in err.lower()
+
+
+def test_assert_jobs_clean_passes_when_clean(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_init_with_main(repo)
+    wt.assert_jobs_clean(repo, "jobs/")

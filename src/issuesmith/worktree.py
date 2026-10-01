@@ -10,7 +10,12 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
+
+from ghdag.forge import ForgePort, get_forge
+
+from issuesmith.contract import StepResult
 
 _TRANSIENT_FETCH_MARKERS = ("cannot lock ref", "unable to update local ref")
 
@@ -324,6 +329,137 @@ def prepare_local_worktree(
     return worktree_path
 
 
+def github_client() -> ForgePort:
+    """Return the configured forge client for GitHub API calls."""
+    return get_forge()
+
+
+def require_yaml_metadata(body: str) -> None:
+    """Require Issue body to start with a YAML metadata fenced block."""
+    first = body.split("\n", 1)[0] if body else ""
+    if not first.startswith("```yaml"):
+        _fail(
+            "issue body must start with a yaml metadata block "
+            "(base_branch / allow_paths / target_repo); see #2532"
+        )
+
+
+def handle_milestone(
+    client: ForgePort,
+    issue_number: int,
+    *,
+    comment: str,
+    on_transition: Callable[[int], None] | None = None,
+    stderr_error: str = "scope:milestone issue cannot enter implementation",
+) -> StepResult:
+    """Block milestone-scoped issues from entering implementation.
+
+    *on_transition* and *comment* are supplied by the caller so this helper
+    stays free of workflow-specific defaults.
+    """
+    if on_transition is not None:
+        try:
+            on_transition(issue_number)
+        except Exception as exc:  # noqa: BLE001 — caller may use best-effort transition
+            print(f"P0 milestone transition failed: {exc}", file=sys.stderr)
+    try:
+        client.issue_comment(issue_number, comment)
+    except Exception as exc:  # noqa: BLE001
+        print(f"P0 milestone comment failed: {exc}", file=sys.stderr)
+    print(f"WORKTREE_ERROR: {stderr_error}", file=sys.stderr)
+    return StepResult(exit_code=1, pipeline_status="WORKTREE_FAILED")
+
+
+def ensure_base_included(
+    worktree_dir: Path,
+    base_branch: str,
+    client: ForgePort,
+    issue_number: int,
+    *,
+    stale_base_comment_template: str,
+) -> StepResult | None:
+    """Return ``None`` when HEAD includes origin/*base_branch*; rebase or fail otherwise."""
+    rev_parse = subprocess.run(
+        ["git", "-C", str(worktree_dir), "rev-parse", f"origin/{base_branch}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if rev_parse.returncode != 0:
+        return None
+
+    base_sha = rev_parse.stdout.strip()
+
+    ancestor = subprocess.run(
+        ["git", "-C", str(worktree_dir), "merge-base", "--is-ancestor", base_sha, "HEAD"],
+        capture_output=True,
+        check=False,
+    )
+    if ancestor.returncode == 0:
+        return None
+
+    rebase = subprocess.run(
+        ["git", "-C", str(worktree_dir), "rebase", f"origin/{base_branch}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if rebase.returncode == 0:
+        print(
+            f"P0_REBASE: auto-synced with origin/{base_branch}",
+            file=sys.stderr,
+        )
+        return None
+
+    conflict_proc = subprocess.run(
+        ["git", "-C", str(worktree_dir), "diff", "--name-only", "--diff-filter=U"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    conflict_files = (conflict_proc.stdout or "").strip() or "(unavailable)"
+
+    subprocess.run(
+        ["git", "-C", str(worktree_dir), "rebase", "--abort"],
+        capture_output=True,
+        check=False,
+    )
+
+    comment = stale_base_comment_template.format(
+        base_branch=base_branch,
+        conflict_files=conflict_files,
+    )
+    try:
+        client.issue_comment(issue_number, comment)
+    except Exception as exc:  # noqa: BLE001
+        print(f"P0 stale_base comment failed: {exc}", file=sys.stderr)
+
+    return StepResult(exit_code=1, pipeline_status="STALE_BASE")
+
+
+def assert_jobs_clean(worktree_dir: Path, jobs_path: str) -> None:
+    """Fail when *jobs_path* under *worktree_dir* is dirty in git status."""
+    proc = subprocess.run(
+        ["git", "-C", str(worktree_dir), "status", "--porcelain", "--", jobs_path],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        msg = f"failed to check {jobs_path} dirty status in {worktree_dir}"
+        if detail:
+            msg = f"{msg}: {detail}"
+        _fail(msg)
+    if (proc.stdout or "").strip():
+        msg = (
+            f"P0: worktree has dirty files under {jobs_path} after prepare. "
+            "Daemon auto-commits may have leaked into the tree."
+        )
+        print(msg, file=sys.stderr)
+        _fail(msg)
+
+
 def prepare_cross_repo_worktree(
     clone_path: Path,
     worktree_path: Path,
@@ -345,12 +481,17 @@ def prepare_cross_repo_worktree(
 
 __all__ = [
     "WorktreeError",
+    "assert_jobs_clean",
     "clone_if_missing",
+    "ensure_base_included",
     "fetch_base_or_raise",
     "fetch_base_with_retry",
+    "github_client",
+    "handle_milestone",
     "prepare_cross_repo_worktree",
     "prepare_local_worktree",
     "prepare_worktree",
+    "require_yaml_metadata",
     "resolve_base_ref",
     "validate_branch",
 ]
