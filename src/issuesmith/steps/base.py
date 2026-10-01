@@ -9,8 +9,7 @@ from issuesmith.contract import Andon, StepContext, StepResult, Verdict
 __all__ = ["Andon", "StepContext", "StepResult", "Verdict"]
 
 warnings.warn(
-    "issuesmith.steps.base is deprecated; "
-    "import StepContext, StepResult, Andon, Verdict from issuesmith.contract instead",
+    "issuesmith.steps.base is deprecated; use issuesmith.contract (StepContext, StepResult, Andon, Verdict) instead",
     DeprecationWarning,
     stacklevel=2,
 )
