@@ -288,6 +288,17 @@ def run_checks(contract: dict, repo_root: Path, *, base_ref: str = "HEAD") -> li
                 }
             )
             continue
+        if source is None:
+            records.append(
+                {
+                    "check": "references_must_resolve",
+                    "path": str(ref),
+                    "result": "FAIL",
+                    "detail": f"invalid reference entry (expected str or {{file, key_path}}): {ref!r}",
+                    "git_log": "",
+                }
+            )
+            continue
         source_path = repo_root / source
         if not source_path.exists():
             records.append(

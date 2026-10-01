@@ -233,3 +233,24 @@ def test_run_checks_references_dict_file_only_pass_regression(tmp_path):
     contract = {"references_must_resolve": [{"file": "config.yaml"}]}
     records = run_checks(contract, tmp_path)
     assert records[0]["result"] == "PASS"
+
+
+def test_run_checks_references_none_source_fails_without_raising(tmp_path, monkeypatch):
+    """Defense branch when normalize_reference_entry returns (None, None, None)."""
+    import issuesmith.ac_contract as ac_contract
+
+    monkeypatch.setattr(
+        ac_contract,
+        "normalize_reference_entry",
+        lambda _ref: (None, None, None),
+    )
+    contract = {"references_must_resolve": ["docs/MLTGNT.md"]}
+
+    records = run_checks(contract, tmp_path)
+
+    assert len(records) == 1
+    r = records[0]
+    assert r["check"] == "references_must_resolve"
+    assert r["result"] == "FAIL"
+    assert "invalid reference entry" in r["detail"]
+    assert r["git_log"] == ""
