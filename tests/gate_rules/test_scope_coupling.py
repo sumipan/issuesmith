@@ -48,7 +48,7 @@ def repo(tmp_path: Path) -> Path:
             'SCRIPT = ROOT / "scripts" / "git-sync.py"\n'
         ),
         "tests/scripts/test_git_sync_retired.py": "import git_sync\n",
-        "tools/runner.sh": "python scripts/git-sync --dry-run\n",
+        "tools/runner.sh": "python scripts/git-sync.py --dry-run\n",
         "src/app.py": "# git-sync.py is not searched under src/\n",
         "docs/notes.md": "git-sync.py\n",
     }
@@ -113,11 +113,11 @@ def test_uncovered_referrers_yield_violation(repo):
     assert v.location == "scripts/git-sync.py"
     for ref in (
         "tests/scripts/test_vcs_untrack_migration.py",
-        "tests/scripts/test_git_sync_retired.py",
         "tools/runner.sh",
     ):
         assert ref in v.message
         assert ref in (v.fix_hint or "")
+    assert "tests/scripts/test_git_sync_retired.py" not in v.message
     # src/ and docs/ are outside the search dirs; the deleted file itself is never a referrer.
     assert "src/app.py" not in v.message
     assert "docs/notes.md" not in v.message
@@ -177,8 +177,10 @@ def test_delete_row_for_other_repo_is_ignored(repo):
 
 def test_rules_check_reports_deletion_violation(repo):
     body = _body(["scripts/git-sync.py"], rows=_DELETE_ROW)
+    rule = ScopeCouplingRules()
     with mock.patch.object(scope_coupling, "resolve_scope_root", return_value=repo):
-        violations = ScopeCouplingRules().check(body, [])
+        with mock.patch.object(rule, "_coupling_violations", return_value=[]):
+            violations = rule.check(body, [])
     assert DELETION_RULE_ID in {v.rule_id for v in violations}
 
 
@@ -579,7 +581,7 @@ def test_unique_compaction_stem_requires_identifier_boundary(tmp_path):
     assert "tools/needs.py" not in referrers
     assert "tools/import_mod.py" in referrers
     assert "tools/import_dot.py" in referrers
-    assert "tools/import_bare.py" in referrers
+    assert "tools/import_bare.py" not in referrers
 
 
 def test_memory_dream_stem_boundary(tmp_path):
@@ -599,7 +601,7 @@ def test_memory_dream_stem_boundary(tmp_path):
     )
     referrers = refs.get("scripts/memory-dream.py", [])
     assert "tools/fail.py" not in referrers
-    assert "tools/import.py" in referrers
+    assert "tools/import.py" not in referrers
 
 
 def test_non_py_json_deletion_skips_prose_dream(tmp_path):
@@ -657,3 +659,122 @@ def test_no_stem_search_from_allow_paths_path(tmp_path):
     allow = ["src/foo.py"]
     # Searches for exact string "src/foo.py" in tests; "foo" alone does not match.
     assert check_allow_paths_string_references(allow, root) == []
+
+
+# ---------------------------------------------------------------------------
+# stem context matching (#4268)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def post_repo(tmp_path: Path) -> Path:
+    root = tmp_path / "post_repo"
+    files = {
+        "skills/a/scripts/post.py": "# deleted target\n",
+        "skills/a/scripts/runner.py": "import post\n",
+        "skills/a/scripts/relative.py": "from . import post\n",
+        "tools/import_pkg.py": "from skills.a.scripts import post\n",
+        "tools/import_other.py": "from tools.slack.batch_notify import post\n",
+        "tools/import_cross.py": "import post\n",
+        "tools/dynamic.py": (
+            'loader = spec_from_file_location("post", root / "post.py")\n'
+        ),
+        "tools/false_app.py": '@app.post("/sessions", response_model=SessionOut)\n',
+        "tools/false_help.py": 'help="Do not post to Slack"\n',
+        "tools/false_doc.py": '"""Load and post results."""\n',
+    }
+    return _init_repo(root, files)
+
+
+def test_stem_post_false_positives_excluded(post_repo):
+    body = _body(
+        ["skills/a/scripts/post.py"],
+        rows="| sumipan/issuesmith | skills/a/scripts/post.py | delete | retire |",
+    )
+    refs = scope_coupling.uncovered_deletion_references(
+        body, ["skills/a/scripts/post.py"], post_repo
+    )
+    referrers = refs.get("skills/a/scripts/post.py", [])
+    for path in (
+        "tools/false_app.py",
+        "tools/false_help.py",
+        "tools/false_doc.py",
+        "tools/import_other.py",
+        "tools/import_cross.py",
+    ):
+        assert path not in referrers
+
+
+def test_stem_post_true_positives_included(post_repo):
+    body = _body(
+        ["skills/a/scripts/post.py"],
+        rows="| sumipan/issuesmith | skills/a/scripts/post.py | delete | retire |",
+    )
+    refs = scope_coupling.uncovered_deletion_references(
+        body, ["skills/a/scripts/post.py"], post_repo
+    )
+    referrers = refs.get("skills/a/scripts/post.py", [])
+    for path in (
+        "skills/a/scripts/runner.py",
+        "skills/a/scripts/relative.py",
+        "tools/import_pkg.py",
+        "tools/dynamic.py",
+    ):
+        assert path in referrers
+
+
+@pytest.fixture()
+def memory_compact_repo(tmp_path: Path) -> Path:
+    root = tmp_path / "memory_compact_repo"
+    files = {
+        "scripts/memory-compact.py": "# deleted target\n",
+        "tools/comment.py": "# (later replaced with `memory_compact`)\n",
+        "tools/docstring.py": '"""Priority for memory-compact reduction."""\n',
+        "tools/yaml_ref.py": "path: scripts/memory-compact.py\n",
+        "tools/basename.py": 'MODULE = "memory-compact.py"\n',
+    }
+    return _init_repo(root, files)
+
+
+def test_stem_memory_compact_false_positives_excluded(memory_compact_repo):
+    body = _body(
+        ["scripts/memory-compact.py"],
+        rows="| sumipan/issuesmith | scripts/memory-compact.py | delete | retire |",
+    )
+    refs = scope_coupling.uncovered_deletion_references(
+        body, ["scripts/memory-compact.py"], memory_compact_repo
+    )
+    referrers = refs.get("scripts/memory-compact.py", [])
+    assert "tools/comment.py" not in referrers
+    assert "tools/docstring.py" not in referrers
+
+
+def test_stem_memory_compact_true_positives_included(memory_compact_repo):
+    body = _body(
+        ["scripts/memory-compact.py"],
+        rows="| sumipan/issuesmith | scripts/memory-compact.py | delete | retire |",
+    )
+    refs = scope_coupling.uncovered_deletion_references(
+        body, ["scripts/memory-compact.py"], memory_compact_repo
+    )
+    referrers = refs.get("scripts/memory-compact.py", [])
+    assert "tools/yaml_ref.py" in referrers
+    assert "tools/basename.py" in referrers
+
+
+def test_stem_violation_fix_hint_includes_context_suffix(tmp_path):
+    root = tmp_path / "hint_stem_repo"
+    files = {
+        "skills/a/scripts/post.py": "# target\n",
+        "tools/import_pkg.py": "from skills.a.scripts import post\n",
+    }
+    _init_repo(root, files)
+    body = _body(
+        ["skills/a/scripts/post.py"],
+        rows="| sumipan/issuesmith | skills/a/scripts/post.py | delete | retire |",
+    )
+    [v] = check_deletion_references(body, ["skills/a/scripts/post.py"], root)
+    hint = v.fix_hint or ""
+    assert "tools/import_pkg.py:" in hint
+    assert "stem:import" in hint
+
