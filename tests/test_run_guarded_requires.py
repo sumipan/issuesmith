@@ -624,3 +624,66 @@ def test_run_guarded_no_derived_block_when_empty(capsys, fresh_repo: Path):
     out = capsys.readouterr().out
     assert "derived_allow_paths" not in out
     assert "PIPELINE_STATUS: IMPL_DONE" in out
+
+
+# ---------------------------------------------------------------------------
+# #4304: HEAD advanced past base → requires loop despite LLM non-zero exit
+# ---------------------------------------------------------------------------
+
+
+def _run_guarded_with_llm_rc(fresh_repo: Path, llm_rc: int, track_loop: list) -> int:
+    from issuesmith.config import StepConfig
+    from issuesmith.engine import run_guarded
+
+    variables = [
+        "issue_number=42",
+        "base_branch=main",
+        f"worktree_path={fresh_repo}",
+        "allow_paths=- README.md",
+        "workflow_name=issuesmith",
+    ]
+    with patch("issuesmith.engine._run_emit_order", return_value=(llm_rc, "")):
+        with patch(
+            "issuesmith.ops.dispatch.run_requires_loop",
+            side_effect=lambda *a, **k: track_loop.append(True),
+        ):
+            with patch("issuesmith.ops.dispatch.resolve_step_config") as mock_resolve:
+                mock_resolve.return_value = StepConfig(
+                    module="", requires=("lint",), requires_declared=True
+                )
+                return run_guarded(
+                    "implementation",
+                    "fake.md",
+                    variables,
+                    success_statuses=["IMPL_DONE"],
+                    failure_status="IMPL_FAILED",
+                    emit_status="IMPL_DONE",
+                    requires_step="p1",
+                )
+
+
+def test_run_guarded_head_advanced_proceeds_to_requires_despite_llm_failure(
+    capsys, fresh_repo: Path,
+):
+    """LLM rc != 0 but HEAD ahead of base → requires loop runs."""
+    _git(fresh_repo, "checkout", "-b", "feat/impl")
+    (fresh_repo / "extra.txt").write_text("x\n", encoding="utf-8")
+    _git(fresh_repo, "add", "extra.txt")
+    _git(fresh_repo, "commit", "-m", "impl work")
+
+    loop_called: list[bool] = []
+    rc = _run_guarded_with_llm_rc(fresh_repo, 124, loop_called)
+
+    assert loop_called, "requires loop should run when HEAD advanced"
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "PIPELINE_STATUS: IMPL_DONE" in out
+
+
+def test_run_guarded_head_not_advanced_exits_on_llm_failure(fresh_repo: Path):
+    """LLM rc != 0 and HEAD unchanged → early exit, no requires loop."""
+    loop_called: list[bool] = []
+    rc = _run_guarded_with_llm_rc(fresh_repo, 1, loop_called)
+
+    assert not loop_called
+    assert rc == 1
