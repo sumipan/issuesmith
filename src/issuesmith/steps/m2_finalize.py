@@ -1,29 +1,53 @@
-"""M2 finalize Python step — replaces m2-role-dispatch.md bash (#2869)."""
+"""Deprecated compat re-exports — import from issuesmith.ac_contract instead (#4275).
+
+Kept so existing consumers that still import the old M2 step names keep working
+until they switch to the public ``issuesmith.ac_contract`` / ``issuesmith.merge``
+APIs. Underscore helpers keep their old signatures; materialize/cleanup delegate
+to ``issuesmith.ac_contract``. ``run`` remains the workflow orchestration entry.
+"""
 
 from __future__ import annotations
 
 import re
-import shutil
 import subprocess
 import sys
-import tempfile
-import time
+import warnings
 from pathlib import Path
 from typing import Any
 
 from ghdag.forge import ForgePort, get_forge
 from ghdag.workflow.state_machine import _load_workflow_config, transition
 
-from issuesmith.ac_contract import extract_contract_from_body, run_checks
+from issuesmith.ac_contract import (
+    GateMaterializationError,
+    extract_contract_from_body,
+    run_checks,
+)
+from issuesmith.ac_contract import (
+    cleanup_gate_root as _ac_cleanup_gate_root,
+)
+from issuesmith.ac_contract import (
+    materialize_gate_root as _ac_materialize_gate_root,
+)
 from issuesmith.config import StepConfig, get_config
 from issuesmith.engine import run_guarded
 from issuesmith.m2_gate import check_gate, synthesize_contract_failures
 from issuesmith.ops.labels import run_hygiene as run_label_hygiene
 from issuesmith.steps.base import StepContext, StepResult
 
+__all__ = [
+    "GateMaterializationError",
+    "check_gate",
+    "extract_contract_from_body",
+    "run",
+    "run_checks",
+]
 
-class GateMaterializationError(RuntimeError):
-    """origin/base の一時 worktree を作れなかった。"""
+warnings.warn(
+    "issuesmith.steps.m2_finalize is deprecated; use issuesmith.ac_contract instead",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
 def _github_client() -> ForgePort:
@@ -55,41 +79,13 @@ def _git(cmd: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
 
 
 def _materialize_gate_root(repo_cwd: Path, base_branch: str, issue_number: int, prefix: str) -> Path:
-    gate_root = Path(tempfile.mkdtemp(prefix=f"m2-gate-{issue_number}-{prefix}"))
-    fetch = _git(["git", "fetch", "-q", "origin", base_branch], cwd=repo_cwd)
-    if fetch.returncode != 0:
-        shutil.rmtree(gate_root, ignore_errors=True)
-        raise GateMaterializationError(
-            f"fetch failed (repo={repo_cwd}): "
-            f"fetch_rc={fetch.returncode} fetch_stderr={fetch.stderr!r}"
-        )
-
-    max_retry = 3
-    backoff = [5, 10, 15]
-    add: subprocess.CompletedProcess[str] | None = None
-    for attempt in range(max_retry):
-        subprocess.run(["git", "worktree", "prune"], cwd=str(repo_cwd), capture_output=True)
-        add = _git(
-            ["git", "worktree", "add", "--detach", "-q", str(gate_root), f"origin/{base_branch}"],
-            cwd=repo_cwd,
-        )
-        if add.returncode == 0:
-            return gate_root
-        shutil.rmtree(gate_root, ignore_errors=True)
-        if attempt < max_retry - 1:
-            time.sleep(backoff[attempt])
-
-    raise GateMaterializationError(
-        f"could not materialize origin/{base_branch} (repo={repo_cwd}) "
-        f"after {max_retry} attempts: "
-        f"add_rc={add.returncode if add else None} add_stderr={add.stderr if add else None!r}"
+    return _ac_materialize_gate_root(
+        repo_cwd, base_branch, f"m2-gate-{issue_number}-{prefix}"
     )
 
 
 def _cleanup_gate_root(repo_cwd: Path, gate_root: Path) -> None:
-    remove = _git(["git", "worktree", "remove", "--force", str(gate_root)], cwd=repo_cwd)
-    if remove.returncode != 0:
-        shutil.rmtree(gate_root, ignore_errors=True)
+    _ac_cleanup_gate_root(repo_cwd, gate_root)
 
 
 def _evaluate_dual_root(
@@ -113,7 +109,7 @@ def _evaluate_dual_root(
             "nexus": run_checks(contract, nexus_root),
             "target": run_checks(contract, target_root),
         }
-    except Exception as exc:  # 契約フォーマット変異等で M2 全体を落とさない（fail-open、#3290）
+    except Exception as exc:
         print(f"[m2-gate] dual-root contract check skipped (fail-open): {exc}", file=sys.stderr)
         return base
     failures = synthesize_contract_failures(records_by_root)
@@ -395,7 +391,6 @@ def _finalize_merge_done(
     try:
         _transition(issue_number, "issuesmith:merge-done")
     except ValueError as exc:
-        # get_current_phase 先頭一致失敗やラベル欠落時の fallback (#3221 AC-5 / #3207)
         removable: list[str] = [
             name
             for name in (

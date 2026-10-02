@@ -1,22 +1,22 @@
-"""Fixture tests for issuesmith.steps.m1_merge (#3164).
+"""Fixture tests for issuesmith.merge helpers (#3164 / #4275).
 
 PR / GraphQL fixtures were captured 2026-09-11 from live GitHub via
-``ForgePort.api_request`` / GraphQL (CLAUDE.md §10):
+``ForgePort.api_request`` / GraphQL (CLAUDE.md section 10):
 
   api_request("repos/sumipan/nexus/pulls?head=sumipan%3Afeat%2Fissue-3173-eb3c5291-diary&state=open")
-  → success list (number=3183, body contains Refs #3173)
+  -> success list (number=3183, body contains Refs #3173)
 
   api_request("repos/sumipan/nexus/pulls?head=nobody%3Afeat%2Fnonexistent-zzzz&state=open")
-  → []
+  -> []
 
   api_request("repos/sumipan/nexus/pulls/3183")
-  → merged=false, mergeable_state=unknown
+  -> merged=false, mergeable_state=unknown
 
   api_request("repos/sumipan/nexus/pulls/3181")
-  → merged=true, state=closed
+  -> merged=true, state=closed
 
   GraphQL pullRequest(number:3183) (retry until computed)
-  → mergeStateStatus=CLEAN, mergeable=MERGEABLE
+  -> mergeStateStatus=CLEAN, mergeable=MERGEABLE
 
   GraphQL BLOCKED: live BLOCKED PR was not found in sumipan/{nexus,issuesmith}
   on 2026-09-11; fixture uses the same envelope/fields as the live CLEAN
@@ -29,10 +29,9 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from issuesmith.steps import m1_merge as m1
-from issuesmith.steps.base import StepContext
+import pytest
 
-# --- Real API strings (trimmed to fields the step reads; values unchanged) ---
+from issuesmith import merge as merge_api
 
 PR_LIST_SUCCESS_JSON = json.dumps(
     [
@@ -117,53 +116,28 @@ GQL_BLOCKED_JSON = json.dumps(
 )
 
 
-def _ctx(**overrides: str) -> StepContext:
-    base = {
-        "issue_number": "3173",
-        "base_branch": "main",
-        "handler_name": "merge",
-        "is_cross_repo": "false",
-        "target_clone_path": "",
-        "source": "",
-        "workflow_name": "issuesmith",
-        "m1_result_filename": "",
-        "m1r_result_filename": "",
-        "worktree_path": "/tmp/wt",
-        "target_worktree_path": "/tmp/twt",
-        "branch": "feat/issue-3173-eb3c5291-diary",
-        "target_repo": "",
-        "allow_paths": "- src/**",
-        "issue_repo": "sumipan/nexus",
-        "has_diary_changes": "false",
-    }
-    base.update(overrides)
-    return StepContext(**base)
-
-
 def test_find_pr_success_uses_real_list_string() -> None:
     client = MagicMock()
     client.api_request.return_value = json.loads(PR_LIST_SUCCESS_JSON)
-    number, state, stage = m1._find_pr(
+    result = merge_api.find_pr(
         client,
         "sumipan/nexus",
         "feat/issue-3173-eb3c5291-diary",
         3173,
     )
-    assert number == 3183
-    assert state == "open"
-    assert stage == "branch"
+    assert result.number == 3183
+    assert result.state == "open"
+    assert result.stage == "branch"
     assert "head=" in client.api_request.call_args.args[0]
 
 
 def test_find_pr_absent_uses_real_empty_list_string() -> None:
     client = MagicMock()
     client.api_request.return_value = json.loads(PR_LIST_ABSENT_JSON)
-    number, state, stage = m1._find_pr(
-        client, "sumipan/nexus", "feat/nonexistent-zzzz", 9999
-    )
-    assert number is None
-    assert state == ""
-    assert stage == ""
+    result = merge_api.find_pr(client, "sumipan/nexus", "feat/nonexistent-zzzz", 9999)
+    assert result.number is None
+    assert result.state == ""
+    assert result.stage == ""
 
 
 def test_already_merged_true_uses_real_merged_field() -> None:
@@ -171,7 +145,7 @@ def test_already_merged_true_uses_real_merged_field() -> None:
     assert detail["merged"] is True
     client = MagicMock()
     client.api_request.return_value = detail
-    assert m1._is_already_merged(client, "sumipan/nexus", 3181) is True
+    assert merge_api.is_already_merged(client, "sumipan/nexus", 3181) is True
 
 
 def test_already_merged_false_uses_real_open_detail() -> None:
@@ -179,7 +153,7 @@ def test_already_merged_false_uses_real_open_detail() -> None:
     assert detail["merged"] is False
     client = MagicMock()
     client.api_request.return_value = detail
-    assert m1._is_already_merged(client, "sumipan/nexus", 3183) is False
+    assert merge_api.is_already_merged(client, "sumipan/nexus", 3183) is False
 
 
 def test_merge_state_clean_parses_real_graphql_string() -> None:
@@ -188,10 +162,10 @@ def test_merge_state_clean_parses_real_graphql_string() -> None:
     assert pr["mergeStateStatus"] == "CLEAN"
     assert pr["mergeable"] == "MERGEABLE"
     client = MagicMock()
-    with patch.object(m1, "_graphql_merge_state", return_value=pr):
-        got = m1._get_merge_state(client, "sumipan/nexus", 3183)
-    assert got["mergeStateStatus"] == "CLEAN"
-    assert got["headRefName"] == "feat/issue-3173-eb3c5291-diary"
+    with patch.object(merge_api, "graphql_merge_state", return_value=merge_api.MergeStateInfo.from_mapping(pr)):
+        got = merge_api.get_merge_state(client, "sumipan/nexus", 3183)
+    assert got.merge_state_status == "CLEAN"
+    assert got.head_ref_name == "feat/issue-3173-eb3c5291-diary"
 
 
 def test_merge_state_blocked_parses_graphql_blocked_fixture() -> None:
@@ -199,299 +173,133 @@ def test_merge_state_blocked_parses_graphql_blocked_fixture() -> None:
     pr = payload["data"]["repository"]["pullRequest"]
     assert pr["mergeStateStatus"] == "BLOCKED"
     client = MagicMock()
-    with patch.object(m1, "_graphql_merge_state", return_value=pr):
-        got = m1._get_merge_state(client, "sumipan/nexus", 3183)
-    assert got["mergeStateStatus"] == "BLOCKED"
+    with patch.object(merge_api, "graphql_merge_state", return_value=merge_api.MergeStateInfo.from_mapping(pr)):
+        got = merge_api.get_merge_state(client, "sumipan/nexus", 3183)
+    assert got.merge_state_status == "BLOCKED"
 
 
-def test_merge_state_retries_on_blocked() -> None:
-    blocked = json.loads(GQL_BLOCKED_JSON)["data"]["repository"]["pullRequest"]
-    clean = json.loads(GQL_CLEAN_JSON)["data"]["repository"]["pullRequest"]
-    client = MagicMock()
-    with (
-        patch.object(m1, "_graphql_merge_state", side_effect=[blocked, blocked, clean]),
-        patch.object(m1, "time") as mock_time,
-    ):
-        mock_time.sleep = MagicMock()
-        got = m1._poll_merge_state(client, "sumipan/nexus", 3183)
-    assert got["mergeStateStatus"] == "CLEAN"
-    assert mock_time.sleep.call_count == 2
-
-
-def test_run_always_exit_0_merge_reported_when_pr_absent() -> None:
-    client = MagicMock()
-    client.api_request.return_value = []
-    with patch.object(m1, "_github_client", return_value=client):
-        result = m1.run(_ctx(branch="feat/missing"))
-    assert result.exit_code == 0
-    assert result.pipeline_status == "MERGE_REPORTED"
-
-
-def test_run_always_exit_0_merge_reported_when_already_merged() -> None:
-    client = MagicMock()
-    client.api_request.side_effect = [
-        json.loads(PR_LIST_SUCCESS_JSON),
-        json.loads(PR_DETAIL_MERGED_JSON),
-    ]
-    with patch.object(m1, "_github_client", return_value=client):
-        result = m1.run(_ctx())
-    assert result.exit_code == 0
-    assert result.pipeline_status == "MERGE_REPORTED"
-
-
-def test_run_always_exit_0_merge_reported_on_blocked_skip() -> None:
-    client = MagicMock()
-    client.api_request.side_effect = [
-        json.loads(PR_LIST_SUCCESS_JSON),
-        json.loads(PR_DETAIL_OPEN_JSON),
-    ]
-    blocked = json.loads(GQL_BLOCKED_JSON)["data"]["repository"]["pullRequest"]
-    with (
-        patch.object(m1, "_github_client", return_value=client),
-        patch.object(m1, "_poll_merge_state", return_value=blocked),
-        patch.object(m1, "_local_merge_verify", return_value=("SKIPPED", False)),
-        patch.object(m1, "_m2_gate_preflight", return_value=[]),
-        patch.object(m1, "time") as mock_time,
-    ):
-        mock_time.sleep = MagicMock()
-        result = m1.run(_ctx())
-    assert result.exit_code == 0
-    assert result.pipeline_status == "MERGE_REPORTED"
-    client.pr_merge.assert_not_called()
-
-
-def test_run_merge_clean_still_reports_merge_reported() -> None:
-    client = MagicMock()
-    client.api_request.side_effect = [
-        json.loads(PR_LIST_SUCCESS_JSON),
-        json.loads(PR_DETAIL_OPEN_JSON),
-    ]
-    clean = json.loads(GQL_CLEAN_JSON)["data"]["repository"]["pullRequest"]
-    with (
-        patch.object(m1, "_github_client", return_value=client),
-        patch.object(m1, "_poll_merge_state", return_value=clean),
-        patch.object(m1, "_m2_gate_preflight", return_value=[]),
-        patch.object(m1, "_post_merge_pytest", return_value=0),
-    ):
-        result = m1.run(_ctx())
-    assert result.exit_code == 0
-    assert result.pipeline_status == "MERGE_REPORTED"
-    client.pr_merge.assert_called_once()
-    client.issue_update.assert_not_called()
-
-
-def test_post_merge_test_failure_adds_merge_running() -> None:
-    """After PR merge succeeds, post_merge_test-only failure still adds merge-running (#3221 AC-6)."""
-    client = MagicMock()
-    client.api_request.side_effect = [
-        json.loads(PR_LIST_SUCCESS_JSON),
-        json.loads(PR_DETAIL_OPEN_JSON),
-    ]
-    clean = json.loads(GQL_CLEAN_JSON)["data"]["repository"]["pullRequest"]
-    with (
-        patch.object(m1, "_github_client", return_value=client),
-        patch.object(m1, "_poll_merge_state", return_value=clean),
-        patch.object(m1, "_m2_gate_preflight", return_value=[]),
-        patch.object(m1, "_post_merge_pytest", return_value=1),
-    ):
-        result = m1.run(_ctx())
-    assert result.exit_code == 0
-    assert result.pipeline_status == "MERGE_REPORTED"
-    client.pr_merge.assert_called_once()
-    client.issue_update.assert_called_once_with(
-        3173, labels_add=["issuesmith:merge-running"]
+def test_wait_merge_state_retries_on_blocked() -> None:
+    blocked = merge_api.MergeStateInfo.from_mapping(
+        json.loads(GQL_BLOCKED_JSON)["data"]["repository"]["pullRequest"]
     )
-
-
-def test_companion_merge_only_when_has_diary_changes() -> None:
+    clean = merge_api.MergeStateInfo.from_mapping(
+        json.loads(GQL_CLEAN_JSON)["data"]["repository"]["pullRequest"]
+    )
     client = MagicMock()
-    client.api_request.side_effect = [
-        json.loads(PR_LIST_SUCCESS_JSON),
-        json.loads(PR_DETAIL_OPEN_JSON),
-        [],  # companion list empty when has_diary_changes path runs
-    ]
-    clean = json.loads(GQL_CLEAN_JSON)["data"]["repository"]["pullRequest"]
-    with (
-        patch.object(m1, "_github_client", return_value=client),
-        patch.object(m1, "_poll_merge_state", return_value=clean),
-        patch.object(m1, "_m2_gate_preflight", return_value=[]),
-        patch.object(m1, "_post_merge_pytest", return_value=0),
-        patch.object(m1, "_find_companion_pr") as companion,
-    ):
-        companion.return_value = None
-        result = m1.run(_ctx(has_diary_changes="false"))
-        companion.assert_not_called()
-        assert result.exit_code == 0
+    sleeps: list[float] = []
 
-        client.api_request.side_effect = [
-            json.loads(PR_LIST_SUCCESS_JSON),
-            json.loads(PR_DETAIL_OPEN_JSON),
-        ]
-        result2 = m1.run(_ctx(has_diary_changes="true"))
-        companion.assert_called()
-        assert result2.exit_code == 0
-        assert result2.pipeline_status == "MERGE_REPORTED"
+    def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    with patch.object(
+        merge_api,
+        "get_merge_state",
+        side_effect=[blocked, blocked, clean],
+    ):
+        got = merge_api.wait_merge_state(
+            client,
+            "sumipan/nexus",
+            3183,
+            timeout_seconds=120.0,
+            poll_interval_seconds=1.0,
+            sleep=fake_sleep,
+        )
+    assert got.merge_state_status == "CLEAN"
+    assert sleeps == [5.0, 10.0]
+
+
+def test_wait_merge_state_timeout_includes_last_state_and_pr_number() -> None:
+    blocked = merge_api.MergeStateInfo.from_mapping(
+        json.loads(GQL_BLOCKED_JSON)["data"]["repository"]["pullRequest"]
+    )
+    client = MagicMock()
+
+    with (
+        patch.object(merge_api, "get_merge_state", return_value=blocked),
+        patch.object(merge_api, "time") as mock_time,
+    ):
+        mock_time.monotonic.side_effect = [0.0, 0.0, 10.0]
+        with pytest.raises(merge_api.MergeStateTimeoutError) as exc_info:
+            merge_api.wait_merge_state(
+                client,
+                "sumipan/nexus",
+                3183,
+                timeout_seconds=5.0,
+                poll_interval_seconds=1.0,
+                blocked_backoff_seconds=(),
+                sleep=lambda _s: None,
+            )
+    err = exc_info.value
+    assert err.pr_number == 3183
+    assert err.last_state.merge_state_status == "BLOCKED"
+
+
+def test_find_companion_pr_uses_branch_suffix() -> None:
+    client = MagicMock()
+    client.api_request.return_value = json.loads(PR_LIST_SUCCESS_JSON)
+    number = merge_api.find_companion_pr(
+        client,
+        "sumipan/nexus",
+        "feat/issue-3173-eb3c5291",
+        companion_suffix="-diary",
+    )
+    assert number == 3183
+    assert "head=" in client.api_request.call_args.args[0]
+
+
+def test_check_companion_ready_requires_approval_and_ci() -> None:
+    client = MagicMock()
+    client.api_request.return_value = [{"state": "APPROVED"}]
+    client.pr_checks.return_value = [{"conclusion": "success"}]
+    result = merge_api.check_companion_ready(client, "sumipan/nexus", 3183)
+    assert result.ready is True
+    assert result.review_decision == "APPROVED"
+    assert result.ci_ok is True
 
 
 def test_merge_tree_invokes_git_subprocess(tmp_path: Path) -> None:
     wt = tmp_path / "wt"
     wt.mkdir()
-    with patch.object(m1.subprocess, "run") as run:
+    with patch.object(merge_api.subprocess, "run") as run:
         run.side_effect = [
-            MagicMock(returncode=0, stdout="", stderr=""),  # fetch
-            MagicMock(returncode=0, stdout="tree\n", stderr=""),  # merge-tree
+            MagicMock(returncode=0, stdout="", stderr=""),
+            MagicMock(returncode=0, stdout="tree\n", stderr=""),
         ]
-        result, verified = m1._local_merge_verify(
+        result = merge_api.verify_local_merge(
             str(wt), "main", "feat/issue-3173-eb3c5291-diary"
         )
-    assert result == "CLEAN"
-    assert verified is True
+    assert result.result == "CLEAN"
+    assert result.verified is True
+    assert result.cwd == str(wt)
+    assert result.fetch_command is not None
+    assert result.merge_tree_command is not None
     assert any("merge-tree" in c.args[0] for c in run.call_args_list)
 
 
-# --- m1.version_behind_base (nexus #3936) ---
-
-
-def _git(cwd: Path, *args: str) -> str:
-    import subprocess
-
-    return subprocess.run(
-        ["git", "-C", str(cwd), *args], capture_output=True, text=True, check=True
-    ).stdout
-
-
-def _set_version(repo: Path, version: str) -> None:
-    (repo / "pyproject.toml").write_text(
-        f'[project]\nname = "demo"\nversion = "{version}"\n', encoding="utf-8"
-    )
-
-
-def _parallel_bump_repo(tmp_path: Path, branch_ver: str, base_ver: str) -> Path:
-    """origin/main and origin/feat both moved 0.80.0 → their own version (parallel publish)."""
-    origin = tmp_path / "origin.git"
-    _git(tmp_path, "init", "--bare", "-b", "main", str(origin))
-    seed = tmp_path / "seed"
+def test_run_post_merge_pytest_returns_command_cwd_and_exit_code(tmp_path: Path) -> None:
     wt = tmp_path / "wt"
-    _git(tmp_path, "clone", str(origin), str(seed))
-    for repo in (seed,):
-        _git(repo, "config", "user.email", "t@t.com")
-        _git(repo, "config", "user.name", "T")
-    _set_version(seed, "0.80.0")
-    _git(seed, "add", ".")
-    _git(seed, "commit", "-m", "init")
-    _git(seed, "push", "origin", "HEAD:main")
-    _git(tmp_path, "clone", str(origin), str(wt))
-    _git(wt, "config", "user.email", "t@t.com")
-    _git(wt, "config", "user.name", "T")
-    _git(wt, "checkout", "-b", "feat/issue-3173-eb3c5291-diary")
-    (wt / "notes.txt").write_text("feature\n", encoding="utf-8")
-    _set_version(wt, branch_ver)
-    _git(wt, "add", ".")
-    _git(wt, "commit", "-m", f"chore: bump version to {branch_ver} (Z: Z)")
-    _git(wt, "push", "-u", "origin", "HEAD")
-    _set_version(seed, base_ver)
-    _git(seed, "commit", "-am", f"chore: bump version to {base_ver} (Z: Z)")
-    _git(seed, "push", "origin", "HEAD:main")
-    return wt
-
-
-def _in_process_bump(worktree: Path, base_branch: str):
-    import contextlib
-    import io
-    import subprocess
-
-    from issuesmith.ops.version_bump import run_bump
-
-    out = io.StringIO()
-    with contextlib.redirect_stdout(out):
-        rc = run_bump(worktree, base_branch)
-    return subprocess.CompletedProcess(args=[], returncode=rc, stdout=out.getvalue(), stderr="")
-
-
-def _origin_branch_version(wt: Path) -> str:
-    _git(wt, "fetch", "origin")
-    text = _git(wt, "show", "origin/feat/issue-3173-eb3c5291-diary:pyproject.toml")
-    return text.split('version = "', 1)[1].split('"', 1)[0]
-
-
-def _run_clean(wt: Path, **patches):
-    client = MagicMock()
-    client.api_request.side_effect = [
-        json.loads(PR_LIST_SUCCESS_JSON),
-        json.loads(PR_DETAIL_OPEN_JSON),
-    ]
-    clean = json.loads(GQL_CLEAN_JSON)["data"]["repository"]["pullRequest"]
-    bump = patches.get("bump", _in_process_bump)
-    with (
-        patch.object(m1, "_github_client", return_value=client),
-        patch.object(m1, "_poll_merge_state", return_value=clean) as poll,
-        patch.object(m1, "_m2_gate_preflight", return_value=[]),
-        patch.object(m1, "_post_merge_pytest", return_value=0),
-        patch("issuesmith.gates.m1.run_version_bump", side_effect=bump),
-    ):
-        result = m1.run(_ctx(worktree_path=str(wt)))
-    return client, poll, result
-
-
-def test_version_behind_base_bumps_pushes_then_merges(tmp_path: Path, capsys) -> None:
-    """AC-1: branch 0.81.0 == base 0.81.0 → 0.81.1 pushed, then the PR is merged."""
-    wt = _parallel_bump_repo(tmp_path, "0.81.0", "0.81.0")
-    client, poll, result = _run_clean(wt)
-    assert result.pipeline_status == "MERGE_REPORTED"
-    assert _origin_branch_version(wt) == "0.81.1"
-    client.pr_merge.assert_called_once()
-    assert poll.call_count == 2  # merge state is re-read after the push
-    out = capsys.readouterr().out
-    assert "VERSION_BEHIND_BASE: FIXED" in out
-    assert "MERGE_FAILED_STAGES: (none)" in out
-
-
-def test_version_behind_base_branch_ahead_merges_without_bump(tmp_path: Path, capsys) -> None:
-    """AC-2: branch 0.82.0 > base 0.81.0 → no bump commit, merge as before."""
-    wt = _parallel_bump_repo(tmp_path, "0.82.0", "0.81.0")
-    head = _git(wt, "rev-parse", "HEAD")
-    client, poll, result = _run_clean(wt)
-    assert _git(wt, "rev-parse", "HEAD") == head
-    assert _origin_branch_version(wt) == "0.82.0"
-    client.pr_merge.assert_called_once()
-    assert poll.call_count == 1
-    assert "VERSION_BEHIND_BASE: OK" in capsys.readouterr().out
-
-
-def test_version_behind_base_fix_failure_blocks_merge(tmp_path: Path, capsys) -> None:
-    import subprocess
-
-    wt = _parallel_bump_repo(tmp_path, "0.81.0", "0.81.0")
-    head = _git(wt, "rev-parse", "HEAD")
-
-    def _fail(worktree: Path, base_branch: str):
-        return subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="boom")
-
-    client, _poll, result = _run_clean(wt, bump=_fail)
+    wt.mkdir()
+    (wt / "src").mkdir()
+    with patch.object(merge_api.subprocess, "run") as run:
+        run.side_effect = [
+            MagicMock(returncode=0, stdout="", stderr=""),
+            MagicMock(returncode=0, stdout="ok\n", stderr=""),
+        ]
+        result = merge_api.run_post_merge_pytest(str(wt))
+    assert result.cwd == str(wt)
+    assert result.command == ["python3", "-m", "pytest", "-q"]
     assert result.exit_code == 0
-    assert result.pipeline_status == "MERGE_REPORTED"
-    client.pr_merge.assert_not_called()
-    assert _git(wt, "rev-parse", "HEAD") == head
-    out = capsys.readouterr().out
-    assert "MERGE_FAILED_STAGES:version_behind_base" in out
+    assert result.pull_command == ["git", "pull", "origin", "HEAD"]
 
 
-def test_version_behind_base_skipped_when_not_clean(tmp_path: Path, capsys) -> None:
-    """No push for a PR that will not be merged in this run."""
-    wt = _parallel_bump_repo(tmp_path, "0.81.0", "0.81.0")
-    head = _git(wt, "rev-parse", "HEAD")
-    client = MagicMock()
-    client.api_request.side_effect = [
-        json.loads(PR_LIST_SUCCESS_JSON),
-        json.loads(PR_DETAIL_OPEN_JSON),
-    ]
-    blocked = json.loads(GQL_BLOCKED_JSON)["data"]["repository"]["pullRequest"]
-    with (
-        patch.object(m1, "_github_client", return_value=client),
-        patch.object(m1, "_poll_merge_state", return_value=blocked),
-        patch.object(m1, "_m2_gate_preflight", return_value=[]),
-    ):
-        m1.run(_ctx(worktree_path=str(wt)))
-    assert _git(wt, "rev-parse", "HEAD") == head
-    client.pr_merge.assert_not_called()
-    assert "VERSION_BEHIND_BASE: skipped" in capsys.readouterr().out
+def test_run_post_merge_pytest_propagates_failure_exit_code(tmp_path: Path) -> None:
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    (wt / "src").mkdir()
+    with patch.object(merge_api.subprocess, "run") as run:
+        run.side_effect = [
+            MagicMock(returncode=0, stdout="", stderr=""),
+            MagicMock(returncode=1, stdout="", stderr="fail\n"),
+        ]
+        result = merge_api.run_post_merge_pytest(str(wt))
+    assert result.exit_code == 1

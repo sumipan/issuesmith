@@ -15,10 +15,4 @@ issuesmith.ops.labels _ns
 issuesmith.ops.publish _push_branch
 issuesmith.recovery _generation_keys_available
 issuesmith.recovery _run_ghdag_recover
-issuesmith.steps.m1_merge _find_pr
-issuesmith.steps.m1_merge _get_merge_state
-issuesmith.steps.m2_finalize _cleanup_branches
-issuesmith.steps.m2_finalize _close_issue_if_open
-issuesmith.steps.m2_finalize _list_worktrees
-issuesmith.steps.m2_finalize _remove_worktree
 issuesmith.targets _normalize_allow_paths

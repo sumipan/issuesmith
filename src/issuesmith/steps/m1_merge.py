@@ -1,27 +1,35 @@
-"""M1 merge Python step — replaces m1-merge.md bash (#3164 / #3060).
+"""Deprecated compat re-exports — import from issuesmith.merge instead (#4275).
 
-Always returns exit_code=0 with pipeline_status=MERGE_REPORTED so ghdag
-continues and m1-recover (LLM) can judge / recover.
+Kept so existing consumers that still import the old M1 step names keep working
+until they switch to the public ``issuesmith.merge`` API. Underscore helpers
+keep their old signatures; bodies delegate to ``issuesmith.merge``. ``run``
+remains the workflow orchestration entry point for the M1 step.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 import tempfile
 import time
-import urllib.parse
-import urllib.request
+import warnings
 from pathlib import Path
 from typing import Any
 
 from ghdag.forge import ForgePort, get_forge
 
+from issuesmith import merge as _merge
 from issuesmith.config import StepConfig
-from issuesmith.forge_api import api_request
 from issuesmith.steps.base import StepContext, StepResult
+
+__all__ = ["run"]
+
+warnings.warn(
+    "issuesmith.steps.m1_merge is deprecated; use issuesmith.merge instead",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 _BACKOFF_SEC = (5, 10, 20)
 _MERGE_STATE_ATTEMPTS = 3
@@ -43,16 +51,6 @@ def _worktree_path(ctx: StepContext) -> str:
     return ctx.worktree_path.strip()
 
 
-def _head_param(repo: str, branch: str) -> str:
-    branch = branch.strip()
-    if not branch:
-        return ""
-    if ":" in branch:
-        return branch
-    owner = repo.split("/", 1)[0] if "/" in repo else ""
-    return f"{owner}:{branch}" if owner else branch
-
-
 def _list_pulls(
     client: ForgePort,
     repo: str,
@@ -60,17 +58,7 @@ def _list_pulls(
     state: str = "open",
     head: str | None = None,
 ) -> list[dict[str, Any]]:
-    if not repo:
-        return []
-    path = f"repos/{repo}/pulls?state={state}&per_page=100"
-    if head:
-        path += f"&head={urllib.parse.quote(head, safe='')}"
-    try:
-        data = api_request(client, path)
-    except Exception as exc:
-        print(f"PR list failed ({exc})", file=sys.stderr)
-        return []
-    return data if isinstance(data, list) else []
+    return _merge.list_pulls(client, repo, state=state, head=head)
 
 
 def _find_pr(
@@ -79,149 +67,34 @@ def _find_pr(
     branch: str,
     issue_number: int,
 ) -> tuple[int | None, str, str]:
-    """Progressive PR search: branch → title → body Refs #N → draft → closed.
-
-    Returns (number, state, stage).
-    """
-    branch = branch.strip()
-    refs_marker = f"Refs #{issue_number}"
-    title_markers = (f"#{issue_number}", f"Issue #{issue_number}")
-
-    # Stage 1: branch head (open)
-    if branch:
-        head = _head_param(repo, branch)
-        pulls = _list_pulls(client, repo, state="open", head=head)
-        if pulls and isinstance(pulls[0], dict) and isinstance(pulls[0].get("number"), int):
-            p = pulls[0]
-            return p["number"], str(p.get("state") or ""), "branch"
-
-    open_pulls = _list_pulls(client, repo, state="open")
-
-    # Stage 2: title
-    for p in open_pulls:
-        if not isinstance(p, dict) or not isinstance(p.get("number"), int):
-            continue
-        title = p.get("title") or ""
-        if branch and branch in title:
-            return p["number"], str(p.get("state") or ""), "title"
-        if any(m in title for m in title_markers):
-            return p["number"], str(p.get("state") or ""), "title"
-
-    # Stage 3: body Refs #N
-    for p in open_pulls:
-        if not isinstance(p, dict) or not isinstance(p.get("number"), int):
-            continue
-        body = p.get("body") or ""
-        if refs_marker in body:
-            return p["number"], str(p.get("state") or ""), "body_refs"
-
-    # Stage 4: draft PRs (open list already includes drafts; match head/title)
-    for p in open_pulls:
-        if not isinstance(p, dict) or not isinstance(p.get("number"), int):
-            continue
-        if p.get("draft") is not True:
-            continue
-        head_ref = (p.get("head") or {}).get("ref") or ""
-        title = p.get("title") or ""
-        if (branch and (head_ref == branch or branch in title)) or any(
-            m in title for m in title_markers
-        ):
-            return p["number"], str(p.get("state") or ""), "draft"
-
-    # Stage 5: include closed
-    all_pulls = _list_pulls(client, repo, state="all")
-    for p in all_pulls:
-        if not isinstance(p, dict) or not isinstance(p.get("number"), int):
-            continue
-        head_ref = (p.get("head") or {}).get("ref") or ""
-        if branch and head_ref == branch:
-            return p["number"], str(p.get("state") or ""), "closed"
-    for p in all_pulls:
-        if not isinstance(p, dict) or not isinstance(p.get("number"), int):
-            continue
-        title = p.get("title") or ""
-        body = p.get("body") or ""
-        if any(m in title for m in title_markers) or refs_marker in body:
-            return p["number"], str(p.get("state") or ""), "closed"
-
-    return None, "", ""
+    result = _merge.find_pr(client, repo, branch, issue_number)
+    return result.number, result.state, result.stage
 
 
 def _is_already_merged(client: ForgePort, repo: str, number: int) -> bool:
-    """REST `.merged` (CLAUDE.md §10: true/false rc0; missing → treat as false)."""
-    path = f"repos/{repo}/pulls/{number}" if repo else f"pulls/{number}"
-    try:
-        detail = api_request(client, path)
-    except Exception as exc:
-        print(f"PR detail failed ({exc})", file=sys.stderr)
-        return False
-    if not isinstance(detail, dict):
-        return False
-    return detail.get("merged") is True
+    return _merge.is_already_merged(client, repo, number)
 
 
 def _graphql_merge_state(
     client: ForgePort, repo: str, number: int
 ) -> dict[str, str]:
-    """Fetch mergeStateStatus via GraphQL; fall back to ForgePort.pr_get."""
-    owner, _, name = repo.partition("/")
-    headers_fn = getattr(client, "_headers", None)
-    if owner and name and callable(headers_fn):
-        try:
-            from ghdag.github_client import GRAPHQL_URL
-
-            query = """
-            query($owner:String!,$name:String!,$number:Int!) {
-              repository(owner:$owner, name:$name) {
-                pullRequest(number:$number) {
-                  mergeStateStatus
-                  mergeable
-                  state
-                  headRefName
-                }
-              }
-            }
-            """
-            payload = json.dumps(
-                {
-                    "query": query,
-                    "variables": {"owner": owner, "name": name, "number": number},
-                }
-            ).encode()
-            req = urllib.request.Request(
-                GRAPHQL_URL,
-                data=payload,
-                method="POST",
-                headers={**headers_fn(), "Content-Type": "application/json"},
-            )
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                result = json.loads(resp.read().decode())
-            pr = (
-                (result.get("data") or {})
-                .get("repository", {})
-                .get("pullRequest")
-            )
-            if isinstance(pr, dict) and pr.get("mergeStateStatus"):
-                return {
-                    "mergeStateStatus": str(pr.get("mergeStateStatus") or "UNKNOWN"),
-                    "mergeable": str(pr.get("mergeable") or "UNKNOWN"),
-                    "state": str(pr.get("state") or ""),
-                    "headRefName": str(pr.get("headRefName") or ""),
-                }
-        except Exception as exc:
-            print(f"GraphQL mergeStateStatus failed ({exc}); falling back to pr_get", file=sys.stderr)
-
-    detail = client.pr_get(number, repo=repo or None)
+    info = _merge.graphql_merge_state(client, repo, number)
     return {
-        "mergeStateStatus": str(detail.get("mergeStateStatus") or "UNKNOWN"),
-        "mergeable": str(detail.get("mergeable") or "UNKNOWN"),
-        "state": str(detail.get("state") or ""),
-        "headRefName": str(detail.get("headRefName") or ""),
+        "mergeStateStatus": info.merge_state_status,
+        "mergeable": info.mergeable,
+        "state": info.state,
+        "headRefName": info.head_ref_name,
     }
 
 
 def _get_merge_state(client: ForgePort, repo: str, number: int) -> dict[str, str]:
-    return _graphql_merge_state(client, repo, number)
+    info = _merge.get_merge_state(client, repo, number)
+    return {
+        "mergeStateStatus": info.merge_state_status,
+        "mergeable": info.mergeable,
+        "state": info.state,
+        "headRefName": info.head_ref_name,
+    }
 
 
 def _poll_merge_state(client: ForgePort, repo: str, number: int) -> dict[str, str]:
@@ -246,37 +119,14 @@ def _poll_merge_state(client: ForgePort, repo: str, number: int) -> dict[str, st
 def _local_merge_verify(
     worktree: str, base_branch: str, head_ref: str
 ) -> tuple[str, bool]:
-    """Run git merge-tree; return (CLEAN|CONFLICT|SKIPPED, verified)."""
-    if not worktree or not Path(worktree).is_dir() or not head_ref:
-        return "SKIPPED", False
-    fetch = subprocess.run(
-        ["git", "fetch", "origin", base_branch, head_ref],
-        cwd=worktree,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if fetch.returncode != 0:
-        print(f"LOCAL_VERIFY: SKIPPED (fetch failed): {fetch.stderr.strip()}", file=sys.stderr)
-        return "SKIPPED", False
-    tree = subprocess.run(
-        [
-            "git",
-            "merge-tree",
-            "--write-tree",
-            f"origin/{base_branch}",
-            f"origin/{head_ref}",
-        ],
-        cwd=worktree,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if tree.returncode == 0:
+    result = _merge.verify_local_merge(worktree, base_branch, head_ref)
+    if result.result == "CLEAN":
         print("LOCAL_VERIFY: CLEAN (no conflicts detected by merge-tree)")
-        return "CLEAN", True
-    print(f"LOCAL_VERIFY: CONFLICT (merge-tree exit code={tree.returncode})")
-    return "CONFLICT", False
+    elif result.result == "CONFLICT":
+        print("LOCAL_VERIFY: CONFLICT (merge-tree exit code=1)")
+    elif result.result == "SKIPPED" and worktree and Path(worktree).is_dir():
+        print("LOCAL_VERIFY: SKIPPED (fetch failed or missing inputs)", file=sys.stderr)
+    return result.result, result.verified
 
 
 def _m2_gate_preflight(body: str, labels: list[str]) -> list[dict[str, Any]]:
@@ -313,12 +163,7 @@ def _m2_gate_preflight(body: str, labels: list[str]) -> list[dict[str, Any]]:
 
 
 def _version_behind_base_check(worktree: str, base_branch: str, merge_state: str) -> str:
-    """Run ``m1.version_behind_base``; return ``OK`` / ``FIXED`` / ``skipped (...)`` / ``FAILED (...)``.
-
-    Only a CLEAN PR is checked: the fix pushes a merge + bump commit, which is
-    pointless when this run will not merge, and CLEAN guarantees the merge of
-    ``origin/<base>`` has no conflicts.
-    """
+    """Run ``m1.version_behind_base``; return ``OK`` / ``FIXED`` / ``skipped (...)`` / ``FAILED (...)``."""
     from issuesmith.gates.base import ContractInput
     from issuesmith.gates.m1 import VersionBehindBaseGate
 
@@ -343,49 +188,16 @@ def _version_behind_base_check(worktree: str, base_branch: str, merge_state: str
 def _find_companion_pr(
     client: ForgePort, issue_repo: str, branch: str
 ) -> int | None:
-    companion_branch = f"{branch.strip()}-diary"
-    if not issue_repo or not branch.strip():
-        return None
-    head = _head_param(issue_repo, companion_branch)
-    pulls = _list_pulls(client, issue_repo, state="open", head=head)
-    if pulls and isinstance(pulls[0], dict) and isinstance(pulls[0].get("number"), int):
-        return pulls[0]["number"]
-    return None
+    return _merge.find_companion_pr(
+        client, issue_repo, branch, companion_suffix="-diary"
+    )
 
 
 def _companion_ready(
     client: ForgePort, issue_repo: str, number: int
 ) -> tuple[bool, str, bool]:
-    """Return (ready, review_decision, ci_ok)."""
-    decision = ""
-    try:
-        reviews = api_request(client, f"repos/{issue_repo}/pulls/{number}/reviews")
-        if isinstance(reviews, list):
-            for rev in reversed(reviews):
-                if isinstance(rev, dict) and rev.get("state"):
-                    # APPROVED / CHANGES_REQUESTED / COMMENTED
-                    state = str(rev.get("state") or "").upper()
-                    if state in ("APPROVED", "CHANGES_REQUESTED"):
-                        decision = state
-                        break
-    except Exception as exc:
-        print(f"companion reviews failed ({exc})", file=sys.stderr)
-
-    ci_ok = False
-    try:
-        checks = client.pr_checks(number, repo=issue_repo)
-        if checks:
-            ci_ok = all(
-                str(c.get("conclusion") or "").lower() == "success" for c in checks
-            )
-        else:
-            ci_ok = True  # no checks → treat as pass (align with empty rollup edge)
-    except Exception as exc:
-        print(f"companion checks failed ({exc})", file=sys.stderr)
-        ci_ok = False
-
-    ready = decision == "APPROVED" and ci_ok
-    return ready, decision, ci_ok
+    result = _merge.check_companion_ready(client, issue_repo, number)
+    return result.ready, result.review_decision, result.ci_ok
 
 
 def _post_merge_pytest(work_dir: str) -> int:
@@ -393,27 +205,8 @@ def _post_merge_pytest(work_dir: str) -> int:
         print("POST_MERGE_WORKTREE: (not present, skipping)")
         return 0
     print(f"POST_MERGE_WORKTREE: {work_dir}")
-    subprocess.run(
-        ["git", "pull", "origin", "HEAD"],
-        cwd=work_dir,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    env = os.environ.copy()
-    src = str(Path(work_dir) / "src")
-    env["PYTHONPATH"] = f"{src}:{env.get('PYTHONPATH', '')}"
-    proc = subprocess.run(
-        ["python3", "-m", "pytest", "-q"],
-        cwd=work_dir,
-        capture_output=True,
-        text=True,
-        check=False,
-        env=env,
-    )
-    out = (proc.stdout or "") + (proc.stderr or "")
-    print("\n".join(out.splitlines()[-30:]))
-    return int(proc.returncode)
+    result = _merge.run_post_merge_pytest(work_dir)
+    return result.exit_code
 
 
 def _reported(failed_stages: list[str], **extra: Any) -> StepResult:
@@ -446,7 +239,6 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
 
     companion_pr: int | None = None
 
-    # ---- companion check (has_diary_changes only) ----
     print("## [companion_pr_check]")
     if ctx.has_diary_changes == "true":
         companion_pr = _find_companion_pr(client, issue_repo, ctx.branch)
@@ -474,7 +266,6 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
         print("(has_diary_changes != true — skipped)")
     print("")
 
-    # ---- PR search ----
     print("## [pr_search]")
     pr_number, pr_state, stage = _find_pr(client, pr_repo, ctx.branch, issue_number)
     if pr_number is None:
@@ -485,7 +276,6 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
     print(f"PR_SEARCH_STAGE: {stage}")
     print("")
 
-    # ---- already merged ----
     print("## [already_merged_check]")
     if _is_already_merged(client, pr_repo, pr_number):
         print("PR_MERGED: true")
@@ -496,7 +286,6 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
     print("ALREADY_MERGED: no")
     print("")
 
-    # ---- mergeStateStatus (BLOCKED retry) ----
     print("## [merge_state]")
     merge_info = _poll_merge_state(client, pr_repo, pr_number)
     merge_state = merge_info.get("mergeStateStatus") or "UNKNOWN"
@@ -506,7 +295,6 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
     print(f"PR_HEAD_REF: {head_ref}")
     print("")
 
-    # ---- merge-tree when UNKNOWN ----
     print("## [local_merge_verify]")
     local_result = "SKIPPED"
     local_verified = False
@@ -525,7 +313,6 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
     print(f"LOCAL_VERIFIED: {local_verified}")
     print("")
 
-    # ---- M2 gate preflight ----
     print("## [gate_preflight_m2]")
     try:
         issue_data = client.issue_get(issue_number, fields=["body", "labels"])
@@ -559,7 +346,6 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
     print("GATE_PREFLIGHT_M2: OK")
     print("")
 
-    # ---- version behind base (#3936) ----
     print("## [version_behind_base_check]")
     version_status = _version_behind_base_check(_worktree_path(ctx), ctx.base_branch, merge_state)
     print(f"VERSION_BEHIND_BASE: {version_status}")
@@ -567,7 +353,6 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
         failed.append("version_behind_base")
         return _reported(failed, PR_NUMBER=pr_number)
     if version_status == "FIXED":
-        # The push invalidates the merge state read above.
         merge_info = _poll_merge_state(client, pr_repo, pr_number)
         merge_state = merge_info.get("mergeStateStatus") or "UNKNOWN"
         print(f"MERGE_STATE: {merge_state}")
@@ -575,7 +360,6 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
             failed.append("merge_state")
     print("")
 
-    # ---- merge attempt ----
     print("## [merge_attempt]")
     merge_attempted = False
     merge_rc = -1
@@ -600,7 +384,6 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
     print(f"MERGE_RC: {merge_rc}")
     print("")
 
-    # ---- companion merge ----
     print("## [companion_pr_merge]")
     companion_merge_rc = -1
     if (
@@ -629,15 +412,12 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
     print(f"COMPANION_MERGE_RC: {companion_merge_rc}")
     print("")
 
-    # ---- post-merge pytest ----
     print("## [post_merge_test]")
     posttest_rc = 0
     if merge_attempted and merge_rc == 0:
         posttest_rc = _post_merge_pytest(_worktree_path(ctx))
         if posttest_rc != 0:
             failed.append("post_merge_test")
-            # PR はマージ済みだが post_merge_test 失敗 → M1r/M2 が
-            # merge-running → merge-done を辿れるようラベルを先に付与 (#3221 AC-6)
             try:
                 client.issue_update(issue_number, labels_add=["issuesmith:merge-running"])
                 print("LABEL: added issuesmith:merge-running (post_merge_test failed)")
