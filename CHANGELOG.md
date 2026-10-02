@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - `TestsGate` reruns newly failing tests on the branch worktree up to `tests.flaky_reruns` times (default `2`; set `0` to disable). Tests that pass on any rerun are recorded as `tests.flaky` (severity `warn`, non-blocking) instead of blocking the pipeline with `tests.pytest_failure` (nexus #3922).
+- `evaluate_requires()` now classifies violations whose severity is not `fail` into `RequiresResult.warnings` instead of `blocking`, so `tests.flaky` and other warn-level gate results do not launch the repair loop (same treatment as `b1_verify` #4076).
 
 ### Changed
 

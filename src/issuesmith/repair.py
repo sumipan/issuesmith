@@ -27,6 +27,7 @@ class RequiresResult:
 
     blocking: list = field(default_factory=list)    # violations that block progress
     preexisting: list = field(default_factory=list) # same violations on base branch
+    warnings: list = field(default_factory=list)    # non-fail severity (e.g. tests.flaky)
     auto_fixed: list = field(default_factory=list)  # rule_ids auto-fixed this pass
     gate_error: Exception | None = None             # set if any gate raised
 
@@ -52,8 +53,18 @@ def evaluate_requires(
             return RequiresResult(gate_error=exc)
 
     preexisting = [v for v in all_violations if v.rule_id in preexisting_rule_ids]
-    blocking = [v for v in all_violations if v.rule_id not in preexisting_rule_ids]
-    return RequiresResult(blocking=blocking, preexisting=preexisting)
+    non_preexisting = [
+        v for v in all_violations if v.rule_id not in preexisting_rule_ids
+    ]
+    blocking = [
+        v for v in non_preexisting if getattr(v, "severity", "fail") == "fail"
+    ]
+    warnings = [
+        v for v in non_preexisting if getattr(v, "severity", "fail") != "fail"
+    ]
+    return RequiresResult(
+        blocking=blocking, preexisting=preexisting, warnings=warnings
+    )
 
 
 def apply_auto_fixes(
@@ -87,6 +98,7 @@ def apply_auto_fixes(
     updated = RequiresResult(
         blocking=still_blocking,
         preexisting=result.preexisting,
+        warnings=result.warnings,
         auto_fixed=auto_fixed,
     )
     return updated, inp
