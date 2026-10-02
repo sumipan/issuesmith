@@ -18,6 +18,7 @@ from issuesmith.gate_rules import scope_coupling
 from issuesmith.gate_rules.scope_coupling import (
     BEHAVIOR_PIN_RULE_ID,
     DELETION_RULE_ID,
+    DELETION_SEARCH_DIRS,
     PATH_STRING_RULE_ID,
     ScopeCouplingRules,
     check_allow_paths_string_references,
@@ -49,7 +50,7 @@ def repo(tmp_path: Path) -> Path:
         ),
         "tests/scripts/test_git_sync_retired.py": "import git_sync\n",
         "tools/runner.sh": "python scripts/git-sync.py --dry-run\n",
-        "src/app.py": "# git-sync.py is not searched under src/\n",
+        "src/app.py": "# unrelated runtime module\n",
         "docs/notes.md": "git-sync.py\n",
     }
     for rel, text in files.items():
@@ -760,6 +761,62 @@ def test_stem_memory_compact_true_positives_included(memory_compact_repo):
     referrers = refs.get("scripts/memory-compact.py", [])
     assert "tools/yaml_ref.py" in referrers
     assert "tools/basename.py" in referrers
+
+
+# ---------------------------------------------------------------------------
+# src-layout deletion reference detection (#4321)
+# ---------------------------------------------------------------------------
+
+
+def test_deletion_search_dirs_includes_src():
+    assert "src" in DELETION_SEARCH_DIRS
+
+
+def test_deleted_parent_module_strips_src_prefix():
+    assert scope_coupling._deleted_parent_module(
+        "src/issuesmith/steps/p0_worktree.py"
+    ) == "issuesmith.steps"
+
+
+def test_deletion_search_keys_strips_src_prefix():
+    keys = deletion_search_keys("src/issuesmith/steps/p0_worktree.py")
+    assert "issuesmith.steps.p0_worktree" in keys
+    assert "src.issuesmith.steps.p0_worktree" not in keys
+
+
+@pytest.fixture()
+def src_layout_repo(tmp_path: Path) -> Path:
+    root = tmp_path / "src_layout_repo"
+    files = {
+        "src/pkg/steps/x.py": "def f(): pass\n",
+        "src/pkg/verbs/y.py": "from pkg.steps.x import f\n",
+        "tests/t.py": "from pkg.steps import x\n",
+    }
+    return _init_repo(root, files)
+
+
+def test_src_layout_from_import_symbol_reported(src_layout_repo):
+    body = _body(
+        ["src/pkg/steps/x.py"],
+        rows="| sumipan/issuesmith | src/pkg/steps/x.py | delete | retire |",
+    )
+    refs = scope_coupling.uncovered_deletion_references(
+        body, ["src/pkg/steps/x.py"], src_layout_repo
+    )
+    referrers = refs.get("src/pkg/steps/x.py", [])
+    assert "src/pkg/verbs/y.py" in referrers
+
+
+def test_src_layout_from_import_module_reported(src_layout_repo):
+    body = _body(
+        ["src/pkg/steps/x.py"],
+        rows="| sumipan/issuesmith | src/pkg/steps/x.py | delete | retire |",
+    )
+    refs = scope_coupling.uncovered_deletion_references(
+        body, ["src/pkg/steps/x.py"], src_layout_repo
+    )
+    referrers = refs.get("src/pkg/steps/x.py", [])
+    assert "tests/t.py" in referrers
 
 
 def test_stem_violation_fix_hint_includes_context_suffix(tmp_path):

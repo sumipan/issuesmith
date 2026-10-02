@@ -482,8 +482,16 @@ def check_paths_must_not_exist_contract(
 DELETION_RULE_ID = "scope_coupling.deletion_reference_uncovered"
 
 # Directories whose files break when a referenced file is deleted but are not covered by
-# type checks / CI of the runtime code (src/ is intentionally excluded).
-DELETION_SEARCH_DIRS: tuple[str, ...] = ("tests", "scripts", "tools")
+# type checks / CI of the runtime code.
+DELETION_SEARCH_DIRS: tuple[str, ...] = ("src", "tests", "scripts", "tools")
+
+
+def _module_parts_from_path(path: str) -> tuple[str, ...]:
+    """Return module name parts, stripping leading 'src' for src-layout repos."""
+    parts = Path(path).with_suffix("").parts
+    if parts and parts[0] == "src" and len(parts) >= 3:
+        return parts[1:]
+    return parts
 
 
 def _deletion_search_pathspecs(deleted_path: str) -> tuple[str, ...]:
@@ -543,10 +551,13 @@ def _deletion_search_key_kinds(
         if repo_path is None or _filename_is_unique_in_repo(name, repo_path):
             add(name, "name")
 
-    parts = Path(path).with_suffix("").parts
+    parts = _module_parts_from_path(path)
     if len(parts) > 1:
         add(".".join(parts), "module")
         add(path, "path")
+        raw_parts = Path(path).with_suffix("").parts
+        if raw_parts and raw_parts[0] == "src" and len(parts) > 2:
+            add(".".join(parts[:-1]), "module")
 
     if Path(path).suffix == ".py" and repo_path is not None:
         stem = Path(path).stem
@@ -594,7 +605,7 @@ def _git_grep_lines(root: Path, pattern: str, pathspec: str) -> list[tuple[str, 
 
 
 def _deleted_parent_module(deleted_path: str) -> str:
-    parts = Path(deleted_path).with_suffix("").parts
+    parts = _module_parts_from_path(deleted_path)
     if len(parts) <= 1:
         return parts[0] if parts else ""
     return ".".join(parts[:-1])
