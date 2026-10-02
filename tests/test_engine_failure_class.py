@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from unittest.mock import MagicMock
 
 import pytest
@@ -134,3 +135,46 @@ def test_execute_success_does_not_persist_stderr(execute_mocks, monkeypatch):
     assert proc.stdout == "done"
     assert proc.stderr == ""
     assert execute_mocks["recorded"][-1].get("failure_detail") is None
+
+
+def test_execute_timeout_expired_records_metrics_and_returns_124(execute_mocks, monkeypatch):
+    def raise_timeout(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(cmd=["agent"], timeout=3599)
+
+    monkeypatch.setattr("issuesmith.engine.call_managed", raise_timeout)
+
+    proc = _execute("implementation", "prompt")
+
+    assert proc.returncode == 124
+    assert proc.stdout == ""
+    assert "TimeoutExpired after 3599s" in proc.stderr
+    recorded = execute_mocks["recorded"][-1]
+    assert recorded["status"] == "timeout"
+    assert recorded["failure_class"] == FailureClass.TIMEOUT.value
+    assert recorded["failure_detail"] == "TimeoutExpired after 3599s"
+
+
+def test_execute_llm_result_timeout_records_metrics(execute_mocks, monkeypatch):
+    from ghdag.llm.managed import ManagedResult
+
+    monkeypatch.setattr(
+        "issuesmith.engine.call_managed",
+        lambda *args, **kwargs: ManagedResult(
+            body="",
+            usage=None,
+            returncode=124,
+            failure_class=FailureClass.TIMEOUT.value,
+            engine_used="claude",
+            model_used="claude-sonnet-4-6",
+            attempts=1,
+            quota_reported=False,
+            additional_tags={},
+        ),
+    )
+
+    proc = _execute("implementation", "prompt")
+
+    assert proc.returncode == 124
+    recorded = execute_mocks["recorded"][-1]
+    assert recorded["status"] == "timeout"
+    assert recorded["failure_class"] == FailureClass.TIMEOUT.value

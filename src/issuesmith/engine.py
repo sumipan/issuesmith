@@ -776,17 +776,39 @@ def _execute(
     original_call = _llm_managed.call
     _llm_managed.call = _issuesmith_call
     try:
-        result = call_managed(
-            content,
-            engine=selection.engine,
-            model=selection.model,
-            timeout=int(timeout_sec),
-            cwd=working_directory,
-            capabilities=_ISSUESMITH_CAPABILITIES,
-            fallback_candidates=fallback_candidates,
-            additional_tags=additional_tags,
-            quota_gate=quota_gate,
-        )
+        try:
+            result = call_managed(
+                content,
+                engine=selection.engine,
+                model=selection.model,
+                timeout=int(timeout_sec),
+                cwd=working_directory,
+                capabilities=_ISSUESMITH_CAPABILITIES,
+                fallback_candidates=fallback_candidates,
+                additional_tags=additional_tags,
+                quota_gate=quota_gate,
+            )
+        except subprocess.TimeoutExpired as exc:
+            finished_at = time.time()
+            timeout_detail = f"TimeoutExpired after {int(exc.timeout)}s"
+            _record_task_metrics(
+                role=role,
+                engine=selection.engine,
+                model=selection.model,
+                template=template,
+                status="timeout",
+                started_at=started_at,
+                finished_at=finished_at,
+                usage=None,
+                failure_class=FailureClass.TIMEOUT.value,
+                failure_detail=timeout_detail,
+            )
+            return subprocess.CompletedProcess(
+                args=[],
+                returncode=124,
+                stdout="",
+                stderr=f"[issuesmith-engine] {timeout_detail}",
+            )
 
         # F2: ghdag が RATE_LIMIT を分類するまでの nexus 側ワークアラウンド。
         if (
@@ -1292,6 +1314,34 @@ def run_guarded(
     return rc
 
 
+def _worktree_head_ahead(context: dict[str, str]) -> bool:
+    """True when the worktree has commits on HEAD not in base_branch."""
+    worktree_path = context.get("worktree_path") or context.get("target_worktree_path")
+    if not worktree_path:
+        return False
+    base_branch = context.get("base_branch", "main")
+    try:
+        proc = subprocess.run(
+            [
+                "git",
+                "-C",
+                worktree_path,
+                "rev-list",
+                "--count",
+                f"{base_branch}..HEAD",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return False
+        return int(proc.stdout.strip()) > 0
+    except Exception:
+        return False
+
+
 def _run_guarded_with_requires(
     role: str,
     template_path: str,
@@ -1332,7 +1382,14 @@ def _run_guarded_with_requires(
             role, template_path, variables, success_statuses, failure_status, cwd, tier
         )
     if rc != 0:
-        return rc
+        if _worktree_head_ahead(context):
+            print(
+                "[issuesmith-engine] HEAD advanced past base; "
+                "proceeding to requires loop despite LLM exit code",
+                file=sys.stderr,
+            )
+        else:
+            return rc
 
     # Post-phase: run full requires loop
     issue_number: int | None = None
