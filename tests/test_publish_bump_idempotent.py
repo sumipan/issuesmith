@@ -5,9 +5,10 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from issuesmith.ops.publish import (
-    _bump_commits_on_top,
+    _bump_versions_in_range,
     _check_commit_diff_gates,
     _maybe_bump_version,
+    _strip_bump_version_lines,
     publish,
 )
 
@@ -19,6 +20,28 @@ index 1111111..2222222 100644
 @@ -1,5 +1,5 @@
 -version = "0.26.0"
 +version = "0.27.0"
+"""
+
+_ISSUE_3922_LOG = [
+    "fix: b",
+    "fix: a",
+    "chore: bump version to 0.105.0 (Y: B1)",
+    "feat: impl",
+]
+
+_ISSUE_3922_CUMULATIVE_DIFF = """\
+diff --git a/pyproject.toml b/pyproject.toml
+index 1111111..2222222 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+-version = "0.104.0"
++version = "0.105.0"
+diff --git a/src/pkg/foo.py b/src/pkg/foo.py
+--- a/src/pkg/foo.py
++++ b/src/pkg/foo.py
+@@ -1 +1,2 @@
++x = 1
 """
 
 
@@ -40,23 +63,64 @@ def _git_router(log_subjects: list[str], diffs: dict[str, str]):
     return _run
 
 
-def test_bump_commits_on_top_counts_only_leading_bump_subjects():
+def test_bump_versions_in_range_collects_bump_subjects_anywhere_in_range():
+    subjects = ["fix: b", "fix: a", "chore: bump version to 0.105.0 (Y: B1)", "feat: impl"]
+    with patch("issuesmith.ops.publish._run_git", side_effect=_git_router(subjects, {})):
+        assert _bump_versions_in_range(Path("/tmp/wt"), "main") == ["0.105.0"]
     with patch("issuesmith.ops.publish._run_git", side_effect=_git_router(
         ["chore: bump version to 0.79.0 (Y: B1)", "test: rewrite docstrings", "fix: allow Write"], {}
     )):
-        assert _bump_commits_on_top(Path("/tmp/wt"), "main") == 1
+        assert _bump_versions_in_range(Path("/tmp/wt"), "main") == ["0.79.0"]
     with patch("issuesmith.ops.publish._run_git", side_effect=_git_router(
         ["fix: allow Write", "chore: bump version to 0.79.0 (Y: B1)"], {}
     )):
-        assert _bump_commits_on_top(Path("/tmp/wt"), "main") == 0
+        assert _bump_versions_in_range(Path("/tmp/wt"), "main") == ["0.79.0"]
     with patch("issuesmith.ops.publish._run_git", side_effect=_git_router([], {})):
-        assert _bump_commits_on_top(Path("/tmp/wt"), "main") == 0
+        assert _bump_versions_in_range(Path("/tmp/wt"), "main") == []
+    with patch("issuesmith.ops.publish._run_git", side_effect=_git_router(["", "fix: x"], {})):
+        assert _bump_versions_in_range(Path("/tmp/wt"), "main") == []
 
 
-def test_diff_gate_inspects_below_our_bump_commit():
+def test_strip_bump_version_lines_removes_matching_pyproject_version_hunks():
+    diff = _ISSUE_3922_CUMULATIVE_DIFF
+    stripped = _strip_bump_version_lines(diff, ["0.105.0"])
+    assert "-version = " not in stripped
+    assert '+version = "0.105.0"' not in stripped
+    assert "src/pkg/foo.py" in stripped
+    assert '+version = "0.106.0"' in _strip_bump_version_lines(
+        diff.replace('0.105.0', '0.106.0'), ["0.105.0"]
+    )
+    assert _strip_bump_version_lines(diff, []) == diff
+
+
+def test_diff_gate_passes_issue_3922_layout_with_bump_not_at_head():
+    router = _git_router(_ISSUE_3922_LOG, {"origin/main...HEAD": _ISSUE_3922_CUMULATIVE_DIFF})
+    with patch("issuesmith.ops.publish._run_git", side_effect=router):
+        assert _check_commit_diff_gates(Path("/tmp/wt"), "main") is None
+
+
+def test_diff_gate_rejects_llm_version_edit_after_publish_bump():
+    llm_diff = _ISSUE_3922_CUMULATIVE_DIFF.replace(
+        '+version = "0.105.0"', '+version = "0.106.0"'
+    )
+    router = _git_router(_ISSUE_3922_LOG, {"origin/main...HEAD": llm_diff})
+    with patch("issuesmith.ops.publish._run_git", side_effect=router):
+        result = _check_commit_diff_gates(Path("/tmp/wt"), "main")
+    assert result is not None and result.status == "P3_GATE_FAILED"
+    assert "cp1.version_line_in_diff" in result.stderr
+
+
+def test_diff_gate_passes_when_bump_at_head_using_cumulative_diff():
+    bump_079_diff = _BUMP_ONLY_DIFF.replace("0.26.0", "0.78.0").replace("0.27.0", "0.79.0")
+    cumulative = bump_079_diff + "\n" + (
+        "diff --git a/src/x.py b/src/x.py\n"
+        "--- a/src/x.py\n"
+        "+++ b/src/x.py\n"
+        "+x = 1\n"
+    )
     router = _git_router(
         ["chore: bump version to 0.79.0 (Y: B1)", "fix: allow Write"],
-        {"origin/main...HEAD": _BUMP_ONLY_DIFF, "origin/main...HEAD~1": "diff --git a/src/x.py b/src/x.py\n+x = 1\n"},
+        {"origin/main...HEAD": cumulative},
     )
     with patch("issuesmith.ops.publish._run_git", side_effect=router):
         assert _check_commit_diff_gates(Path("/tmp/wt"), "main") is None
@@ -69,9 +133,18 @@ def test_diff_gate_still_rejects_llm_version_edit_without_bump_commit():
     assert result is not None and result.status == "P3_GATE_FAILED"
 
 
-def test_maybe_bump_version_skips_when_head_is_bump_commit(tmp_path: Path):
+def test_maybe_bump_version_skips_when_bump_commit_in_range(tmp_path: Path):
     (tmp_path / "pyproject.toml").write_text('version = "0.79.0"\n', encoding="utf-8")
     router = _git_router(["chore: bump version to 0.79.0 (Y: B1)", "fix: x"], {})
+    with patch("issuesmith.ops.publish._run_git", side_effect=router), \
+         patch("issuesmith.ops.publish._run_version_bump") as run_bump:
+        assert _maybe_bump_version(tmp_path, "main", "sumipan/ghdag", "sumipan/nexus") is None
+    run_bump.assert_not_called()
+
+
+def test_maybe_bump_version_skips_issue_3922_layout(tmp_path: Path):
+    (tmp_path / "pyproject.toml").write_text('version = "0.105.0"\n', encoding="utf-8")
+    router = _git_router(_ISSUE_3922_LOG, {})
     with patch("issuesmith.ops.publish._run_git", side_effect=router), \
          patch("issuesmith.ops.publish._run_version_bump") as run_bump:
         assert _maybe_bump_version(tmp_path, "main", "sumipan/ghdag", "sumipan/nexus") is None
