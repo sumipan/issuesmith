@@ -156,6 +156,24 @@ class TestExecuteReleaseInFlight:
         )
         assert any(e.get("issue") == 3781 for e in store.snapshot().in_flight)
 
+    def test_skips_release_on_normalized_pr_list_shape(self, tmp_path):
+        """GitHubClient.pr_list returns headRefName and no body; no per-PR fetch."""
+        store = _store(tmp_path)
+        store.add_in_flight(3781, "claude", role="implementation")
+        client = MagicMock()
+        client.pr_list.return_value = [
+            {"number": 158, "title": "unrelated", "headRefName": "feat/issue-1-x"},
+            {"number": 159, "title": "fix", "headRefName": "issue-3781-abc123"},
+        ]
+        execute(
+            [ReleaseInFlightAction(issue=3781, phase="develop", reason="test")],
+            store,
+            sinks=[],
+            client=client,
+        )
+        assert any(e.get("issue") == 3781 for e in store.snapshot().in_flight)
+        client.pr_get.assert_not_called()
+
     def test_releases_when_no_open_linked_pr(self, tmp_path):
         store = _store(tmp_path)
         store.add_in_flight(3782, "claude", role="implementation")

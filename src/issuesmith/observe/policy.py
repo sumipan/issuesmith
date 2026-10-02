@@ -280,8 +280,12 @@ def _issue_has_open_linked_pr(
 ) -> bool:
     """Return True when *issue_number* has an open PR linked on the forge.
 
-    Matches PRs whose head ref is ``issue-{N}-*``, whose title/body mention
-    ``#{N}``, or whose body/title contain ``Closes #N`` / ``Refs #N``.
+    Matches PRs whose head ref is ``issue-{N}`` / ``issue-{N}-*`` or whose
+    title/body mention ``#{N}`` (covers ``Closes #N`` / ``Refs #N`` and
+    cross-repo ``owner/repo#N``). Lists open PRs of *target_repo* with one raw
+    API call (``head.ref`` and ``body`` included); falls back to
+    ``client.pr_list`` (normalized: ``headRefName``, no body) when the repo is
+    unknown or the raw API is unavailable. No per-PR fetch.
     """
     import re
 
@@ -289,11 +293,10 @@ def _issue_has_open_linked_pr(
 
     issue_ref = re.compile(rf"(?<!\d)#{issue_number}(?!\d)")
     branch_prefix = f"issue-{issue_number}-"
-    closes_marker = re.compile(rf"(?i)\b(?:closes|refs)\s+#{issue_number}(?!\d)")
 
     def _matches(pr: dict[str, Any]) -> bool:
-        head = pr.get("head") or {}
-        ref = head.get("ref") if isinstance(head, dict) else None
+        head = pr.get("head")
+        ref = head.get("ref") if isinstance(head, dict) else pr.get("headRefName")
         if isinstance(ref, str) and (
             ref.startswith(branch_prefix) or ref == f"issue-{issue_number}"
         ):
@@ -302,58 +305,20 @@ def _issue_has_open_linked_pr(
         body = str(pr.get("body") or "")
         return bool(issue_ref.search(title) or issue_ref.search(body))
 
-    def _has_closes_or_refs_marker(prs: list[Any]) -> bool:
-        for pr in prs:
-            if not isinstance(pr, dict):
-                continue
-            title = str(pr.get("title") or "")
-            body = str(pr.get("body") or "")
-            if closes_marker.search(title) or closes_marker.search(body):
-                return True
-            number = pr.get("number")
-            if not isinstance(number, int):
-                continue
-            try:
-                detail = client.pr_get(number)
-            except Exception:
-                continue
-            if not isinstance(detail, dict):
-                continue
-            d_title = str(detail.get("title") or "")
-            d_body = str(detail.get("body") or "")
-            if closes_marker.search(d_title) or closes_marker.search(d_body):
-                return True
-        return False
-
-    def _open_prs_for_repo(repo: str) -> list[dict[str, Any]]:
-        if not repo:
-            return []
-        path = f"repos/{repo}/pulls?state=open&per_page=100"
-        try:
-            listed = api_request(client, path)
-        except Exception:
-            return []
-        if not isinstance(listed, list):
-            return []
-        return [p for p in listed if isinstance(p, dict)]
-
-    try:
-        prs = client.pr_list(state="open", limit=100)
-    except Exception:
-        prs = []
-    if isinstance(prs, list):
-        if _has_closes_or_refs_marker(prs):
-            return True
-        for pr in prs:
-            if isinstance(pr, dict) and _matches(pr):
-                return True
-
+    prs: Any = None
     if target_repo:
-        for pr in _open_prs_for_repo(target_repo):
-            if _matches(pr):
-                return True
-
-    return False
+        try:
+            prs = api_request(client, f"repos/{target_repo}/pulls?state=open&per_page=100")
+        except Exception:
+            prs = None
+    if not isinstance(prs, list):
+        try:
+            prs = client.pr_list(state="open", limit=100)
+        except Exception:
+            prs = []
+    if not isinstance(prs, list):
+        return False
+    return any(isinstance(pr, dict) and _matches(pr) for pr in prs)
 
 
 def _strip_generation(key: str) -> str:
