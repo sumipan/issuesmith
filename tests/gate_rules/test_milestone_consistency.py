@@ -28,7 +28,13 @@ def test_fixture_without_milestone_label_detects_all_three():
         "milestone_consistency.sub_header_english",
         "milestone_consistency.sub_plan_misplaced",
     }
-    for v in vs:
+    by_id = {v.rule_id: v for v in vs}
+    assert by_id["milestone_consistency.label_missing"].auto_fixable is False
+    for rule_id in (
+        "milestone_consistency.sub_header_english",
+        "milestone_consistency.sub_plan_misplaced",
+    ):
+        v = by_id[rule_id]
         assert v.severity == "fail"
         assert v.auto_fixable is True
         assert v.fix_hint
@@ -181,7 +187,13 @@ def test_apply_body_autofixes_normalizes_english_and_relocates_plan():
     assert applied2 == []
 
 
-def test_apply_auto_fixable_helpers_adds_label_before_llm():
+def test_label_missing_is_not_auto_fixable():
+    vs = _check(_FIXTURE, [])
+    label_v = next(v for v in vs if v.rule_id == "milestone_consistency.label_missing")
+    assert label_v.auto_fixable is False
+
+
+def test_apply_auto_fixable_helpers_skips_label_missing():
     from issuesmith.gate_rules.milestone_consistency import (
         MilestoneConsistencyRules,
         apply_auto_fixable_helpers,
@@ -224,8 +236,9 @@ def test_apply_auto_fixable_helpers_adds_label_before_llm():
     body, labels, applied = apply_auto_fixable_helpers(
         client, 4191, _FIXTURE, [], vs
     )
-    assert "milestone_consistency.label_missing" in applied
-    assert "scope:milestone" in labels
-    assert "scope:milestone" in client.labels
-    assert client.issue_milestone is not None
+    assert "milestone_consistency.label_missing" not in applied
+    assert "scope:milestone" not in labels
+    assert "scope:milestone" not in client.labels
+    assert client.issue_milestone is None
+    assert "milestone_consistency.sub_header_english" in applied
     assert "#### Sub " not in body
