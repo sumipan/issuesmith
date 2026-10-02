@@ -276,6 +276,17 @@ def test_sibling_skill_dirs_aggregate_to_grandparent_concern():
     assert ScopeSizeRules().check(_body(rows), []) == []
 
 
+def test_promote_keeps_root_and_excluded_rows():
+    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
+
+    rows = [(f"src/{d}/x.py", _MODIFY) for d in ("a", "b", "c")]
+    rows += [("CHANGELOG.md", _MODIFY), ("tests/test_x.py", _NEW)]
+    promoted = promote_oversized_issue_body(_body(rows))
+    split_rows = [line for line in promoted.splitlines() if "split from oversized issue" in line]
+    for path, _ in rows:
+        assert any(f"`{path}`" in line for line in split_rows), path
+
+
 def test_root_level_files_are_not_concerns():
     rows = [
         ("CHANGELOG.md", _MODIFY),

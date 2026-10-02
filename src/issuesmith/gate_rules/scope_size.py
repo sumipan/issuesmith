@@ -183,17 +183,22 @@ def _rows_by_concern(
         by_parent.setdefault(parent, []).append((repo, path, change_type))
     measured = measure_size(body, cfg)
     ordered: dict[str, list[tuple[str, str, str]]] = {}
+    consumed: set[str] = set()
     for concern, paths in measured.concerns.items():
         rows_for_concern: list[tuple[str, str, str]] = []
-        seen_parents: set[str] = set()
         for path in paths:
             parent = posixpath.dirname(path) or "."
-            if parent in seen_parents:
+            if parent in consumed:
                 continue
-            seen_parents.add(parent)
+            consumed.add(parent)
             rows_for_concern.extend(by_parent.get(parent, []))
         if rows_for_concern:
             ordered[concern] = rows_for_concern
+    # Excluded prefixes and root-level files are not measured concerns but must
+    # stay in the promoted sub designs (file-union complete).
+    for parent, rows in by_parent.items():
+        if parent not in consumed:
+            ordered.setdefault(parent, []).extend(rows)
     return ordered
 
 
