@@ -3,17 +3,24 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from unittest.mock import MagicMock
 
 import pytest
 
 from issuesmith.config import MilestoneChainConfig, reset_config_cache
 from issuesmith.milestone import (
+    PlanRow,
     _list_open_milestones,
     advance_milestone_chains,
+    allow_paths_for_row,
+    build_child_body,
     ensure_sub1_binding,
     link_sub_issue,
     milestone_last_issue_terminal_ok,
     milestone_status,
+    parse_split_plan,
+    plan_section,
+    prevalidate_child_body,
     validate_children,
 )
 from issuesmith.queue_store import QueueStore
@@ -863,6 +870,89 @@ class TestSubIssuesEnumeration:
         found = _list_open_milestones(client)
         assert len(found) == 1
         assert found[0]["number"] == 100
+
+
+class TestSub1PublicApi:
+    """SUB1 parser/body/preflight public API on issuesmith.milestone (#4276)."""
+
+    def test_plan_section_returns_split_plan_body(self):
+        body = (
+            _PARENT_BODY
+            + f"\n## Milestone\n\n### Sub-issue Plan\n"
+            f"| # | {TITLE} | {TARGET_REPOSITORY} | {CONTENT} | {DEPENDENCY} |\n"
+            "|---|--------|----------------|------|------|\n"
+            f"| 1 | child | `sumipan/nexus` | scope | {NONE} |\n"
+        )
+        section = plan_section(body)
+        assert section is not None
+        assert "Sub-issue Plan" not in section
+        assert "child" in section
+
+    def test_parse_split_plan_structures_row_and_repo(self):
+        body = (
+            _PARENT_BODY
+            + f"\n## Milestone\n\n### Sub-issue Plan\n"
+            f"| # | {TITLE} | {TARGET_REPOSITORY} | {CONTENT} | {DEPENDENCY} |\n"
+            "|---|--------|----------------|------|------|\n"
+            f"| 1 | child | `sumipan/nexus` | scope text | {NONE} |\n"
+        )
+        rows, has_repo = parse_split_plan(body, parent_target_repo="sumipan/nexus")
+        assert has_repo is True
+        assert len(rows) == 1
+        assert rows[0] == PlanRow(
+            row_num=1,
+            title="child",
+            repo="sumipan/nexus",
+            scope="scope text",
+            dep_raw=NONE,
+        )
+
+    def test_parse_split_plan_rejects_malformed_number_column(self):
+        body = (
+            _PARENT_BODY
+            + f"\n## Milestone\n\n### Sub-issue Plan\n"
+            f"| # | {TITLE} | {TARGET_REPOSITORY} | {CONTENT} | {DEPENDENCY} |\n"
+            "|---|--------|----------------|------|------|\n"
+            f"| x | child | `sumipan/nexus` | scope | {NONE} |\n"
+        )
+        rows, has_repo = parse_split_plan(body, parent_target_repo="sumipan/nexus")
+        assert has_repo is True
+        assert rows == []
+
+    def test_build_child_body_preserves_target_repo_and_ac(self):
+        parent_body = (
+            _PARENT_BODY
+            + f"\n## Milestone\n\n### Sub-issue Plan\n"
+            f"| # | {TITLE} | {TARGET_REPOSITORY} | {CONTENT} | {DEPENDENCY} |\n"
+            "|---|--------|----------------|------|------|\n"
+            f"| 1 | child | `sumipan/nexus` | scope | {NONE} |\n"
+        )
+        row = PlanRow(row_num=1, title="child", repo="sumipan/nexus", scope="scope", dep_raw=NONE)
+        paths = allow_paths_for_row(parent_body, row)
+        child = build_child_body(
+            parent_body=parent_body,
+            parent_number=100,
+            row=row,
+            resolved_dep=NONE,
+            client=MagicMock(),
+            parent_labels=["scope:milestone"],
+            allow_paths=paths,
+        )
+        assert "target_repo: sumipan/nexus" in child
+        assert "#100" in child
+        assert child.count("##") >= 3
+
+    def test_prevalidate_child_body_rejects_unsupported_repo(self):
+        child_body = _CHILD_BODY
+        failures = prevalidate_child_body(
+            body=child_body,
+            row_repo="sumipan/unknown",
+            parent_issue_number=100,
+            resolved_dep=NONE,
+            client=MagicMock(),
+            supported=frozenset({"sumipan/nexus"}),
+        )
+        assert any("V1 target_repo mismatch" in f for f in failures)
 
 
 class TestIssue3130Fixes:

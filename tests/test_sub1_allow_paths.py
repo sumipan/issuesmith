@@ -12,7 +12,7 @@ issuesmith.contract, the single parser the B1 gate also uses) and return []
 
 from __future__ import annotations
 
-from issuesmith.steps.sub1_create import PlanRow, _allow_paths_for_row
+from issuesmith.milestone import PlanRow, allow_paths_for_row
 from tests.legacy_text import CHANGE_TYPE, CHANGED_FILES, DESCRIPTION, FILE_PATH, MODIFY, REPOSITORY, SUB
 
 _CHANGE_TABLE_HEADER = f"{REPOSITORY} | {FILE_PATH} | {CHANGE_TYPE} | {DESCRIPTION}"
@@ -59,7 +59,7 @@ def test_row_gets_only_its_own_change_table_paths() -> None:
     body = _parent_body_bold_label_table()
     row = PlanRow(row_num=1, title="fix scope gate", repo="sumipan/issuesmith", scope="x", dep_raw="")
 
-    paths = _allow_paths_for_row(body, row)
+    paths = allow_paths_for_row(body, row)
 
     assert paths == _CHILD_PATHS
     for parent_path in _PARENT_ALLOW_PATHS:
@@ -71,7 +71,7 @@ def test_row_without_change_table_and_different_repo_returns_empty() -> None:
     body = _parent_body_bold_label_table()
     row = PlanRow(row_num=2, title="unrelated", repo="sumipan/mltgnt", scope="x", dep_raw="")
 
-    paths = _allow_paths_for_row(body, row)
+    paths = allow_paths_for_row(body, row)
 
     assert paths == []
     for parent_path in _PARENT_ALLOW_PATHS:
@@ -83,4 +83,4 @@ def test_missing_sub_block_returns_empty() -> None:
     body = _parent_body_bold_label_table()
     row = PlanRow(row_num=9, title="does not exist", repo="sumipan/issuesmith", scope="x", dep_raw="")
 
-    assert _allow_paths_for_row(body, row) == []
+    assert allow_paths_for_row(body, row) == []
