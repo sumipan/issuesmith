@@ -268,6 +268,7 @@ Config file resolution order: explicit path argument → `ISSUESMITH_CONFIG` →
 | `scope_gate` | `enabled: true`, `max_files: 80`, … | P0 allow_paths size gate |
 | `scope_coupling` | `enabled: true` | Caller/test coupling gate |
 | `scope_size` | `enabled: true`, `max_files: 8`, … | B1 Issue size gate |
+| `tests` | `flaky_reruns: 2` | Branch-side reruns for newly failing tests (`0` disables flaky detection) |
 | `derived_allow` | `enabled: true` | Derived allow_paths for newly failing tests |
 | `external_leak` | `cjk_free_external_targets: false` | Cross-repo CJK leak gate |
 | `terminal_labels` | `issuesmith:merge-done`, `bump:done` | Labels that mark terminal state |

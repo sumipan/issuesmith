@@ -245,6 +245,13 @@ class ScopeSizeConfig:
 
 
 @dataclass(frozen=True)
+class TestsConfig:
+    """Pytest gate options (``issuesmith.yaml`` ``tests:`` section)."""
+
+    flaky_reruns: int = 2
+
+
+@dataclass(frozen=True)
 class DerivedAllowConfig:
     """Derived allow_paths for newly failing tests in the requires loop (#3756).
 
@@ -323,6 +330,7 @@ class IssuesmithConfig:
     scope_gate: ScopeGateConfig = field(default_factory=ScopeGateConfig)
     scope_coupling: ScopeCouplingConfig = field(default_factory=ScopeCouplingConfig)
     scope_size: ScopeSizeConfig = field(default_factory=ScopeSizeConfig)
+    tests: TestsConfig = field(default_factory=TestsConfig)
     derived_allow: DerivedAllowConfig = field(default_factory=DerivedAllowConfig)
     external_leak: ExternalLeakConfig = field(default_factory=ExternalLeakConfig)
     terminal_labels: tuple[str, ...] = _DEFAULT_TERMINAL_LABELS
@@ -706,6 +714,21 @@ def _build_scope_size(raw: Mapping[str, Any] | None) -> ScopeSizeConfig:
     )
 
 
+def _build_tests(raw: Mapping[str, Any] | None) -> TestsConfig:
+    defaults = TestsConfig()
+    if not raw:
+        return defaults
+    unknown = sorted(str(k) for k in raw if k != "flaky_reruns")
+    if unknown:
+        raise ConfigError(
+            f"tests supports only 'flaky_reruns'; unknown keys: {unknown}"
+        )
+    reruns_raw = raw.get("flaky_reruns", defaults.flaky_reruns)
+    if isinstance(reruns_raw, bool) or not isinstance(reruns_raw, int) or reruns_raw < 0:
+        raise ConfigError("tests.flaky_reruns must be an integer >= 0")
+    return TestsConfig(flaky_reruns=reruns_raw)
+
+
 def _build_derived_allow(raw: Mapping[str, Any] | None) -> DerivedAllowConfig:
     if not raw:
         return DerivedAllowConfig()
@@ -816,6 +839,7 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     scope_size_raw = (
         data.get("scope_size") if isinstance(data.get("scope_size"), dict) else None
     )
+    tests_raw = data.get("tests") if isinstance(data.get("tests"), dict) else None
     derived_allow_raw = (
         data.get("derived_allow") if isinstance(data.get("derived_allow"), dict) else None
     )
@@ -847,6 +871,7 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         scope_gate=_build_scope_gate(scope_gate_raw),
         scope_coupling=_build_scope_coupling(scope_coupling_raw),
         scope_size=_build_scope_size(scope_size_raw),
+        tests=_build_tests(tests_raw),
         derived_allow=_build_derived_allow(derived_allow_raw),
         external_leak=_build_external_leak(external_leak_raw),
         terminal_labels=_build_terminal_labels(data.get("terminal_labels")),
