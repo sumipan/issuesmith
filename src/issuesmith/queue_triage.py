@@ -257,8 +257,8 @@ def deterministic_decision(
         return Decision(
             kind="rejected",
             reason=(
-                "scope:milestone の Issue は develop に入れない"
-                "（P0 が MILESTONE_BLOCKED で止まるためキュー段階で弾く）"
+                "scope:milestone issues cannot enter develop phase "
+                "(P0 raises MILESTONE_BLOCKED; reject at queue intake)"
             ),
             comment=True,
             add_rejected_label=True,
@@ -674,6 +674,7 @@ def triage(
                 force = store.is_force(snapshot, req.request_id) if store else False
                 if req.actor_kind == "human" or force:
                     protected.add(req.request_id)
+            req_map = {r.request_id: r for r in active}
             fixed: list[TriageDecision] = []
             for d in parsed_decisions:
                 if d.decision == "reject" and d.request_id in protected:
@@ -703,9 +704,29 @@ def triage(
                             uncertain_flag=d.uncertain_flag,
                         )
                     )
+                elif d.decision == "reject":
+                    req = req_map.get(d.request_id)
+                    if (
+                        req is not None
+                        and req.phase == "develop"
+                        and req.source == "milestone-chain"
+                        and _MILESTONE_LABEL not in label_names(issues.get(req.issue) or {})
+                    ):
+                        fixed.append(
+                            TriageDecision(
+                                request_id=d.request_id,
+                                decision="keep",
+                                reason=(
+                                    "LLM reject ignored for milestone-chain child develop: "
+                                    f"{d.reason}"
+                                ),
+                                uncertain_flag=d.uncertain_flag,
+                            )
+                        )
+                    else:
+                        fixed.append(d)
                 else:
                     fixed.append(d)
-            req_map = {r.request_id: r for r in active}
             order = apply_deterministic_order_constraints(parsed_order, req_map, now=now)
             decisions = fixed
             adopted = True
