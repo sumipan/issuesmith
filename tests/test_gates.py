@@ -558,5 +558,5 @@ def test_publish_exports_bump_helpers() -> None:
     from issuesmith.ops import publish
 
     assert "_run_version_bump" in publish.__all__
-    assert "_bump_commits_on_top" in publish.__all__
+    assert "_bump_versions_in_range" in publish.__all__
     assert publish.run_version_bump is publish._run_version_bump

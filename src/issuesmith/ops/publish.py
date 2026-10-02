@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import os
+import re
 import subprocess
 import sys
 import time
@@ -209,26 +210,72 @@ run_version_bump = _run_version_bump
 
 
 _BUMP_SUBJECT_PREFIX = "chore: bump version to "
+_PLUS_VERSION_VALUE_RE = re.compile(r"""^\+\s*version\s*=\s*["']([^"']+)["']""")
+_MINUS_VERSION_LINE_RE = re.compile(r"""^-\s*version\s*=\s*["']""")
 
 
-def _bump_commits_on_top(worktree: Path, base_branch: str) -> int:
-    """Number of consecutive publish-made bump commits at the top of ``origin/<base>..HEAD``.
+def _bump_versions_in_range(worktree: Path, base_branch: str) -> list[str]:
+    """Publish-made bump versions anywhere in ``origin/<base>..HEAD`` (newest first).
 
-    ``publish`` commits the bump, pushes, then looks up / creates the PR. When a later step
-    fails (rate limit on ``pr_list``, PR creation, M1) and P3 is re-run, HEAD already carries
-    the bump commit. Without this the diff gate rejects our own bump and a second run would
-    bump again (#3767 / #3794).
+    CP2 FAIL → P1 re-run can stack implementation commits above an earlier bump commit.
+    Range-wide detection keeps diff gates and idempotent bumping correct (#3922 / #4351).
     """
     log = _run_git(
         worktree, "log", "--format=%s", f"origin/{base_branch}..HEAD", check=False
     ).stdout.splitlines()
-    count = 0
+    versions: list[str] = []
     for subject in log:
-        if subject.startswith(_BUMP_SUBJECT_PREFIX):
-            count += 1
-        else:
-            break
-    return count
+        if not subject or not subject.startswith(_BUMP_SUBJECT_PREFIX):
+            continue
+        rest = subject[len(_BUMP_SUBJECT_PREFIX) :]
+        token = rest.split(None, 1)[0] if rest.split(None, 1) else ""
+        if token:
+            versions.append(token)
+    return versions
+
+
+def _section_is_pyproject(section: list[str]) -> bool:
+    for line in section:
+        if line.startswith("diff --git "):
+            if re.search(r"[ab]/(?:.+/)?pyproject\.toml\b", line):
+                return True
+        elif line.startswith("+++ b/"):
+            if line[6:].rstrip().endswith("pyproject.toml"):
+                return True
+    return False
+
+
+def _strip_bump_version_lines(diff: str, versions: list[str]) -> str:
+    """Drop publish bump ``version =`` hunks from a unified diff before CP1 gates."""
+    if not versions:
+        return diff
+    allowed = set(versions)
+    sections: list[list[str]] = []
+    current: list[str] = []
+    for line in diff.splitlines(keepends=True):
+        if line.startswith("diff --git ") and current:
+            sections.append(current)
+            current = []
+        current.append(line)
+    if current:
+        sections.append(current)
+
+    out: list[str] = []
+    for section in sections:
+        if not _section_is_pyproject(section):
+            out.extend(section)
+            continue
+        plus_remove: set[int] = set()
+        minus_indices: list[int] = []
+        for idx, line in enumerate(section):
+            plus_match = _PLUS_VERSION_VALUE_RE.match(line.rstrip("\r\n"))
+            if plus_match and plus_match.group(1) in allowed:
+                plus_remove.add(idx)
+            elif _MINUS_VERSION_LINE_RE.match(line.rstrip("\r\n")):
+                minus_indices.append(idx)
+        remove = plus_remove | set(minus_indices[: len(plus_remove)])
+        out.extend(line for idx, line in enumerate(section) if idx not in remove)
+    return "".join(out)
 
 
 def _maybe_bump_version(
@@ -246,8 +293,11 @@ def _maybe_bump_version(
         return None
     if not (worktree / "pyproject.toml").is_file():
         return None
-    if _bump_commits_on_top(worktree, base_branch) > 0:
-        print("version bump skipped: HEAD is already a bump commit")
+    if _bump_versions_in_range(worktree, base_branch):
+        print(
+            f"version bump skipped: a publish bump commit is already in "
+            f"origin/{base_branch}..HEAD"
+        )
         return None
 
     result = _run_version_bump(worktree, base_branch)
@@ -265,10 +315,9 @@ def _check_commit_diff_gates(worktree: Path, base_branch: str) -> PublishResult 
     三点ドット差分（merge-base 起点）を使う。二点ドットだと base が進んだだけで
     逆方向の version 差分が写り、偽陽性になる（#3221）。
     """
-    # Our own bump commit(s) on top are not the LLM's doing: inspect the diff below them.
-    skip = _bump_commits_on_top(worktree, base_branch)
-    head = "HEAD" if skip == 0 else f"HEAD~{skip}"
-    diff = _run_git(worktree, "diff", f"origin/{base_branch}...{head}").stdout
+    bump_versions = _bump_versions_in_range(worktree, base_branch)
+    diff = _run_git(worktree, "diff", f"origin/{base_branch}...HEAD").stdout
+    diff = _strip_bump_version_lines(diff, bump_versions)
     violations = check_version_line_in_diff(diff) + check_test_version_exact_assert(diff)
     if not violations:
         return None
@@ -603,7 +652,7 @@ def main(argv: list[str]) -> int:
 # The bump helpers are shared with the M1 version_behind_base gate (nexus #3936).
 __all__ = [
     "PublishResult",
-    "_bump_commits_on_top",
+    "_bump_versions_in_range",
     "_run_version_bump",
     "main",
     "publish",
