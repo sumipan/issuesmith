@@ -55,41 +55,45 @@ def _extract_new_file_paths_from_design(body: str) -> list[str]:
 
 class B1AcFormatRules:
     def check(self, body: str, labels: list[str]) -> list[Violation]:
-        # migration Issue も YAML 契約（paths_must_exist 等）の形式検証対象
-        if "scope:milestone" not in labels and "scope:migration" not in labels:
-            return []
-
+        is_structured = "scope:milestone" in labels or "scope:migration" in labels
         ac_heading = get_config().sections["acceptance_criteria"]
         section = get_ac_section(body)
-        if section is None:
-            return [Violation(
-                rule_id="b1_ac_format.section_missing",
-                severity="fail",
-                message=f"## {ac_heading} セクションが存在しません",
-                location=None,
-                auto_fixable=False,
-                fix_hint=None,
-            )]
 
-        yaml_text = extract_yaml_block(section)
-        if yaml_text is None:
-            new_paths = _extract_new_file_paths_from_design(body)
-            if new_paths:
-                hint_lines = ["```yaml", "paths_must_exist:"]
-                hint_lines.extend(f"  - {p}" for p in new_paths)
-                hint_lines.append("```")
-                fix_hint = "\n".join(hint_lines)
-            else:
-                changed = get_config().sections["changed_files"]
-                fix_hint = f"{changed}テーブルから paths_must_exist を自動派生"
-            return [Violation(
-                rule_id="b1_ac_format.yaml_block_missing",
-                severity="fail",
-                message=f"## {ac_heading} セクション内に ```yaml ブロックが存在しません",
-                location=None,
-                auto_fixable=True,
-                fix_hint=fix_hint,
-            )]
+        if is_structured:
+            if section is None:
+                return [Violation(
+                    rule_id="b1_ac_format.section_missing",
+                    severity="fail",
+                    message=f"## {ac_heading} section is missing",
+                    location=None,
+                    auto_fixable=False,
+                    fix_hint=None,
+                )]
+            yaml_text = extract_yaml_block(section)
+            if yaml_text is None:
+                new_paths = _extract_new_file_paths_from_design(body)
+                if new_paths:
+                    hint_lines = ["```yaml", "paths_must_exist:"]
+                    hint_lines.extend(f"  - {p}" for p in new_paths)
+                    hint_lines.append("```")
+                    fix_hint = "\n".join(hint_lines)
+                else:
+                    changed = get_config().sections["changed_files"]
+                    fix_hint = f"Derive paths_must_exist from the {changed} table"
+                return [Violation(
+                    rule_id="b1_ac_format.yaml_block_missing",
+                    severity="fail",
+                    message=f"## {ac_heading} section is missing a ```yaml block",
+                    location=None,
+                    auto_fixable=True,
+                    fix_hint=fix_hint,
+                )]
+        else:
+            if section is None:
+                return []
+            yaml_text = extract_yaml_block(section)
+            if yaml_text is None:
+                return []
 
         try:
             data = yaml.safe_load(yaml_text)
