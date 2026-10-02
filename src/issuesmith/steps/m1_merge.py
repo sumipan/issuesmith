@@ -188,7 +188,9 @@ def _version_behind_base_check(worktree: str, base_branch: str, merge_state: str
 def _find_companion_pr(
     client: ForgePort, issue_repo: str, branch: str
 ) -> int | None:
-    return _merge.find_companion_pr(client, issue_repo, branch)
+    return _merge.find_companion_pr(
+        client, issue_repo, branch, companion_suffix="-diary"
+    )
 
 
 def _companion_ready(

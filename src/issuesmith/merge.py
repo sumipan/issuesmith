@@ -354,7 +354,7 @@ def find_companion_pr(
     repo: str,
     branch: str,
     *,
-    companion_suffix: str = "-diary",
+    companion_suffix: str,
 ) -> int | None:
     """Return an open companion PR number for *branch* + *companion_suffix*, if any."""
     companion_branch = f"{branch.strip()}{companion_suffix}"

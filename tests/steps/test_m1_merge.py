@@ -241,6 +241,7 @@ def test_find_companion_pr_uses_branch_suffix() -> None:
         client,
         "sumipan/nexus",
         "feat/issue-3173-eb3c5291",
+        companion_suffix="-diary",
     )
     assert number == 3183
     assert "head=" in client.api_request.call_args.args[0]
