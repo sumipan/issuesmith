@@ -1041,6 +1041,96 @@ _DEFAULT_SUB1_TEMPLATE = "_sub1-body-order.md"
 _SUB1_DEP_REF_RE = re.compile(r"#(\d+)")
 _SUB1_NIKKI_PREFIX = "${NIKKI_ROOT}"
 
+def _lt(*codepoints: int) -> str:
+    return "".join(chr(codepoint) for codepoint in codepoints)
+
+_LT_1 = _lt(0x0023, 0x0023, 0x0020, 0x0053, 0x0055, 0x0042, 0x0031, 0x0020, 0x30A8, 0x30E9, 0x30FC, 0x003A, 0x0020, 0x0043, 0x0050, 0x0031, 0x0020, 0x672A, 0x901A, 0x904E, 0x005C, 0x006E, 0x005C, 0x006E)
+_LT_10 = _lt(0x30B5, 0x30D6, 0x30A4, 0x30B7, 0x30E5, 0x30FC, 0x30EA, 0x30F3, 0x30AF, 0x3067, 0x7D9A, 0x884C, 0x3057, 0x307E, 0x3059, 0x3002, 0x005C, 0x006E)
+_LT_11 = _lt(0x0023, 0x0023, 0x0020, 0x0053, 0x0055, 0x0042, 0x0031, 0x0020, 0x30A8, 0x30E9, 0x30FC, 0x003A, 0x0020, 0x30B5, 0x30D6, 0x30A4, 0x30B7, 0x30E5, 0x30FC, 0x5206, 0x5272, 0x8A08, 0x753B, 0x304C, 0x898B, 0x3064, 0x304B, 0x308A, 0x307E, 0x305B, 0x3093)
+_LT_12 = _lt(0x0023, 0x0023, 0x0020, 0x0053, 0x0055, 0x0042, 0x0031, 0x0020, 0x30A8, 0x30E9, 0x30FC, 0x003A, 0x0020, 0x89AA, 0x0020, 0x0059, 0x0041, 0x004D, 0x004C, 0x0020, 0x306B, 0x0020, 0x0074, 0x0061, 0x0072, 0x0067, 0x0065, 0x0074, 0x005F, 0x0072, 0x0065, 0x0070, 0x006F, 0x0020, 0x304C, 0x3042, 0x308A, 0x307E, 0x305B, 0x3093, 0x005C, 0x006E, 0x005C, 0x006E)
+_LT_13 = _lt(0x89AA, 0x0020, 0x0049, 0x0073, 0x0073, 0x0075, 0x0065, 0x0020, 0x0023)
+_LT_14 = _lt(0x0020, 0x306E, 0x0020, 0x0059, 0x0041, 0x004D, 0x004C, 0x0020, 0x30D6, 0x30ED, 0x30C3, 0x30AF, 0x306B, 0x0020, 0x0060, 0x0074, 0x0061, 0x0072, 0x0067, 0x0065, 0x0074, 0x005F, 0x0072, 0x0065, 0x0070, 0x006F, 0x0060, 0x0020, 0x30D5, 0x30A3, 0x30FC, 0x30EB, 0x30C9, 0x304C, 0x5FC5, 0x8981, 0x3067, 0x3059, 0x3002)
+_LT_15 = _lt(0x30BF, 0x30A4, 0x30C8, 0x30EB)
+_LT_16 = _lt(0x5BFE, 0x8C61, 0x30EA, 0x30DD, 0x30B8, 0x30C8, 0x30EA)
+_LT_17 = _lt(0x5185, 0x5BB9)
+_LT_18 = _lt(0x4F9D, 0x5B58)
+_LT_19 = _lt(0x30B5, 0x30D6)
+_LT_2 = _lt(0x89AA, 0x0020, 0x0049, 0x0073, 0x0073, 0x0075, 0x0065, 0x0020, 0x306E, 0x0020, 0x0043, 0x0050, 0x0031, 0x0020, 0x30B2, 0x30FC, 0x30C8, 0x304C, 0x0020, 0x0046, 0x0041, 0x0049, 0x004C, 0xFF08, 0x0069, 0x006E, 0x0074, 0x0065, 0x006E, 0x0074, 0x0069, 0x006F, 0x006E, 0x0061, 0x006C, 0x005F, 0x0068, 0x006F, 0x006C, 0x0064, 0x0020, 0x4EE5, 0x5916, 0xFF09, 0x306E, 0x72B6, 0x614B, 0x3067, 0x3059, 0x3002)
+_LT_20 = _lt(0x003A, 0x0020, 0x0035, 0x0020, 0x5217, 0x8868, 0x3067, 0x5BFE, 0x8C61, 0x30EA, 0x30DD, 0x30B8, 0x30C8, 0x30EA, 0x304C, 0x7A7A)
+_LT_21 = _lt(0x0023, 0x0023, 0x0020, 0x0053, 0x0055, 0x0042, 0x0031, 0x0020, 0x30A8, 0x30E9, 0x30FC, 0x003A, 0x0020, 0x65E2, 0x5B58, 0x5B50, 0x0020, 0x0023)
+_LT_22 = _lt(0x0020, 0x306E, 0x30B5, 0x30D6, 0x30A4, 0x30B7, 0x30E5, 0x30FC, 0x30EA, 0x30F3, 0x30AF, 0x306B, 0x5931, 0x6557)
+_LT_23 = _lt(0x65E2, 0x5B58, 0x003A, 0x0020, 0x0023)
+_LT_24 = _lt(0xFF08, 0x30B9, 0x30AD, 0x30C3, 0x30D7, 0xFF09)
+_LT_25 = _lt(0x003A, 0x0020, 0x5909, 0x66F4, 0x5BFE, 0x8C61, 0x30D5, 0x30A1, 0x30A4, 0x30EB, 0x8868, 0x304B, 0x3089, 0x0020)
+_LT_26 = _lt(0x0020, 0x306E, 0x30D1, 0x30B9, 0x3092)
+_LT_27 = _lt(0x62BD, 0x51FA, 0x3067, 0x304D, 0x306A, 0x3044, 0x305F, 0x3081, 0x5B50, 0x3092, 0x4F5C, 0x6210, 0x3057, 0x306A, 0x3044, 0xFF08, 0x89AA, 0x306E, 0x0020, 0x0061, 0x006C, 0x006C, 0x006F, 0x0077, 0x005F, 0x0070, 0x0061, 0x0074, 0x0068, 0x0073, 0x0020, 0x306F, 0x7D99, 0x627F, 0x3057, 0x306A, 0x3044, 0xFF09)
+_LT_28 = _lt(0x306A, 0x3057)
+_LT_29 = _lt(0x9023, 0x756A, 0x89E3, 0x6C7A, 0x003A, 0x0020, 0x30C6, 0x30FC, 0x30D6, 0x30EB)
+_LT_3 = _lt(0x0023, 0x0023, 0x0020, 0x0053, 0x0055, 0x0042, 0x0031, 0x003A, 0x0020, 0x006D, 0x0069, 0x006C, 0x0065, 0x0073, 0x0074, 0x006F, 0x006E, 0x0065, 0x0020, 0x3092, 0x81EA, 0x52D5, 0x4F5C, 0x6210, 0x3057, 0x307E, 0x3057, 0x305F, 0x005C, 0x006E, 0x005C, 0x006E)
+_LT_30 = _lt(0x672A, 0x89E3, 0x6C7A, 0x306E, 0x524D, 0x65B9, 0x53C2, 0x7167, 0x003A, 0x0020, 0x30C6, 0x30FC, 0x30D6, 0x30EB)
+_LT_31 = _lt(0x9664, 0x5916, 0x3057, 0x305F, 0x0020, 0x0073, 0x0063, 0x006F, 0x0070, 0x0065, 0x003A, 0x006D, 0x0069, 0x006C, 0x0065, 0x0073, 0x0074, 0x006F, 0x006E, 0x0065, 0x0020, 0x4F9D, 0x5B58, 0x003A, 0x0020, 0x0023)
+_LT_32 = _lt(0x0061, 0x006C, 0x006C, 0x006F, 0x0077, 0x005F, 0x0070, 0x0061, 0x0074, 0x0068, 0x0073, 0x0020, 0x0066, 0x006F, 0x0072, 0x0020, 0x0052, 0x004F, 0x0057, 0x005F, 0x0052, 0x0045, 0x0050, 0x004F, 0x0020, 0x0066, 0x0072, 0x006F, 0x006D, 0x0020, 0x0074, 0x0068, 0x0065, 0x0020, 0x0023, 0x0023, 0x0023, 0x0023, 0x0020, 0x30B5, 0x30D6, 0x004E, 0x0020, 0x0063, 0x0068, 0x0061, 0x006E, 0x0067, 0x0065, 0x0020, 0x0074, 0x0061, 0x0062, 0x006C, 0x0065, 0x002E)
+_LT_33 = _lt(0x0023, 0x0023, 0x0020, 0x0053, 0x0055, 0x0042, 0x0031, 0x0020, 0x30A8, 0x30E9, 0x30FC, 0x003A, 0x0020, 0x30B5, 0x30D6)
+_LT_34 = _lt(0x0020, 0x0062, 0x006F, 0x0064, 0x0079, 0x0020, 0x306B, 0x0020, 0x0043, 0x0050, 0x0031, 0x0020, 0x7981, 0x5247, 0x8A9E, 0x304C, 0x6B8B, 0x5B58, 0x005C, 0x006E, 0x005C, 0x006E)
+_LT_35 = _lt(0x003A, 0x0020, 0x0043, 0x0050, 0x0031, 0x0020, 0x7981, 0x5247, 0x8A9E)
+_LT_36 = _lt(0x0023, 0x0023, 0x0020, 0x4F9D, 0x5B58, 0xFF08, 0x5148, 0x884C, 0xFF09)
+_LT_37 = _lt(0x007C, 0x0020, 0x0023, 0x0020, 0x007C, 0x0020, 0x4F9D, 0x5B58, 0x5148, 0x0020, 0x007C, 0x0020, 0x72B6, 0x614B, 0x0020, 0x007C)
+_LT_38 = _lt(0x0023, 0x0023, 0x0020, 0x0053, 0x0055, 0x0042, 0x0031, 0x0020, 0x30A8, 0x30E9, 0x30FC, 0x003A, 0x0020, 0x0049, 0x0073, 0x0073, 0x0075, 0x0065, 0x0020, 0x4F5C, 0x6210, 0x5931, 0x6557, 0xFF08, 0x30B5, 0x30D6)
+_LT_39 = _lt(0xFF09, 0x005C, 0x006E, 0x005C, 0x006E)
+_LT_4 = _lt(0x89AA, 0x0020, 0x0049, 0x0073, 0x0073, 0x0075, 0x0065, 0x0020, 0x306B, 0x0020, 0x006D, 0x0069, 0x006C, 0x0065, 0x0073, 0x0074, 0x006F, 0x006E, 0x0065, 0x0020, 0x304C, 0x672A, 0x8A2D, 0x5B9A, 0x3060, 0x3063, 0x305F, 0x305F, 0x3081, 0x0020)
+_LT_40 = _lt(0x003E, 0x0020, 0x5916, 0x90E8, 0x30EA, 0x30DD, 0x30B8, 0x30C8, 0x30EA, 0x306E, 0x30EA, 0x30EA, 0x30FC, 0x30B9, 0x3068, 0x0020, 0x0072, 0x0065, 0x006C, 0x0065, 0x0061, 0x0073, 0x0065, 0x002D, 0x0077, 0x0061, 0x0074, 0x0063, 0x0068, 0x0065, 0x0072, 0x0020, 0x306E, 0x0020, 0x0062, 0x0075, 0x006D, 0x0070, 0x0020, 0x0049, 0x0073, 0x0073, 0x0075, 0x0065, 0x0020, 0x304C, 0x0020)
+_LT_41 = _lt(0x006D, 0x0065, 0x0072, 0x0067, 0x0065, 0x002D, 0x0064, 0x006F, 0x006E, 0x0065, 0x0020, 0x306B, 0x306A, 0x3063, 0x3066, 0x304B, 0x3089, 0x3053, 0x306E, 0x5B50, 0x3092, 0x6295, 0x5165, 0x3059, 0x308B)
+_LT_42 = _lt(0x0023, 0x0023, 0x0020, 0x0053, 0x0055, 0x0042, 0x0031, 0x0020, 0x30A8, 0x30E9, 0x30FC, 0x003A, 0x0020, 0x5B50, 0x0020, 0x0023)
+_LT_43 = _lt(0x8A2D, 0x8A08)
+_LT_44 = _lt(0x0023, 0x0023, 0x0023, 0x0023, 0x0020, 0x30B5, 0x30D6)
+_LT_45 = _lt(0x30B9, 0x30B3, 0x30FC, 0x30D7)
+_LT_46 = _lt(0x8A2D, 0x8A08, 0x65B9, 0x91DD)
+_LT_47 = _lt(0x5909, 0x66F4, 0x5BFE, 0x8C61, 0x30D5, 0x30A1, 0x30A4, 0x30EB)
+_LT_48 = _lt(0x53D7, 0x3051, 0x5165, 0x308C, 0x6761, 0x4EF6)
+_LT_49 = _lt(0x65E2, 0x5B58, 0x003A)
+_LT_5 = _lt(0x0060, 0xFF08, 0x0023)
+_LT_50 = _lt(0x0023, 0x0023, 0x0020, 0x0053, 0x0055, 0x0042, 0x0031, 0x0020, 0x30A8, 0x30E9, 0x30FC, 0x003A, 0x0020, 0x5B50, 0x0020, 0x0049, 0x0073, 0x0073, 0x0075, 0x0065, 0x0020, 0x0062, 0x006F, 0x0064, 0x0079, 0x0020, 0x691C, 0x8A3C, 0x5931, 0x6557, 0x005C, 0x006E, 0x005C, 0x006E)
+_LT_51 = _lt(0x4EE5, 0x4E0B, 0x306E, 0x884C, 0x3067, 0x0020, 0x0070, 0x0072, 0x0065, 0x002D, 0x0063, 0x0072, 0x0065, 0x0061, 0x0074, 0x0069, 0x006F, 0x006E, 0x0020, 0x0076, 0x0061, 0x006C, 0x0069, 0x0064, 0x0061, 0x0074, 0x0069, 0x006F, 0x006E, 0x0020, 0x0028, 0x0056, 0x0031, 0x2013, 0x0056, 0x0035, 0x0029, 0x0020, 0x304C, 0x5931, 0x6557, 0x3057, 0x305F, 0x305F, 0x3081, 0x0020)
+_LT_52 = _lt(0x0049, 0x0073, 0x0073, 0x0075, 0x0065, 0x0020, 0x3092, 0x4F5C, 0x6210, 0x3057, 0x307E, 0x305B, 0x3093, 0x3067, 0x3057, 0x305F, 0x003A, 0x005C, 0x006E, 0x005C, 0x006E)
+_LT_53 = _lt(0x0023, 0x0023, 0x0020, 0x0053, 0x0055, 0x0042, 0x0031, 0x0020, 0x8B66, 0x544A, 0x003A, 0x0020, 0x4E00, 0x90E8, 0x884C, 0x306E, 0x691C, 0x8A3C, 0x5931, 0x6557, 0x005C, 0x006E, 0x005C, 0x006E)
+_LT_54 = _lt(0x89AA, 0x30A4, 0x30B7, 0x30E5, 0x30FC, 0x003A, 0x0020, 0x0023)
+_LT_55 = _lt(0x4F9D, 0x5B58, 0x003A, 0x0020)
+_LT_56 = _lt(0x0023, 0x0023, 0x0020, 0x0053, 0x0055, 0x0042, 0x0031, 0x0020, 0x30A8, 0x30E9, 0x30FC, 0x003A, 0x0020, 0x4F5C, 0x6210, 0x5F8C, 0x0020, 0x0076, 0x0061, 0x006C, 0x0069, 0x0064, 0x0061, 0x0074, 0x0065, 0x005F, 0x0063, 0x0068, 0x0069, 0x006C, 0x0064, 0x0072, 0x0065, 0x006E, 0x0020, 0x5931, 0x6557, 0x005C, 0x006E, 0x005C, 0x006E)
+_LT_57 = _lt(0x002D, 0x0020, 0x0028, 0x306A, 0x3057, 0x0029)
+_LT_58 = _lt(0x0023, 0x0023, 0x0020, 0x30B9, 0x30B3, 0x30FC, 0x30D7)
+_LT_59 = _lt(0x0023, 0x0023, 0x0020, 0x8A2D, 0x8A08)
+_LT_6 = _lt(0xFF09, 0x3092, 0x4F5C, 0x6210, 0x3057, 0x3066, 0x7D10, 0x4ED8, 0x3051, 0x307E, 0x3057, 0x305F, 0x3002, 0x005C, 0x006E)
+_LT_60 = _lt(0x003E, 0x0020, 0x89AA, 0x30A4, 0x30B7, 0x30E5, 0x30FC, 0x0020, 0x0023)
+_LT_61 = _lt(0x0020, 0x30B5, 0x30D6)
+_LT_62 = _lt(0x0020, 0x304B, 0x3089, 0x5C0E, 0x51FA)
+_LT_63 = _lt(0x306A, 0x3057, 0xFF08, 0x30B5, 0x30D6, 0x30A4, 0x30B7, 0x30E5, 0x30FC, 0x30EA, 0x30F3, 0x30AF, 0x306E, 0x307F, 0xFF09)
+_LT_64 = _lt(0x0023, 0x0023, 0x0020, 0x0053, 0x0055, 0x0042, 0x0031, 0x0020, 0x30B5, 0x30D6, 0x30A4, 0x30B7, 0x30E5, 0x30FC, 0x4F5C, 0x6210, 0x5B8C, 0x4E86, 0x005C, 0x006E, 0x005C, 0x006E)
+_LT_65 = _lt(0x4F5C, 0x6210, 0x3057, 0x305F, 0x30B5, 0x30D6, 0x30A4, 0x30B7, 0x30E5, 0x30FC, 0x003A, 0x005C, 0x006E)
+_LT_66 = _lt(0x0023, 0x0023, 0x0020, 0x5909, 0x66F4, 0x5BFE, 0x8C61, 0x30D5, 0x30A1, 0x30A4, 0x30EB)
+_LT_67 = _lt(0x691C, 0x8A3C, 0x6E08, 0x307F, 0x306E, 0x5B50, 0x0020, 0x0064, 0x0065, 0x0076, 0x0065, 0x006C, 0x006F, 0x0070, 0x0020, 0x0072, 0x0065, 0x0071, 0x0075, 0x0065, 0x0073, 0x0074, 0x0020, 0x306F, 0x0020, 0x0071, 0x0075, 0x0065, 0x0075, 0x0065, 0x0020, 0x304C, 0x4F9D, 0x5B58, 0x9806, 0x306B, 0x81EA, 0x52D5, 0x6295, 0x5165, 0x3059, 0x308B, 0x3002, 0x005C, 0x006E)
+_LT_68 = _lt(0x0023, 0x0023, 0x0020, 0x53D7, 0x3051, 0x5165, 0x308C, 0x6761, 0x4EF6)
+_LT_69 = _lt(0x5F71, 0x97FF, 0x7BC4, 0x56F2, 0x8ABF, 0x67FB, 0xFF08, 0x0073, 0x0063, 0x006F, 0x0070, 0x0065, 0x003A, 0x006D, 0x0069, 0x0067, 0x0072, 0x0061, 0x0074, 0x0069, 0x006F, 0x006E, 0x0020, 0x6642, 0x306F, 0x5FC5, 0x9808, 0xFF09)
+_LT_7 = _lt(0x0023, 0x0023, 0x0020, 0x0053, 0x0055, 0x0042, 0x0031, 0x0020, 0x8B66, 0x544A, 0x003A, 0x0020, 0x006D, 0x0069, 0x006C, 0x0065, 0x0073, 0x0074, 0x006F, 0x006E, 0x0065, 0x0020, 0x81EA, 0x52D5, 0x4F5C, 0x6210, 0x306B, 0x5931, 0x6557, 0x005C, 0x006E, 0x005C, 0x006E)
+_LT_70 = _lt(0x0023, 0x0023, 0x0020, 0x5F71, 0x97FF, 0x7BC4, 0x56F2, 0x8ABF, 0x67FB, 0xFF08, 0x0073, 0x0063, 0x006F, 0x0070, 0x0065, 0x003A, 0x006D, 0x0069, 0x0067, 0x0072, 0x0061, 0x0074, 0x0069, 0x006F, 0x006E, 0x0020, 0x6642, 0x306F, 0x5FC5, 0x9808, 0xFF09)
+_LT_71 = _lt(0x7834, 0x58CA, 0x7684, 0x5909, 0x66F4, 0x306E, 0x5F71, 0x97FF, 0x7BC4, 0x56F2)
+_LT_72 = _lt(0x0023, 0x0023, 0x0020, 0x7834, 0x58CA, 0x7684, 0x5909, 0x66F4, 0x306E, 0x5F71, 0x97FF, 0x7BC4, 0x56F2)
+_LT_73 = _lt(0x30D5, 0x30A1, 0x30A4, 0x30EB, 0x30D1, 0x30B9)
+_LT_74 = _lt(0x0056, 0x0032, 0x003A, 0x0020, 0x0061, 0x006C, 0x006C, 0x006F, 0x0077, 0x005F, 0x0070, 0x0061, 0x0074, 0x0068, 0x0073, 0x0020, 0x672A, 0x5305, 0x542B, 0x0020, 0x0028)
+_LT_75 = _lt(0x0056, 0x0034, 0x003A, 0x0020, 0x4F9D, 0x5B58, 0x3042, 0x308A, 0x3060, 0x304C, 0x0020, 0x0023, 0x0023, 0x0020, 0x4F9D, 0x5B58, 0xFF08, 0x5148, 0x884C, 0xFF09, 0x0020, 0x30BB, 0x30AF, 0x30B7, 0x30E7, 0x30F3, 0x6B20, 0x843D)
+_LT_76 = _lt(0x0056, 0x0035, 0x003A, 0x0020, 0x4F9D, 0x5B58, 0x304C, 0x89AA, 0x0020, 0x0049, 0x0073, 0x0073, 0x0075, 0x0065, 0x0020, 0x81EA, 0x8EAB, 0x3092, 0x53C2, 0x7167, 0x0020, 0x0028, 0x0023)
+_LT_77 = _lt(0x0056, 0x0035, 0x003A, 0x0020, 0x4F9D, 0x5B58, 0x304C, 0x0020, 0x0073, 0x0063, 0x006F, 0x0070, 0x0065, 0x003A, 0x006D, 0x0069, 0x006C, 0x0065, 0x0073, 0x0074, 0x006F, 0x006E, 0x0065, 0x0020, 0x0049, 0x0073, 0x0073, 0x0075, 0x0065, 0x0020, 0x3092, 0x53C2, 0x7167, 0x0020, 0x0028, 0x0023)
+_LT_78 = _lt(0x0023, 0x0023, 0x0020, 0x0053, 0x0055, 0x0042, 0x0031, 0x0020, 0x30A8, 0x30E9, 0x30FC, 0x003A, 0x0020, 0x0060, 0x0023, 0x0023, 0x0020, 0x8A2D, 0x8A08, 0x0060, 0x0020, 0x30BB, 0x30AF, 0x30B7, 0x30E7, 0x30F3, 0x304C, 0x91CD, 0x8907, 0x3057, 0x3066, 0x3044, 0x307E, 0x3059)
+_LT_79 = _lt(0x0023, 0x0023, 0x0020, 0x0053, 0x0055, 0x0042, 0x0031, 0x0020, 0x30A8, 0x30E9, 0x30FC, 0x003A, 0x0020, 0x8A2D, 0x8A08, 0x307E, 0x305F, 0x306F, 0x53D7, 0x3051, 0x5165, 0x308C, 0x6761, 0x4EF6, 0x304C, 0x672A, 0x8A18, 0x8F09, 0x005C, 0x006E, 0x005C, 0x006E)
+_LT_8 = _lt(0x89AA, 0x0020, 0x0049, 0x0073, 0x0073, 0x0075, 0x0065, 0x0020, 0x306B, 0x0020, 0x006D, 0x0069, 0x006C, 0x0065, 0x0073, 0x0074, 0x006F, 0x006E, 0x0065, 0x0020, 0x304C, 0x672A, 0x8A2D, 0x5B9A, 0x3067, 0x3001, 0x81EA, 0x52D5, 0x4F5C, 0x6210, 0x3082, 0x5931, 0x6557, 0x3057, 0x307E, 0x3057, 0x305F, 0xFF08)
+_LT_80 = _lt(0x89AA, 0x30A4, 0x30B7, 0x30E5, 0x30FC, 0x306B, 0x0020, 0x0060, 0x0023, 0x0023, 0x0020, 0x8A2D, 0x8A08, 0x0060, 0x0020, 0x3068, 0x0020, 0x0060, 0x0023, 0x0023, 0x0020, 0x53D7, 0x3051, 0x5165, 0x308C, 0x6761, 0x4EF6, 0x0060, 0x0020, 0x306E, 0x4E21, 0x65B9, 0x304C, 0x5FC5, 0x8981, 0x3067, 0x3059, 0x3002)
+_LT_81 = _lt(0x0023, 0x0023, 0x0020, 0x0053, 0x0055, 0x0042, 0x0031, 0x0020, 0x30A8, 0x30E9, 0x30FC, 0x003A, 0x0020, 0x30B5, 0x30D6, 0x30A4, 0x30B7, 0x30E5, 0x30FC, 0x8A73, 0x7D30, 0x8A2D, 0x8A08, 0x304C, 0x672A, 0x751F, 0x6210, 0xFF08, 0x0042, 0x0031, 0x0020, 0x672A, 0x5B8C, 0x4E86, 0x306E, 0x53EF, 0x80FD, 0x6027, 0xFF09, 0x005C, 0x006E, 0x005C, 0x006E)
+_LT_82 = _lt(0x89AA, 0x30A4, 0x30B7, 0x30E5, 0x30FC, 0x306E, 0x0020, 0x0060, 0x0023, 0x0023, 0x0020, 0x8A2D, 0x8A08, 0x0060, 0x0020, 0x306B, 0x0020, 0x0060, 0x0023, 0x0023, 0x0023, 0x0023, 0x0020, 0x30B5, 0x30D6, 0x004E, 0x0060, 0x0020, 0x30B5, 0x30D6, 0x30BB, 0x30AF, 0x30B7, 0x30E7, 0x30F3, 0x304C, 0x3042, 0x308A, 0x307E, 0x305B, 0x3093, 0x3002)
+_LT_83 = _lt(0x0023, 0x0023, 0x0020, 0x0053, 0x0055, 0x0042, 0x0031, 0x0020, 0x30A8, 0x30E9, 0x30FC, 0x003A, 0x0020, 0x0073, 0x0063, 0x006F, 0x0070, 0x0065, 0x003A, 0x006D, 0x0069, 0x006C, 0x0065, 0x0073, 0x0074, 0x006F, 0x006E, 0x0065, 0x0020, 0x306A, 0x3057, 0x005C, 0x006E, 0x005C, 0x006E)
+_LT_84 = _lt(0x0060, 0x0069, 0x0073, 0x0073, 0x0075, 0x0065, 0x0073, 0x006D, 0x0069, 0x0074, 0x0068, 0x003A, 0x0073, 0x0075, 0x0062, 0x002D, 0x0072, 0x0065, 0x0061, 0x0064, 0x0079, 0x0060, 0x0020, 0x306F, 0x0020, 0x0060, 0x0073, 0x0063, 0x006F, 0x0070, 0x0065, 0x003A, 0x006D, 0x0069, 0x006C, 0x0065, 0x0073, 0x0074, 0x006F, 0x006E, 0x0065, 0x0060, 0x0020, 0x30E9, 0x30D9, 0x30EB, 0x4ED8, 0x304D, 0x0020, 0x0049, 0x0073, 0x0073, 0x0075, 0x0065, 0x0020, 0x306B, 0x306E, 0x307F, 0x4F7F, 0x7528, 0x3067, 0x304D, 0x307E, 0x3059, 0x3002)
+_LT_85 = _lt(0x0023, 0x0023, 0x0020, 0x0053, 0x0055, 0x0042, 0x0031, 0x0020, 0x30A8, 0x30E9, 0x30FC, 0x003A, 0x0020, 0x0043, 0x0050, 0x0031, 0x0020, 0x672A, 0x5B8C, 0x4E86, 0x005C, 0x006E, 0x005C, 0x006E)
+_LT_86 = _lt(0x0042, 0x0031, 0x0020, 0x30D6, 0x30E9, 0x30C3, 0x30B7, 0x30E5, 0x30A2, 0x30C3, 0x30D7, 0x5F8C, 0x306E, 0x0020, 0x0043, 0x0050, 0x0031, 0x0020, 0x30B2, 0x30FC, 0x30C8, 0x304C, 0x307E, 0x3060, 0x5B8C, 0x4E86, 0x3057, 0x3066, 0x3044, 0x307E, 0x305B, 0x3093, 0x3002)
+_LT_9 = _lt(0xFF09, 0x3002)
+
 
 @dataclass
 class PlanRow:
@@ -1089,10 +1179,10 @@ def parse_split_plan(
         return None
 
     num_i = _idx("#", exact=True)
-    title_i = _idx("タイトル")
-    repo_i = _idx("対象リポジトリ")
-    scope_i = _idx("内容")
-    dep_i = _idx("依存")
+    title_i = _idx(_LT_15)
+    repo_i = _idx(_LT_16)
+    scope_i = _idx(_LT_17)
+    dep_i = _idx(_LT_18)
     if num_i is None or title_i is None:
         return [], repo_i is not None
 
@@ -1134,8 +1224,8 @@ def resolve_dependencies(
 ) -> str:
     """Resolve plan-row dependency tokens to concrete Issue numbers."""
     dep = (dep_raw or "").strip()
-    if not dep or dep == "なし":
-        return "なし"
+    if not dep or dep == _LT_28:
+        return _LT_28
     seen: list[int] = []
     labels_cache: dict[int, list[str]] = {}
 
@@ -1148,10 +1238,10 @@ def resolve_dependencies(
             if k in row_to_issue:
                 target = f"#{row_to_issue[k]}"
                 if first:
-                    state.resolved_logs.append(f"連番解決: テーブル{k} → {target}")
+                    state.resolved_logs.append(f"{_LT_29}{k} → {target}")
                 return target
             if first:
-                state.unresolved_forward_logs.append(f"未解決の前方参照: テーブル{k}")
+                state.unresolved_forward_logs.append(f"{_LT_30}{k}")
             return match.group(0)
         if k not in labels_cache:
             try:
@@ -1161,19 +1251,19 @@ def resolve_dependencies(
                 labels_cache[k] = []
         if "scope:milestone" in labels_cache[k]:
             if first:
-                state.excluded_milestone_logs.append(f"除外した scope:milestone 依存: #{k}")
+                state.excluded_milestone_logs.append(f"{_LT_31}{k}")
             return ""
         return match.group(0)
 
     resolved = _SUB1_DEP_REF_RE.sub(_repl, dep)
     resolved = re.sub(r"\s+", " ", resolved).strip(" ,;|")
-    if not resolved or resolved == "なし":
-        return "なし"
+    if not resolved or resolved == _LT_28:
+        return _LT_28
     return resolved
 
 
 def allow_paths_for_row(parent_body: str, row: PlanRow) -> list[str]:
-    """allow_paths for ROW_REPO from the #### サブN change table."""
+    _LT_32
     sub_body = sub_block(parent_body, row.row_num)
     if not sub_body:
         return []
@@ -1191,15 +1281,15 @@ def allow_paths_for_row(parent_body: str, row: PlanRow) -> list[str]:
 def _sub1_build_dep_section(
     resolved_dep: str, *, row_repo: str, client: ForgePort
 ) -> str:
-    if not resolved_dep or resolved_dep == "なし":
+    if not resolved_dep or resolved_dep == _LT_28:
         return ""
     nums = [int(m.group(1)) for m in _SUB1_DEP_REF_RE.finditer(resolved_dep)]
     if not nums:
         return ""
     lines = [
-        "## 依存（先行）",
+        _LT_36,
         "",
-        "| # | 依存先 | 状態 |",
+        _LT_37,
         "|---|--------|------|",
     ]
     cross_repo = False
@@ -1217,22 +1307,22 @@ def _sub1_build_dep_section(
     if cross_repo:
         lines.append("")
         lines.append(
-            "> 外部リポジトリのリリースと release-watcher の bump Issue が "
-            "merge-done になってからこの子を投入する"
+            _LT_40 +
+            _LT_41
         )
     return "\n".join(lines) + "\n"
 
 
 def _sub1_section_parts(parent_body: str, row_num: int) -> dict[str, str]:
-    sub_secs = get_subsections(parent_body, "設計", "#### サブ")
-    prefix = f"#### サブ{row_num}:"
+    sub_secs = get_subsections(parent_body, _LT_43, _LT_44)
+    prefix = f"{_LT_44}{row_num}:"
     for heading, content in sub_secs:
         if heading.startswith(prefix):
             return {
-                "scope": (get_section(content, "スコープ") or "").strip(),
-                "design": (get_section(content, "設計方針") or "").strip(),
-                "files": (get_section(content, "変更対象ファイル") or "").strip(),
-                "ac": (get_section(content, "受け入れ条件") or "").strip(),
+                "scope": (get_section(content, _LT_45) or "").strip(),
+                "design": (get_section(content, _LT_46) or "").strip(),
+                "files": (get_section(content, _LT_47) or "").strip(),
+                "ac": (get_section(content, _LT_48) or "").strip(),
             }
     return {}
 
@@ -1271,8 +1361,8 @@ def build_child_body(
         *yaml_lines,
         "```",
         "",
-        f"親イシュー: #{parent_number}",
-        f"依存: {resolved_dep}",
+        f"{_LT_54}{parent_number}",
+        f"{_LT_55}{resolved_dep}",
         "",
     ]
     dep_section = _sub1_build_dep_section(resolved_dep, row_repo=row.repo, client=client)
@@ -1281,50 +1371,50 @@ def build_child_body(
 
     sub = _sub1_section_parts(parent_body, row.row_num)
     if sub:
-        parts.append("## スコープ")
+        parts.append(_LT_58)
         parts.append(sub.get("scope") or row.scope or "")
         parts.append("")
-        parts.append("## 設計")
-        parts.append(f"> 親イシュー #{parent_number} サブ{row.row_num} から導出")
+        parts.append(_LT_59)
+        parts.append(f"{_LT_60}{parent_number}{_LT_61}{row.row_num}{_LT_62}")
         parts.append("")
         if sub.get("design"):
             parts.append(sub["design"])
             parts.append("")
         if sub.get("files"):
-            parts.append("## 変更対象ファイル")
+            parts.append(_LT_66)
             parts.append(sub["files"])
             parts.append("")
-        parts.append("## 受け入れ条件")
+        parts.append(_LT_68)
         parts.append(sub.get("ac") or "- [ ] (from parent)")
         parts.append("")
     else:
-        parts.append("## スコープ")
+        parts.append(_LT_58)
         parts.append(row.scope or "")
         parts.append("")
-        design = get_section(parent_body, "設計") or ""
-        parts.append("## 設計")
-        parts.append(f"> 親イシュー #{parent_number} サブ{row.row_num} から導出")
+        design = get_section(parent_body, _LT_43) or ""
+        parts.append(_LT_59)
+        parts.append(f"{_LT_60}{parent_number}{_LT_61}{row.row_num}{_LT_62}")
         parts.append("")
         parts.append(design.strip())
         parts.append("")
-        ac = get_section(parent_body, "受け入れ条件") or get_section_by_keyword(
-            parent_body, "受け入れ条件"
+        ac = get_section(parent_body, _LT_48) or get_section_by_keyword(
+            parent_body, _LT_48
         )
-        parts.append("## 受け入れ条件")
+        parts.append(_LT_68)
         parts.append((ac or "").strip())
         parts.append("")
 
     if "scope:migration" in parent_labels:
         filtered = _sub1_filter_parent_section(
-            parent_body, row.row_num, "影響範囲調査（scope:migration 時は必須）"
+            parent_body, row.row_num, _LT_69
         )
         if filtered:
-            parts.append("## 影響範囲調査（scope:migration 時は必須）")
+            parts.append(_LT_70)
             parts.append(filtered)
             parts.append("")
-    breaking = _sub1_filter_parent_section(parent_body, row.row_num, "破壊的変更の影響範囲")
+    breaking = _sub1_filter_parent_section(parent_body, row.row_num, _LT_71)
     if breaking:
-        parts.append("## 破壊的変更の影響範囲")
+        parts.append(_LT_72)
         parts.append(breaking)
         parts.append("")
 
@@ -1332,15 +1422,15 @@ def build_child_body(
 
 
 def _sub1_filter_parent_section(parent_body: str, row_num: int, heading: str) -> str:
-    sub_secs = get_subsections(parent_body, "設計", "#### サブ")
+    sub_secs = get_subsections(parent_body, _LT_43, _LT_44)
     sub_body = ""
-    prefix = f"#### サブ{row_num}:"
+    prefix = f"{_LT_44}{row_num}:"
     for h, content in sub_secs:
         if h.startswith(prefix):
             sub_body = content
             break
     sub_paths: list[str] = []
-    tbl = get_section(sub_body, "変更対象ファイル") if sub_body else None
+    tbl = get_section(sub_body, _LT_47) if sub_body else None
     if tbl:
         for line in tbl.splitlines():
             if not line.startswith("|") or "---|" in line:
@@ -1352,7 +1442,7 @@ def _sub1_filter_parent_section(parent_body: str, row_num: int, heading: str) ->
             last = cell.rfind(":")
             if last >= 0 and cell[last + 1 :].isdigit():
                 cell = cell[:last]
-            if cell and cell not in ("ファイルパス",):
+            if cell and cell not in (_LT_73,):
                 sub_paths.append(cell)
     section_content = get_section(parent_body, heading)
     if not section_content or not sub_paths:
@@ -1383,27 +1473,27 @@ def prevalidate_child_body(
         if item.startswith("V2 allow_paths missing:"):
             missing = item.split(":", 1)[1].strip()
             for path in [p.strip() for p in missing.split(",") if p.strip()]:
-                failures.append(f"V2: allow_paths 未包含 ({path})")
+                failures.append(f"{_LT_74}{path})")
         else:
             failures.append(item)
 
     failures.extend(check_v3_cjk_placeholders(allow_paths=allow_paths))
 
     dep = (resolved_dep or "").strip()
-    if dep and dep != "なし":
-        if "## 依存（先行）" not in body:
-            failures.append("V4: 依存ありだが ## 依存（先行） セクション欠落")
+    if dep and dep != _LT_28:
+        if _LT_36 not in body:
+            failures.append(_LT_75)
         for num_str in _SUB1_DEP_REF_RE.findall(dep):
             num = int(num_str)
             if num == parent_issue_number:
-                failures.append(f"V5: 依存が親 Issue 自身を参照 (#{num})")
+                failures.append(f"{_LT_76}{num})")
                 continue
             try:
                 labels = sorted(label_names(client.issue_get(num, fields=["labels"])))
             except Exception:
                 labels = []
             if "scope:milestone" in labels:
-                failures.append(f"V5: 依存が scope:milestone Issue を参照 (#{num})")
+                failures.append(f"{_LT_77}{num})")
     return failures
 
 
@@ -1430,19 +1520,19 @@ def _sub1_check_cp1_gate(comments: list[dict[str, Any]]) -> str:
 
 
 def _sub1_parent_design_gate(body: str) -> str | None:
-    if count_heading(body, "設計") > 1:
-        return "## SUB1 エラー: `## 設計` セクションが重複しています"
-    design = get_section(body, "設計")
-    ac = get_section(body, "受け入れ条件") or get_section_by_keyword(body, "受け入れ条件")
+    if count_heading(body, _LT_43) > 1:
+        return _LT_78
+    design = get_section(body, _LT_43)
+    ac = get_section(body, _LT_48) or get_section_by_keyword(body, _LT_48)
     if not design or not design.strip() or not ac or not ac.strip():
         return (
-            "## SUB1 エラー: 設計または受け入れ条件が未記載\n\n"
-            "親イシューに `## 設計` と `## 受け入れ条件` の両方が必要です。"
+            _LT_79 +
+            _LT_80
         )
-    if not get_subsections(body, "設計", "#### サブ"):
+    if not get_subsections(body, _LT_43, _LT_44):
         return (
-            "## SUB1 エラー: サブイシュー詳細設計が未生成（B1 未完了の可能性）\n\n"
-            "親イシューの `## 設計` に `#### サブN` サブセクションがありません。"
+            _LT_81 +
+            _LT_82
         )
     return None
 
@@ -1520,8 +1610,8 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
         return _sub1_fail(
             client,
             issue_number,
-            "## SUB1 エラー: scope:milestone なし\n\n"
-            "`issuesmith:sub-ready` は `scope:milestone` ラベル付き Issue にのみ使用できます。",
+            _LT_83 +
+            _LT_84,
         )
 
     cp1 = _sub1_check_cp1_gate([c for c in comments if isinstance(c, dict)])
@@ -1529,15 +1619,15 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
         return _sub1_fail(
             client,
             issue_number,
-            "## SUB1 エラー: CP1 未完了\n\n"
-            "B1 ブラッシュアップ後の CP1 ゲートがまだ完了していません。",
+            _LT_85 +
+            _LT_86,
         )
     if cp1 == "BLOCK":
         return _sub1_fail(
             client,
             issue_number,
-            "## SUB1 エラー: CP1 未通過\n\n"
-            "親 Issue の CP1 ゲートが FAIL（intentional_hold 以外）の状態です。",
+            _LT_1 +
+            _LT_2,
         )
 
     milestone_number = _milestone_number(parent)
@@ -1553,17 +1643,17 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
             milestone_number = _milestone_number(parent)
             client.issue_comment(
                 issue_number,
-                "## SUB1: milestone を自動作成しました\n\n"
-                f"親 Issue に milestone が未設定だったため "
-                f"`{created_title}`（#{milestone_number}）を作成して紐付けました。\n",
+                _LT_3 +
+                f"{_LT_4}"
+                f"`{created_title}{_LT_5}{milestone_number}{_LT_6}",
             )
         except Exception as exc:
             try:
                 client.issue_comment(
                     issue_number,
-                    "## SUB1 警告: milestone 自動作成に失敗\n\n"
-                    f"親 Issue に milestone が未設定で、自動作成も失敗しました（{exc}）。"
-                    "サブイシューリンクで続行します。\n",
+                    _LT_7 +
+                    f"{_LT_8}{exc}{_LT_9}" +
+                    _LT_10,
                 )
             except Exception:
                 pass
@@ -1581,14 +1671,14 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
         return _sub1_fail(
             client,
             issue_number,
-            "## SUB1 エラー: サブイシュー分割計画が見つかりません",
+            _LT_11,
         )
     if not has_repo_col and not parent_target_repo:
         return _sub1_fail(
             client,
             issue_number,
-            "## SUB1 エラー: 親 YAML に target_repo がありません\n\n"
-            f"親 Issue #{issue_number} の YAML ブロックに `target_repo` フィールドが必要です。",
+            _LT_12 +
+            f"{_LT_13}{issue_number}{_LT_14}",
         )
 
     supported = get_config().supported_repos
@@ -1607,7 +1697,7 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
     for row in plan_rows:
         if has_repo_col and not row.repo:
             state.validation_failures.append(
-                f"サブ{row.row_num}: 5 列表で対象リポジトリが空"
+                f"{_LT_19}{row.row_num}{_LT_20}"
             )
             continue
 
@@ -1618,9 +1708,9 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
                 return _sub1_fail(
                     client,
                     issue_number,
-                    f"## SUB1 エラー: 既存子 #{child_num} のサブイシューリンクに失敗",
+                    f"{_LT_21}{child_num}{_LT_22}",
                 )
-            state.created_issues.append(f"既存: #{child_num} / {row.title}（スキップ）")
+            state.created_issues.append(f"{_LT_23}{child_num} / {row.title}{_LT_24}")
             continue
 
         resolved_dep = resolve_dependencies(
@@ -1633,8 +1723,8 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
         row_allow_paths = allow_paths_for_row(parent_body, row)
         if not row_allow_paths:
             state.validation_failures.append(
-                f"サブ{row.row_num}: 変更対象ファイル表から {row.repo} のパスを"
-                "抽出できないため子を作成しない（親の allow_paths は継承しない）"
+                f"{_LT_19}{row.row_num}{_LT_25}{row.repo}{_LT_26}" +
+                _LT_27
             )
             continue
         body = build_child_body(
@@ -1685,12 +1775,12 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
             try:
                 client.issue_comment(
                     issue_number,
-                    f"## SUB1 エラー: サブ{row.row_num} body に CP1 禁則語が残存\n\n"
+                    f"{_LT_33}{row.row_num}{_LT_34}"
                     f"{detail}\n\nPIPELINE_STATUS: SUB1_CP1_BLOCKED\n",
                 )
             except Exception:
                 pass
-            state.validation_failures.append(f"サブ{row.row_num}: CP1 禁則語")
+            state.validation_failures.append(f"{_LT_19}{row.row_num}{_LT_35}")
             continue
 
         pre_fail = prevalidate_child_body(
@@ -1703,7 +1793,7 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
         )
         if pre_fail:
             state.validation_failures.append(
-                f"サブ{row.row_num}:\n" + "\n".join(pre_fail)
+                f"{_LT_19}{row.row_num}:\n" + "\n".join(pre_fail)
             )
             continue
 
@@ -1721,7 +1811,7 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
             return _sub1_fail(
                 client,
                 issue_number,
-                f"## SUB1 エラー: Issue 作成失敗（サブ{row.row_num}）\n\n{exc}",
+                f"{_LT_38}{row.row_num}{_LT_39}{exc}",
             )
 
         try:
@@ -1735,7 +1825,7 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
             return _sub1_fail(
                 client,
                 issue_number,
-                f"## SUB1 エラー: 子 #{new_number} のサブイシューリンクに失敗",
+                f"{_LT_42}{new_number}{_LT_22}",
             )
 
         state.row_to_issue[row.row_num] = new_number
@@ -1755,15 +1845,15 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
         sys.exit(1)
 
     if state.validation_failures and not state.created_children and not any(
-        s.startswith("既存:") for s in state.created_issues
+        s.startswith(_LT_49) for s in state.created_issues
     ):
         fail_body = "\n".join(f"- {entry}" for entry in state.validation_failures)
         return _sub1_fail(
             client,
             issue_number,
-            "## SUB1 エラー: 子 Issue body 検証失敗\n\n"
-            "以下の行で pre-creation validation (V1–V5) が失敗したため "
-            "Issue を作成しませんでした:\n\n"
+            _LT_50 +
+            _LT_51 +
+            _LT_52 +
             f"{fail_body}\n",
         )
 
@@ -1772,7 +1862,7 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
         try:
             client.issue_comment(
                 issue_number,
-                "## SUB1 警告: 一部行の検証失敗\n\n" + fail_body + "\n",
+                _LT_53 + fail_body + "\n",
             )
         except Exception:
             pass
@@ -1787,24 +1877,24 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
             return _sub1_fail(
                 client,
                 issue_number,
-                "## SUB1 エラー: 作成後 validate_children 失敗\n\n" + "\n".join(details),
+                _LT_56 + "\n".join(details),
             )
 
-    created_block = "\n".join(f"- {line}" for line in state.created_issues) or "- (なし)"
+    created_block = "\n".join(f"- {line}" for line in state.created_issues) or _LT_57
     extra_logs = []
     extra_logs.extend(state.resolved_logs)
     extra_logs.extend(state.excluded_milestone_logs)
     extra_logs.extend(state.unresolved_forward_logs)
     log_block = ("\n" + "\n".join(extra_logs) + "\n") if extra_logs else "\n"
-    ms = str(milestone_number) if milestone_number is not None else "なし（サブイシューリンクのみ）"
+    ms = str(milestone_number) if milestone_number is not None else _LT_63
     try:
         client.issue_comment(
             issue_number,
-            "## SUB1 サブイシュー作成完了\n\n"
-            f"作成したサブイシュー:\n{created_block}\n\n"
+            _LT_64 +
+            f"{_LT_65}{created_block}\n\n"
             f"milestone: {ms}\n"
-            f"{log_block}\n"
-            "検証済みの子 develop request は queue が依存順に自動投入する。\n",
+            f"{log_block}\n" +
+            _LT_67,
         )
     except Exception as exc:
         print(f"WARN: completion comment failed: {exc}", file=sys.stderr)
