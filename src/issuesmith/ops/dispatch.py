@@ -590,6 +590,7 @@ def run_requires_loop(
     *,
     repair_count: int = 0,
     auto_fix_round: int = 0,
+    _prev_blocking_rule_ids: frozenset[str] | None = None,
 ) -> int | None:
     """Evaluate requires gates; auto-fix, repair, or raise andon as needed.
 
@@ -707,6 +708,29 @@ def run_requires_loop(
         _safe_record_metrics("requires_check", step_id, issue_num)
         return None
 
+    # Oscillation detection: repair made no progress (same or worsened violations).
+    current_rule_ids = frozenset(v.rule_id for v in result.blocking)
+    if (
+        _prev_blocking_rule_ids is not None
+        and result.blocking
+        and _prev_blocking_rule_ids.issubset(current_rule_ids)
+    ):
+        options = _build_andon_options(result.blocking)
+        summary = (
+            f"repair oscillation detected in step {step_id} after {repair_count} repair(s): "
+            + "; ".join(sorted(current_rule_ids))
+        )
+        full_andon = _FullAndon(
+            id=f"{workflow}:{issue_num}:{step_id}:0",
+            kind="decision",
+            issue=issue_num,
+            step=step_id,
+            summary=summary,
+            options=options,
+        )
+        _raise_andon(get_forge(), full_andon)
+        return 1
+
     # Non-repairable violations → andon(decision) without repair
     non_repairable = [
         v for v in result.blocking
@@ -759,6 +783,7 @@ def run_requires_loop(
     return run_requires_loop(
         step_cfg, step_id, context,
         repair_count=repair_count + 1,
+        _prev_blocking_rule_ids=current_rule_ids,
     )
 
 

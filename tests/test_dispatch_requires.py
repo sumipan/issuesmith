@@ -913,6 +913,132 @@ class TestFetchFreshIssueBodyLogging:
         assert "(issue=7, reason=empty_body)" in capsys.readouterr().err
 
 
+# ---------------------------------------------------------------------------
+# #4285: repair oscillation detection
+# ---------------------------------------------------------------------------
+
+
+class TestRepairOscillation:
+    """Repair loop stops early when violations do not improve after a repair."""
+
+    def test_same_violations_after_repair_raises_oscillation_andon(self):
+        from issuesmith.config import StepConfig
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        cfg = StepConfig(module="issuesmith.steps.test", requires=("tests",))
+        gate = MagicMock()
+        gate.check.side_effect = [
+            [_v(rule_id="tests.pytest_failure", auto_fixable=False)],
+            [_v(rule_id="tests.pytest_failure", auto_fixable=False)],
+        ]
+
+        with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"tests": gate}):
+            with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
+                mock_forge.return_value = MagicMock()
+                with patch("issuesmith.ops.dispatch._raise_andon") as mock_andon:
+                    with patch("issuesmith.ops.dispatch._run_repair_step", return_value=None) as mock_repair:
+                        rc = run_requires_loop(cfg, "p1", _make_ctx())
+
+        assert rc == 1
+        mock_repair.assert_called_once()
+        mock_andon.assert_called_once()
+        andon_arg = mock_andon.call_args[0][1]
+        assert andon_arg.kind == "decision"
+        assert "repair oscillation detected" in andon_arg.summary
+        assert "step p1" in andon_arg.summary
+        assert "after 1 repair(s)" in andon_arg.summary
+        assert "tests.pytest_failure" in andon_arg.summary
+
+    def test_improvement_after_repair_continues_loop(self, capsys):
+        from issuesmith.config import StepConfig
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        cfg = StepConfig(
+            module="issuesmith.steps.test",
+            requires=("lint", "tests"),
+        )
+        gate = MagicMock()
+        gate.check.side_effect = [
+            [
+                _v(rule_id="lint.E501", auto_fixable=False),
+                _v(rule_id="tests.pytest_failure", auto_fixable=False),
+            ],
+            [_v(rule_id="tests.pytest_failure", auto_fixable=False)],
+            [],
+        ]
+
+        with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"tests": gate}):
+            with patch("issuesmith.ops.dispatch.get_forge"):
+                with patch("issuesmith.ops.dispatch._raise_andon") as mock_andon:
+                    with patch("issuesmith.ops.dispatch._run_repair_step", return_value=None) as mock_repair:
+                        rc = run_requires_loop(cfg, "p1", _make_ctx())
+
+        assert rc is None
+        assert mock_repair.call_count == 2
+        mock_andon.assert_not_called()
+        assert "PIPELINE_STATUS" not in capsys.readouterr().out
+
+    def test_worsened_violations_after_repair_raises_oscillation_andon(self):
+        from issuesmith.config import StepConfig
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        cfg = StepConfig(
+            module="issuesmith.steps.test",
+            requires=("lint", "tests"),
+        )
+        gate = MagicMock()
+        gate.check.side_effect = [
+            [_v(rule_id="lint.E501", auto_fixable=False)],
+            [
+                _v(rule_id="lint.E501", auto_fixable=False),
+                _v(rule_id="tests.pytest_failure", auto_fixable=False),
+            ],
+        ]
+
+        with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"tests": gate}):
+            with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
+                mock_forge.return_value = MagicMock()
+                with patch("issuesmith.ops.dispatch._raise_andon") as mock_andon:
+                    with patch("issuesmith.ops.dispatch._run_repair_step", return_value=None) as mock_repair:
+                        rc = run_requires_loop(cfg, "p1", _make_ctx())
+
+        assert rc == 1
+        mock_repair.assert_called_once()
+        andon_arg = mock_andon.call_args[0][1]
+        assert "repair oscillation detected" in andon_arg.summary
+
+    def test_oscillation_with_pr_scope_includes_widen_option(self):
+        from issuesmith.config import StepConfig
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        cfg = StepConfig(module="issuesmith.steps.test", requires=("pr_scope",))
+        violation = Violation(
+            rule_id="pr_scope.out_of_allow",
+            severity="fail",
+            message="scripts/x.py: outside allow_paths",
+            location="scripts/x.py",
+            auto_fixable=False,
+            fix_hint="widen:scripts/x.py",
+        )
+        gate = MagicMock()
+        gate.check.side_effect = [[violation], [violation]]
+
+        with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"pr_scope": gate}):
+            with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
+                mock_forge.return_value = MagicMock()
+                with patch("issuesmith.ops.dispatch._raise_andon") as mock_andon:
+                    with patch("issuesmith.ops.dispatch._run_repair_step", return_value=None):
+                        rc = run_requires_loop(cfg, "p1", _make_ctx())
+
+        assert rc == 1
+        andon_arg = mock_andon.call_args[0][1]
+        assert any(
+            o.startswith("widen:") and "scripts/x.py" in o for o in andon_arg.options
+        )
+        assert "split" in andon_arg.options
+        assert "reject" in andon_arg.options
+
+
 class TestPassSummary:
     def test_format_pass_summary_counts_per_gate(self):
         from issuesmith.ops.dispatch import _format_pass_summary
