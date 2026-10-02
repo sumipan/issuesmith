@@ -1,27 +1,27 @@
 # issuesmith
 
-issuesmith is a GitHub Issue label-driven workflow toolkit that runs on [ghdag](https://github.com/sumipan/ghdag). ghdag owns DAG execution, polling, and label transitions; issuesmith supplies Issue-domain gates, queue triage, context hooks, and a unified CLI that templates invoke.
+issuesmith is a GitHub Issue label-driven workflow toolkit that runs on [ghdag](https://github.com/sumipan/ghdag). ghdag owns DAG execution, polling, and label transitions; issuesmith supplies Issue-domain gates, queue triage, context hooks, and a unified CLI that workflow templates invoke.
 
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.98.0-blue)
+![version](https://img.shields.io/badge/version-v0.109.0-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-Current release is **v0.98.0** (pre-1.0). Public interfaces may change before `1.0.0`.
+Current release is **v0.109.0** (pre-1.0). Public interfaces may change before `1.0.0`.
 
 ## Installation
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.98.0"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.109.0"
 ```
 
 With ghdag (required for `gate-preflight`, dispatch, and most runtime paths):
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.98.0"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.109.0"
 ```
 
 | Item | Value |
@@ -49,7 +49,8 @@ engines:
   design:
     allowed: [claude, codex]
     default_model:
-      claude: claude-sonnet-4-6
+      claude: claude-opus-4-6
+      codex: gpt-5.6-sol
     timeout_sec: 1800
   implementation:
     allowed: [claude, cursor]
@@ -74,7 +75,7 @@ Common entry points: `python3 -m issuesmith doctor`, `python3 -m issuesmith gate
 
 Entry points: `issuesmith` / `python3 -m issuesmith`.
 
-Top-level commands are registered in `issuesmith.cli._HANDLERS`. `andon` and `labels` are dispatched from `issuesmith.__main__` before the main handler table.
+Top-level commands are registered in `issuesmith.cli._HANDLERS`. `andon` is dispatched from `issuesmith.__main__` before the handler table (not listed in `_HANDLERS`).
 
 | Command | Description |
 |---|---|
@@ -82,7 +83,7 @@ Top-level commands are registered in `issuesmith.cli._HANDLERS`. `andon` and `la
 | `gate` / `gate-preflight` | Run a named gate (`gate cp1 --body-file ...` aliases `gate-preflight`) |
 | `cp1-gate` / `m2-gate` | Direct CP1 / M2 gate entry points |
 | `verify` / `b1-verify` | B1 verification (`verify b1 ...`) |
-| `queue` | Night / draft queue tick and status (`draft`, `sub`, `develop`, `merge` phases) |
+| `queue` | Night / draft queue tick and status |
 | `deps` | Extract Issue dependencies |
 | `tier` | Choose B1 / CP2 model tier (`tier b1` / `tier cp2`) |
 | `comments` | Pipeline comment helpers |
@@ -90,7 +91,7 @@ Top-level commands are registered in `issuesmith.cli._HANDLERS`. `andon` and `la
 | `engine` | LLM role switcher / runner (see subcommands below) |
 | `dispatch` | Render and enqueue a workflow template |
 | `publish` | Publish / version-bump orchestration |
-| `labels reconcile [--fix] [--json]` | Report (or fix) managed-label divergences |
+| `labels` | Managed-label reconciliation (`labels reconcile [--fix] [--json]`) |
 | `doctor` | Preflight / environment checks |
 | `smoke` | Template smoke against live Issue bodies |
 | `gen-live` | Generate live dispatch payloads |
@@ -99,8 +100,8 @@ Top-level commands are registered in `issuesmith.cli._HANDLERS`. `andon` and `la
 | `recover` | Deprecated; use `resume --from <step>` instead |
 | `redispatch` | Deprecated; use `resume --phase <phase>` instead |
 | `convert-to-milestone` | Convert an Issue into a milestone chain |
-| `milestone` | Milestone chain status / resume (`milestone status <parent>`, `milestone resume <parent>`) |
-| `config show` | Print resolved `issuesmith.yaml` as JSON and validate `steps.*.requires` |
+| `milestone` | Milestone chain status / resume / prune |
+| `config` | Resolved configuration (`config show`) |
 | `observe [--apply] [--json]` | Collect observe events; `--apply` executes policy actions |
 | `main-health` | Run `observe.main_health.command` on the latest base branch and write state |
 | `apply` / `ingest-review` | Moved to host `tools/stash/`; exits 2 |
@@ -118,31 +119,108 @@ Top-level commands are registered in `issuesmith.cli._HANDLERS`. `andon` and `la
 
 `run-guarded` is **not** a top-level command. Module-less LLM steps must be invoked as `engine run-guarded --requires-step <step_id>`.
 
-### `andon` subcommands (`python3 -m issuesmith andon ...`)
+### `queue` subcommands
 
 | Subcommand | Description |
 |---|---|
-| `andon list [--all] [--json]` | List open (unanswered) andons |
-| `andon show <id>` | Show a specific andon |
-| `andon answer <id> <action>` | Post answer, remove label, call resume hook |
-| `andon note <id> --key <k> --value <v>` | Record a note on an open andon (no label change) |
+| `queue enqueue` | Enqueue an Issue for a phase |
+| `queue tick` | Process the queue (night / draft dispatch loop) |
+| `queue status` | Show queue state |
+| `queue doctor` | Check for untracked in-flight Issues |
+| `queue reset` | Reset queue halt state |
+| `queue skip` | Skip an Issue in the queue |
+| `queue dequeue` | Remove a request by ID |
+| `queue audit` | Audit queue integrity (`--offline` skips GitHub checks) |
+| `queue triage-log` | Show recent triage log entries |
+| `queue migrate` | Migrate from legacy night-queue state |
+| `queue release` | Release a design-slot in-flight entry (recovery only) |
+
+### `milestone` subcommands
+
+| Subcommand | Description |
+|---|---|
+| `milestone status <parent>` | Show milestone chain status |
+| `milestone resume <parent>` | Resume milestone chain progress |
+| `milestone prune [--dry-run]` | Prune completed milestone chain state |
 
 ## Public API
 
-Top-level `issuesmith.__all__` is empty; import modules directly.
+Top-level `issuesmith.__all__` is empty (`[]`); import submodules directly.
 
-| Symbol | Module | Notes |
-|---|---|---|
-| `get_config` / `load_config` / `reset_config_cache` | `issuesmith.config` | Load and cache `issuesmith.yaml` |
-| `ConfigError` | `issuesmith.config` | Invalid configuration |
-| `QueueStore` / `QueueValidationError` | `issuesmith.queue_store` | Persistent queue state |
-| `parse_issue_metadata` / `validate_issue_metadata` | `issuesmith.context_hook` | Issue YAML metadata |
-| `MetadataViolation` | `issuesmith.context_hook` | Dataclass (not an exception) for metadata violations |
-| `run_checks` / `extract_key_path_values` | `issuesmith.ac_contract` | Acceptance-criteria contract DSL |
-| `GATE_REGISTRY` / `Verdict` / `GateBuildError` | `issuesmith.gates` | Unified gate registry |
-| `main` | `issuesmith.cli` | CLI entry point |
+### `issuesmith.body_editor`
 
-`TemplateVariableError` is defined in `ghdag.pipeline.order` and may be raised by `issuesmith.engine` when template variables are missing.
+| Symbol | Notes |
+|---|---|
+| `count_heading` | Count markdown headings |
+| `filter_section_by_paths` | Filter a section by allow_paths |
+| `get_section` | Extract a named H2 section |
+| `get_section_by_keyword` | Find section by keyword alias |
+| `get_subsections` | List H3 subsections under a section |
+| `normalize_sub_headers` | Normalize subsection headers |
+| `relocate_sub_plan` | Move sub-plan content between sections |
+| `apply_milestone_normalizers` | Apply milestone body normalizers |
+| `replace_allow_paths` | Replace allow_paths block in body |
+| `split_h2_sections` | Split body into H2 sections |
+| `upsert_section` | Insert or replace an H2 section |
+
+### `issuesmith.gates`
+
+| Symbol | Notes |
+|---|---|
+| `Verdict` | Gate evaluation result |
+| `GateBuildContext` | Context for gate instantiation |
+| `GateBuildError` | Gate cannot be instantiated |
+| `GateEntry` | Registry entry for a gate |
+| `RequiresGate` | Gate used in `steps.*.requires` |
+| `GATE_REGISTRY` | Unified gate registry |
+| `validate_step_requires` | Validate `steps.*.requires` chain |
+| `check_scope` | Run scope gate |
+| `check_pr_scope` | Run PR scope gate |
+| `check_m2` | Run M2 gate |
+| `check_deps` | Run dependency gate |
+
+### `issuesmith.gates.base`
+
+| Symbol | Notes |
+|---|---|
+| `ContractInput` | Input for gate `check()` / `fix()` |
+| `Gate` | Gate protocol |
+
+### `issuesmith.gates.dep`
+
+| Symbol | Notes |
+|---|---|
+| `check_deps` | Evaluate dependency gate |
+| `DepsGate` | Dependency gate class |
+| `dependents_of` | List Issues that depend on a given Issue |
+| `on_dep_merge_done` | Notify dependents when a dependency merges |
+
+### `issuesmith.gates.m1`
+
+| Symbol | Notes |
+|---|---|
+| `RULE_ID` | M1 version-behind-base rule identifier |
+| `VersionBehindBaseGate` | M1 version-behind-base gate |
+
+### `issuesmith.gates.m2`
+
+| Symbol | Notes |
+|---|---|
+| `check_m2` | Evaluate M2 merge gate |
+
+### `issuesmith.gates.pr_scope`
+
+| Symbol | Notes |
+|---|---|
+| `check_pr_scope` | Evaluate PR diff scope |
+| `PrScopeGate` | PR scope gate class |
+
+### `issuesmith.gates.scope`
+
+| Symbol | Notes |
+|---|---|
+| `check_scope` | Evaluate allow_paths scope gate |
+| `ScopeGate` | Scope gate class |
 
 ## Architecture
 
@@ -152,7 +230,7 @@ Orchestration (polling, DAG construction, label transitions, idempotency) lives 
 |---|---|
 | `issuesmith/__init__.py` | Package docstring; empty `__all__` |
 | `issuesmith/__main__.py` | Dispatches `andon` / `labels` before `cli.main` |
-| `issuesmith/ac_contract.py` | Acceptance-criteria contract DSL helpers |
+| `issuesmith/ac_contract.py` | Acceptance-criteria contract DSL and path/reference checks |
 | `issuesmith/andon.py` | Andon list/answer/note |
 | `issuesmith/b1_tier.py` | B1 model tier selection |
 | `issuesmith/b1_verify.py` | B1 verification runner |
@@ -168,20 +246,6 @@ Orchestration (polling, DAG construction, label transitions, idempotency) lives 
 | `issuesmith/dep_extractor.py` | Dependency extraction from Issue bodies |
 | `issuesmith/engine.py` | LLM role switcher, `run-guarded`, metrics |
 | `issuesmith/forge_api.py` | ghdag forge client wrappers |
-| `issuesmith/github_api.py` | Issue API wrappers |
-| `issuesmith/m2_gate.py` | M2 gate CLI entry |
-| `issuesmith/milestone.py` | Milestone chain status and resume |
-| `issuesmith/pipeline_comments.py` | Pipeline comment helpers |
-| `issuesmith/pr_scope.py` | PR diff scope helpers |
-| `issuesmith/queue.py` | Queue dispatch loop |
-| `issuesmith/queue_store.py` | Persistent queue state |
-| `issuesmith/queue_triage.py` | LLM triage / title normalization |
-| `issuesmith/quota_gate.py` | Quota gate state |
-| `issuesmith/recovery.py` | Deprecated recover/redispatch implementation |
-| `issuesmith/repair.py` | Repair-step helpers |
-| `issuesmith/resume.py` | Resume workflow from step or phase |
-| `issuesmith/targets.py` | Target repository resolution |
-| `issuesmith/template_ids.py` | Template id constants |
 | `issuesmith/gate_rules/__init__.py` | Re-exports ghdag gate types |
 | `issuesmith/gate_rules/b1_ac_format.py` | B1 acceptance-criteria format rules |
 | `issuesmith/gate_rules/b1_migration.py` | B1 migration plan rules |
@@ -200,6 +264,10 @@ Orchestration (polling, DAG construction, label transitions, idempotency) lives 
 | `issuesmith/gates/pr_scope.py` | PR scope gate |
 | `issuesmith/gates/scope.py` | Scope gate |
 | `issuesmith/gates/worktree.py` | Lint, tests, external_leak, base_freshness gates |
+| `issuesmith/github_api.py` | Issue API wrappers |
+| `issuesmith/m2_gate.py` | M2 gate CLI entry |
+| `issuesmith/merge.py` | Reusable PR merge and verification helpers |
+| `issuesmith/milestone.py` | Milestone chain status, resume, and prune |
 | `issuesmith/observe/__init__.py` | Observe package |
 | `issuesmith/observe/dag_state.py` | DAG state readers |
 | `issuesmith/observe/events.py` | Observe event types |
@@ -212,21 +280,35 @@ Orchestration (polling, DAG construction, label transitions, idempotency) lives 
 | `issuesmith/ops/labels.py` | Managed-label reconciliation |
 | `issuesmith/ops/preflight.py` | Gate preflight helpers |
 | `issuesmith/ops/publish.py` | Publish / version-bump orchestration |
+| `issuesmith/ops/repair_step.py` | Explicit repair step for requires violations |
 | `issuesmith/ops/smoke.py` | Template smoke tests |
 | `issuesmith/ops/version_bump.py` | Deterministic version bump |
+| `issuesmith/pipeline_comments.py` | Pipeline comment helpers |
+| `issuesmith/pr_scope.py` | PR diff scope helpers |
+| `issuesmith/queue.py` | Queue dispatch loop |
+| `issuesmith/queue_store.py` | Persistent queue state |
+| `issuesmith/queue_triage.py` | LLM triage / title normalization |
+| `issuesmith/quota_gate.py` | Quota gate state |
+| `issuesmith/recovery.py` | Deprecated recover/redispatch implementation |
+| `issuesmith/repair.py` | Repair-step helpers |
+| `issuesmith/resume.py` | Resume workflow from step or phase |
+| `issuesmith/scope_gate.py` | Reusable allow_paths scope measurement |
 | `issuesmith/steps/__init__.py` | Steps package |
-| `issuesmith/steps/base.py` | Step base types |
-| `issuesmith/steps/m1_merge.py` | M1 merge step |
-| `issuesmith/steps/m2_finalize.py` | M2 finalize step |
-| `issuesmith/steps/p0_worktree.py` | P0 worktree creation |
-| `issuesmith/steps/repair.py` | Repair step wrapper |
-| `issuesmith/steps/scope_gate.py` | Scope root resolver for P0/CP1 |
+| `issuesmith/steps/base.py` | Step base types (deprecated shim) |
+| `issuesmith/steps/m1_merge.py` | M1 merge step (deprecated shim) |
+| `issuesmith/steps/m2_finalize.py` | M2 finalize step (deprecated shim) |
+| `issuesmith/steps/p0_worktree.py` | P0 worktree creation (deprecated shim) |
+| `issuesmith/steps/repair.py` | Repair step wrapper (deprecated shim) |
+| `issuesmith/steps/scope_gate.py` | Scope root resolver (deprecated shim) |
 | `issuesmith/steps/sub1_create.py` | Sub-issue creation step |
+| `issuesmith/targets.py` | Target repository resolution |
+| `issuesmith/template_ids.py` | Template id constants |
 | `issuesmith/verbs/__init__.py` | Workflow verb package |
 | `issuesmith/verbs/finalize.py` | Finalize verb |
 | `issuesmith/verbs/merge.py` | Merge verb |
 | `issuesmith/verbs/publish.py` | Publish verb |
 | `issuesmith/verbs/worktree.py` | Worktree verb |
+| `issuesmith/worktree.py` | Worktree creation and base-branch fetch |
 
 ## Configuration
 
@@ -287,11 +369,12 @@ Nested `observe.main_health` keys: `worktree` (required when enabled), `command`
 | `QueueValidationError` | `issuesmith.queue_store` | `ValueError` | Invalid queue request payload |
 | `GateBuildError` | `issuesmith.gates` | `ValueError` | Gate cannot be instantiated (e.g. missing worktree) |
 | `MainHealthError` | `issuesmith.observe.main_health` | `RuntimeError` | Base-branch health command failed |
-| `GateMaterializationError` | `issuesmith.steps.m2_finalize` | `RuntimeError` | M2 gate materialization failed |
-| `WorktreeError` | `issuesmith.steps.p0_worktree` | `Exception` | P0 worktree creation failed |
+| `GateMaterializationError` | `issuesmith.ac_contract` | `RuntimeError` | Gate root worktree could not be materialized |
+| `WorktreeError` | `issuesmith.worktree` | `Exception` | Worktree creation or validation failed |
+| `RetrySignal` | `issuesmith.engine` | `RuntimeError` | Engine deferred for quota/rate-limit retry (not a failure) |
 
 `TemplateVariableError` (`ghdag.pipeline.order`) may propagate from `issuesmith.engine` when a template variable is missing at render time.
 
 ## License
 
-MIT. See [LICENSE](./LICENSE).
+MIT (SPDX `MIT`). See [LICENSE](./LICENSE).
