@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 from issuesmith.config import ObserveConfig
 from issuesmith.observe.events import (
     AllEnginesPausedEvent,
+    DagTerminatedEvent,
     ForgeUnavailableEvent,
     IssueStallEvent,
     LabelDriftEvent,
@@ -15,6 +16,8 @@ from issuesmith.observe.events import (
 from issuesmith.observe.policy import (
     AndonAction,
     HaltAction,
+    ReleaseInFlightAction,
+    RemoveRunningLabelAction,
     ResumeAction,
     WaitAction,
     evaluate,
@@ -94,6 +97,77 @@ class TestEvaluate:
     def test_empty_events_produces_no_actions(self):
         cfg_obs = ObserveConfig()
         assert evaluate([], cfg_obs) == []
+
+
+class TestEvaluateDagTerminated:
+    def test_open_pr_retains_in_flight_via_remove_running_label(self):
+        """#3895 AC-1: DagTerminatedEvent must not release in_flight when PR is open."""
+        cfg_obs = ObserveConfig()
+        event = DagTerminatedEvent(
+            issue=3781,
+            key="issuesmith:impl:3781",
+            phase="develop",
+            failed_step="m1",
+            failed_uuid="m1-uuid",
+            result_path="/jobs/done/m1",
+        )
+        actions = evaluate([event], cfg_obs)
+        assert not any(isinstance(a, ReleaseInFlightAction) for a in actions)
+        assert any(isinstance(a, RemoveRunningLabelAction) for a in actions)
+
+    def test_no_open_pr_also_retains_in_flight(self):
+        """#3895 AC-2 / #4137: DagTerminatedEvent never releases in_flight."""
+        cfg_obs = ObserveConfig()
+        event = DagTerminatedEvent(
+            issue=3782,
+            key="issuesmith:impl:3782",
+            phase="develop",
+            failed_step="p3",
+        )
+        actions = evaluate([event], cfg_obs)
+        assert not any(isinstance(a, ReleaseInFlightAction) for a in actions)
+        assert any(isinstance(a, RemoveRunningLabelAction) for a in actions)
+
+
+class TestExecuteReleaseInFlight:
+    def test_skips_release_when_open_linked_pr(self, tmp_path):
+        store = _store(tmp_path)
+        store.add_in_flight(
+            3781,
+            "claude",
+            role="implementation",
+            allow_paths=("tools/asana/tasksmith.py",),
+            target_repo="sumipan/issuesmith",
+        )
+        client = MagicMock()
+        client.pr_list.return_value = [
+            {
+                "number": 3892,
+                "title": "tasksmith fix",
+                "body": "Refs #3781",
+                "head": {"ref": "issue-3781-abc123"},
+            }
+        ]
+        execute(
+            [ReleaseInFlightAction(issue=3781, phase="develop", reason="test")],
+            store,
+            sinks=[],
+            client=client,
+        )
+        assert any(e.get("issue") == 3781 for e in store.snapshot().in_flight)
+
+    def test_releases_when_no_open_linked_pr(self, tmp_path):
+        store = _store(tmp_path)
+        store.add_in_flight(3782, "claude", role="implementation")
+        client = MagicMock()
+        client.pr_list.return_value = []
+        execute(
+            [ReleaseInFlightAction(issue=3782, phase="develop", reason="test")],
+            store,
+            sinks=[],
+            client=client,
+        )
+        assert not any(e.get("issue") == 3782 for e in store.snapshot().in_flight)
 
 
 class TestExecute:

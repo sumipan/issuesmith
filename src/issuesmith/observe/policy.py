@@ -272,6 +272,57 @@ def _evaluate_one(event: ObserveEvent, config: "ObserveConfig") -> list[Action]:
     return [WaitAction(reason=f"unknown event: {event.kind}")]
 
 
+def _issue_has_open_linked_pr(
+    client: Any,
+    issue_number: int,
+    *,
+    target_repo: str | None = None,
+) -> bool:
+    """Return True when *issue_number* has an open PR linked on the forge.
+
+    Matches PRs whose head ref is ``issue-{N}-*``, whose title/body mention
+    ``#{N}``, or whose body/title contain ``Closes #N`` / ``Refs #N``.
+    """
+    import re
+
+    from issuesmith.queue import _find_open_prs_closing_issue
+
+    if _find_open_prs_closing_issue(client, issue_number):
+        return True
+
+    issue_ref = re.compile(rf"(?<!\d)#{issue_number}(?!\d)")
+    branch_prefix = f"issue-{issue_number}-"
+
+    def _matches(pr: dict[str, Any]) -> bool:
+        head = pr.get("head") or {}
+        ref = head.get("ref") if isinstance(head, dict) else None
+        if isinstance(ref, str) and (
+            ref.startswith(branch_prefix) or ref == f"issue-{issue_number}"
+        ):
+            return True
+        title = str(pr.get("title") or "")
+        body = str(pr.get("body") or "")
+        return bool(issue_ref.search(title) or issue_ref.search(body))
+
+    try:
+        prs = client.pr_list(state="open", limit=100)
+    except Exception:
+        prs = []
+    if isinstance(prs, list):
+        for pr in prs:
+            if isinstance(pr, dict) and _matches(pr):
+                return True
+
+    if target_repo:
+        from issuesmith.pr_scope import _list_open_pulls
+
+        for pr in _list_open_pulls(client, target_repo):
+            if _matches(pr):
+                return True
+
+    return False
+
+
 def _strip_generation(key: str) -> str:
     """Remove trailing :N generation suffix from an idempotency key when present.
 
@@ -285,6 +336,15 @@ def _strip_generation(key: str) -> str:
     if len(parts) >= 4 and parts[-1].isdigit():
         return ":".join(parts[:-1])
     return key
+
+
+def _in_flight_target_repo(store: "QueueStore", issue: int) -> str | None:
+    for entry in store.snapshot().in_flight:
+        if entry.get("issue") == issue:
+            repo = entry.get("target_repo")
+            if isinstance(repo, str) and repo.strip():
+                return repo
+    return None
 
 
 def _label_namespace() -> str:
@@ -408,6 +468,16 @@ def execute(
                     logger.exception("andon sink emit failed")
 
         elif isinstance(action, ReleaseInFlightAction):
+            if client is not None and _issue_has_open_linked_pr(
+                client,
+                action.issue,
+                target_repo=_in_flight_target_repo(store, action.issue),
+            ):
+                logger.info(
+                    "in_flight release skipped: issue=#%s has open linked PR",
+                    action.issue,
+                )
+                continue
             store.remove_in_flight(action.issue)
             logger.info("in_flight released: issue=#%s reason=%s", action.issue, action.reason)
             if client is not None and action.phase:
