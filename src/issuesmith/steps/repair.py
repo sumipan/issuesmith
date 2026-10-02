@@ -1,14 +1,16 @@
-"""Deprecated compat re-exports — import from issuesmith.ops.repair_step instead (#4276)."""
+"""Deprecated compat alias — import from issuesmith.ops.repair_step instead (#4276).
+
+The module object is replaced with ``issuesmith.ops.repair_step`` itself, so
+callers that patch ``issuesmith.steps.repair.run_guarded`` / ``get_config`` /
+``_get_previous_commits`` still patch the code that ``run`` executes.
+"""
 
 from __future__ import annotations
 
+import sys
 import warnings
 
-from issuesmith.config import StepConfig
-from issuesmith.contract import StepContext, StepResult
-from issuesmith.ops.repair_step import run as _run
-
-__all__ = ["run"]
+from issuesmith.ops import repair_step as _impl
 
 warnings.warn(
     "issuesmith.steps.repair is deprecated; use issuesmith.ops.repair_step instead",
@@ -16,6 +18,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-
-def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
-    return _run(ctx, step)
+sys.modules[__name__] = _impl

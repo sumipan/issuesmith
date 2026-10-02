@@ -140,10 +140,20 @@ def test_repair_propagates_retry_signal() -> None:
                 run(ctx, _step())
 
 
-def test_steps_repair_shim_delegates_to_repair_step() -> None:
+def test_steps_repair_shim_aliases_repair_step() -> None:
+    """Patching the legacy path must patch the code that run() executes (nexus tests do this)."""
+    import issuesmith.ops.repair_step as repair_step
     from issuesmith.steps import repair as repair_shim
 
+    assert repair_shim is repair_step
     ctx = _ctx()
-    with patch("issuesmith.steps.repair._run", return_value=MagicMock(status="done")) as mock_run:
-        repair_shim.run(ctx, _step())
-    mock_run.assert_called_once()
+    with (
+        patch("issuesmith.steps.repair.run_guarded", return_value=0) as mock_rg,
+        patch("issuesmith.steps.repair.get_config") as mock_cfg,
+        patch("issuesmith.steps.repair._get_previous_commits", return_value=""),
+    ):
+        mock_cfg.return_value.paths.template_dir = MagicMock()
+        mock_cfg.return_value.paths.template_dir.__truediv__ = lambda s, o: "/tmp/repair.md"
+        result = repair_shim.run(ctx, _step())
+    mock_rg.assert_called_once()
+    assert result.status == "done"

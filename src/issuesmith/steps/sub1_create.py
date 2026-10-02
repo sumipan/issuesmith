@@ -23,6 +23,7 @@ from issuesmith.milestone import (
     parse_split_plan,
     prevalidate_child_body,
     resolve_dependencies,
+    run_guarded_sub1_body,
     run_sub1_create,
     validate_children,
 )
@@ -56,6 +57,7 @@ _resolve_dependencies = resolve_dependencies
 _allow_paths_for_row = allow_paths_for_row
 _build_child_body = build_child_body
 _prevalidate_child_body = prevalidate_child_body
+_run_guarded_body = run_guarded_sub1_body
 
 
 def _github_client() -> ForgePort:
