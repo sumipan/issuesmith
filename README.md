@@ -216,7 +216,6 @@ Orchestration (polling, DAG construction, label transitions, idempotency) lives 
 | `issuesmith/ops/version_bump.py` | Deterministic version bump |
 | `issuesmith/steps/__init__.py` | Steps package |
 | `issuesmith/steps/base.py` | Step base types |
-| `issuesmith/steps/cp2_checkpoint.py` | CP2 checkpoint step |
 | `issuesmith/steps/m1_merge.py` | M1 merge step |
 | `issuesmith/steps/m2_finalize.py` | M2 finalize step |
 | `issuesmith/steps/p0_worktree.py` | P0 worktree creation |
