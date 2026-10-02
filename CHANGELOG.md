@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Added
+
+- `TestsGate` reruns newly failing tests on the branch worktree up to `tests.flaky_reruns` times (default `2`; set `0` to disable). Tests that pass on any rerun are recorded as `tests.flaky` (severity `warn`, non-blocking) instead of blocking the pipeline with `tests.pytest_failure` (nexus #3922).
+
 ### Changed
 
 - Queue triage rejects `phase=develop` requests for Issues labeled `scope:milestone` before `develop-ready` is applied, so milestone parents never reach P0 (`MILESTONE_BLOCKED`) via the queue (nexus #3942).

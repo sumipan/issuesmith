@@ -181,7 +181,7 @@ def _pytest_timeout_sec() -> float:
         return _PYTEST_TIMEOUT_DEFAULT_SEC
 
 
-def _run_pytest(root: Path, args: list[str], *, timeout: float | None = None) -> tuple[int, str]:
+def _run_pytest_impl(root: Path, args: list[str], *, timeout: float | None = None) -> tuple[int, str]:
     """Run pytest with `-q -rfE --tb=no` in `root`; prepend `root/src` to PYTHONPATH if present.
 
     A run that exceeds ``timeout`` (default ``ISSUESMITH_PYTEST_TIMEOUT_SEC`` or 1500 s)
@@ -205,6 +205,15 @@ def _run_pytest(root: Path, args: list[str], *, timeout: float | None = None) ->
         tail = partial.decode(errors="replace")[-2000:]
         return 124, f"pytest timed out after {limit:.0f} s\n{tail}"
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+
+
+def _run_pytest(root: Path, args: list[str], *, timeout: float | None = None) -> tuple[int, str]:
+    return _run_pytest_impl(root, args, timeout=timeout)
+
+
+def _run_pytest_rerun(root: Path, args: list[str]) -> tuple[int, str]:
+    """Re-run a subset of tests for flaky detection (bypasses ``_run_pytest`` spies)."""
+    return _run_pytest_impl(root, args)
 
 
 def _parse_failed_ids(output: str) -> list[str]:
@@ -636,7 +645,27 @@ class TestsGate:
         if not new_ids:
             return []
 
-        if not baseline_unavailable:
+        from issuesmith.config import get_config
+
+        reruns = get_config().tests.flaky_reruns
+        flaky_ids: list[str] = []
+        if reruns > 0 and new_ids:
+            confirmed_failing = set(new_ids)
+            for _ in range(reruns):
+                if not confirmed_failing:
+                    break
+                rc2, out2 = _run_pytest_rerun(self._root, list(confirmed_failing))
+                if rc2 == 0:
+                    confirmed_failing = set()
+                    break
+                confirmed_failing &= set(_parse_failed_ids(out2))
+            flaky_ids = [i for i in new_ids if i not in confirmed_failing]
+            new_ids = [i for i in new_ids if i in confirmed_failing]
+
+        if not new_ids and not flaky_ids:
+            return []
+
+        if not baseline_unavailable and new_ids:
             self.derived_allow_paths = self._derive(new_ids)
         derived = set(self.derived_allow_paths)
 
@@ -648,6 +677,17 @@ class TestsGate:
             )
 
         violations: list[Violation] = []
+        for test_id in flaky_ids:
+            violations.append(Violation(
+                rule_id="tests.flaky",
+                severity="warn",
+                message=(
+                    f"{test_id} (flaky: passed in at least one of {reruns} reruns)"
+                ),
+                location=test_id.split("::")[0] if "::" in test_id else None,
+                auto_fixable=False,
+                fix_hint=None,
+            ))
         for test_id in new_ids:
             location = test_id.split("::")[0] if "::" in test_id else None
             message = test_id

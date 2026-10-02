@@ -3,7 +3,13 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
+import yaml
+
+import issuesmith.gates.worktree as wt
+from issuesmith.config import ConfigError, load_config, reset_config_cache
 from issuesmith.gates.worktree import (
     WORKTREE_GATES,
     TestsGate,
@@ -277,6 +283,130 @@ def test_parse_failed_ids_deduplicates() -> None:
 def test_parse_failed_ids_ignores_non_failed_lines() -> None:
     output = "PASSED tests/t.py::test_x\nfailed (exit code 1)\n"
     assert _parse_failed_ids(output) == []
+
+
+def _judge_new_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    root: Path,
+    test_ids: list[str],
+    rerun_results: list[tuple[int, str]],
+    *,
+    flaky_reruns: int = 2,
+) -> list:
+    """Call ``_judge`` with mocked baseline (all new) and controlled reruns."""
+    cfg = SimpleNamespace(
+        tests=SimpleNamespace(flaky_reruns=flaky_reruns),
+        derived_allow=SimpleNamespace(enabled=False),
+    )
+    monkeypatch.setattr(
+        "issuesmith.config.get_config",
+        lambda: cfg,
+    )
+    monkeypatch.setattr(wt, "_baseline_failed_func_ids", lambda *a, **k: set())
+
+    call_idx = 0
+
+    def fake_run(_root: Path, args: list[str]) -> tuple[int, str]:
+        nonlocal call_idx
+        if call_idx < len(rerun_results):
+            result = rerun_results[call_idx]
+            call_idx += 1
+            return result
+        return 1, "\n".join(f"FAILED {a} - err" for a in args)
+
+    monkeypatch.setattr(wt, "_run_pytest_rerun", fake_run)
+    output = "\n".join(f"FAILED {tid} - AssertionError" for tid in test_ids)
+    return TestsGate(root, base_branch="main")._judge(1, output)
+
+
+def test_flaky_rerun_passes_recorded_as_warn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Intermittent failure that passes on rerun -> tests.flaky (warn, non-blocking)."""
+    test_id = "tests/test_flaky.py::test_flaky"
+    violations = _judge_new_failures(
+        monkeypatch, tmp_path, [test_id], [(0, "")],
+    )
+
+    assert len(violations) == 1
+    assert violations[0].rule_id == "tests.flaky"
+    assert violations[0].severity == "warn"
+    assert test_id in violations[0].message
+
+
+def test_flaky_rerun_always_fails_stays_pytest_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Failure on every rerun -> tests.pytest_failure (fail, blocking)."""
+    test_id = "tests/test_bad.py::test_bad"
+    fail_out = f"FAILED {test_id} - AssertionError"
+    violations = _judge_new_failures(
+        monkeypatch,
+        tmp_path,
+        [test_id],
+        [(1, fail_out), (1, fail_out)],
+    )
+
+    assert len(violations) == 1
+    assert violations[0].rule_id == "tests.pytest_failure"
+    assert violations[0].severity == "fail"
+
+
+def test_flaky_reruns_zero_skips_rerun(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """flaky_reruns=0 -> no rerun; single failure is pytest_failure."""
+    test_id = "tests/test_one.py::test_one"
+    rerun_calls: list[list[str]] = []
+
+    def spy_run(_root: Path, args: list[str]) -> tuple[int, str]:
+        rerun_calls.append(list(args))
+        return 0, ""
+
+    monkeypatch.setattr(wt, "_run_pytest_rerun", spy_run)
+    violations = _judge_new_failures(
+        monkeypatch, tmp_path, [test_id], [], flaky_reruns=0,
+    )
+
+    assert rerun_calls == []
+    assert len(violations) == 1
+    assert violations[0].rule_id == "tests.pytest_failure"
+
+
+def test_tests_flaky_reruns_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(yaml.safe_dump({"repo": "example/repo"}), encoding="utf-8")
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    assert load_config().tests.flaky_reruns == 2
+
+
+def test_tests_flaky_reruns_zero_loaded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "example/repo", "tests": {"flaky_reruns": 0}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    assert load_config().tests.flaky_reruns == 0
+
+
+def test_tests_flaky_reruns_unknown_key_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({
+            "repo": "example/repo",
+            "tests": {"flaky_reruns": 2, "extra": True},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    with pytest.raises(ConfigError, match="extra"):
+        load_config()
 
 
 def test_message_uses_exact_id_line_not_prefix_match(tmp_path: Path) -> None:
