@@ -9,6 +9,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Queue triage rejects `phase=develop` requests for Issues labeled `scope:milestone` before `develop-ready` is applied, so milestone parents never reach P0 (`MILESTONE_BLOCKED`) via the queue (nexus #3942).
+- `scope_size.measure_size()` aggregates sibling directories that share a hyphenated basename prefix (e.g. `.agents/skills/source-command-*/`) into one concern at the grandparent directory, and no longer counts root-level files as concerns (nexus #3942).
+- `milestone_consistency.label_missing` is no longer auto-fixable; split-plan bodies require an explicit human decision before `scope:milestone` is added (nexus #3942).
+
 - Queue intake YAML validation now returns `repair` instead of terminal `rejected` for post-draft requests (nexus #4238). `contract.validate_frontmatter()` centralizes the check; `deterministic_decision()` runs it only when `phase != draft` and `issuesmith:draft-done` is present. `_apply_repair()` redispatches draft via `queue-repair`, keeps the original request active with `repair_count`, and rejects only after `MAX_REPAIR_PER_REQUEST` (1). Draft requests with missing YAML are kept so B1 can fix the body. LLM triage no longer rejects for YAML reasons (`is_yaml_reject_reason` downgrades to keep).
 
 ### Fixed

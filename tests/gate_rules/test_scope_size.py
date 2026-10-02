@@ -98,7 +98,7 @@ def test_original_fixture_messages():
     by_id = {v.rule_id: v for v in ScopeSizeRules().check(_fixture("issue_3627_original.md"), [])}
     assert "files=10/8" in by_id["scope_size.too_many_files"].message
     concerns = by_id["scope_size.too_many_concerns"].message
-    assert "concerns=4/2" in concerns
+    assert "concerns=3/2" in concerns
     assert "tools/issuesmith_steps" in concerns
     mixed = by_id["scope_size.delete_with_new"].message
     assert "workflows/issuesmith/cp1-gate.md" in mixed
@@ -109,10 +109,9 @@ def test_original_fixture_measure():
     measure = measure_size(_fixture("issue_3627_original.md"))
     assert len(measure.files) == 10
     assert list(measure.concerns) == [
-        "workflows",
-        ".",
         "workflows/issuesmith",
         "tools/issuesmith_steps",
+        "workflows",
     ]
     assert measure.kinds == frozenset({"delete", "new", "modify"})
 
@@ -254,6 +253,37 @@ def test_promote_oversized_issue_body_writes_japanese_sub_headers():
     assert "#### Sub " not in promoted
     # Idempotent
     assert promote_oversized_issue_body(promoted) == promoted
+
+
+def test_sibling_skill_dirs_aggregate_to_grandparent_concern():
+    rows = [
+        (f".agents/skills/source-command-{name}/SKILL.md", _DELETE)
+        for name in (
+            "bookmark",
+            "diary",
+            "github",
+            "morning",
+            "news",
+            "statusline",
+            "voice",
+        )
+    ]
+    rows.append(("configs/settings.json", _MODIFY))
+    measure = measure_size(_body(rows))
+    assert len(measure.files) == 8
+    assert list(measure.concerns) == [".agents/skills", "configs"]
+    assert len(measure.concerns[".agents/skills"]) == 7
+    assert ScopeSizeRules().check(_body(rows), []) == []
+
+
+def test_root_level_files_are_not_concerns():
+    rows = [
+        ("CHANGELOG.md", _MODIFY),
+        ("pyproject.toml", _MODIFY),
+        ("src/a/x.py", _MODIFY),
+    ]
+    measure = measure_size(_body(rows))
+    assert list(measure.concerns) == ["src/a"]
 
 
 def test_config_thresholds_are_honoured(tmp_path, monkeypatch):

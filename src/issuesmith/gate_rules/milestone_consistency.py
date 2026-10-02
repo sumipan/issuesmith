@@ -133,7 +133,7 @@ class MilestoneConsistencyRules:
                         f"{_MILESTONE_LABEL} が付いていません"
                     ),
                     location=None,
-                    auto_fixable=True,
+                    auto_fixable=False,
                     fix_hint=(
                         "scope:milestone を付与し、"
                         "issuesmith.gate_rules.milestone_consistency.fix_label_missing() "

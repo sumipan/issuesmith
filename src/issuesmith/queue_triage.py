@@ -253,6 +253,17 @@ def deterministic_decision(
             add_rejected_label=True,
         )
 
+    if phase == "develop" and _MILESTONE_LABEL in labels:
+        return Decision(
+            kind="rejected",
+            reason=(
+                "scope:milestone の Issue は develop に入れない"
+                "（P0 が MILESTONE_BLOCKED で止まるためキュー段階で弾く）"
+            ),
+            comment=True,
+            add_rejected_label=True,
+        )
+
     # force=True: done ラベルが付いていても再ディスパッチを許可する。
     # CP2 FAIL 等でフェーズが *-done に差し戻された Issue を、案内された
     # `enqueue --force` で再投入する経路（2026-09-04 に発覚した回帰）。

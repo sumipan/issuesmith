@@ -53,6 +53,64 @@ def _normalize_kind(change_type: str, cfg: ScopeSizeConfig) -> str:
     return "modify"
 
 
+def _common_prefix(strings: list[str]) -> str:
+    if not strings:
+        return ""
+    prefix = strings[0]
+    for name in strings[1:]:
+        limit = min(len(prefix), len(name))
+        i = 0
+        while i < limit and prefix[i] == name[i]:
+            i += 1
+        prefix = prefix[:i]
+    return prefix
+
+
+def _sibling_dirs_share_prefix(parent_dirs: tuple[str, ...]) -> bool:
+    """True when sibling directory basenames share a hyphenated common prefix."""
+    basenames = [posixpath.basename(parent) for parent in parent_dirs]
+    if len(basenames) < 2:
+        return False
+    prefix = _common_prefix(basenames)
+    return len(prefix) >= 2 and prefix.endswith("-")
+
+
+def _group_paths_by_concern(paths: tuple[str, ...] | list[str]) -> dict[str, tuple[str, ...]]:
+    """Map concern directory keys to counted file paths (table order preserved)."""
+    parent_to_paths: dict[str, list[str]] = {}
+    for path in paths:
+        if "/" not in path:
+            continue
+        parent = posixpath.dirname(path) or "."
+        parent_to_paths.setdefault(parent, []).append(path)
+
+    concerns: dict[str, list[str]] = {}
+    singleton_parents: dict[str, list[str]] = {}
+    for parent, grouped in parent_to_paths.items():
+        if len(grouped) >= 2:
+            concerns[parent] = grouped
+        else:
+            singleton_parents[parent] = grouped
+
+    by_grandparent: dict[str, list[str]] = {}
+    for parent in singleton_parents:
+        grandparent = posixpath.dirname(parent) or "."
+        by_grandparent.setdefault(grandparent, []).append(parent)
+
+    for grandparent, parents in by_grandparent.items():
+        parent_tuple = tuple(parents)
+        if len(parents) >= 2 and _sibling_dirs_share_prefix(parent_tuple):
+            merged: list[str] = []
+            for parent in parents:
+                merged.extend(singleton_parents[parent])
+            concerns[grandparent] = concerns.get(grandparent, []) + merged
+        else:
+            for parent in parents:
+                concerns[parent] = singleton_parents[parent]
+
+    return {key: tuple(value) for key, value in concerns.items()}
+
+
 def _counted_rows(body: str, cfg: ScopeSizeConfig) -> list[tuple[str, str]]:
     """Return ``(path, kind)`` for counted rows, deduplicated by ``(repo, path)``."""
     seen: set[tuple[str, str]] = set()
@@ -70,12 +128,10 @@ def _counted_rows(body: str, cfg: ScopeSizeConfig) -> list[tuple[str, str]]:
 def measure_size(body: str, cfg: ScopeSizeConfig | None = None) -> SizeMeasure:
     cfg = cfg or get_config().scope_size
     rows = _counted_rows(body, cfg)
-    concerns: dict[str, list[str]] = {}
-    for path, _ in rows:
-        concerns.setdefault(posixpath.dirname(path) or ".", []).append(path)
+    paths = [path for path, _ in rows]
     return SizeMeasure(
-        files=tuple(path for path, _ in rows),
-        concerns={d: tuple(paths) for d, paths in concerns.items()},
+        files=tuple(paths),
+        concerns=_group_paths_by_concern(paths),
         kinds=frozenset(kind for _, kind in rows),
     )
 
@@ -117,21 +173,27 @@ def _rows_by_concern(
     designs cover the full parent change table.
     """
     seen: set[tuple[str, str]] = set()
-    concerns: dict[str, list[tuple[str, str, str]]] = {}
+    by_parent: dict[str, list[tuple[str, str, str]]] = {}
     for repo, path, change_type in extract_change_table_rows(body):
         key = (repo, path)
         if key in seen:
             continue
         seen.add(key)
-        concern = posixpath.dirname(path) or "."
-        concerns.setdefault(concern, []).append((repo, path, change_type))
+        parent = posixpath.dirname(path) or "."
+        by_parent.setdefault(parent, []).append((repo, path, change_type))
     measured = measure_size(body, cfg)
     ordered: dict[str, list[tuple[str, str, str]]] = {}
-    for concern in measured.concerns:
-        if concern in concerns:
-            ordered[concern] = concerns.pop(concern)
-    for concern, rows in concerns.items():
-        ordered[concern] = rows
+    for concern, paths in measured.concerns.items():
+        rows_for_concern: list[tuple[str, str, str]] = []
+        seen_parents: set[str] = set()
+        for path in paths:
+            parent = posixpath.dirname(path) or "."
+            if parent in seen_parents:
+                continue
+            seen_parents.add(parent)
+            rows_for_concern.extend(by_parent.get(parent, []))
+        if rows_for_concern:
+            ordered[concern] = rows_for_concern
     return ordered
 
 
