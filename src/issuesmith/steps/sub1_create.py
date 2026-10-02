@@ -6,8 +6,10 @@ import warnings
 
 from ghdag.forge import ForgePort, get_forge
 
+import issuesmith.milestone as _milestone_module
 from issuesmith.config import StepConfig
 from issuesmith.contract import StepContext, StepResult
+from issuesmith.gate_rules.scope_breadth import ScopeBreadthRules
 from issuesmith.milestone import (
     PlanRow,
     Sub1State,
@@ -21,11 +23,13 @@ from issuesmith.milestone import (
     check_v3_cjk_placeholders,
     ensure_sub1_binding,
     parse_split_plan,
-    prevalidate_child_body,
     resolve_dependencies,
     run_guarded_sub1_body,
     run_sub1_create,
     validate_children,
+)
+from issuesmith.milestone import (
+    prevalidate_child_body as _milestone_prevalidate_child_body,
 )
 
 __all__ = [
@@ -52,12 +56,40 @@ warnings.warn(
 
 # Backward-compatible private aliases used by existing tests and callers.
 _COMPAT_PRIVATE = (_list_chain_children, _parse_table_rows, _plan_section)
+
+
+def prevalidate_child_body(
+    *,
+    body: str,
+    row_repo: str,
+    parent_issue_number: int,
+    resolved_dep: str,
+    client: ForgePort,
+    supported: frozenset[str] | set[str],
+) -> list[str]:
+    """Pre-creation V1-V6. V1-V5 via milestone; V6 scope_breadth.too_large (#4293)."""
+    failures = _milestone_prevalidate_child_body(
+        body=body,
+        row_repo=row_repo,
+        parent_issue_number=parent_issue_number,
+        resolved_dep=resolved_dep,
+        client=client,
+        supported=supported,
+    )
+    for violation in ScopeBreadthRules().check(body, []):
+        if violation.rule_id == "scope_breadth.too_large":
+            failures.append(f"V6: scope_breadth.too_large: {violation.message}")
+    return failures
+
+
 _parse_split_plan = parse_split_plan
 _resolve_dependencies = resolve_dependencies
 _allow_paths_for_row = allow_paths_for_row
 _build_child_body = build_child_body
 _prevalidate_child_body = prevalidate_child_body
 _run_guarded_body = run_guarded_sub1_body
+
+_milestone_module.prevalidate_child_body = prevalidate_child_body
 
 
 def _github_client() -> ForgePort:

@@ -285,6 +285,78 @@ def test_v1_v2_v3_helpers_used_by_validate_children_and_sub1() -> None:
         assert sv1.called and sv2.called and sv3.called
 
 
+def test_prevalidate_child_body_rejects_scope_breadth_too_large() -> None:
+    """V6: scope_breadth.too_large adds a failure and skips sub issue creation."""
+    from ghdag.workflow.gates import Violation
+
+    child_body = (
+        _yaml("sumipan/nexus", ["src/**", "tests/**"])
+        + "\n**Changed Files**:\n"
+        f"| {_CHANGE_TABLE_HEADER} |\n"
+        "|---|---|---|---|\n"
+        f"| `sumipan/nexus` | `src/a.py` | {MODIFY} | x |\n"
+    )
+    client = MagicMock()
+    client.issue_get.return_value = {"number": 101}
+
+    scope_violation = Violation(
+        rule_id="scope_breadth.too_large",
+        severity="fail",
+        message="allow_paths scope too large (lines: 21490 > 20000).",
+        location=None,
+        auto_fixable=False,
+        fix_hint=None,
+    )
+
+    with patch("issuesmith.steps.sub1_create.ScopeBreadthRules") as mock_rules_cls:
+        mock_rules_cls.return_value.check.return_value = [scope_violation]
+        failures = sub1._prevalidate_child_body(
+            body=child_body,
+            row_repo="sumipan/nexus",
+            parent_issue_number=100,
+            resolved_dep=NONE,
+            client=client,
+            supported=frozenset({"sumipan/nexus"}),
+        )
+
+    assert len(failures) == 1
+    assert failures[0].startswith("V6: scope_breadth.too_large:")
+    assert "21490" in failures[0]
+
+
+def test_prevalidate_child_body_passes_when_scope_within_limit() -> None:
+    """V6 does not fire when scope_breadth is within limits."""
+    child_body = (
+        _yaml("sumipan/nexus", ["src/a.py"])
+        + "\n**Changed Files**:\n"
+        f"| {_CHANGE_TABLE_HEADER} |\n"
+        "|---|---|---|---|\n"
+        f"| `sumipan/nexus` | `src/a.py` | {MODIFY} | x |\n"
+    )
+    client = MagicMock()
+    client.issue_get.return_value = {"number": 101}
+
+    with patch("issuesmith.steps.sub1_create.ScopeBreadthRules") as mock_rules_cls:
+        mock_rules_cls.return_value.check.return_value = []
+        failures = sub1._prevalidate_child_body(
+            body=child_body,
+            row_repo="sumipan/nexus",
+            parent_issue_number=100,
+            resolved_dep=NONE,
+            client=client,
+            supported=frozenset({"sumipan/nexus"}),
+        )
+
+    assert failures == []
+
+
+def test_prevalidate_child_body_patched_on_milestone_module() -> None:
+    """sub1_create shim replaces milestone.prevalidate_child_body for SUB1 flow."""
+    import issuesmith.milestone as milestone
+
+    assert milestone.prevalidate_child_body is sub1.prevalidate_child_body
+
+
 def test_parse_plan_table_by_header_names_not_column_order() -> None:
     # ASCII fixture data.
     body = (
