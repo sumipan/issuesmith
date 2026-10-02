@@ -269,3 +269,79 @@ def test_ac1_end_to_end_with_real_done_markers(env):
     assert len(second_evts) == 1
     assert isinstance(second_evts[0], DagTerminatedEvent)
     assert len(client.get_issue_comments(issue_num)) == len(comments_first)
+
+
+def test_regression_overlapping_develop_blocked_after_dag_terminated_with_open_pr(env):
+    """#3895 AC-3: M1 blocked + DAG terminated + open PR -> overlapping develop blocked."""
+    from issuesmith.queue import _allow_paths_conflict
+
+    store, client, _tmp_path = env
+    cfg = get_config()
+    ns = cfg.label_namespace
+
+    shared_body = (
+        "```yaml\n"
+        "target_repo: sumipan/issuesmith\n"
+        "base_branch: main\n"
+        "allow_paths:\n"
+        '  - "tools/asana/tasksmith.py"\n'
+        '  - "tests/tools/asana/test_asana_tasksmith.py"\n'
+        "```\n"
+    )
+    blocked_issue = client.issue_create("blocked sibling", shared_body)
+    next_issue = client.issue_create("next sibling", shared_body)
+
+    client.issue_update(
+        blocked_issue,
+        labels_add=[f"{ns}:draft-done", f"{ns}:develop-running"],
+    )
+    store.add_in_flight(
+        blocked_issue,
+        "claude",
+        role="implementation",
+        phase="develop",
+        allow_paths=(
+            "tools/asana/tasksmith.py",
+            "tests/tools/asana/test_asana_tasksmith.py",
+        ),
+        target_repo="sumipan/issuesmith",
+    )
+
+    dag_states = _dag_failed_states(blocked_issue)
+    snap = store.snapshot()
+    events = _detect_dag_terminated(
+        snap, client, cfg, cfg.observe.max_api_calls, dag_states
+    )
+    assert len(events) == 1
+    execute(evaluate(events, cfg.observe), store, sinks=[], client=client)
+
+    assert any(e.get("issue") == blocked_issue for e in store.snapshot().in_flight), (
+        "in_flight must stay locked after DagTerminatedEvent while PR is still open"
+    )
+
+    conflict = _allow_paths_conflict(
+        "sumipan/issuesmith",
+        (
+            "tools/asana/tasksmith.py",
+            "tests/tools/asana/test_asana_tasksmith.py",
+        ),
+        store.snapshot().in_flight,
+        candidate_phase="develop",
+    )
+    assert conflict == blocked_issue
+
+    # Simulate an open PR still linked to the blocked issue (#3781 / PR #3892 scenario).
+    client.pr_create(
+        title=f"tasksmith Refs #{blocked_issue}",
+        body=f"Refs #{blocked_issue}",
+        head=f"issue-{blocked_issue}-1364c267",
+        base="main",
+    )
+
+    assert _allow_paths_conflict(
+        "sumipan/issuesmith",
+        ("tools/asana/tasksmith.py",),
+        store.snapshot().in_flight,
+        candidate_phase="develop",
+    ) == blocked_issue
+    assert next_issue != blocked_issue

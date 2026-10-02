@@ -272,6 +272,55 @@ def _evaluate_one(event: ObserveEvent, config: "ObserveConfig") -> list[Action]:
     return [WaitAction(reason=f"unknown event: {event.kind}")]
 
 
+def _issue_has_open_linked_pr(
+    client: Any,
+    issue_number: int,
+    *,
+    target_repo: str | None = None,
+) -> bool:
+    """Return True when *issue_number* has an open PR linked on the forge.
+
+    Matches PRs whose head ref is ``issue-{N}`` / ``issue-{N}-*`` or whose
+    title/body mention ``#{N}`` (covers ``Closes #N`` / ``Refs #N`` and
+    cross-repo ``owner/repo#N``). Lists open PRs of *target_repo* with one raw
+    API call (``head.ref`` and ``body`` included); falls back to
+    ``client.pr_list`` (normalized: ``headRefName``, no body) when the repo is
+    unknown or the raw API is unavailable. No per-PR fetch.
+    """
+    import re
+
+    from issuesmith.forge_api import api_request
+
+    issue_ref = re.compile(rf"(?<!\d)#{issue_number}(?!\d)")
+    branch_prefix = f"issue-{issue_number}-"
+
+    def _matches(pr: dict[str, Any]) -> bool:
+        head = pr.get("head")
+        ref = head.get("ref") if isinstance(head, dict) else pr.get("headRefName")
+        if isinstance(ref, str) and (
+            ref.startswith(branch_prefix) or ref == f"issue-{issue_number}"
+        ):
+            return True
+        title = str(pr.get("title") or "")
+        body = str(pr.get("body") or "")
+        return bool(issue_ref.search(title) or issue_ref.search(body))
+
+    prs: Any = None
+    if target_repo:
+        try:
+            prs = api_request(client, f"repos/{target_repo}/pulls?state=open&per_page=100")
+        except Exception:
+            prs = None
+    if not isinstance(prs, list):
+        try:
+            prs = client.pr_list(state="open", limit=100)
+        except Exception:
+            prs = []
+    if not isinstance(prs, list):
+        return False
+    return any(isinstance(pr, dict) and _matches(pr) for pr in prs)
+
+
 def _strip_generation(key: str) -> str:
     """Remove trailing :N generation suffix from an idempotency key when present.
 
@@ -285,6 +334,15 @@ def _strip_generation(key: str) -> str:
     if len(parts) >= 4 and parts[-1].isdigit():
         return ":".join(parts[:-1])
     return key
+
+
+def _in_flight_target_repo(store: "QueueStore", issue: int) -> str | None:
+    for entry in store.snapshot().in_flight:
+        if entry.get("issue") == issue:
+            repo = entry.get("target_repo")
+            if isinstance(repo, str) and repo.strip():
+                return repo
+    return None
 
 
 def _label_namespace() -> str:
@@ -408,6 +466,16 @@ def execute(
                     logger.exception("andon sink emit failed")
 
         elif isinstance(action, ReleaseInFlightAction):
+            if client is not None and _issue_has_open_linked_pr(
+                client,
+                action.issue,
+                target_repo=_in_flight_target_repo(store, action.issue),
+            ):
+                logger.info(
+                    "in_flight release skipped: issue=#%s has open linked PR",
+                    action.issue,
+                )
+                continue
             store.remove_in_flight(action.issue)
             logger.info("in_flight released: issue=#%s reason=%s", action.issue, action.reason)
             if client is not None and action.phase:
