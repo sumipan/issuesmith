@@ -64,7 +64,7 @@ class B1AcFormatRules:
                 return [Violation(
                     rule_id="b1_ac_format.section_missing",
                     severity="fail",
-                    message=f"## {ac_heading} セクションが存在しません",
+                    message=f"## {ac_heading} section is missing",
                     location=None,
                     auto_fixable=False,
                     fix_hint=None,
@@ -79,11 +79,11 @@ class B1AcFormatRules:
                     fix_hint = "\n".join(hint_lines)
                 else:
                     changed = get_config().sections["changed_files"]
-                    fix_hint = f"{changed}テーブルから paths_must_exist を自動派生"
+                    fix_hint = f"Derive paths_must_exist from the {changed} table"
                 return [Violation(
                     rule_id="b1_ac_format.yaml_block_missing",
                     severity="fail",
-                    message=f"## {ac_heading} セクション内に ```yaml ブロックが存在しません",
+                    message=f"## {ac_heading} section is missing a ```yaml block",
                     location=None,
                     auto_fixable=True,
                     fix_hint=fix_hint,
