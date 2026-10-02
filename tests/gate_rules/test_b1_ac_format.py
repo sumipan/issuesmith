@@ -106,7 +106,7 @@ paths_must_exist:
 
 
 # ---------------------------------------------------------------------------
-# Without scope:milestone → always empty list
+# Without scope:milestone / scope:migration — skip unless AC has YAML block
 # ---------------------------------------------------------------------------
 
 
@@ -117,6 +117,11 @@ def test_no_milestone_label_returns_empty():
 
 def test_no_milestone_label_with_valid_body_returns_empty():
     violations = _check(BODY_WITH_AC_AND_YAML, NON_MILESTONE_LABELS)
+    assert violations == []
+
+
+def test_no_milestone_label_with_ac_no_yaml_returns_empty():
+    violations = _check(BODY_WITH_AC_NO_YAML, NON_MILESTONE_LABELS)
     assert violations == []
 
 
@@ -443,11 +448,31 @@ def test_references_mixed_valid_and_invalid_returns_each_violation():
     assert "references_must_resolve[2]" in locations
 
 
-def test_references_invalid_with_no_milestone_label_returns_empty():
+def test_references_symbol_form_without_milestone_label():
     violations = _check(_BODY_REFS_SYMBOL_STRING, NON_MILESTONE_LABELS)
-    assert violations == []
+    assert len(violations) == 1
+    assert violations[0].rule_id == "b1_ac_format.reference_symbol_form"
 
 
-def test_references_invalid_with_no_labels_returns_empty():
-    violations = _check(_BODY_REFS_MISSING_FILE_KEY, [])
-    assert violations == []
+def test_references_symbol_form_without_labels():
+    violations = _check(_BODY_REFS_SYMBOL_STRING, [])
+    assert len(violations) == 1
+    assert violations[0].rule_id == "b1_ac_format.reference_symbol_form"
+
+
+def test_references_invalid_without_milestone_label_when_yaml_present():
+    violations = _check(_BODY_REFS_MISSING_FILE_KEY, NON_MILESTONE_LABELS)
+    assert len(violations) == 1
+    assert violations[0].rule_id == "b1_ac_format.reference_entry_invalid"
+
+
+def test_unknown_key_without_milestone_label_when_yaml_present():
+    violations = _check(BODY_WITH_INVALID_YAML, NON_MILESTONE_LABELS)
+    assert len(violations) == 1
+    assert violations[0].rule_id == "b1_ac_format.yaml_invalid"
+
+
+def test_unparseable_yaml_without_milestone_label_when_yaml_present():
+    violations = _check(BODY_WITH_UNPARSEABLE_YAML, NON_MILESTONE_LABELS)
+    assert len(violations) == 1
+    assert violations[0].rule_id == "b1_ac_format.yaml_invalid"
