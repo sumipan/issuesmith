@@ -342,6 +342,10 @@ def test_scope_breadth_blocks_llm(capsys, fresh_repo: Path):
     assert andon_arg.kind == "decision"
     assert "split" in andon_arg.options
     assert "reject" in andon_arg.options
+    captured = capsys.readouterr()
+    assert "pre-LLM gate violation in step p1" in captured.out
+    assert "scope too large" in captured.out
+    assert "PIPELINE_STATUS: IMPL_FAILED" in captured.out
 
 
 # ---------------------------------------------------------------------------

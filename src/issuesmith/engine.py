@@ -1270,6 +1270,7 @@ def _run_pre_gate_phase(
             options=["split", "reject"],
         )
         _raise_andon(get_forge(), full_andon)
+        print(summary)
         print(f"PIPELINE_STATUS: {failure_status}")
         return 1
 
