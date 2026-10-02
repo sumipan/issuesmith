@@ -27,6 +27,7 @@ import string
 import subprocess
 import sys
 import tempfile
+import warnings
 from dataclasses import replace
 from pathlib import Path
 
@@ -67,7 +68,13 @@ def resolve_step_config(step_id: str) -> StepConfig:
     steps = get_config().steps
     if step_id in steps:
         return steps[step_id]
-    return StepConfig(module=f"issuesmith.steps.{step_id.replace('-', '_')}")
+    fallback = f"issuesmith.steps.{step_id.replace('-', '_')}"
+    warnings.warn(
+        f"step {step_id!r} not in config.steps; falling back to {fallback}",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return StepConfig(module=fallback)
 
 
 def step_id_to_module(step_id: str) -> str:

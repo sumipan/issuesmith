@@ -1,4 +1,4 @@
-"""Fixture tests for issuesmith.steps.sub1_create (#3166).
+"""Fixture tests for issuesmith.milestone SUB1 API and steps.sub1_create shim (#3166 / #4276).
 
 Issue create fixtures were captured 2026-09-13 from live GitHub REST via
 ``GitHubClient`` (CLAUDE.md §10):
@@ -38,9 +38,17 @@ from tests.legacy_text import (
 from issuesmith.config import reset_config_cache
 from issuesmith.engine import RoleSelection, _extract_status_values
 from issuesmith.milestone import (
+    PlanRow,
+    allow_paths_for_row,
+    build_child_body,
     check_v1_target_repo,
     check_v2_allow_paths,
     check_v3_cjk_placeholders,
+    parse_split_plan,
+    prevalidate_child_body,
+    resolve_dependencies,
+    run_guarded_sub1_body,
+    run_sub1_create,
     validate_children,
 )
 from issuesmith.steps import sub1_create as sub1
@@ -145,6 +153,25 @@ def _reset_cfg():
     reset_config_cache()
 
 
+def test_milestone_public_api_exports_sub1_helpers() -> None:
+    """AC: milestone exposes parser/body/preflight without importing issuesmith.steps."""
+    assert PlanRow is not None
+    assert callable(parse_split_plan)
+    assert callable(resolve_dependencies)
+    assert callable(allow_paths_for_row)
+    assert callable(build_child_body)
+    assert callable(prevalidate_child_body)
+    assert callable(run_sub1_create)
+
+
+def test_sub1_shim_run_delegates_to_milestone() -> None:
+    ctx = _ctx()
+    with patch("issuesmith.steps.sub1_create.run_sub1_create") as mock_run:
+        mock_run.return_value = MagicMock(exit_code=0, pipeline_status="SUB_CREATED")
+        sub1.run(ctx)
+    mock_run.assert_called_once()
+
+
 def test_issue_create_fixtures_are_real_strings() -> None:
     success = json.loads(ISSUE_CREATE_SUCCESS_JSON)
     assert success["number"] == 3000
@@ -236,10 +263,15 @@ def test_v1_v2_v3_helpers_used_by_validate_children_and_sub1() -> None:
 
     # Direct helper use from sub1 path (prevalidate calls them)
     with (
-        patch.object(sub1, "check_v1_target_repo", wraps=check_v1_target_repo) as sv1,
-        patch.object(sub1, "check_v2_allow_paths", wraps=check_v2_allow_paths) as sv2,
-        patch.object(
-            sub1, "check_v3_cjk_placeholders", wraps=check_v3_cjk_placeholders
+        patch(
+            "issuesmith.milestone.check_v1_target_repo", wraps=check_v1_target_repo
+        ) as sv1,
+        patch(
+            "issuesmith.milestone.check_v2_allow_paths", wraps=check_v2_allow_paths
+        ) as sv2,
+        patch(
+            "issuesmith.milestone.check_v3_cjk_placeholders",
+            wraps=check_v3_cjk_placeholders,
         ) as sv3,
     ):
         sub1._prevalidate_child_body(
@@ -326,15 +358,14 @@ def test_run_creates_child_and_returns_sub_created() -> None:
     client.issue_create.side_effect = _capture_create
 
     with (
-        patch.object(sub1, "_github_client", return_value=client),
-        patch.object(sub1, "_resolve_template", return_value=None),
-        patch.object(sub1, "ensure_sub1_binding", return_value=True),
-        patch.object(
-            sub1,
-            "validate_children",
+        patch("issuesmith.milestone.get_forge", return_value=client),
+        patch("issuesmith.milestone.resolve_sub1_template", return_value=None),
+        patch("issuesmith.milestone.ensure_sub1_binding", return_value=True),
+        patch(
+            "issuesmith.milestone.validate_children",
             return_value=MagicMock(passed=True, results=[]),
         ),
-        patch.object(sub1, "get_config") as cfg,
+        patch("issuesmith.milestone.get_config") as cfg,
     ):
         cfg.return_value.supported_repos = frozenset(
             {"sumipan/nexus", "sumipan/issuesmith", "sumipan/ghdag"}
@@ -397,16 +428,15 @@ def test_run_auto_creates_milestone_when_unset() -> None:
     client.milestone_create.return_value = 42
 
     with (
-        patch.object(sub1, "_github_client", return_value=client),
-        patch.object(sub1, "_resolve_template", return_value=None),
-        patch.object(sub1, "ensure_sub1_binding", return_value=True),
-        patch.object(
-            sub1,
-            "validate_children",
+        patch("issuesmith.milestone.get_forge", return_value=client),
+        patch("issuesmith.milestone.resolve_sub1_template", return_value=None),
+        patch("issuesmith.milestone.ensure_sub1_binding", return_value=True),
+        patch(
+            "issuesmith.milestone.validate_children",
             return_value=MagicMock(passed=True, results=[]),
         ),
         patch("issuesmith.convert_to_milestone.get_config") as ctm_cfg,
-        patch.object(sub1, "get_config") as cfg,
+        patch("issuesmith.milestone.get_config") as cfg,
     ):
         ctm_cfg.return_value.timezone = "Asia/Tokyo"
         cfg.return_value.supported_repos = frozenset({"sumipan/nexus"})
@@ -455,8 +485,8 @@ def test_run_all_rows_fail_validation_exits_nonzero() -> None:
     client.list_sub_issues = MagicMock(return_value=[])
 
     with (
-        patch.object(sub1, "_github_client", return_value=client),
-        patch.object(sub1, "get_config") as cfg,
+        patch("issuesmith.milestone.get_forge", return_value=client),
+        patch("issuesmith.milestone.get_config") as cfg,
     ):
         cfg.return_value.supported_repos = frozenset({"sumipan/nexus"})
         # ASCII fixture data.
@@ -520,10 +550,12 @@ def test_run_guarded_body_does_not_pass_invalid_tier(tmp_path) -> None:
 
     ctx = MagicMock(issue_number="3379", target_repo="sumipan/nexus")
     row = MagicMock(row_num=1, title="t", repo="sumipan/nexus")
-    with patch.object(sub1, "resolve", side_effect=fake_resolve), patch.object(
-        sub1, "run_guarded", side_effect=fake_run_guarded
+    with patch("issuesmith.engine.resolve", side_effect=fake_resolve), patch(
+        "issuesmith.engine.run_guarded", side_effect=fake_run_guarded
     ):
-        rc = sub1._run_guarded_body(ctx, row=row, body_path=tmp_path / "b.md", template_name="sub-body.md")
+        rc = run_guarded_sub1_body(
+            ctx, row=row, body_path=tmp_path / "b.md", template_name="sub-body.md"
+        )
     assert rc == 0
     assert calls["resolve"] == ("implementation", None)
     assert "model=m" in calls["run_guarded"][1]
@@ -563,10 +595,10 @@ def test_run_guarded_body_value_error_exits_nonzero(capsys) -> None:
     client.list_sub_issues = MagicMock(return_value=[])
 
     with (
-        patch.object(sub1, "_github_client", return_value=client),
-        patch.object(sub1, "_resolve_template", return_value="sub-ready.md"),
-        patch.object(sub1, "resolve", side_effect=ValueError("tier must be one of: heavy, light")),
-        patch.object(sub1, "get_config") as cfg,
+        patch("issuesmith.milestone.get_forge", return_value=client),
+        patch("issuesmith.milestone.resolve_sub1_template", return_value="sub-ready.md"),
+        patch("issuesmith.engine.resolve", side_effect=ValueError("tier must be one of: heavy, light")),
+        patch("issuesmith.milestone.get_config") as cfg,
     ):
         _cfg_mock(cfg)
         with pytest.raises(SystemExit) as exc_info:
@@ -623,16 +655,18 @@ def test_run_guarded_body_timeout_warns_and_continues(capsys) -> None:
     client.issue_create.return_value = 9001
 
     with (
-        patch.object(sub1, "_github_client", return_value=client),
-        patch.object(sub1, "_resolve_template", return_value="sub-ready.md"),
-        patch.object(
-            sub1,
-            "_run_guarded_body",
+        patch("issuesmith.milestone.get_forge", return_value=client),
+        patch("issuesmith.milestone.resolve_sub1_template", return_value="sub-ready.md"),
+        patch(
+            "issuesmith.milestone.run_guarded_sub1_body",
             side_effect=subprocess.TimeoutExpired(cmd="claude", timeout=30),
         ),
-        patch.object(sub1, "ensure_sub1_binding", return_value=True),
-        patch.object(sub1, "validate_children", return_value=MagicMock(passed=True, results=[])),
-        patch.object(sub1, "get_config") as cfg,
+        patch("issuesmith.milestone.ensure_sub1_binding", return_value=True),
+        patch(
+            "issuesmith.milestone.validate_children",
+            return_value=MagicMock(passed=True, results=[]),
+        ),
+        patch("issuesmith.milestone.get_config") as cfg,
     ):
         _cfg_mock(cfg)
         sub1.run(_ctx())
@@ -651,14 +685,13 @@ def test_run_all_rows_guarded_body_fail_exits_nonzero(capsys) -> None:
     client.list_sub_issues = MagicMock(return_value=[])
 
     with (
-        patch.object(sub1, "_github_client", return_value=client),
-        patch.object(sub1, "_resolve_template", return_value="sub-ready.md"),
-        patch.object(
-            sub1,
-            "_run_guarded_body",
+        patch("issuesmith.milestone.get_forge", return_value=client),
+        patch("issuesmith.milestone.resolve_sub1_template", return_value="sub-ready.md"),
+        patch(
+            "issuesmith.milestone.run_guarded_sub1_body",
             side_effect=subprocess.CalledProcessError(returncode=1, cmd="claude"),
         ),
-        patch.object(sub1, "get_config") as cfg,
+        patch("issuesmith.milestone.get_config") as cfg,
     ):
         _cfg_mock(cfg)
         with pytest.raises(SystemExit) as exc_info:
@@ -685,10 +718,10 @@ def test_run_guarded_body_passes_execution_constraints_in_variables() -> None:
     )
     row = MagicMock(row_num=1, title="t", repo="sumipan/issuesmith")
     with (
-        patch.object(sub1, "resolve", side_effect=fake_resolve),
-        patch.object(sub1, "run_guarded", side_effect=fake_run_guarded),
+        patch("issuesmith.engine.resolve", side_effect=fake_resolve),
+        patch("issuesmith.engine.run_guarded", side_effect=fake_run_guarded),
     ):
-        rc = sub1._run_guarded_body(
+        rc = run_guarded_sub1_body(
             ctx, row=row, body_path=Path("/tmp/b.md"), template_name="sub-ready.md"
         )
 
@@ -737,12 +770,12 @@ def test_run_guarded_body_template_expansion_does_not_raise_on_execution_constra
     )
     row = MagicMock(row_num=1, title="t", repo="sumipan/issuesmith")
     with (
-        patch.object(sub1, "resolve", side_effect=fake_resolve),
-        patch.object(sub1, "run_guarded", side_effect=fake_run_guarded),
-        patch.object(sub1, "get_config") as cfg,
+        patch("issuesmith.engine.resolve", side_effect=fake_resolve),
+        patch("issuesmith.engine.run_guarded", side_effect=fake_run_guarded),
+        patch("issuesmith.milestone.get_config") as cfg,
     ):
         cfg.return_value.paths.template_dir = tmp_path
-        rc = sub1._run_guarded_body(
+        rc = run_guarded_sub1_body(
             ctx, row=row, body_path=tmp_path / "b.md", template_name="sub-ready.md"
         )
 
@@ -765,8 +798,8 @@ def test_run_row_with_unreadable_change_table_creates_no_child() -> None:
     }
     client.list_sub_issues = MagicMock(return_value=[])
     with (
-        patch.object(sub1, "_github_client", return_value=client),
-        patch.object(sub1, "get_config") as cfg,
+        patch("issuesmith.milestone.get_forge", return_value=client),
+        patch("issuesmith.milestone.get_config") as cfg,
     ):
         cfg.return_value.supported_repos = frozenset({"sumipan/nexus"})
         cfg.return_value.sections = {

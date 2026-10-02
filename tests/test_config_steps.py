@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import importlib
+import warnings
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 import yaml
@@ -109,9 +111,49 @@ def test_custom_step_module_loaded_by_dispatch(tmp_path, monkeypatch):
 
 def test_unknown_step_falls_back_to_hyphen_module(tmp_path, monkeypatch):
     _write_config(tmp_path, monkeypatch, {"repo": "example/app"})
-    resolved = dispatch_mod.resolve_step_config("some-new-step")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        resolved = dispatch_mod.resolve_step_config("some-new-step")
     assert resolved.module == "issuesmith.steps.some_new_step"
     assert resolved.template is None
+    assert any(
+        issubclass(w.category, DeprecationWarning)
+        and "some-new-step" in str(w.message)
+        for w in caught
+    )
+
+
+def test_step_without_module_returns_andon_broken(tmp_path, monkeypatch):
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "repo": "example/app",
+            "steps": {
+                "llm-only": {"module": None, "template": "design.md"},
+            },
+        },
+    )
+    with patch.object(dispatch_mod, "map_step_result", return_value=1) as mock_map:
+        rc = dispatch_mod.main(
+            [
+                "llm-only",
+                "issue_number=1",
+                "base_branch=main",
+                "handler_name=x",
+                "is_cross_repo=false",
+                "target_clone_path=",
+                "source=",
+                "workflow_name=issuesmith",
+                "m1_result_filename=",
+                "m1r_result_filename=",
+            ]
+        )
+    assert rc == 1
+    result = mock_map.call_args[0][0]
+    assert result.status == "andon"
+    assert result.andon is not None
+    assert "no module" in result.andon.summary
 
 
 def test_m2_finalize_has_no_m2_compact_literal():
