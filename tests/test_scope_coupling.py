@@ -48,7 +48,7 @@ def ascii_sections_config(tmp_path, monkeypatch):
 _FAKE_ROOT = Path("/fake/root")
 
 # AC-1 fixture: run_guarded is modified via backtick identifier;
-# allow_paths is missing steps/cp2_checkpoint.py
+# allow_paths is missing steps/m2_finalize.py
 _AC1_BODY = (
     "```yaml\n"
     "target_repo: sumipan/issuesmith\n"
@@ -94,14 +94,14 @@ _AC3_BODY_SMALL = (
 
 
 def _make_grep_mock_ac1():
-    """_git_grep side_effect: run_guarded defined in engine.py, used in cp2_checkpoint."""
+    """_git_grep side_effect: run_guarded defined in engine.py, used in m2_finalize."""
     def fake_grep(root, pattern, pathspec):
         if pattern == "def run_guarded":
             return ["src/issuesmith/engine.py"]
         if pattern == "class run_guarded":
             return []
         if pattern == "run_guarded" and pathspec == "src":
-            return ["src/issuesmith/engine.py", "src/issuesmith/steps/cp2_checkpoint.py"]
+            return ["src/issuesmith/engine.py", "src/issuesmith/steps/m2_finalize.py"]
         if pattern == "run_guarded" and pathspec == "tests":
             return []
         return []
@@ -128,7 +128,7 @@ def _make_grep_mock_ac2():
 
 
 def _make_grep_mock_run_guarded(
-    missing_src="src/issuesmith/steps/cp2_checkpoint.py",
+    missing_src="src/issuesmith/steps/m2_finalize.py",
 ):
     """_git_grep side_effect: run_guarded defined in engine.py, found in missing_src."""
     def fake_grep(root, pattern, pathspec):
@@ -143,9 +143,9 @@ def _make_grep_mock_run_guarded(
 
 
 class TestAC1CallersOutsideAllowPaths:
-    """AC-1: run_guarded changed; cp2_checkpoint.py missing from allow_paths."""
+    """AC-1: run_guarded changed; m2_finalize.py missing from allow_paths."""
 
-    def test_returns_callers_violation_with_cp2_checkpoint(self):
+    def test_returns_callers_violation_with_m2_finalize(self):
         with mock.patch(
             "issuesmith.gate_rules.scope_coupling.resolve_scope_root",
             return_value=_FAKE_ROOT,
@@ -160,12 +160,12 @@ class TestAC1CallersOutsideAllowPaths:
         assert caller_v, f"Expected callers violation, got: {violations}"
         v = caller_v[0]
         assert v.severity == "fail"
-        assert "steps/cp2_checkpoint.py" in v.fix_hint
+        assert "steps/m2_finalize.py" in v.fix_hint
 
     def test_no_violation_when_missing_file_in_allow_paths(self):
         body = _AC1_BODY.replace(
             "  - src/issuesmith/engine.py\n",
-            "  - src/issuesmith/engine.py\n  - src/issuesmith/steps/cp2_checkpoint.py\n",
+            "  - src/issuesmith/engine.py\n  - src/issuesmith/steps/m2_finalize.py\n",
         )
         with mock.patch(
             "issuesmith.gate_rules.scope_coupling.resolve_scope_root",
@@ -222,7 +222,7 @@ class TestAC3AutoWiden:
         assert violations
         assert all(v.auto_fixable for v in violations)
         assert rule.autofix_new_allow_paths is not None
-        assert "src/issuesmith/steps/cp2_checkpoint.py" in rule.autofix_new_allow_paths
+        assert "src/issuesmith/steps/m2_finalize.py" in rule.autofix_new_allow_paths
 
     def test_widen_blocked_when_over_max_files(self):
         # 80 allow_paths + 1 missing = 81 > max_files(80)
@@ -256,7 +256,7 @@ class TestAC3AutoWiden:
 
     def test_widen_exactly_at_max_files_succeeds(self):
         """Merged count == max_files (80): 79 allow_paths + 1 missing = 80."""
-        # engine.py in allow_paths (not missing), cp2_checkpoint.py is missing
+        # engine.py in allow_paths (not missing), m2_finalize.py is missing
         body_79 = (
             "```yaml\n"
             "target_repo: sumipan/issuesmith\n"
@@ -341,7 +341,7 @@ class TestAC5RegistryAndGateIntegration:
 
         assert result["status"] == "FAIL"
         assert any(
-            "callers_outside_allow_paths" in r or "steps/cp2_checkpoint.py" in r
+            "callers_outside_allow_paths" in r or "steps/m2_finalize.py" in r
             for r in result["reasons"]
         )
 
@@ -359,7 +359,7 @@ class TestAC5RegistryAndGateIntegration:
                 result = check_gate(_AC3_BODY_SMALL, [])
 
         assert result["autofix_new_allow_paths"] is not None
-        assert "src/issuesmith/steps/cp2_checkpoint.py" in result["autofix_new_allow_paths"]
+        assert "src/issuesmith/steps/m2_finalize.py" in result["autofix_new_allow_paths"]
 
 
 class TestEdgeCases:
@@ -416,7 +416,7 @@ class TestEdgeCases:
             "base_branch: main\n"
             "allow_paths:\n"
             "  - src/issuesmith/engine.py\n"
-            "  - src/issuesmith/steps/cp2_checkpoint.py\n"
+            "  - src/issuesmith/steps/m2_finalize.py\n"
             "```\n\n"
             "## Design\n\n"
             "`run_guarded` is changed.\n"
