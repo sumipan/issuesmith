@@ -5,23 +5,23 @@ issuesmith is a GitHub Issue label-driven workflow toolkit that runs on [ghdag](
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.109.0-blue)
+![version](https://img.shields.io/badge/version-v0.113.0-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-Current release is **v0.109.0** (pre-1.0). Public interfaces may change before `1.0.0`.
+Current release is **v0.113.0** (pre-1.0). Public interfaces may change before `1.0.0`.
 
 ## Installation
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.109.0"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.113.0"
 ```
 
 With ghdag (required for `gate-preflight`, dispatch, and most runtime paths):
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.109.0"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.113.0"
 ```
 
 | Item | Value |
@@ -67,6 +67,7 @@ export ISSUESMITH_CONFIG=/path/to/issuesmith.yaml   # optional when yaml is at c
 python3 -m issuesmith doctor
 python3 -m issuesmith gate-preflight --gate cp1 --body-file body.md
 python3 -m issuesmith engine show
+python3 -m issuesmith config show
 ```
 
 Common entry points: `python3 -m issuesmith doctor`, `python3 -m issuesmith gate-preflight --gate cp1 --body-file body.md`, `python3 -m issuesmith resume <issue> --from <step>`, and `python3 -m issuesmith config show`.
@@ -106,6 +107,17 @@ Top-level commands are registered in `issuesmith.cli._HANDLERS`. `andon` is disp
 | `main-health` | Run `observe.main_health.command` on the latest base branch and write state |
 | `apply` / `ingest-review` | Moved to host `tools/stash/`; exits 2 |
 
+### `andon` subcommands
+
+Dispatched from `issuesmith.__main__` (not in `_HANDLERS`).
+
+| Subcommand | Description |
+|---|---|
+| `andon list [--all] [--json]` | List open (unanswered) andons |
+| `andon show <andon-id>` | Show a specific andon by id |
+| `andon answer <andon-id> <action>` | Post answer, remove label, call resume hook |
+| `andon note <andon-id> --key <key> --value <value>` | Record a note on an open andon (no label change) |
+
 ### `engine` subcommands
 
 | Subcommand | Description |
@@ -142,6 +154,14 @@ Top-level commands are registered in `issuesmith.cli._HANDLERS`. `andon` is disp
 | `milestone status <parent>` | Show milestone chain status |
 | `milestone resume <parent>` | Resume milestone chain progress |
 | `milestone prune [--dry-run]` | Prune completed milestone chain state |
+
+### Deprecated API
+
+| Command | Replacement |
+|---|---|
+| `recover` | `resume <issue> --from <step>` |
+| `redispatch` | `resume <issue> --phase <phase>` |
+| `apply` / `ingest-review` | Host `tools/stash/` scripts; CLI exits 2 |
 
 ## Public API
 
@@ -222,6 +242,133 @@ Top-level `issuesmith.__all__` is empty (`[]`); import submodules directly.
 | `check_scope` | Evaluate allow_paths scope gate |
 | `ScopeGate` | Scope gate class |
 
+### `issuesmith.merge`
+
+| Symbol | Notes |
+|---|---|
+| `CompanionReadyResult` | Companion PR readiness result |
+| `LocalMergeVerifyResult` | Local merge verification result |
+| `MergeStateInfo` | PR merge state snapshot |
+| `MergeStateTimeoutError` | Merge state polling timed out |
+| `PostMergeTestResult` | Post-merge pytest result |
+| `PrSearchResult` | PR search result |
+| `check_companion_ready` | Check companion PR readiness |
+| `find_companion_pr` | Find companion PR for a branch |
+| `find_pr` | Find PR by branch |
+| `get_merge_state` | Read PR merge state |
+| `graphql_merge_state` | GraphQL merge state query |
+| `is_already_merged` | Check whether PR is merged |
+| `list_pulls` | List pull requests |
+| `run_post_merge_pytest` | Run pytest after merge |
+| `verify_local_merge` | Verify local merge result |
+| `wait_merge_state` | Poll until merge state settles |
+
+### `issuesmith.m2_gate`
+
+| Symbol | Notes |
+|---|---|
+| `has_acceptance_criteria_section` | Detect acceptance-criteria section |
+| `get_unchecked_count` | Count unchecked AC items |
+| `check_gate` | Run M2 gate checks |
+| `check_gate_multi_root` | Run M2 gate across multiple roots |
+| `synthesize_contract_failures` | Format multi-root contract failures |
+| `main` | CLI entry point |
+
+### `issuesmith.pr_scope`
+
+| Symbol | Notes |
+|---|---|
+| `DEFAULT_FORBIDDEN_PR_PATHS` | Default paths excluded from PR scope |
+| `DIFF_LINES_FALLBACK` | Fallback diff line count |
+| `DerivedAllowPathsError` | Derived allow_paths could not be computed |
+| `allow_paths_from_issue_body` | Parse allow_paths from Issue body |
+| `check_pr_diff_scope` | Check PR diff against allow_paths |
+| `check_pr_scope_with_derived` | PR scope check with derived paths |
+| `derived_allow_paths_from_result` | Derive allow_paths from test failures |
+| `filenames_from_pr_files` | Extract filenames from PR files |
+| `find_pr_for_branch` | Find PR for a branch name |
+| `pr_diff_lines` | Count PR diff lines |
+| `unchecked_ac_count` | Count unchecked acceptance criteria |
+
+### `issuesmith.repair`
+
+| Symbol | Notes |
+|---|---|
+| `RequiresResult` | Result of requires evaluation |
+| `evaluate_requires` | Evaluate step requires chain |
+| `apply_auto_fixes` | Apply automatic fixes from gate verdicts |
+| `record_metrics` | Record repair metrics |
+
+### `issuesmith.scope_gate`
+
+| Symbol | Notes |
+|---|---|
+| `ScopeMeasure` | Scope measurement (files, lines, by_dir) |
+| `ScopeVerdict` | Scope gate verdict |
+| `evaluate` | Evaluate scope against limits |
+| `format_comment` | Format scope gate comment |
+| `measure_scope` | Measure scope of changed files |
+| `override_from_metadata` | Override scope limits from metadata |
+| `parse_allow_paths_from_ctx` | Parse allow_paths from step context |
+| `record_p0_trip_metric` | Record P0 scope trip metric |
+| `resolve_scope_root` | Resolve scope measurement root |
+
+### `issuesmith.worktree`
+
+| Symbol | Notes |
+|---|---|
+| `WorktreeError` | Worktree creation or validation failed |
+| `assert_jobs_clean` | Assert jobs directory is clean |
+| `clone_if_missing` | Clone external repo if missing |
+| `ensure_base_included` | Ensure base branch is included in worktree |
+| `fetch_base_or_raise` | Fetch base branch or raise |
+| `fetch_base_with_retry` | Fetch base with lock and retries |
+| `github_client` | Return forge client |
+| `handle_milestone` | Handle milestone-blocked Issues |
+| `prepare_cross_repo_worktree` | Prepare cross-repo worktree |
+| `prepare_local_worktree` | Prepare local worktree |
+| `prepare_worktree` | Prepare worktree (local or cross-repo) |
+| `require_yaml_metadata` | Require YAML metadata in Issue body |
+| `resolve_base_ref` | Resolve base branch ref |
+| `validate_branch` | Validate branch name |
+
+### `issuesmith.ops.publish`
+
+| Symbol | Notes |
+|---|---|
+| `PublishResult` | Publish operation result |
+| `_bump_versions_in_range` | Bump versions in commit range (internal) |
+| `_run_version_bump` | Run version bump subprocess (internal) |
+| `main` | CLI entry point |
+| `publish` | Publish branch and create release |
+| `run_version_bump` | Run deterministic version bump |
+
+### `issuesmith.verbs`
+
+| Symbol | Notes |
+|---|---|
+| `prepare_worktree` | Worktree verb |
+| `publish_branch` | Publish verb |
+| `find_pr` | Merge verb: find PR |
+| `merge_state` | Merge verb: read merge state |
+| `merge_pr` | Merge verb: merge PR |
+| `cleanup_worktrees` | Finalize verb: remove worktrees |
+| `cleanup_branches` | Finalize verb: remove branches |
+| `close_issue` | Finalize verb: close Issue |
+
+### Deprecated step shims (`issuesmith.steps.*`)
+
+Each `issuesmith.steps.<name>` module re-exports its canonical location. Prefer the canonical module.
+
+| Module | Canonical location | `__all__` exports |
+|---|---|---|
+| `issuesmith.steps.base` | `issuesmith.contract` | `Andon`, `StepContext`, `StepResult`, `Verdict` |
+| `issuesmith.steps.m1_merge` | `issuesmith.merge` | `run` |
+| `issuesmith.steps.m2_finalize` | `issuesmith.ac_contract` | `GateMaterializationError`, `check_gate`, `extract_contract_from_body`, `run`, `run_checks` |
+| `issuesmith.steps.p0_worktree` | `issuesmith.worktree` | `WorktreeError`, `fetch_base_with_retry`, `validate_branch`, … |
+| `issuesmith.steps.scope_gate` | `issuesmith.scope_gate` | `ScopeMeasure`, `ScopeVerdict`, `evaluate`, `measure_scope`, … |
+| `issuesmith.steps.sub1_create` | `issuesmith.milestone` | `PlanRow`, `Sub1State`, `parse_split_plan`, `run`, … |
+
 ## Architecture
 
 Orchestration (polling, DAG construction, label transitions, idempotency) lives in **ghdag** `WorkflowDispatcher`. issuesmith provides Issue-domain tools, gates, and steps that workflow templates call.
@@ -247,14 +394,14 @@ Orchestration (polling, DAG construction, label transitions, idempotency) lives 
 | `issuesmith/engine.py` | LLM role switcher, `run-guarded`, metrics |
 | `issuesmith/forge_api.py` | ghdag forge client wrappers |
 | `issuesmith/gate_rules/__init__.py` | Re-exports ghdag gate types |
-| `issuesmith/gate_rules/b1_ac_format.py` | B1 acceptance-criteria format rules |
+| `issuesmith/gate_rules/b1_ac_format.py` | B1 acceptance-criteria YAML format rules (all Issues with YAML blocks) |
 | `issuesmith/gate_rules/b1_migration.py` | B1 migration plan rules |
 | `issuesmith/gate_rules/b1_milestone_subdesign.py` | B1 milestone sub-design rules |
 | `issuesmith/gate_rules/cp1.py` | CP1 design gate rules |
 | `issuesmith/gate_rules/m2.py` | M2 merge gate rules |
 | `issuesmith/gate_rules/milestone_consistency.py` | Milestone consistency rules |
 | `issuesmith/gate_rules/scope_breadth.py` | Scope breadth (pre-LLM) rules |
-| `issuesmith/gate_rules/scope_coupling.py` | Scope coupling rules |
+| `issuesmith/gate_rules/scope_coupling.py` | Scope coupling rules (deleted src layout references) |
 | `issuesmith/gate_rules/scope_size.py` | Issue size rules |
 | `issuesmith/gates/__init__.py` | Unified `GATE_REGISTRY` and `Verdict` |
 | `issuesmith/gates/base.py` | Shared gate base types |
@@ -279,7 +426,7 @@ Orchestration (polling, DAG construction, label transitions, idempotency) lives 
 | `issuesmith/ops/gen_live_dispatch.py` | Live dispatch payload generation |
 | `issuesmith/ops/labels.py` | Managed-label reconciliation |
 | `issuesmith/ops/preflight.py` | Gate preflight helpers |
-| `issuesmith/ops/publish.py` | Publish / version-bump orchestration |
+| `issuesmith/ops/publish.py` | Publish / version-bump orchestration (detects bump commit anywhere in `origin/base..HEAD`) |
 | `issuesmith/ops/repair_step.py` | Explicit repair step for requires violations |
 | `issuesmith/ops/smoke.py` | Template smoke tests |
 | `issuesmith/ops/version_bump.py` | Deterministic version bump |
@@ -293,7 +440,7 @@ Orchestration (polling, DAG construction, label transitions, idempotency) lives 
 | `issuesmith/repair.py` | Repair-step helpers |
 | `issuesmith/resume.py` | Resume workflow from step or phase |
 | `issuesmith/scope_gate.py` | Reusable allow_paths scope measurement |
-| `issuesmith/steps/__init__.py` | Steps package |
+| `issuesmith/steps/__init__.py` | Deprecated step shim package |
 | `issuesmith/steps/base.py` | Step base types (deprecated shim) |
 | `issuesmith/steps/m1_merge.py` | M1 merge step (deprecated shim) |
 | `issuesmith/steps/m2_finalize.py` | M2 finalize step (deprecated shim) |
@@ -324,6 +471,8 @@ Orchestration (polling, DAG construction, label transitions, idempotency) lives 
 | `ISSUESMITH_PYTEST_TIMEOUT_SEC` | (none) | Per-invocation pytest timeout for worktree `tests` gate |
 | `ISSUESMITH_TIMEOUT_SEC` | role `timeout_sec` from config | Total wall budget for engine wait + LLM call |
 | `ISSUESMITH_REPAIR_ACTIVE` | (unset) | Set internally during repair dispatch to prevent nested repair |
+| `METRICS_JSONL_PATH` | `paths.metrics` from config | Override path for engine metrics JSONL |
+| `P0_FETCH_LOCK_WAIT` | `30` | Seconds to wait for P0 base-fetch lock |
 | `GHDAG_TASK_UUID` | (none) | Current DAG task UUID for dispatch correlation |
 | `AGENT_SKILLS_DIR` | `~/.agents/skills` | Skills directory for doctor/preflight |
 
@@ -343,7 +492,7 @@ Config file resolution order: explicit path argument → `ISSUESMITH_CONFIG` →
 | `milestone_chain` | `enabled: false` | Milestone chain automation |
 | `triage` | `enabled: true` | Queue tick LLM reorder |
 | `phases` | draft/sub/develop/merge | Phase → role → entry step mapping |
-| `sections` | Japanese section headings | Issue body section name map |
+| `sections` | section heading map | Issue body section name map |
 | `sub_design_subsections` | fixed tuple | Required sub-design subsections |
 | `steps` | `m2-role-dispatch` | Step definitions (`module`, `template`, `requires`) |
 | `forbidden_pr_paths` | `jobs/**`, `logs/**`, … | Paths excluded from PR scope |
@@ -372,6 +521,8 @@ Nested `observe.main_health` keys: `worktree` (required when enabled), `command`
 | `GateMaterializationError` | `issuesmith.ac_contract` | `RuntimeError` | Gate root worktree could not be materialized |
 | `WorktreeError` | `issuesmith.worktree` | `Exception` | Worktree creation or validation failed |
 | `RetrySignal` | `issuesmith.engine` | `RuntimeError` | Engine deferred for quota/rate-limit retry (not a failure) |
+| `DerivedAllowPathsError` | `issuesmith.pr_scope` | `ValueError` | Derived allow_paths could not be computed from test output |
+| `MergeStateTimeoutError` | `issuesmith.merge` | `Exception` | PR merge state polling timed out |
 
 `TemplateVariableError` (`ghdag.pipeline.order`) may propagate from `issuesmith.engine` when a template variable is missing at render time.
 
