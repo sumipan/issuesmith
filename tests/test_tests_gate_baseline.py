@@ -352,6 +352,23 @@ def test_flaky_rerun_always_fails_stays_pytest_failure(
     assert violations[0].severity == "fail"
 
 
+@pytest.mark.parametrize("rerun_result", [
+    (124, "pytest timed out after 1500 s\n"),
+    (2, "ERROR tests/test_bad.py - ImportError\n"),
+    (1, "no parsable failure lines\n"),
+])
+def test_flaky_rerun_inconclusive_stays_pytest_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rerun_result: tuple[int, str],
+) -> None:
+    """A rerun without a pass verdict (timeout, collection error) must not whitewash failures."""
+    test_id = "tests/test_bad.py::test_bad"
+    violations = _judge_new_failures(
+        monkeypatch, tmp_path, [test_id], [rerun_result, rerun_result],
+    )
+
+    assert [v.rule_id for v in violations] == ["tests.pytest_failure"]
+
+
 def test_flaky_reruns_zero_skips_rerun(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

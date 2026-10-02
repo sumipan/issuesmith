@@ -658,7 +658,11 @@ class TestsGate:
                 if rc2 == 0:
                     confirmed_failing = set()
                     break
-                confirmed_failing &= set(_parse_failed_ids(out2))
+                rerun_failed = set(_parse_failed_ids(out2))
+                if rc2 != 1 or not rerun_failed:
+                    # Timeout / collection error / unparsable output: inconclusive, keep blocking.
+                    break
+                confirmed_failing &= rerun_failed
             flaky_ids = [i for i in new_ids if i not in confirmed_failing]
             new_ids = [i for i in new_ids if i in confirmed_failing]
 
