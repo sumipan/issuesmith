@@ -285,13 +285,11 @@ def _issue_has_open_linked_pr(
     """
     import re
 
-    from issuesmith.queue import _find_open_prs_closing_issue
-
-    if _find_open_prs_closing_issue(client, issue_number):
-        return True
+    from issuesmith.forge_api import api_request
 
     issue_ref = re.compile(rf"(?<!\d)#{issue_number}(?!\d)")
     branch_prefix = f"issue-{issue_number}-"
+    closes_marker = re.compile(rf"(?i)\b(?:closes|refs)\s+#{issue_number}(?!\d)")
 
     def _matches(pr: dict[str, Any]) -> bool:
         head = pr.get("head") or {}
@@ -304,19 +302,54 @@ def _issue_has_open_linked_pr(
         body = str(pr.get("body") or "")
         return bool(issue_ref.search(title) or issue_ref.search(body))
 
+    def _has_closes_or_refs_marker(prs: list[Any]) -> bool:
+        for pr in prs:
+            if not isinstance(pr, dict):
+                continue
+            title = str(pr.get("title") or "")
+            body = str(pr.get("body") or "")
+            if closes_marker.search(title) or closes_marker.search(body):
+                return True
+            number = pr.get("number")
+            if not isinstance(number, int):
+                continue
+            try:
+                detail = client.pr_get(number)
+            except Exception:
+                continue
+            if not isinstance(detail, dict):
+                continue
+            d_title = str(detail.get("title") or "")
+            d_body = str(detail.get("body") or "")
+            if closes_marker.search(d_title) or closes_marker.search(d_body):
+                return True
+        return False
+
+    def _open_prs_for_repo(repo: str) -> list[dict[str, Any]]:
+        if not repo:
+            return []
+        path = f"repos/{repo}/pulls?state=open&per_page=100"
+        try:
+            listed = api_request(client, path)
+        except Exception:
+            return []
+        if not isinstance(listed, list):
+            return []
+        return [p for p in listed if isinstance(p, dict)]
+
     try:
         prs = client.pr_list(state="open", limit=100)
     except Exception:
         prs = []
     if isinstance(prs, list):
+        if _has_closes_or_refs_marker(prs):
+            return True
         for pr in prs:
             if isinstance(pr, dict) and _matches(pr):
                 return True
 
     if target_repo:
-        from issuesmith.pr_scope import _list_open_pulls
-
-        for pr in _list_open_pulls(client, target_repo):
+        for pr in _open_prs_for_repo(target_repo):
             if _matches(pr):
                 return True
 
