@@ -40,9 +40,11 @@ _META_AC_PATTERN = re.compile(
 )
 _OPTIONAL_AC_PATTERN = re.compile(r"^\(optional\)", re.IGNORECASE)
 # Token separators: ASCII ones plus the CJK symbols / punctuation, katakana middle dot
-# and fullwidth punctuation ranges (escapes keep this file free of CJK literals).
+# and fullwidth punctuation ranges (named escapes keep this file free of CJK literals).
 _KEYWORD_TOKEN_SEP_RE = re.compile(
-    r"[\s:()/\u3000-\u303f\u30fb\uff01-\uff0f\uff1a-\uff20]"
+    r"[\s:()/\N{IDEOGRAPHIC SPACE}-\N{IDEOGRAPHIC HALF FILL SPACE}"
+    r"\N{KATAKANA MIDDLE DOT}\N{FULLWIDTH EXCLAMATION MARK}-\N{FULLWIDTH SOLIDUS}"
+    r"\N{FULLWIDTH COLON}-\N{FULLWIDTH COMMERCIAL AT}]"
 )
 _VERSION_ASSIGN_LINE = re.compile(r"^\s*version\s*=")
 _VERSION_EXACT_ASSERT = re.compile(r'version["\]\s]*\s*==\s*["\'][0-9]+\.[0-9]+')
