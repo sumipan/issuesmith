@@ -16,7 +16,13 @@ from pathlib import Path
 _PUBLIC_DEF = re.compile(r"^([+-])((?:async\s+)?def)\s+([A-Za-z][A-Za-z0-9_]*)\s*\((.*)$")
 _PUBLIC_CLASS = re.compile(r"^([+-])class\s+([A-Za-z][A-Za-z0-9_]*)\b(.*)$")
 _ALL_LINE = re.compile(r"""^([+-])__all__\s*=\s*\[(.*)\]\s*$""")
-_BREAKING_MSG = re.compile(r"(breaking|BREAKING|feat!:|!:)")
+# type!: or type(scope)!: — Conventional Commits breaking subject line
+_CC_BREAKING_SUBJECT = re.compile(r"^[a-z]+(?:\([^)]+\))?!:")
+# BREAKING CHANGE: or BREAKING-CHANGE: footer trailer
+_CC_BREAKING_FOOTER = re.compile(r"^BREAKING[- ]CHANGE:", re.MULTILINE)
+# Subjects of publish-made bump commits (same value as publish._BUMP_SUBJECT_PREFIX;
+# defined here because this module also runs as a standalone script).
+_BUMP_COMMIT_PREFIX = "chore: bump version to "
 _ENTRY_SECTION = re.compile(
     r"^\[project\.(?:scripts|entry-points(?:\.[^\]]+)?)\]\s*$"
 )
@@ -228,11 +234,21 @@ def _check_a3_b4(diff: str) -> BumpDecision | None:
 
 
 def _check_b1(worktree: Path, base: str) -> BumpDecision | None:
-    result = _run_git(worktree, "log", f"{base}..HEAD", "--format=%s%n%b")
-    if result.returncode != 0:
+    """Conventional Commits breaking markers only; publish bump commits are skipped (#4508)."""
+    hit = BumpDecision("Y", "B1", "B1 — commit message indicates breaking change")
+    subjects = _run_git(worktree, "log", f"{base}..HEAD", "--format=%s")
+    if subjects.returncode != 0:
         return None
-    if _BREAKING_MSG.search(result.stdout):
-        return BumpDecision("Y", "B1", "B1 — commit message indicates breaking change")
+    for subject in subjects.stdout.splitlines():
+        if subject.startswith(_BUMP_COMMIT_PREFIX):
+            continue
+        if _CC_BREAKING_SUBJECT.match(subject):
+            return hit
+    bodies = _run_git(worktree, "log", f"{base}..HEAD", "--format=%B")
+    if bodies.returncode != 0:
+        return None
+    if _CC_BREAKING_FOOTER.search(bodies.stdout):
+        return hit
     return None
 
 

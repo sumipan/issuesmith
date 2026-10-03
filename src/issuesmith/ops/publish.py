@@ -307,7 +307,9 @@ def _maybe_bump_version(
         )
         return None
 
-    result = _run_version_bump(worktree, base_branch)
+    # origin/<base>, not the local branch: a stale local main drags old bump commits
+    # and other PRs into the range and self-feeds B1 (#4508).
+    result = _run_version_bump(worktree, f"origin/{base_branch}")
     if result.stdout:
         print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
     if result.returncode != 0:
