@@ -15,7 +15,6 @@ because they need the same raise_andon / RetrySignal machinery.
 """
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -104,16 +103,20 @@ def apply_auto_fixes(
     return updated, inp
 
 
-def record_metrics(path: Path, event: str, step_id: str, issue_num: int) -> None:
+def record_metrics(
+    path: Path,
+    event: str,
+    step_id: str,
+    issue_num: int,
+    rule_ids: list[str] | None = None,
+) -> None:
     """Append a requires_check or requires_repair event to the metrics file."""
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as fh:
-            fh.write(
-                json.dumps({"event": event, "step": step_id, "issue": issue_num}) + "\n"
-            )
-    except OSError:
-        pass
+    from issuesmith.metrics_events import append_event
+
+    payload: dict = {"event": event, "step": step_id, "issue": issue_num}
+    if rule_ids is not None:
+        payload["rule_ids"] = rule_ids
+    append_event(path, payload)
 
 
 __all__ = ["RequiresResult", "evaluate_requires", "apply_auto_fixes", "record_metrics"]

@@ -540,11 +540,18 @@ def _run_repair_step(
     return rc if rc != 0 else None
 
 
-def _safe_record_metrics(event: str, step_id: str, issue_num: int) -> None:
+def _safe_record_metrics(
+    event: str,
+    step_id: str,
+    issue_num: int,
+    rule_ids: list[str] | None = None,
+) -> None:
     try:
         from issuesmith.repair import record_metrics
 
-        record_metrics(get_config().paths.metrics, event, step_id, issue_num)
+        record_metrics(
+            get_config().paths.metrics, event, step_id, issue_num, rule_ids=rule_ids
+        )
     except Exception:
         pass
 
@@ -796,7 +803,8 @@ def run_requires_loop(
         _raise_andon(get_forge(), full_andon)
         return 1
 
-    _safe_record_metrics("requires_repair", step_id, issue_num)
+    blocking_rule_ids = list(dict.fromkeys(v.rule_id for v in result.blocking))
+    _safe_record_metrics("requires_repair", step_id, issue_num, rule_ids=blocking_rule_ids)
 
     # Launch repair step — may raise RetrySignal (not counted as repair).
     rc = _run_repair_step(result.blocking, step_id, context)
@@ -930,6 +938,11 @@ def main(argv: list[str]) -> int:
     if not argv:
         print(__doc__, file=sys.stderr)
         return 2
+
+    from issuesmith.metrics_events import record_step_started
+
+    record_step_started(get_config().paths)
+
     step_id, raw_context = argv[0], argv[1:]
     try:
         context = parse_context(raw_context)

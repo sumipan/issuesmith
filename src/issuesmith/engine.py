@@ -611,6 +611,9 @@ def _record_task_metrics(
         "role": role,
         "template": template or "",
     }
+    parent_uuid = os.environ.get("GHDAG_TASK_UUID", "").strip()
+    if parent_uuid:
+        tags["parent_uuid"] = parent_uuid
     if failure_class is not None:
         tags["failure_class"] = failure_class
     if failure_detail:
@@ -1288,6 +1291,9 @@ def run_guarded(
     emit_status: str | None = None,
     requires_step: str | None = None,
 ) -> int:
+    from issuesmith.metrics_events import record_step_started
+
+    record_step_started(get_config().paths)
     for status in success_statuses:
         if status.endswith("_SKIPPED"):
             raise ValueError(
@@ -1463,6 +1469,9 @@ def run_verified(
     契約違反として扱う（自然言語の書式ゆらぎで制御が壊れるクラスを排除）。
     Verify PASS 後に engine が唯一の `PIPELINE_STATUS: {emit_status}` を出力する。
     """
+    from issuesmith.metrics_events import record_step_started
+
+    record_step_started(get_config().paths)
     if emit_status:
         emit_rc, _stdout = _run_emit_order(
             role, template_path, variables, failure_status, cwd, tier
