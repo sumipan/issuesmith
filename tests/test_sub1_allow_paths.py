@@ -12,8 +12,20 @@ issuesmith.contract, the single parser the B1 gate also uses) and return []
 
 from __future__ import annotations
 
+from issuesmith.language import EN
 from issuesmith.milestone import PlanRow, allow_paths_for_row
-from tests.legacy_text import CHANGE_TYPE, CHANGED_FILES, DESCRIPTION, FILE_PATH, MODIFY, REPOSITORY, SUB
+from tests.legacy_text import (
+    CHANGE_TYPE,
+    DESCRIPTION,
+    FILE_PATH,
+    MODIFY,
+    REPOSITORY,
+    SUB,
+)
+
+# Split-plan / section vocabulary comes from the language pack (EN in tests);
+# the sub-header prefix and change-table columns still use the legacy test pack.
+CHANGED_FILES = EN.sections["changed_files"]
 
 _CHANGE_TABLE_HEADER = f"{REPOSITORY} | {FILE_PATH} | {CHANGE_TYPE} | {DESCRIPTION}"
 

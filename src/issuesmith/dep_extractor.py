@@ -6,6 +6,7 @@ import json
 import re
 import sys
 from dataclasses import asdict, dataclass, field
+from functools import lru_cache
 
 from ghdag.forge import ForgePort, get_forge
 from ghdag.markdown.body_editor import count_heading, get_section
@@ -17,16 +18,47 @@ _REJECTED_LABEL = "issuesmith:rejected"
 _SUB_DONE_LABEL = "issuesmith:sub-done"
 _MILESTONE_LABEL = "scope:milestone"
 _ISSUESMITH_LABEL_PREFIX = "issuesmith:"
-_ANALYSIS_TITLE_PREFIX = "【障害分析】"
+_ANALYSIS_TITLE_PREFIX = "[Failure Analysis]"
 _ISSUE_NUM_RE = re.compile(r"#(\d+)")
-_PARENT_ISSUE_RE = re.compile(r"^親イシュー:\s")
-_PARENT_NUMBER_RE = re.compile(r"^親イシュー:\s*#(\d+)", re.MULTILINE)
-_CHILD_ISSUE_RE = re.compile(r"^子イシュー:\s")
-_DEP_PREFIX_RE = re.compile(r"^依存:\s+(.+)$")
+_CHILD_ISSUE_LABEL = "Child issue"
 _TABLE_ROW_RE = re.compile(r"^\|")
 _TABLE_SEPARATOR_RE = re.compile(r"^\|[\s\-:|]+\|$")
 _LIST_ITEM_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+\S")
 UNPARSED_DEPENDENCY_SECTION = "unparsed_dependency_section"
+
+
+@lru_cache(maxsize=8)
+def _label_line_re(label: str) -> re.Pattern[str]:
+    return re.compile(rf"^{re.escape(label)}:\s")
+
+
+@lru_cache(maxsize=8)
+def _label_number_re(label: str) -> re.Pattern[str]:
+    return re.compile(rf"^{re.escape(label)}:\s*#(\d+)", re.MULTILINE)
+
+
+@lru_cache(maxsize=8)
+def _label_value_re(label: str) -> re.Pattern[str]:
+    return re.compile(rf"^{re.escape(label)}:\s+(.+)$")
+
+
+def _parent_issue_re() -> re.Pattern[str]:
+    """``<parent_issue_label>: `` line (the language pack's parent label)."""
+    return _label_line_re(get_config().language.parent_issue_label)
+
+
+def _parent_number_re() -> re.Pattern[str]:
+    """``<parent_issue_label>: #N`` anywhere in a body (group 1 = N)."""
+    return _label_number_re(get_config().language.parent_issue_label)
+
+
+def _child_issue_re() -> re.Pattern[str]:
+    return _label_line_re(_CHILD_ISSUE_LABEL)
+
+
+def _dep_prefix_re() -> re.Pattern[str]:
+    """Inline ``<depends-on column>: #N, ...`` line SUB1 writes into a child body."""
+    return _label_value_re(get_config().language.sub_plan_columns[4])
 
 
 @dataclass
@@ -71,7 +103,7 @@ def _extract_issue_numbers(text: str) -> list[int]:
 
 
 def _is_excluded_line(line: str) -> bool:
-    return bool(_PARENT_ISSUE_RE.match(line) or _CHILD_ISSUE_RE.match(line))
+    return bool(_parent_issue_re().match(line) or _child_issue_re().match(line))
 
 
 def _is_table_data_row(line: str) -> bool:
@@ -114,10 +146,11 @@ def extract_dependencies(body: str) -> list[int]:
         section = get_section(body, deps_heading) or ""
         deps.update(_section_dependencies(section))
 
+    dep_prefix = _dep_prefix_re()
     for line in _iter_scannable_lines(body):
         if _is_excluded_line(line):
             continue
-        match = _DEP_PREFIX_RE.match(line)
+        match = dep_prefix.match(line)
         if match:
             deps.update(_extract_issue_numbers(match.group(1)))
 
@@ -136,10 +169,11 @@ def unparsed_dependency_refs(body: str) -> list[int]:
         return []
     section = get_section(body, deps_heading) or ""
     declared = _section_dependencies(section)
+    dep_prefix = _dep_prefix_re()
     for line in _iter_scannable_lines(body):
         if _is_excluded_line(line):
             continue
-        match = _DEP_PREFIX_RE.match(line)
+        match = dep_prefix.match(line)
         if match:
             declared.update(_extract_issue_numbers(match.group(1)))
     mentioned: set[int] = set()
@@ -149,7 +183,7 @@ def unparsed_dependency_refs(body: str) -> list[int]:
         mentioned.update(_extract_issue_numbers(line))
     # A sub-issue may mention its milestone parent in prose ("parallel with sub 2 of #N"):
     # the parent is never a dependency of its own child, so it is not an unparsed ref.
-    parent = _PARENT_NUMBER_RE.search(body)
+    parent = _parent_number_re().search(body)
     if parent:
         mentioned.discard(int(parent.group(1)))
     return sorted(mentioned - declared)
@@ -165,7 +199,7 @@ def _is_exempt(title: str, labels: list[dict]) -> bool:
     """Return True when a CLOSED dependency should be treated as satisfied.
 
     Exempt cases:
-    1. Title starts with 【障害分析】 (analysis issues never get merge-done)
+    1. Title starts with ``_ANALYSIS_TITLE_PREFIX`` (analysis issues never get merge-done)
     2. Has issuesmith:rejected label
     3. Has no issuesmith:* labels at all (outside issuesmith lifecycle)
     4. Is a milestone that finished splitting (scope:milestone + issuesmith:sub-done).
@@ -232,7 +266,7 @@ def get_dep_status(client: ForgePort, issue_number: int) -> DepStatus:
 
 
 def is_satisfied(status: DepStatus) -> bool:
-    # exempt は「CLOSED でも merge-done 不要」の緩和。OPEN のままでは未解消。
+    # exempt relaxes "CLOSED needs merge-done"; an OPEN dependency is still unresolved.
     if status.state == "CLOSED" and status.is_exempt:
         return True
     if status.state == "CLOSED" and status.has_merge_done:

@@ -27,15 +27,15 @@ def extract_user_comments(comments: list[dict]) -> list[dict]:
     return [c for c in comments if not is_pipeline_comment(c["body"])]
 
 
-_B1_DEP_HEADER = "## B1 事前検証失敗:"
-_UNMERGED_LINE = "未マージ:"
+_B1_DEP_HEADER = "## B1 dependency check failed:"
+_UNMERGED_LINE = "Unmerged:"
 _ISSUE_REF_RE = re.compile(r"#\d+")
 
 
 def main() -> None:
-    """stdin の {body, comments: [...]} JSON からパイプライン自動生成コメントを除去して出力する。
+    """Drop pipeline-generated comments from the ``{body, comments: [...]}`` JSON on stdin.
 
-    B1 等のプロンプトが LLM にコメントを読ませる前段で決定論的にフィルタするための CLI。
+    CLI that filters deterministically before prompts such as B1 let the LLM read comments.
     """
     import json
     import sys

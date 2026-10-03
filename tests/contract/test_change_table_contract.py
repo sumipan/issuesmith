@@ -160,16 +160,20 @@ def test_split_plan_with_cell_pipe_reads_dep_repo_scope() -> None:
     from issuesmith.config import get_config
 
     sec = get_config().sections
+    # Split-plan columns and the no-deps word come from the language pack (#4470).
+    lang = get_config().language
+    _, title, target_repo, content, dependency = lang.sub_plan_columns
+    none_word = lang.no_deps_word
     body = (
         f"## {sec['milestone']}\n\n### {sec['sub_plan']}\n"
-        f"| # | {TITLE} | {TARGET_REPOSITORY} | {CONTENT} | {DEPENDENCY} |\n"
+        f"| # | {title} | {target_repo} | {content} | {dependency} |\n"
         "|---|---|---|---|---|\n"
-        f"| 1 | andon | `sumipan/issuesmith` | add `andon list|show|answer` | {NONE} |\n"
+        f"| 1 | andon | `sumipan/issuesmith` | add `andon list|show|answer` | {none_word} |\n"
         "| 2 | wire | `sumipan/nexus` | use `a|b` | #1 |\n"
     )
     rows, has_repo = sub1._parse_split_plan(body, parent_target_repo="sumipan/nexus")
     assert has_repo is True
     assert [(r.row_num, r.repo, r.scope, r.dep_raw) for r in rows] == [
-        (1, "sumipan/issuesmith", "add `andon list|show|answer`", NONE),
+        (1, "sumipan/issuesmith", "add `andon list|show|answer`", none_word),
         (2, "sumipan/nexus", "use `a|b`", "#1"),
     ]

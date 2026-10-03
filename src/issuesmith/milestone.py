@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
+import functools
 import re
 import subprocess
 import sys
@@ -32,6 +33,7 @@ from issuesmith.contract import (
 )
 from issuesmith.dep_extractor import check_dependencies, extract_dependencies
 from issuesmith.forge_api import api_request
+from issuesmith.language import LanguagePack
 from issuesmith.queue_store import QueueSnapshot, QueueStore
 from issuesmith.queue_triage import (
     DONE_LABEL,
@@ -71,19 +73,38 @@ def _build_milestone_idle_ok_labels() -> frozenset[str]:
 
 _SUB_LABELS: frozenset[str] = _build_sub_labels()
 _MILESTONE_IDLE_OK_LABELS: frozenset[str] = _build_milestone_idle_ok_labels()
-_CJK_PLACEHOLDER_RE = re.compile(
-    r"(プレースホルダ|プレースホルダー|未記入|TBD|TODO|FIXME|XXX|ＸＸＸ|要記入|ここに)"
-)
-# V3: 説明文中の語は無視し、単独行・YAML・見出し直下セクションのみ検出する。
-_STANDALONE_PLACEHOLDER_RE = re.compile(
-    r"^(?:[-*]\s*)?(?:プレースホルダ|プレースホルダー|未記入|TBD|TODO|FIXME|XXX|ＸＸＸ|要記入|ここに)\s*$"
-)
+
+
+@functools.lru_cache(maxsize=8)
+def _compile_placeholder_res(words: tuple[str, ...]) -> tuple[re.Pattern[str], re.Pattern[str]]:
+    alternation = "|".join(re.escape(w) for w in sorted(words, key=len, reverse=True))
+    # V3 ignores words in prose: only standalone lines, YAML and heading-only sections.
+    return (
+        re.compile(f"({alternation})"),
+        re.compile(rf"^(?:[-*]\s*)?(?:{alternation})\s*$"),
+    )
+
+
+def _placeholder_res() -> tuple[re.Pattern[str], re.Pattern[str]]:
+    """(any placeholder word, standalone placeholder line) from the language pack."""
+    return _compile_placeholder_res(tuple(_lang().placeholder_words))
+
+
+def _lang() -> LanguagePack:
+    return get_config().language
+
+
+def _msg(key: str, /, **kwargs: Any) -> str:
+    """GitHub-posted text ``milestone.<key>`` from the configured language pack."""
+    return _lang().message(f"milestone.{key}", **kwargs)
+
+
 _YAML_FENCE_RE = re.compile(r"```ya?ml\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
 _HEADING_SPLIT_RE = re.compile(r"(?m)^(#{1,6}\s+.+)$")
 _TABLE_ROW_RE = re.compile(r"^\|")
 _TABLE_SEPARATOR_RE = re.compile(r"^\|[\s\-:|]+\|$")
 _PLAN_REF_RE = re.compile(r"^\|\s*(\d+)\s*\|")
-# 解決済み Issue 参照（3 桁以上）。plan ref（サブ N の連番）と区別する。
+# Resolved Issue reference (3+ digits), told apart from a plan ref (sub N row number).
 _RESOLVED_ISSUE_REF_RE = re.compile(r"#(\d{3,})\b")
 _TERMINAL_NEGATIVE_OUTCOMES = frozenset({"rejected", "dequeued", "skipped"})
 
@@ -173,7 +194,7 @@ def normalize_plan_title(title: str) -> str:
     Strips backticks, collapses full-width/half-width spaces, and trims edges.
     """
     text = str(title).replace("`", "")
-    text = text.replace("\u3000", " ")
+    text = text.replace(_IDEOGRAPHIC_SPACE, " ")
     text = re.sub(r"[ \t]+", " ", text)
     return text.strip()
 
@@ -194,12 +215,13 @@ def _expected_child_target_repo(
     if len(rows) <= 1:
         return parent_repo, None
     header = rows[0]
+    columns = _lang().sub_plan_columns
     try:
-        title_idx = next(i for i, cell in enumerate(header) if "タイトル" in cell)
+        title_idx = next(i for i, cell in enumerate(header) if columns[1] in cell)
     except StopIteration:
         return parent_repo, None
     try:
-        repo_idx = next(i for i, cell in enumerate(header) if "対象リポジトリ" in cell)
+        repo_idx = next(i for i, cell in enumerate(header) if columns[2] in cell)
     except StopIteration:
         return parent_repo, None
 
@@ -300,9 +322,7 @@ def ensure_sub1_binding(client: ForgePort, parent_number: int, child_number: int
     _ensure_parent_comment(
         client,
         parent_number,
-        "## SUB1 エラー: milestone 未設定かつサブイシューリンク失敗\n\n"
-        f"親 Issue に milestone が設定されておらず、子 #{child_number} の"
-        "サブイシューリンクにも失敗しました。",
+        _msg("sub1_no_milestone_no_link", child=child_number),
         "<!-- issuesmith:sub1:no-milestone-no-sub-link -->",
     )
     return False
@@ -316,7 +336,11 @@ def _paths_covered(allow_paths: list[str], paths: list[str]) -> list[str]:
     return missing
 
 
-_CJK_PATH_CHAR_RE = re.compile(r"[　-鿿＀-￯]")
+# Ranges are built from code points so this module stays ASCII (as gates/worktree.py).
+_IDEOGRAPHIC_SPACE = chr(0x3000)
+_CJK_PATH_CHAR_RE = re.compile(
+    "[" + chr(0x3000) + "-" + chr(0x9FFF) + chr(0xFF00) + "-" + chr(0xFFEF) + "]"
+)
 _PATH_EXT_RE = re.compile(r"\.[A-Za-z0-9]+$")
 
 
@@ -363,19 +387,18 @@ def _is_placeholder_only_section(text: str) -> bool:
     ]
     if not lines:
         return False
-    return all(
-        _STANDALONE_PLACEHOLDER_RE.match(ln) or bool(_CJK_PLACEHOLDER_RE.fullmatch(ln))
-        for ln in lines
-    )
+    any_re, standalone_re = _placeholder_res()
+    return all(standalone_re.match(ln) or bool(any_re.fullmatch(ln)) for ln in lines)
 
 
 def _body_has_restricted_placeholder(body: str) -> bool:
     """True when placeholder tokens appear in YAML / standalone lines / heading sections."""
+    any_re, standalone_re = _placeholder_res()
     for match in _YAML_FENCE_RE.finditer(body):
-        if _CJK_PLACEHOLDER_RE.search(match.group(1)):
+        if any_re.search(match.group(1)):
             return True
     for line in body.splitlines():
-        if _STANDALONE_PLACEHOLDER_RE.match(line.strip()):
+        if standalone_re.match(line.strip()):
             return True
     parts = _HEADING_SPLIT_RE.split(body)
     # parts: [preamble, heading, content, heading, content, ...]
@@ -400,7 +423,7 @@ def check_v3_cjk_placeholders(
     if allow_paths:
         for path in allow_paths:
             if is_cjk_placeholder_path(path):
-                failures.append(f"V3: CJK プレースホルダー ({path})")
+                failures.append(_msg("v3_cjk_path", path=path))
     return failures
 
 
@@ -421,10 +444,11 @@ def _dependency_refs_unresolved(body: str) -> list[str]:
         if _TABLE_SEPARATOR_RE.match(line.strip()):
             continue
         if _RESOLVED_ISSUE_REF_RE.search(line):
-            # 先頭セルが連番（`| # | 依存先 | 状態 |` 形式の行番号）でも、同じ行に
-            # 解決済みの `#NNNN` があれば依存は解決している。2026-09-10、SUB1 が
-            # 生成した #3000 の `| 1 | #2999 (...) | OPEN |` を plan ref #1 と誤判定し
-            # milestone chain が validation failed で停止した。
+            # Even when the first cell is a row number (the dependencies table SUB1
+            # writes), a resolved `#NNNN` on the same row means the dependency is
+            # resolved. On 2026-09-10 `| 1 | #2999 (...) | OPEN |` in #3000 (written by
+            # SUB1) was taken for plan ref #1 and the milestone chain stopped on
+            # validation failed.
             continue
         for match in _PLAN_REF_RE.finditer(line):
             failures.append(f"unresolved plan ref #{match.group(1)} in dependency table")
@@ -738,7 +762,7 @@ def advance_milestone_chains(
                 _ensure_parent_comment(
                     client,
                     parent_num,
-                    "子 Issue が未生成です。SUB1 の実行結果を確認してください。",
+                    _msg("chain_no_children"),
                     "<!-- issuesmith:milestone-chain:no-children -->",
                 )
                 _halt_chain(store, parent_num, "no children")
@@ -746,14 +770,15 @@ def advance_milestone_chains(
 
             validation = validate_children(parent, children, client=client)
             if not validation.passed:
-                lines = ["子 Issue の検証に失敗しました。"]
-                for item in validation.results:
-                    if not item.passed:
-                        lines.append(f"- #{item.issue}: {'; '.join(item.failures)}")
+                items = [
+                    _msg("chain_validation_item", issue=item.issue, failures="; ".join(item.failures))
+                    for item in validation.results
+                    if not item.passed
+                ]
                 _ensure_parent_comment(
                     client,
                     parent_num,
-                    "\n".join(lines),
+                    _msg("chain_validation_failed", items="\n".join(items)),
                     "<!-- issuesmith:milestone-chain:validation-failed -->",
                 )
                 _halt_chain(store, parent_num, "validation failed")
@@ -803,7 +828,7 @@ def advance_milestone_chains(
             _ensure_parent_comment(
                 client,
                 parent_num,
-                f"確認待ち: #{first} が {_end_lbl} 以外で終了",
+                _msg("chain_closed_without_merge", issue=first, label=_end_lbl),
                 "<!-- issuesmith:milestone-chain:closed-without-merge -->",
             )
             _halt_chain(store, parent_num, f"child closed without {_end_lbl}: #{first}")
@@ -817,7 +842,7 @@ def advance_milestone_chains(
             _ensure_parent_comment(
                 client,
                 parent_num,
-                f"全サブイシュー完了 ({child_refs})",
+                _msg("chain_all_done_closed", children=child_refs),
                 "<!-- issuesmith:milestone-chain:all-done -->",
             )
             client.issue_close(parent_num)
@@ -829,7 +854,7 @@ def advance_milestone_chains(
             _ensure_parent_comment(
                 client,
                 parent_num,
-                "全サブイシュー完了。親の close は人間が行う",
+                _msg("chain_all_done_manual"),
                 "<!-- issuesmith:milestone-chain:all-done -->",
             )
             store.update_milestone_chain(parent_num, {"notified_all_done": True})
@@ -1040,6 +1065,8 @@ def milestone_prune(*, dry_run: bool = False, store: QueueStore | None = None) -
 _DEFAULT_SUB1_TEMPLATE = "_sub1-body-order.md"
 _SUB1_DEP_REF_RE = re.compile(r"#(\d+)")
 _SUB1_NIKKI_PREFIX = "${NIKKI_ROOT}"
+# Not a language pack field (#4469): an English literal, matched as a heading substring.
+_BREAKING_CHANGE_HEADING = "Breaking Change Impact"
 
 
 @dataclass
@@ -1088,11 +1115,12 @@ def parse_split_plan(
                     return i
         return None
 
-    num_i = _idx("#", exact=True)
-    title_i = _idx("タイトル")
-    repo_i = _idx("対象リポジトリ")
-    scope_i = _idx("内容")
-    dep_i = _idx("依存")
+    columns = _lang().sub_plan_columns
+    num_i = _idx(columns[0], exact=True)
+    title_i = _idx(columns[1])
+    repo_i = _idx(columns[2])
+    scope_i = _idx(columns[3])
+    dep_i = _idx(columns[4])
     if num_i is None or title_i is None:
         return [], repo_i is not None
 
@@ -1133,9 +1161,10 @@ def resolve_dependencies(
     state: Sub1State,
 ) -> str:
     """Resolve plan-row dependency tokens to concrete Issue numbers."""
+    no_deps = _lang().no_deps_word
     dep = (dep_raw or "").strip()
-    if not dep or dep == "なし":
-        return "なし"
+    if not dep or dep == no_deps:
+        return no_deps
     seen: list[int] = []
     labels_cache: dict[int, list[str]] = {}
 
@@ -1148,10 +1177,10 @@ def resolve_dependencies(
             if k in row_to_issue:
                 target = f"#{row_to_issue[k]}"
                 if first:
-                    state.resolved_logs.append(f"連番解決: テーブル{k} → {target}")
+                    state.resolved_logs.append(_msg("log_resolved", row=k, target=target))
                 return target
             if first:
-                state.unresolved_forward_logs.append(f"未解決の前方参照: テーブル{k}")
+                state.unresolved_forward_logs.append(_msg("log_unresolved_forward", row=k))
             return match.group(0)
         if k not in labels_cache:
             try:
@@ -1161,19 +1190,19 @@ def resolve_dependencies(
                 labels_cache[k] = []
         if "scope:milestone" in labels_cache[k]:
             if first:
-                state.excluded_milestone_logs.append(f"除外した scope:milestone 依存: #{k}")
+                state.excluded_milestone_logs.append(_msg("log_excluded_milestone", issue=k))
             return ""
         return match.group(0)
 
     resolved = _SUB1_DEP_REF_RE.sub(_repl, dep)
     resolved = re.sub(r"\s+", " ", resolved).strip(" ,;|")
-    if not resolved or resolved == "なし":
-        return "なし"
+    if not resolved or resolved == no_deps:
+        return no_deps
     return resolved
 
 
 def allow_paths_for_row(parent_body: str, row: PlanRow) -> list[str]:
-    """allow_paths for ROW_REPO from the #### サブN change table."""
+    """allow_paths for ROW_REPO from the ``#### <sub_header_prefix>N:`` change table."""
     sub_body = sub_block(parent_body, row.row_num)
     if not sub_body:
         return []
@@ -1191,16 +1220,18 @@ def allow_paths_for_row(parent_body: str, row: PlanRow) -> list[str]:
 def _sub1_build_dep_section(
     resolved_dep: str, *, row_repo: str, client: ForgePort
 ) -> str:
-    if not resolved_dep or resolved_dep == "なし":
+    lang = _lang()
+    if not resolved_dep or resolved_dep == lang.no_deps_word:
         return ""
     nums = [int(m.group(1)) for m in _SUB1_DEP_REF_RE.finditer(resolved_dep)]
     if not nums:
         return ""
+    header = lang.dependencies_table_header.strip()
     lines = [
-        "## 依存（先行）",
+        f"## {lang.sections['dependencies']}",
         "",
-        "| # | 依存先 | 状態 |",
-        "|---|--------|------|",
+        header,
+        "|" + "---|" * (header.count("|") - 1),
     ]
     cross_repo = False
     for idx, num in enumerate(nums, start=1):
@@ -1213,28 +1244,34 @@ def _sub1_build_dep_section(
         dep_repo = str(_sub1_safe_metadata(str(data.get("body") or "")).get("target_repo") or "")
         if row_repo == "sumipan/nexus" and dep_repo and dep_repo != "sumipan/nexus":
             cross_repo = True
-        lines.append(f"| {idx} | #{num} ({title}) | {state} |")
+        lines.append(_msg("child_dependency_row", index=idx, issue=num, title=title, state=state))
     if cross_repo:
         lines.append("")
-        lines.append(
-            "> 外部リポジトリのリリースと release-watcher の bump Issue が "
-            "merge-done になってからこの子を投入する"
-        )
+        lines.append(_msg("child_cross_repo_note"))
     return "\n".join(lines) + "\n"
 
 
+def _sub1_sub_content(parent_body: str, row_num: int) -> str | None:
+    """Content of the parent's ``#### <sub_header_prefix><row_num>:`` block under design."""
+    lang = _lang()
+    sub_prefix = f"#### {lang.sub_header_prefix}"
+    for heading, content in get_subsections(parent_body, lang.sections["design"], sub_prefix):
+        if heading.startswith(f"{sub_prefix}{row_num}:"):
+            return content
+    return None
+
+
 def _sub1_section_parts(parent_body: str, row_num: int) -> dict[str, str]:
-    sub_secs = get_subsections(parent_body, "設計", "#### サブ")
-    prefix = f"#### サブ{row_num}:"
-    for heading, content in sub_secs:
-        if heading.startswith(prefix):
-            return {
-                "scope": (get_section(content, "スコープ") or "").strip(),
-                "design": (get_section(content, "設計方針") or "").strip(),
-                "files": (get_section(content, "変更対象ファイル") or "").strip(),
-                "ac": (get_section(content, "受け入れ条件") or "").strip(),
-            }
-    return {}
+    content = _sub1_sub_content(parent_body, row_num)
+    if content is None:
+        return {}
+    scope, design, files, ac = _lang().sub_design_subsections
+    return {
+        "scope": (get_section(content, scope) or "").strip(),
+        "design": (get_section(content, design) or "").strip(),
+        "files": (get_section(content, files) or "").strip(),
+        "ac": (get_section(content, ac) or "").strip(),
+    }
 
 
 def build_child_body(
@@ -1266,13 +1303,19 @@ def build_child_body(
             if isinstance(path, str):
                 yaml_lines.append(f'  - "{path}"')
 
+    lang = _lang()
+    sections = lang.sections
+    derived = (
+        f"> {lang.parent_issue_label} #{parent_number}"
+        f" {lang.sub_header_prefix}{row.row_num} {lang.derived_from_phrase}"
+    )
     parts = [
         "```yaml",
         *yaml_lines,
         "```",
         "",
-        f"親イシュー: #{parent_number}",
-        f"依存: {resolved_dep}",
+        f"{lang.parent_issue_label}: #{parent_number}",
+        f"{lang.sub_plan_columns[4]}: {resolved_dep}",
         "",
     ]
     dep_section = _sub1_build_dep_section(resolved_dep, row_repo=row.repo, client=client)
@@ -1280,51 +1323,51 @@ def build_child_body(
         parts.append(dep_section)
 
     sub = _sub1_section_parts(parent_body, row.row_num)
+    scope_heading = lang.sub_design_subsections[0]
     if sub:
-        parts.append("## スコープ")
+        parts.append(f"## {scope_heading}")
         parts.append(sub.get("scope") or row.scope or "")
         parts.append("")
-        parts.append("## 設計")
-        parts.append(f"> 親イシュー #{parent_number} サブ{row.row_num} から導出")
+        parts.append(f"## {sections['design']}")
+        parts.append(derived)
         parts.append("")
         if sub.get("design"):
             parts.append(sub["design"])
             parts.append("")
         if sub.get("files"):
-            parts.append("## 変更対象ファイル")
+            parts.append(f"## {sections['changed_files']}")
             parts.append(sub["files"])
             parts.append("")
-        parts.append("## 受け入れ条件")
-        parts.append(sub.get("ac") or "- [ ] (from parent)")
+        parts.append(f"## {sections['acceptance_criteria']}")
+        parts.append(sub.get("ac") or _msg("child_from_parent_ac"))
         parts.append("")
     else:
-        parts.append("## スコープ")
+        parts.append(f"## {scope_heading}")
         parts.append(row.scope or "")
         parts.append("")
-        design = get_section(parent_body, "設計") or ""
-        parts.append("## 設計")
-        parts.append(f"> 親イシュー #{parent_number} サブ{row.row_num} から導出")
+        design = get_section(parent_body, sections["design"]) or ""
+        parts.append(f"## {sections['design']}")
+        parts.append(derived)
         parts.append("")
         parts.append(design.strip())
         parts.append("")
-        ac = get_section(parent_body, "受け入れ条件") or get_section_by_keyword(
-            parent_body, "受け入れ条件"
+        ac = get_section(parent_body, sections["acceptance_criteria"]) or get_section_by_keyword(
+            parent_body, sections["acceptance_criteria"]
         )
-        parts.append("## 受け入れ条件")
+        parts.append(f"## {sections['acceptance_criteria']}")
         parts.append((ac or "").strip())
         parts.append("")
 
     if "scope:migration" in parent_labels:
-        filtered = _sub1_filter_parent_section(
-            parent_body, row.row_num, "影響範囲調査（scope:migration 時は必須）"
-        )
+        impact = sections["impact_survey"]
+        filtered = _sub1_filter_parent_section(parent_body, row.row_num, impact)
         if filtered:
-            parts.append("## 影響範囲調査（scope:migration 時は必須）")
+            parts.append(f"## {impact}")
             parts.append(filtered)
             parts.append("")
-    breaking = _sub1_filter_parent_section(parent_body, row.row_num, "破壊的変更の影響範囲")
+    breaking = _sub1_filter_parent_section(parent_body, row.row_num, _BREAKING_CHANGE_HEADING)
     if breaking:
-        parts.append("## 破壊的変更の影響範囲")
+        parts.append(f"## {_BREAKING_CHANGE_HEADING}")
         parts.append(breaking)
         parts.append("")
 
@@ -1332,15 +1375,12 @@ def build_child_body(
 
 
 def _sub1_filter_parent_section(parent_body: str, row_num: int, heading: str) -> str:
-    sub_secs = get_subsections(parent_body, "設計", "#### サブ")
-    sub_body = ""
-    prefix = f"#### サブ{row_num}:"
-    for h, content in sub_secs:
-        if h.startswith(prefix):
-            sub_body = content
-            break
+    """Rows of the parent's H2 section whose heading contains ``heading``, filtered to
+    the paths in the ``#### <sub_header_prefix><row_num>:`` change table."""
+    lang = _lang()
+    sub_body = _sub1_sub_content(parent_body, row_num) or ""
     sub_paths: list[str] = []
-    tbl = get_section(sub_body, "変更対象ファイル") if sub_body else None
+    tbl = get_section(sub_body, lang.sub_design_subsections[2]) if sub_body else None
     if tbl:
         for line in tbl.splitlines():
             if not line.startswith("|") or "---|" in line:
@@ -1352,9 +1392,10 @@ def _sub1_filter_parent_section(parent_body: str, row_num: int, heading: str) ->
             last = cell.rfind(":")
             if last >= 0 and cell[last + 1 :].isdigit():
                 cell = cell[:last]
-            if cell and cell not in ("ファイルパス",):
+            if cell and cell != lang.change_table_columns[1]:
                 sub_paths.append(cell)
-    section_content = get_section(parent_body, heading)
+    # Partial match: hosts may suffix the heading, e.g. ``## <impact survey> (...)``.
+    section_content = get_section_by_keyword(parent_body, heading)
     if not section_content or not sub_paths:
         return ""
     result = filter_section_by_paths(section_content, sub_paths)
@@ -1383,27 +1424,29 @@ def prevalidate_child_body(
         if item.startswith("V2 allow_paths missing:"):
             missing = item.split(":", 1)[1].strip()
             for path in [p.strip() for p in missing.split(",") if p.strip()]:
-                failures.append(f"V2: allow_paths 未包含 ({path})")
+                failures.append(_msg("v2_missing_path", path=path))
         else:
             failures.append(item)
 
     failures.extend(check_v3_cjk_placeholders(allow_paths=allow_paths))
 
+    lang = _lang()
+    deps_heading = lang.sections["dependencies"]
     dep = (resolved_dep or "").strip()
-    if dep and dep != "なし":
-        if "## 依存（先行）" not in body:
-            failures.append("V4: 依存ありだが ## 依存（先行） セクション欠落")
+    if dep and dep != lang.no_deps_word:
+        if f"## {deps_heading}" not in body:
+            failures.append(_msg("v4_missing_dep_section", dependencies=deps_heading))
         for num_str in _SUB1_DEP_REF_RE.findall(dep):
             num = int(num_str)
             if num == parent_issue_number:
-                failures.append(f"V5: 依存が親 Issue 自身を参照 (#{num})")
+                failures.append(_msg("v5_dep_self", issue=num))
                 continue
             try:
                 labels = sorted(label_names(client.issue_get(num, fields=["labels"])))
             except Exception:
                 labels = []
             if "scope:milestone" in labels:
-                failures.append(f"V5: 依存が scope:milestone Issue を参照 (#{num})")
+                failures.append(_msg("v5_dep_milestone", issue=num))
     return failures
 
 
@@ -1430,20 +1473,17 @@ def _sub1_check_cp1_gate(comments: list[dict[str, Any]]) -> str:
 
 
 def _sub1_parent_design_gate(body: str) -> str | None:
-    if count_heading(body, "設計") > 1:
-        return "## SUB1 エラー: `## 設計` セクションが重複しています"
-    design = get_section(body, "設計")
-    ac = get_section(body, "受け入れ条件") or get_section_by_keyword(body, "受け入れ条件")
+    lang = _lang()
+    design_name = lang.sections["design"]
+    ac_name = lang.sections["acceptance_criteria"]
+    if count_heading(body, design_name) > 1:
+        return _msg("sub1_dup_design", design=design_name)
+    design = get_section(body, design_name)
+    ac = get_section(body, ac_name) or get_section_by_keyword(body, ac_name)
     if not design or not design.strip() or not ac or not ac.strip():
-        return (
-            "## SUB1 エラー: 設計または受け入れ条件が未記載\n\n"
-            "親イシューに `## 設計` と `## 受け入れ条件` の両方が必要です。"
-        )
-    if not get_subsections(body, "設計", "#### サブ"):
-        return (
-            "## SUB1 エラー: サブイシュー詳細設計が未生成（B1 未完了の可能性）\n\n"
-            "親イシューの `## 設計` に `#### サブN` サブセクションがありません。"
-        )
+        return _msg("sub1_missing_design_ac", design=design_name, acceptance_criteria=ac_name)
+    if not get_subsections(body, design_name, f"#### {lang.sub_header_prefix}"):
+        return _msg("sub1_no_sub_blocks", design=design_name, sub_prefix=lang.sub_header_prefix)
     return None
 
 
@@ -1520,8 +1560,7 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
         return _sub1_fail(
             client,
             issue_number,
-            "## SUB1 エラー: scope:milestone なし\n\n"
-            "`issuesmith:sub-ready` は `scope:milestone` ラベル付き Issue にのみ使用できます。",
+            _msg("sub1_not_milestone"),
         )
 
     cp1 = _sub1_check_cp1_gate([c for c in comments if isinstance(c, dict)])
@@ -1529,15 +1568,13 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
         return _sub1_fail(
             client,
             issue_number,
-            "## SUB1 エラー: CP1 未完了\n\n"
-            "B1 ブラッシュアップ後の CP1 ゲートがまだ完了していません。",
+            _msg("sub1_cp1_not_ready"),
         )
     if cp1 == "BLOCK":
         return _sub1_fail(
             client,
             issue_number,
-            "## SUB1 エラー: CP1 未通過\n\n"
-            "親 Issue の CP1 ゲートが FAIL（intentional_hold 以外）の状態です。",
+            _msg("sub1_cp1_blocked"),
         )
 
     milestone_number = _milestone_number(parent)
@@ -1553,17 +1590,13 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
             milestone_number = _milestone_number(parent)
             client.issue_comment(
                 issue_number,
-                "## SUB1: milestone を自動作成しました\n\n"
-                f"親 Issue に milestone が未設定だったため "
-                f"`{created_title}`（#{milestone_number}）を作成して紐付けました。\n",
+                _msg("sub1_milestone_created", title=created_title, number=milestone_number),
             )
         except Exception as exc:
             try:
                 client.issue_comment(
                     issue_number,
-                    "## SUB1 警告: milestone 自動作成に失敗\n\n"
-                    f"親 Issue に milestone が未設定で、自動作成も失敗しました（{exc}）。"
-                    "サブイシューリンクで続行します。\n",
+                    _msg("sub1_milestone_create_failed", error=exc),
                 )
             except Exception:
                 pass
@@ -1581,14 +1614,13 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
         return _sub1_fail(
             client,
             issue_number,
-            "## SUB1 エラー: サブイシュー分割計画が見つかりません",
+            _msg("sub1_no_plan"),
         )
     if not has_repo_col and not parent_target_repo:
         return _sub1_fail(
             client,
             issue_number,
-            "## SUB1 エラー: 親 YAML に target_repo がありません\n\n"
-            f"親 Issue #{issue_number} の YAML ブロックに `target_repo` フィールドが必要です。",
+            _msg("sub1_no_target_repo", issue=issue_number),
         )
 
     supported = get_config().supported_repos
@@ -1603,11 +1635,13 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
     table_row_count = len(plan_rows)
     template_name = resolve_sub1_template(step)
     skip_count = 0
+    skipped_existing = False
+    sub_prefix = _lang().sub_header_prefix
 
     for row in plan_rows:
         if has_repo_col and not row.repo:
             state.validation_failures.append(
-                f"サブ{row.row_num}: 5 列表で対象リポジトリが空"
+                _msg("sub1_row_repo_empty", sub_prefix=sub_prefix, row=row.row_num)
             )
             continue
 
@@ -1618,9 +1652,12 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
                 return _sub1_fail(
                     client,
                     issue_number,
-                    f"## SUB1 エラー: 既存子 #{child_num} のサブイシューリンクに失敗",
+                    _msg("sub1_existing_link_failed", child=child_num),
                 )
-            state.created_issues.append(f"既存: #{child_num} / {row.title}（スキップ）")
+            state.created_issues.append(
+                _msg("sub1_existing_skipped", child=child_num, title=row.title)
+            )
+            skipped_existing = True
             continue
 
         resolved_dep = resolve_dependencies(
@@ -1633,8 +1670,7 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
         row_allow_paths = allow_paths_for_row(parent_body, row)
         if not row_allow_paths:
             state.validation_failures.append(
-                f"サブ{row.row_num}: 変更対象ファイル表から {row.repo} のパスを"
-                "抽出できないため子を作成しない（親の allow_paths は継承しない）"
+                _msg("sub1_no_row_paths", sub_prefix=sub_prefix, row=row.row_num, repo=row.repo)
             )
             continue
         body = build_child_body(
@@ -1685,12 +1721,14 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
             try:
                 client.issue_comment(
                     issue_number,
-                    f"## SUB1 エラー: サブ{row.row_num} body に CP1 禁則語が残存\n\n"
-                    f"{detail}\n\nPIPELINE_STATUS: SUB1_CP1_BLOCKED\n",
+                    _msg("sub1_cp1_forbidden", sub_prefix=sub_prefix, row=row.row_num, detail=detail)
+                    + "\nPIPELINE_STATUS: SUB1_CP1_BLOCKED\n",
                 )
             except Exception:
                 pass
-            state.validation_failures.append(f"サブ{row.row_num}: CP1 禁則語")
+            state.validation_failures.append(
+                _msg("sub1_cp1_forbidden_item", sub_prefix=sub_prefix, row=row.row_num)
+            )
             continue
 
         pre_fail = prevalidate_child_body(
@@ -1703,7 +1741,12 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
         )
         if pre_fail:
             state.validation_failures.append(
-                f"サブ{row.row_num}:\n" + "\n".join(pre_fail)
+                _msg(
+                    "sub1_prefail_item",
+                    sub_prefix=sub_prefix,
+                    row=row.row_num,
+                    failures="\n".join(pre_fail),
+                )
             )
             continue
 
@@ -1721,7 +1764,7 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
             return _sub1_fail(
                 client,
                 issue_number,
-                f"## SUB1 エラー: Issue 作成失敗（サブ{row.row_num}）\n\n{exc}",
+                _msg("sub1_create_failed", sub_prefix=sub_prefix, row=row.row_num, error=exc),
             )
 
         try:
@@ -1735,11 +1778,13 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
             return _sub1_fail(
                 client,
                 issue_number,
-                f"## SUB1 エラー: 子 #{new_number} のサブイシューリンクに失敗",
+                _msg("sub1_new_link_failed", child=new_number),
             )
 
         state.row_to_issue[row.row_num] = new_number
-        state.created_issues.append(f"#{new_number} / {row.title} / {row.repo}")
+        state.created_issues.append(
+            _msg("sub1_created_item", child=new_number, title=row.title, repo=row.repo)
+        )
         state.created_children.append(
             {
                 "number": new_number,
@@ -1754,17 +1799,12 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
         print("PIPELINE_STATUS: SUB1_BODY_INIT_ERROR", file=sys.stderr)
         sys.exit(1)
 
-    if state.validation_failures and not state.created_children and not any(
-        s.startswith("既存:") for s in state.created_issues
-    ):
+    if state.validation_failures and not state.created_children and not skipped_existing:
         fail_body = "\n".join(f"- {entry}" for entry in state.validation_failures)
         return _sub1_fail(
             client,
             issue_number,
-            "## SUB1 エラー: 子 Issue body 検証失敗\n\n"
-            "以下の行で pre-creation validation (V1–V5) が失敗したため "
-            "Issue を作成しませんでした:\n\n"
-            f"{fail_body}\n",
+            _msg("sub1_all_prevalidation_failed", failures=fail_body),
         )
 
     if state.validation_failures:
@@ -1772,7 +1812,7 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
         try:
             client.issue_comment(
                 issue_number,
-                "## SUB1 警告: 一部行の検証失敗\n\n" + fail_body + "\n",
+                _msg("sub1_partial_validation", failures=fail_body),
             )
         except Exception:
             pass
@@ -1787,24 +1827,20 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
             return _sub1_fail(
                 client,
                 issue_number,
-                "## SUB1 エラー: 作成後 validate_children 失敗\n\n" + "\n".join(details),
+                _msg("sub1_post_validate_failed", details="\n".join(details)),
             )
 
-    created_block = "\n".join(f"- {line}" for line in state.created_issues) or "- (なし)"
+    created_block = "\n".join(f"- {line}" for line in state.created_issues) or _msg("none_item")
     extra_logs = []
     extra_logs.extend(state.resolved_logs)
     extra_logs.extend(state.excluded_milestone_logs)
     extra_logs.extend(state.unresolved_forward_logs)
     log_block = ("\n" + "\n".join(extra_logs) + "\n") if extra_logs else "\n"
-    ms = str(milestone_number) if milestone_number is not None else "なし（サブイシューリンクのみ）"
+    ms = str(milestone_number) if milestone_number is not None else _msg("no_milestone")
     try:
         client.issue_comment(
             issue_number,
-            "## SUB1 サブイシュー作成完了\n\n"
-            f"作成したサブイシュー:\n{created_block}\n\n"
-            f"milestone: {ms}\n"
-            f"{log_block}\n"
-            "検証済みの子 develop request は queue が依存順に自動投入する。\n",
+            _msg("sub1_done", created=created_block, milestone=ms, logs=log_block),
         )
     except Exception as exc:
         print(f"WARN: completion comment failed: {exc}", file=sys.stderr)

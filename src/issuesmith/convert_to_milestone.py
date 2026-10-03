@@ -1,4 +1,4 @@
-"""convert-to-milestone — 誤って develop 経路に入った Issue を milestone 経路へ復旧する。"""
+"""convert-to-milestone — move an Issue that wrongly entered the develop path back to the milestone path."""
 from __future__ import annotations
 
 import argparse
@@ -170,7 +170,7 @@ def _ensure_milestone(client: ForgePort, issue: int, *, dry_run: bool) -> str:
 
 
 def convert_to_milestone(issue: int, *, dry_run: bool = False) -> int:
-    """誤 develop 経路の Issue を milestone 経路へ復旧する（各段冪等）。"""
+    """Move an Issue on the wrong develop path back to the milestone path (each stage idempotent)."""
     cancelled = _request_dag_cancel(issue, dry_run=dry_run)
     if not dry_run and cancelled:
         print(f"cancel requested: {', '.join(cancelled)}")
