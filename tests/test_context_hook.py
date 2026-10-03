@@ -11,7 +11,6 @@ from unittest.mock import patch
 import pytest
 
 from issuesmith.context_hook import build_context, main, validate_issue_metadata
-from tests.legacy_text import DIARY_SIDE_CHANGE, OUT_OF_SCOPE
 
 
 @pytest.fixture(autouse=True)
@@ -252,12 +251,47 @@ def test_lint_warning_nodo_diary_mention_no_diary_allow_paths(capsys):
         "allow_paths:\n"
         "  - src/**\n"
         "```\n\n"
-        f"## {OUT_OF_SCOPE}\n"
-        f"- {DIARY_SIDE_CHANGE} is handled separately\n"
+        "## Out of Scope\n"
+        "- diary-side changes are handled separately\n"
     )
     build_context(990, body=body)
     captured = capsys.readouterr()
-    assert "diary_allow_paths" in captured.err or "Out of Scope" in captured.err
+    assert "diary_allow_paths" in captured.err
+    assert "'Out of Scope'" in captured.err
+
+
+def test_lint_warning_reads_out_of_scope_heading_from_language_pack(
+    capsys, tmp_path, monkeypatch
+):
+    """A pack with a different ASCII out-of-scope heading drives the diary lint warning."""
+    import dataclasses
+
+    from issuesmith import config as config_module
+    from issuesmith.config import reset_config_cache
+    from issuesmith.language import EN
+
+    custom = dataclasses.replace(EN, out_of_scope_heading="Not Doing")
+    monkeypatch.setattr(config_module, "EN", custom)
+    reset_config_cache()
+    try:
+        body = (
+            "```yaml\n"
+            "base_branch: main\n"
+            "target_repo: sumipan/ghdag\n"
+            "allow_paths:\n"
+            "  - src/**\n"
+            "```\n\n"
+            "## Not Doing\n"
+            "- update diary docs\n"
+        )
+        build_context(990, body=body)
+        assert "'Not Doing'" in capsys.readouterr().err
+
+        body_default = body.replace("## Not Doing", "## Out of Scope")
+        build_context(990, body=body_default)
+        assert "diary_allow_paths" not in capsys.readouterr().err
+    finally:
+        reset_config_cache()
 
 
 # --- Issue #1719: warning log when YAML parse fails ---
@@ -1173,3 +1207,15 @@ def test_parse_issue_metadata_unchanged_reads_first_block_only():
     from issuesmith.context_hook import parse_issue_metadata
 
     assert parse_issue_metadata(_TWO_REPO_BODY)["target_repo"] == "sumipan/nexus"
+
+
+def test_unrestricted_allow_paths_round_trips_through_publish_and_scope_gate():
+    """No allow_paths -> the sentinel ops.publish and scope_gate read as 'no filter' (#4471)."""
+    from issuesmith.ops.publish import _parse_allow_paths
+    from issuesmith.scope_gate import parse_allow_paths_from_ctx
+
+    body = "```yaml\nbase_branch: main\ntarget_repo: sumipan/ghdag\n```\n\n## Purpose\ntest"
+    ctx = build_context(4471, body=body)
+    assert ctx["allow_paths"]
+    assert _parse_allow_paths(ctx["allow_paths"]) is None
+    assert parse_allow_paths_from_ctx(ctx["allow_paths"]) == []

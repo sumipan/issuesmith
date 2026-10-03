@@ -1,13 +1,13 @@
 """
 context_hook.py — ghdag context_hook for issuesmith
 
-ghdag WorkflowDispatcher の context_hook 機能により呼び出される。
-GitHub Issue の body から diary 固有のコンテキスト変数を生成し、JSON で stdout に出力する。
+Invoked through the context_hook feature of ghdag WorkflowDispatcher.
+Builds diary-specific context variables from a GitHub Issue body and prints them as JSON on stdout.
 
-呼び出し形式:
+Invocation:
     python -m issuesmith.context_hook <issue_number>
 
-出力 (JSON):
+Output (JSON):
     {
         "pipeline_id": "issue-42-a1b2c3d4",
         "base_branch": "main",
@@ -54,6 +54,12 @@ except ValueError:
     _EXTERNAL_REL = str(_cfg.paths.external_dir)
 
 
+# Phrases in the out-of-scope section that mean "diary-side change" (matched lowercased).
+_DIARY_AVOIDANCE_PATTERNS: tuple[str, ...] = (
+    "diary-side", "diary side", "update diary", "diary changes",
+)
+
+
 @dataclass
 class MetadataViolation:
     field: str
@@ -62,10 +68,10 @@ class MetadataViolation:
 
 
 def validate_issue_metadata(metadata: dict) -> list[MetadataViolation]:
-    """パース済み YAML メタデータのセマンティック検証。
+    """Semantic validation of already-parsed YAML metadata.
 
-    parse_issue_metadata() とは責務を分離し、構文パース後に呼ぶ。
-    build_context() の既存 ValueError catch 経路を破壊しない。
+    Kept separate from parse_issue_metadata() and called after the syntax parse,
+    so the existing ValueError catch path of build_context() stays intact.
     """
     violations: list[MetadataViolation] = []
 
@@ -74,13 +80,16 @@ def validate_issue_metadata(metadata: dict) -> list[MetadataViolation]:
         violations.append(MetadataViolation(
             field="target_repo",
             code="missing_required",
-            message="target_repo は全件必須です（単一リポ案件も含む）",
+            message="target_repo is required for every issue (single-repo issues included)",
         ))
     elif target_repo not in SUPPORTED_REPOS:
         violations.append(MetadataViolation(
             field="target_repo",
             code="unsupported_repo",
-            message=f"target_repo '{target_repo}' は未対応です。対応リポジトリ: {sorted(SUPPORTED_REPOS)}",
+            message=(
+                f"target_repo '{target_repo}' is not supported."
+                f" Supported repositories: {sorted(SUPPORTED_REPOS)}"
+            ),
         ))
 
     allow_paths_raw = metadata.get("allow_paths", [])
@@ -91,43 +100,46 @@ def validate_issue_metadata(metadata: dict) -> list[MetadataViolation]:
             violations.append(MetadataViolation(
                 field=f"allow_paths[{i}]",
                 code="invalid_path_format",
-                message=f"allow_paths[{i}] が /var/tmp/ で始まっています（install ディレクトリは禁止）",
+                message=(
+                    f"allow_paths[{i}] starts with /var/tmp/"
+                    " (install directories are not allowed)"
+                ),
             ))
         elif "(" in str(path) and ")" in str(path):
             violations.append(MetadataViolation(
                 field=f"allow_paths[{i}]",
                 code="annotation_in_path",
-                message=f"allow_paths[{i}] に括弧付き注記が混入しています: {path!r}",
+                message=f"allow_paths[{i}] contains a parenthesized annotation: {path!r}",
             ))
 
     return violations
 
 
 def parse_issue_metadata(body: str) -> dict:
-    """Issue body 冒頭の ```yaml ... ``` ブロックから YAML メタデータを抽出して返す。
+    """Extract and return the YAML metadata from the leading ```yaml ... ``` block of an Issue body.
 
-    「冒頭」とは Issue body 内で最初に現れるコードフェンス（```xxx ... ```）を指す。
-    本文中に登場する `schedule.yaml の例` 等の途中の yaml ブロックを誤って拾わないよう、
-    最初のコードブロックが ```yaml で始まる場合のみメタデータとして解釈する。
+    "Leading" means the first code fence (```xxx ... ```) in the Issue body. To avoid
+    picking up a yaml block in the middle of the text (e.g. a `schedule.yaml example`),
+    the metadata is read only when the first code block starts with ```yaml.
 
     Raises:
-        ValueError: コードブロックが無い / 最初のブロックが yaml でない / YAML が空 /
-            パース結果が dict 以外（list / scalar 等）の場合
+        ValueError: no code block / first block is not yaml / YAML is empty /
+            the parse result is not a dict (list / scalar etc.)
     """
     m = re.search(r"^```(\w*)\n(.*?)\n```", body, re.DOTALL | re.MULTILINE)
     if not m:
-        raise ValueError("Issue body にコードブロックがありません")
+        raise ValueError("Issue body has no code block")
     lang, raw = m.group(1), m.group(2)
     if lang != "yaml":
         raise ValueError(
-            f"Issue body 冒頭のコードブロックが yaml ではありません (lang={lang!r})"
+            f"leading code block of the Issue body is not yaml (lang={lang!r})"
         )
     result = yaml.safe_load(raw)
     if result is None:
-        raise ValueError("Issue body の YAML メタデータブロックが空です")
+        raise ValueError("YAML metadata block of the Issue body is empty")
     if not isinstance(result, dict):
         raise ValueError(
-            f"Issue body の YAML メタデータは dict である必要があります (got {type(result).__name__})"
+            f"YAML metadata of the Issue body must be a dict (got {type(result).__name__})"
         )
     return result
 
@@ -150,11 +162,11 @@ def parse_issue_metadata_blocks(body: str) -> list[dict]:
     return blocks
 
 
-# ghdag dispatcher が subprocess で起動する経路では親プロセス（ghdag_runner 等）が
-# .env を sourcing していないため、GITHUB_TOKEN 等が見えない。自前でロードしておく。
-# find_dotenv で __file__ 起点に親方向探索することで、worktree 経由起動でも
-# 親 nexus リポの .env を見つけられる。
-# （override=False が既定なので、明示的に export されている値は上書きしない）
+# When the ghdag dispatcher starts this as a subprocess, the parent process
+# (ghdag_runner etc.) has not sourced .env, so GITHUB_TOKEN etc. are not visible.
+# Load it ourselves. find_dotenv walks up from __file__, so the parent nexus repo's
+# .env is found even when started from a worktree.
+# (override=False is the default, so explicitly exported values are not overwritten)
 try:
     from dotenv import find_dotenv, load_dotenv
     _env_path = find_dotenv(usecwd=False)
@@ -165,7 +177,7 @@ except ImportError:
 
 
 def _fetch_issue_body_from_api(issue_number: int) -> str | None:
-    """GitHub API で Issue の最新 body を取得する。失敗時は None を返す。"""
+    """Fetch the latest Issue body via the GitHub API. Return None on failure."""
     try:
         from ghdag.forge import get_forge
 
@@ -176,12 +188,12 @@ def _fetch_issue_body_from_api(issue_number: int) -> str | None:
         return None
 
 
-# tests/tools/issuesmith/conftest.py が patch する互換名
+# Compatibility name patched by tests/tools/issuesmith/conftest.py
 _fetch_issue_body_from_gh = _fetch_issue_body_from_api
 
 
 def _pipeline_id_from_comments(issue_number: int, comments: list[dict]) -> str | None:
-    """pipeline-branch コメントから pipeline_id を復元する。最後の一致を採用。"""
+    """Restore pipeline_id from pipeline-branch comments. The last match wins."""
     found: str | None = None
     for comment in comments:
         body = comment.get("body", "") if isinstance(comment, dict) else ""
@@ -194,7 +206,7 @@ def _pipeline_id_from_comments(issue_number: int, comments: list[dict]) -> str |
 
 
 def _fetch_issue_comments_from_api(issue_number: int, issue_repo: str) -> list[dict]:
-    """GitHub API で Issue コメント一覧を全件取得する。失敗時は空リスト。"""
+    """Fetch every Issue comment via the GitHub API. Empty list on failure."""
     try:
         from ghdag.forge import get_forge
         return get_forge(repo=issue_repo).get_issue_comments(issue_number)
@@ -215,17 +227,17 @@ def build_context(
     body: str | None = None,
     queue_dir: str | None = None,
 ) -> dict[str, str]:
-    """Issue 番号から ghdag テンプレートコンテキストを生成する。
+    """Build the ghdag template context from an Issue number.
 
-    GitHub API から Issue body を取得し、YAML メタデータを抽出してコンテキストを生成する。
+    Fetches the Issue body via the GitHub API, extracts the YAML metadata and builds the context.
 
     Args:
-        issue_number: GitHub Issue 番号
-        body: Issue body 文字列（省略時は GitHub API から取得。テスト用）
-        queue_dir: design ファイルを探すディレクトリ（テスト用・指定時は GitHub API を呼ばない）
+        issue_number: GitHub Issue number
+        body: Issue body string (fetched from the GitHub API when omitted; for tests)
+        queue_dir: directory to look for design files in (for tests; no GitHub API call when set)
 
     Returns:
-        ghdag に注入するコンテキスト dict（全値 str）
+        context dict injected into ghdag (all values are str)
     """
     if body is None and queue_dir is not None:
         import pathlib
@@ -239,18 +251,18 @@ def build_context(
         body = _fetch_issue_body_from_gh(issue_number)
         if body is None:
             print(
-                f"Error: GitHub API で Issue #{issue_number} の body 取得に失敗しました。",
+                f"Error: failed to fetch the body of Issue #{issue_number} via the GitHub API.",
                 file=sys.stderr,
             )
             sys.exit(1)
 
-    # YAML メタデータを抽出
+    # Extract the YAML metadata
     metadata: dict = {}
     if body:
         try:
             metadata = parse_issue_metadata(body)
         except (ValueError, Exception) as exc:
-            logging.warning("Issue #%s: YAML メタデータパース失敗: %s", issue_number, exc)
+            logging.warning("Issue #%s: YAML metadata parse failed: %s", issue_number, exc)
             metadata = {}
 
     from ghdag.github_client import DEFAULT_REPO
@@ -258,17 +270,18 @@ def build_context(
     issue_repo = str(metadata.get("issue_repo", DEFAULT_REPO))
     base_branch = str(metadata.get("base_branch", "main"))
 
-    # target_repo / cross-repo を pipeline_id 決定より前に確定させる（branch_reuse の探索先に使う）
+    # Resolve target_repo / cross-repo before pipeline_id (branch_reuse searches there)
     target_repo = str(metadata.get("target_repo", ""))
     if target_repo and target_repo == issue_repo:
-        # target_repo が issue_repo 自身（例: sumipan/nexus）の場合は cross-repo 扱いしない。
-        # external clone/worktree 経路に乗ると、M2 受け入れ条件ゲートがマージ後に消える
-        # feature worktree を契約検査して偽陰性を出す（#2567）。ネイティブ経路に正規化する。
+        # target_repo equal to issue_repo itself (e.g. sumipan/nexus) is not cross-repo.
+        # On the external clone/worktree path the M2 acceptance gate checks the contract
+        # against a feature worktree that disappears after merge and yields false negatives
+        # (#2567). Normalize to the native path.
         target_repo = ""
     if target_repo and target_repo not in SUPPORTED_REPOS:
         raise ValueError(
-            f"target_repo '{target_repo}' は未対応です。"
-            f"対応リポジトリ: {sorted(SUPPORTED_REPOS)}"
+            f"target_repo '{target_repo}' is not supported."
+            f" Supported repositories: {sorted(SUPPORTED_REPOS)}"
         )
     if target_repo:
         repo_name = target_repo.split("/")[-1]
@@ -283,7 +296,7 @@ def build_context(
         is_cross_repo = "false"
         _search_repo_dir = Path(_REPO_ROOT)
 
-    # pipeline_id 決定: 1) pipeline-branch コメント復元 2) ブランチ再利用 3) 新規 uuid
+    # pipeline_id: 1) restore from pipeline-branch comment 2) reuse a branch 3) new uuid
     comments = _fetch_issue_comments_from_api(issue_number, issue_repo)
     restored_pipeline_id = _pipeline_id_from_comments(issue_number, comments)
     if restored_pipeline_id:
@@ -318,7 +331,12 @@ def build_context(
     if allow_paths_raw:
         allow_paths = "\n".join(f"- {p}" for p in allow_paths_raw)
     else:
-        allow_paths = "（制限なし）"
+        # The "unrestricted" sentinel is owned by ops.publish (also matched by scope_gate
+        # and order templates); it is translated together with ops, not here (#4471).
+        # Imported lazily because ops.publish imports this module.
+        from issuesmith.ops import publish as _publish
+
+        allow_paths = _publish._UNRESTRICTED_ALLOW_PATHS
 
     source = str(metadata.get("source", ""))
 
@@ -335,19 +353,19 @@ def build_context(
         diary_allow_paths = ""
         diary_worktree_path = ""
 
-    # Lint warning: target_repo あり + diary_allow_paths 未設定 + "やらないこと" に diary 記述
+    # Lint warning: target_repo set + diary_allow_paths unset + diary mentioned out of scope
     if target_repo and not diary_allow_paths_raw and body:
-        nodo_match = re.search(r"## やらないこと(.*?)(?=\n## |\Z)", body, re.DOTALL)
+        out_of_scope = get_config().language.out_of_scope_heading
+        nodo_match = re.search(
+            rf"## {re.escape(out_of_scope)}(.*?)(?=\n## |\Z)", body, re.DOTALL
+        )
         if nodo_match:
-            nodo_text = nodo_match.group(1)
-            _DIARY_AVOIDANCE_PATTERNS = [
-                "diary 側修正", "diary 側の変更", "diary を更新", "diary側",
-            ]
+            nodo_text = nodo_match.group(1).lower()
             if any(p in nodo_text for p in _DIARY_AVOIDANCE_PATTERNS):
                 print(
-                    f"Warning: Issue #{issue_number}: 「やらないこと」に diary 側変更の記述がありますが"
-                    " diary_allow_paths が未設定です。"
-                    " B1 ブラッシュアップ時に diary_allow_paths の設定を検討してください。",
+                    f"Warning: Issue #{issue_number}: '{out_of_scope}' mentions diary-side"
+                    " changes but diary_allow_paths is not set."
+                    " Consider setting diary_allow_paths during the B1 brush-up.",
                     file=sys.stderr,
                 )
 
@@ -388,11 +406,11 @@ def build_context(
 
 
 def main() -> None:
-    """CLI エントリポイント: python -m issuesmith.context_hook <issue_number>
+    """CLI entry point: python -m issuesmith.context_hook <issue_number>
 
-    stdout: JSON（ghdag context_hook プロトコル準拠）
-    stderr: エラーメッセージ
-    exit code: 0=成功, 1=引数エラー / API エラー
+    stdout: JSON (ghdag context_hook protocol)
+    stderr: error messages
+    exit code: 0=success, 1=argument error / API error
     """
     if len(sys.argv) < 2:
         print(

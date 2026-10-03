@@ -10,55 +10,13 @@ import pytest
 
 from issuesmith.engine import _extract_status_values, _has_inline_marker
 
-# Real incident strings from #4191 / #4202; built without CJK literals (#3385).
-_CP2_PASS_GLUED_LONG = (
-    "PIPELINE_STATUS: CP2_PASS"
-    + chr(0x5168)
-    + chr(0x4F53)
-    + chr(0x30C6)
-    + chr(0x30B9)
-    + chr(0x30C8)
-    + chr(0x306F)
-    + chr(0x7D04)
-    + "79%"
-    + chr(0x3067)
-    + chr(0x505C)
-    + chr(0x6B62)
-    + chr(0x3057)
-    + chr(0x305F)
-    + chr(0x3081)
-    + chr(0x7D42)
-    + chr(0x4E86)
-    + chr(0x3057)
-    + chr(0x307E)
-    + chr(0x3057)
-    + chr(0x305F)
-    + chr(0x3002)
-)
-_REPAIR_DONE_GLUED_ISSUE = (
-    "PIPELINE_STATUS: REPAIR_DONEIssue #4202 "
-    + chr(0x306E)
-    + chr(0x4FEE)
-    + chr(0x5FA9)
-    + chr(0x306F)
-    + chr(0x5B8C)
-    + chr(0x4E86)
-    + chr(0x3057)
-    + chr(0x3066)
-    + chr(0x3044)
-    + chr(0x307E)
-    + chr(0x3059)
-    + chr(0x3002)
-)
-_CP2_PASS_GLUED_PERIOD = "PIPELINE_STATUS: CP2_PASS" + chr(0x3002)
-_CP2_PASS_GLUED_NOTE = (
-    "PIPELINE_STATUS: CP2_PASS"
-    + chr(0xFF08)
-    + chr(0x88DC)
-    + chr(0x8DB3)
-    + chr(0xFF09)
-)
-_CP2_PASS_GLUED_SHORT = "PIPELINE_STATUS: CP2_PASS" + chr(0x88DC) + chr(0x8DB3)
+# Shapes of the real incident strings from #4191 / #4202: prose glued to the marker
+# without whitespace, rewritten in English (#3385 / #4471).
+_CP2_PASS_GLUED_LONG = "PIPELINE_STATUS: CP2_PASSoverall tests about 79%, so stopped and finished."
+_REPAIR_DONE_GLUED_ISSUE = "PIPELINE_STATUS: REPAIR_DONEIssue #4202 repair is complete."
+_CP2_PASS_GLUED_PERIOD = "PIPELINE_STATUS: CP2_PASS."
+_CP2_PASS_GLUED_NOTE = "PIPELINE_STATUS: CP2_PASS(note)"
+_CP2_PASS_GLUED_SHORT = "PIPELINE_STATUS: CP2_PASSnote"
 
 
 @pytest.mark.parametrize(

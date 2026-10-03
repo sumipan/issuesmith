@@ -83,15 +83,15 @@ REPO_ROOT = _cfg.root
 WORKFLOW_FILE = _cfg.paths.workflow
 STATE_FILE = _cfg.paths.engine_state
 LEGACY_STATE_FILE = REPO_ROOT / ".issuesmith-engine"
-# jobs/metrics.jsonl は ghdag MetricsRecorder と同一スキーマの JSONL。
+# jobs/metrics.jsonl is JSONL with the same schema as ghdag MetricsRecorder.
 METRICS_FILE = _cfg.paths.metrics
 METRICS_ENV_VAR = "METRICS_JSONL_PATH"
 QUOTA_STATE_PATH = _cfg.paths.quota_state
 BRAKE_STATE_PATH = _cfg.paths.brake_state or _cfg.paths.quota_state
 
-# call_managed に渡す設計書どおりの capabilities。試行ごとの実効値は
-# `_issuesmith_call` が engine 別に上書きする（codex/cursor は
-# permission_mode!=default を拒むため）。
+# Capabilities passed to call_managed as designed. `_issuesmith_call` overrides the
+# effective value per attempt and engine (codex/cursor reject
+# permission_mode!=default).
 _ISSUESMITH_CAPABILITIES = LLMCapabilities(
     permission_mode="bypassPermissions",
     output_format="json",
@@ -108,9 +108,9 @@ DEFAULT_MODELS: dict[tuple[str, str], str] = {
     for engine, model in role_cfg.default_model.items()
 }
 
-# light tier のデフォルトモデル。heavy tier は常に state の設定モデルを使う。
-# state の light_model キーが定義されていればそちらが優先。
-# ここに無い (role, engine) は light 指定でも state モデルにフォールバックする。
+# Default models of the light tier. The heavy tier always uses the state's model.
+# A light_model key in the state takes precedence.
+# A (role, engine) missing here falls back to the state model even for light.
 DEFAULT_LIGHT_MODELS: dict[tuple[str, str], str] = {
     (role, engine): model
     for role, role_cfg in _cfg.engines.items()
@@ -121,13 +121,13 @@ TIERS = frozenset({"light", "heavy"})
 
 IMPLEMENTATION_STEP_IDS = frozenset({"p1", "p3", "m2", "mg1", "sub1"})
 
-# エージェントセッションの暴走防止。観測 wall-time（数百秒）の 3-5 倍を確保。
+# Guard against runaway agent sessions: 3-5x the observed wall time (a few hundred seconds).
 DEFAULT_TIMEOUTS: dict[str, float] = {
     role: float(role_cfg.timeout_sec) for role, role_cfg in _cfg.engines.items()
 }
 TIMEOUT_ENV_VAR = "ISSUESMITH_TIMEOUT_SEC"
 
-# ghdag classify_common_failure が RATE_LIMIT を持つまでの nexus 側ワークアラウンド（#2798）。
+# nexus-side workaround until ghdag classify_common_failure has RATE_LIMIT (#2798).
 _RATE_LIMIT_PATTERNS = ("resource_exhausted", "rate limit", "ratelimit", "429")
 
 # Failure stderr diagnostic limits (#4239); tail-truncate by line count and bytes.
@@ -137,11 +137,11 @@ _FAILURE_STDERR_MAX_BYTES = 4096
 _LAST_LLM_STDERR: list[str] = [""]
 
 _RETRY_WAIT_MAX_SECONDS: int = 1800
-_WAIT_MAX_SEC_DEFAULT: int = 21600  # 6h — budget brake 5h 枠を超えて待つ既定上限 (#3091)
-_RETRY_INTERVAL_SEC_DEFAULT: int = 3600  # 旧 INTERVAL 既定（互換参照用・#3091）
-_WAIT_POLL_SEC_DEFAULT: int = 60  # 全 engine pause 時の再確認周期 (#3256)
-_LLM_RESERVE_SEC: float = 300.0  # 待機後に LLM 実行へ残す最低余裕 (#3256)
-_WAIT_LOG_INTERVAL_SEC: float = 300.0  # waiting 進捗ログの間隔 (#3256)
+_WAIT_MAX_SEC_DEFAULT: int = 21600  # 6h — default cap to wait past the budget brake 5h window (#3091)
+_RETRY_INTERVAL_SEC_DEFAULT: int = 3600  # old INTERVAL default (compat reference, #3091)
+_WAIT_POLL_SEC_DEFAULT: int = 60  # re-check period while every engine is paused (#3256)
+_LLM_RESERVE_SEC: float = 300.0  # minimum time left for the LLM run after waiting (#3256)
+_WAIT_LOG_INTERVAL_SEC: float = 300.0  # interval of waiting progress logs (#3256)
 
 
 def _wait_max_sec() -> int:
@@ -153,10 +153,10 @@ def _wait_max_sec() -> int:
 
 
 def _wait_poll_sec() -> int:
-    """全 engine pause 時の snapshot 再取得周期（秒）。
+    """Snapshot re-fetch period (seconds) while every engine is paused.
 
-    ``ISSUESMITH_ENGINE_WAIT_POLL_SEC`` を優先し、未設定時だけ互換で
-    ``ISSUESMITH_ENGINE_WAIT_INTERVAL_SEC`` を読む。1〜60 以外・非数値は 60。
+    ``ISSUESMITH_ENGINE_WAIT_POLL_SEC`` wins; only when unset is the compat
+    ``ISSUESMITH_ENGINE_WAIT_INTERVAL_SEC`` read. Values outside 1-60 or non-numeric give 60.
     """
     raw = os.environ.get("ISSUESMITH_ENGINE_WAIT_POLL_SEC")
     if raw is None:
@@ -257,11 +257,11 @@ def load_state() -> dict[str, dict[str, Any]]:
 
 
 def resolve(role: str, tier: str | None = None) -> RoleSelection:
-    """ロールの engine/model を解決する。
+    """Resolve the engine/model of a role.
 
-    tier="light" のときのみモデルを降格する: state の light_model →
-    DEFAULT_LIGHT_MODELS → 未定義 / 許可リスト外なら state モデルのまま（fail-safe）。
-    tier=None / "heavy" は state の設定モデルをそのまま使う。
+    Only tier="light" downgrades the model: state light_model ->
+    DEFAULT_LIGHT_MODELS -> the state model when undefined / not allowlisted (fail-safe).
+    tier=None / "heavy" uses the state's model as is.
     """
     if tier is not None and tier not in TIERS:
         raise ValueError(f"tier must be one of: {', '.join(sorted(TIERS))}")
@@ -284,7 +284,7 @@ def resolve(role: str, tier: str | None = None) -> RoleSelection:
 def _effective_light_model(
     selected: dict[str, Any], role: str, engine: str
 ) -> tuple[str | None, str]:
-    """(light モデル, 出所) を返す。出所は "state" か "config default"。"""
+    """Return (light model, source). source is "state" or "config default"."""
     from_state = selected.get("light_model")
     if from_state:
         return str(from_state), "state"
@@ -295,7 +295,7 @@ def _effective_light_model(
 
 
 def _light_model_allowed(engine: str, model: str) -> bool:
-    """allowlist が読めない場合は検証をスキップして許可扱い。"""
+    """Skip the check and allow when the allowlist cannot be read."""
     allowed = _allowed_models(engine)
     return allowed is None or model in allowed
 
@@ -308,7 +308,7 @@ def _apply_light_or_fallback(
     light_model: str | None,
     source: str,
 ) -> str:
-    """light が使えるならそれを、無効なら heavy にフォールバック（LLM 呼び出し前）。"""
+    """Use light when usable, else fall back to heavy (before the LLM call)."""
     if not light_model:
         print(
             f"[issuesmith-engine] no light model for role={role} "
@@ -317,9 +317,9 @@ def _apply_light_or_fallback(
         )
         return heavy_model
     if not _light_model_allowed(engine, light_model):
-        # light tier は最適化であって必須ではない。allowlist 外のモデルで
-        # 起動して EngineModelError でパイプラインを止めるより、heavy に
-        # 戻して続行する（2026-09-09、#2968 / #2986 / #2981 の再発防止）。
+        # The light tier is an optimization, not a requirement. Rather than starting a
+        # non-allowlisted model and stopping the pipeline with EngineModelError, fall
+        # back to heavy and continue (2026-09-09, prevents #2968 / #2986 / #2981).
         print(
             f"[issuesmith-engine] light model {light_model!r} ({source}) is not in "
             f"configs/llm-models.yml allowlist for engine={engine}; "
@@ -331,7 +331,7 @@ def _apply_light_or_fallback(
 
 
 def light_allowlist_status(role: str) -> tuple[bool, str | None]:
-    """実効 light モデルの許可リスト判定。(allowlist_valid, reason) を返す。"""
+    """Allowlist check of the effective light model. Returns (allowlist_valid, reason)."""
     state = load_state()
     selected = state[role]
     engine = str(selected["engine"])
@@ -348,12 +348,12 @@ def light_allowlist_status(role: str) -> tuple[bool, str | None]:
 
 
 def light_model_errors(state: dict[str, dict[str, Any]] | None = None) -> list[str]:
-    """DEFAULT_LIGHT_MODELS 全項目と state の light_model 上書きを allowlist と照合する。"""
+    """Check every DEFAULT_LIGHT_MODELS entry and state light_model overrides against the allowlist."""
     state = state if state is not None else load_state()
     errors: list[str] = []
 
-    # config 既定（issuesmith.yaml engines.<role>.light_model.<engine>）を全件検査。
-    # 現在 state の engine と無関係に、切替時の地雷を engine check で先に潰す。
+    # Check every config default (issuesmith.yaml engines.<role>.light_model.<engine>),
+    # regardless of the current state engine, so engine check defuses switch-time traps.
     for (role, eng), model in sorted(DEFAULT_LIGHT_MODELS.items()):
         if _light_model_allowed(eng, model):
             continue
@@ -364,7 +364,7 @@ def light_model_errors(state: dict[str, dict[str, Any]] | None = None) -> list[s
             f"fix issuesmith.yaml `{yaml_key}` to an allowlisted model"
         )
 
-    # state 上書き（既存動作を維持）
+    # state overrides (existing behavior kept)
     for role in ROLE_ENGINES:
         selected = state[role]
         eng = str(selected["engine"])
@@ -427,7 +427,7 @@ def switch_role(
     if light_model:
         entry["light_model"] = light_model
     elif previous.get("engine") == engine and "light_model" in previous:
-        # モデル名はエンジン固有のため、エンジンが変わったら light_model は破棄する
+        # Model names are engine-specific: drop light_model when the engine changes
         entry["light_model"] = previous["light_model"]
     state[role] = entry
     validated = _validate_state(state)
@@ -454,7 +454,7 @@ def _cursor_models() -> set[str]:
 
 
 def _allowed_models(engine: str) -> set[str] | None:
-    """configs/llm-models.yml の許可リストを返す。読めない場合は None（検証スキップ）。"""
+    """Return the allowlist of configs/llm-models.yml. None when unreadable (check skipped)."""
     path = REPO_ROOT / "configs" / "llm-models.yml"
     if not path.exists():
         return None
@@ -531,7 +531,7 @@ def _render_template(template_path: str, variables: list[str]) -> str:
     missing = sorted(set(template_identifiers(template)) - set(parsed_variables))
     if missing:
         raise TemplateVariableError(
-            f"テンプレート展開エラー ({template_path}): 未定義変数: {missing}"
+            f"template expansion error ({template_path}): undefined variables: {missing}"
         )
     return template.substitute(parsed_variables)
 
@@ -571,12 +571,12 @@ def _resolve_timeout_sec(role: str) -> float:
 
 
 def _issuesmith_call(prompt: str, **kwargs):
-    """call_managed 内の call() を issuesmith 向けに調整する。
+    """Adapt call() inside call_managed for issuesmith.
 
-    call_managed は dangerously_skip_permissions を受け取らない。また
-    design フォールバックで capabilities が全試行に共有されるが、codex/cursor
-    は permission_mode!=default / output_format!=text を拒む。試行ごとの
-    engine に合わせて capabilities を差し替え、常に bypass する。
+    call_managed does not accept dangerously_skip_permissions. The design fallback
+    also shares capabilities across every attempt, but codex/cursor reject
+    permission_mode!=default / output_format!=text. Swap capabilities per attempt
+    to match its engine and always bypass.
     """
     engine = kwargs.get("engine", "claude")
     kwargs["dangerously_skip_permissions"] = True
@@ -721,7 +721,7 @@ def _execute(
     ]
 
     # global quota: read + write (call_managed / rate_limit_detected)
-    # budget brake: read-only pause 判定
+    # budget brake: read-only pause check
     quota_gate = QuotaGate(state_path=QUOTA_STATE_PATH)
     if BRAKE_STATE_PATH == QUOTA_STATE_PATH:
         brake_gate = quota_gate
@@ -747,8 +747,8 @@ def _execute(
             after = _earliest_paused_resume_at(all_engines, quota_snap, brake_snap)
             raise RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=after, role=role)
 
-    # call_managed は global quota gate しか参照しないため、budget gate で paused の
-    # engine を内部 fallback で起動しないよう候補を事前に絞る。
+    # call_managed only looks at the global quota gate, so narrow the candidates up
+    # front to keep its internal fallback from starting an engine the budget gate paused.
     fallback_candidates = [
         (alt_engine, alt_model)
         for alt_engine, alt_model in fallback_candidates
@@ -813,7 +813,7 @@ def _execute(
                 stderr=f"[issuesmith-engine] {timeout_detail}",
             )
 
-        # F2: ghdag が RATE_LIMIT を分類するまでの nexus 側ワークアラウンド。
+        # F2: nexus-side workaround until ghdag classifies RATE_LIMIT.
         if (
             result.returncode != 0
             and result.failure_class is None
@@ -957,12 +957,13 @@ def exec_file(
     )
 
 
-# PIPELINE_STATUS 契約の単一実装（#2547）。マーカーは「行頭から始まる独立行」のみ
-# 有効で、判定はこのモジュールに一元化する。テンプレート側 shell での重複 grep
-# 判定は追加しないこと（内外の規則差が #2547 の部分成功事故を生んだ）。
-# 独立行であれば、LLM が付けがちなバッククォート / 太字 / アンダースコアの装飾は許容する
-# （2026-09-09、codex が `PIPELINE_STATUS: CP2_PASS` をバッククォートで囲んで出力し、
-# 実体は PASS なのに CP2 FAIL ハンドラが発火した）。箇条書きや文中の埋め込みは従来どおり不可。
+# Single implementation of the PIPELINE_STATUS contract (#2547). A marker is valid only
+# as a standalone line starting at column 0, and the check lives only in this module.
+# Do not add duplicate grep checks in template shell (a rule mismatch between the two
+# caused the #2547 partial-success incident).
+# On a standalone line, the backtick / bold / underscore decoration LLMs tend to add is
+# tolerated (2026-09-09: codex wrapped `PIPELINE_STATUS: CP2_PASS` in backticks and the
+# CP2 FAIL handler fired although the run was PASS). Bullets and inline mentions stay invalid.
 _STATUS_LINE_PREFIX_RE = re.compile(r"^[`*_]*PIPELINE_STATUS: ")
 _STATUS_TRAILING_DECORATION_RE = re.compile(r"^[`*_]+$")
 _STATUS_CHARS = frozenset(string.ascii_uppercase + string.digits)
@@ -1045,7 +1046,7 @@ def _parse_status_token(raw: str) -> tuple[str | None, str | None]:
 
 
 def _extract_status_values(stdout: str) -> list[str]:
-    """独立行の PIPELINE_STATUS マーカー値を出現順に返す。"""
+    """Return standalone-line PIPELINE_STATUS marker values in order of appearance."""
     values: list[str] = []
     for line in stdout.splitlines():
         prefix = _STATUS_LINE_PREFIX_RE.match(line)
@@ -1067,7 +1068,7 @@ def _extract_status_values(stdout: str) -> list[str]:
 
 
 def _has_inline_marker(stdout: str, statuses: list[str]) -> bool:
-    """独立行ではない位置にマーカー文字列が埋まっているか（診断用）。"""
+    """Whether a marker string is embedded somewhere other than a standalone line (diagnostics)."""
     standalone = set(_extract_status_values(stdout))
     return any(
         f"PIPELINE_STATUS: {status}" in stdout and status not in standalone
@@ -1076,8 +1077,8 @@ def _has_inline_marker(stdout: str, statuses: list[str]) -> bool:
 
 
 def _mirror_stdout_tail(prefix: str, stdout: str) -> None:
-    # ghdag は非ゼロ終了タスクの stdout を result に書かないため、失敗時は
-    # stdout 末尾を stderr（永続化される）へミラーして診断材料を残す（#2532）。
+    # ghdag does not write the stdout of a non-zero task into the result, so on failure
+    # mirror the stdout tail to stderr (which is persisted) to keep diagnostics (#2532).
     tail = stdout.splitlines()[-50:]
     if tail:
         print(f"[{prefix}] stdout tail ({len(tail)} lines, persisted for diagnostics):", file=sys.stderr)
@@ -1094,9 +1095,9 @@ def _run_guarded_order(
     cwd: str | None = None,
     tier: str | None = None,
 ) -> tuple[int, str]:
-    """order を実行しマーカー検証する。(returncode, stdout) を返す。
+    """Run an order and verify its marker. Returns (returncode, stdout).
 
-    成功条件: exit 0 かつ独立行のステータスがちょうど 1 件かつ許可値。
+    Success: exit 0 and exactly one standalone status line with an allowed value.
     """
     proc = _execute(
         role,
@@ -1137,10 +1138,10 @@ def _run_emit_order(
     cwd: str | None = None,
     tier: str | None = None,
 ) -> tuple[int, str]:
-    """engine-emit モードで order を実行する（#2547/#2550）。
+    """Run an order in engine-emit mode (#2547/#2550).
 
-    成功条件は exit 0 のみ。order 側の独立行 PIPELINE_STATUS は失敗シグナル
-    として扱う（成功マーカーは呼び出し元が発行する）。
+    Success is exit 0 only. A standalone PIPELINE_STATUS line from the order is a
+    failure signal (the caller issues the success marker).
     """
     proc = _execute(
         role,
@@ -1158,9 +1159,9 @@ def _run_emit_order(
     if proc.returncode != 0:
         reason = f"role process exited with code {proc.returncode}"
     else:
-        # emit モードでは LLM の独立行ステータスは失敗シグナル扱い
-        # （成功マーカーは engine が発行するため、order 側の status 行は
-        # 意図的な失敗報告か契約違反のどちらか）。
+        # In emit mode a standalone status line from the LLM is a failure signal
+        # (the engine issues the success marker, so an order status line is either an
+        # intentional failure report or a contract violation).
         reason = (
             f"order emitted status lines {statuses} — treated as failure "
             "(engine-emit mode issues the success marker itself)"
@@ -1260,9 +1261,10 @@ def _run_pre_gate_phase(
     if non_repairable:
         issue_num = int(context.get("issue_number") or "0")
         workflow = context.get("workflow_name", "unknown")
-        summary = (
-            f"pre-LLM gate violation in step {step_id}: "
-            + "; ".join(v.message for v in non_repairable)
+        summary = get_config().language.message(
+            "engine.pre_llm_gate_violation",
+            step=step_id,
+            messages="; ".join(v.message for v in non_repairable),
         )
         full_andon = _AndonModel(
             id=f"{workflow}:{issue_num}:{step_id}:0",
@@ -1449,22 +1451,23 @@ def run_verified(
     skip_verify_statuses: list[str] | None = None,
     emit_status: str | None = None,
 ) -> int:
-    """Verify→Recover→Re-verify 契約付きの LLM ステップ実行（#2541）。
+    """Run an LLM step under the Verify -> Recover -> Re-verify contract (#2541).
 
-    1. 本体 order を run-guarded 同様に実行（マーカー必須）
-    2. verify_cmd（決定論）を実行。exit 0 = PASS
-    3. FAIL レポートのみを recover order に渡して修正させ、再 Verify
-    4. max_loops 回の recovery で直らなければ failure_status で停止
+    1. Run the main order like run-guarded (marker required)
+    2. Run verify_cmd (deterministic). exit 0 = PASS
+    3. Pass only the FAIL report to the recover order to fix, then verify again
+    4. Stop with failure_status when max_loops recoveries do not fix it
 
-    recovery の責務は Verify が指摘した成果物不備の修正だけ（機械操作は
-    finalizer の仕事）。レポートだけを渡すため recovery は light tier で足りる。
-    skip_verify_statuses のマーカーで完了した場合（例: 依存 BLOCK による早期終了）
-    は成果物が完成していない前提のため Verify を実行しない。
+    Recovery only fixes the artifact defects Verify reported (mechanical operations
+    belong to the finalizer). Only the report is passed, so the light tier suffices.
+    When the run ends with a skip_verify_statuses marker (e.g. early exit on a
+    dependency BLOCK) the artifact is assumed incomplete and Verify is not run.
 
-    emit_status 指定時（#2547）: 成功マーカーは LLM ではなく engine が発行する。
-    本体 order の成功条件は exit 0 のみで、order 側の独立行 PIPELINE_STATUS は
-    契約違反として扱う（自然言語の書式ゆらぎで制御が壊れるクラスを排除）。
-    Verify PASS 後に engine が唯一の `PIPELINE_STATUS: {emit_status}` を出力する。
+    With emit_status (#2547): the engine, not the LLM, issues the success marker.
+    The main order succeeds on exit 0 only, and a standalone PIPELINE_STATUS line
+    from the order is a contract violation (removes the class of control breakage
+    from natural-language formatting drift). After Verify PASS the engine prints
+    the single `PIPELINE_STATUS: {emit_status}`.
     """
     if emit_status:
         emit_rc, _stdout = _run_emit_order(

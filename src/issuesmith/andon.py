@@ -1,4 +1,4 @@
-"""Andon (行燈) — typed stop-the-line signals posted as Issue comment yaml blocks.
+"""Andon (paper lantern) — typed stop-the-line signals posted as Issue comment yaml blocks.
 
 kind is one of: decision / blocked / broken
 id format: <workflow>:<issue>:<step>:<gen>
@@ -90,7 +90,20 @@ def from_comment(text: str) -> Andon | None:
 
 _NOTE_MARKER = "<!-- andon-note -->"
 _NOTE_FENCE_OPEN = "```andon-note"
-_ANSWER_RE = re.compile(r"<!-- andon-answer -->\s*\nandon `([^`]+)` answered:")
+_ANSWER_MARKER = "<!-- andon-answer -->"
+# The id marker keeps answers parseable whatever the language pack's wording is;
+# the second alternative matches answers posted before the id marker existed.
+_ANSWER_RE = re.compile(
+    r"<!-- andon-answer -->\s*\n"
+    r"(?:<!-- andon-answer-id: (\S+) -->|andon `([^`]+)` answered:)"
+)
+
+
+def _answer_comment(andon_id: str, action: str) -> str:
+    from issuesmith.config import get_config
+
+    text = get_config().language.message("andon.answered", andon_id=andon_id, action=action)
+    return f"{_ANSWER_MARKER}\n<!-- andon-answer-id: {andon_id} -->\n{text}\n"
 
 
 def _note_comment(andon_id: str, key: str, value: str) -> str:
@@ -173,7 +186,8 @@ def _iter_open_entries(client: Any) -> Iterator[_OpenEntry]:
                 continue
             m = _ANSWER_RE.search(body)
             if m is not None:
-                entries = [e for e in entries if e.andon.id != m.group(1)]
+                answered_id = m.group(1) or m.group(2)
+                entries = [e for e in entries if e.andon.id != answered_id]
                 continue
             note_data = _parse_note(body)
             if note_data is not None:
@@ -247,6 +261,7 @@ def _handle_widen_action(
         return
 
     from issuesmith.body_editor import replace_allow_paths
+    from issuesmith.config import get_config
 
     # Parse existing allow_paths
     existing: list[str] = []
@@ -274,9 +289,8 @@ def _handle_widen_action(
         try:
             client.issue_comment(
                 issue_num,
-                f"<!-- andon-widen-failed -->\n"
-                f"Cannot widen allow_paths: no yaml metadata block found in Issue body.\n"
-                f"Requested files: {new_files}",
+                "<!-- andon-widen-failed -->\n"
+                + get_config().language.message("andon.widen_failed", files=new_files),
             )
         except Exception:
             pass
@@ -377,7 +391,7 @@ def answer(
         raise KeyError(f"Andon not found: {andon_id}")
 
     label = f"{ns}:andon-{target.kind}"
-    reply = f"<!-- andon-answer -->\nandon `{andon_id}` answered: **{action}**\n"
+    reply = _answer_comment(andon_id, action)
     client.issue_comment(target.issue, reply)
     client.issue_update(target.issue, labels_remove=[label])
 
@@ -418,7 +432,7 @@ def answer_if_open(
         return
 
     label = f"{ns}:andon-{target.kind}"
-    reply = f"<!-- andon-answer -->\nandon `{andon_id}` answered: **{action}**\n"
+    reply = _answer_comment(andon_id, action)
     client.issue_comment(target.issue, reply)
     client.issue_update(target.issue, labels_remove=[label])
 

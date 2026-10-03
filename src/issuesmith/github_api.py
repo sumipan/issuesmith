@@ -21,8 +21,8 @@ def _has_ready_label_in_argv(argv: list[str]) -> bool:
 def _issue_create_target(argv: list[str]) -> str | None:
     """Return non-nexus --repo value for `issue create`, else None.
 
-    Issue 作成は sumipan/nexus のみ許可（CLAUDE.md §6）。
-    `--repo` 省略時は DEFAULT_REPO が使われるため安全として通過させる。
+    Issue creation is allowed only on sumipan/nexus (CLAUDE.md §6).
+    Without ``--repo`` DEFAULT_REPO is used, so the call is let through as safe.
     """
     if len(argv) < 2 or argv[0] != "issue" or argv[1] != "create":
         return None

@@ -289,7 +289,7 @@ def plan(
         reason="idempotency key consumed",
         command=_redispatch_command(issue, phase),
         required_labels=required,
-        blocked_by="冪等キー消費済み。ghdag の世代付きキーが必要（#2876）",
+        blocked_by="idempotency key consumed; needs a ghdag generation-bumped key (#2876)",
     )
 
 
@@ -401,7 +401,7 @@ def cmd_redispatch(
         FutureWarning,
         stacklevel=2,
     )
-    # stale in_flight があると再 enqueue しても dispatch されないため先に除去する。
+    # Drop stale in_flight first: with it in place a re-enqueue is never dispatched.
     if not dry_run:
         QueueStore().remove_in_flight(issue)
 

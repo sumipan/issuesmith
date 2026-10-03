@@ -1,4 +1,4 @@
-"""python3 -m issuesmith のエントリポイント。"""
+"""Entry point for ``python3 -m issuesmith``."""
 from __future__ import annotations
 
 import sys
