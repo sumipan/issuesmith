@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from ghdag.workflow.gates import GATE_REGISTRY, Violation
 
+import issuesmith.config as config_module
 from issuesmith.ac_contract import extract_contract_from_body
 from issuesmith.config import get_config
 from issuesmith.context_hook import parse_issue_metadata
@@ -52,17 +53,19 @@ def _format_autofix_note(
     before: ScopeMeasure,
     after: ScopeMeasure,
 ) -> str:
-    old_text = ", ".join(f"`{p}`" for p in old) or "(none)"
-    new_text = ", ".join(f"`{p}`" for p in new) or "(none)"
-    return (
-        "## CP1: allow_paths を自動で絞り込みました\n"
-        "\n"
-        f"**理由**: allow_paths が幅ゲートを超過（files={before.files}, lines={before.lines}）。"
-        "変更対象ファイル表と受け入れ条件の `paths_must_exist` から決定論で絞り込み、"
-        "続行しました。\n"
-        "\n"
-        f"- 変更前: {old_text}\n"
-        f"- 変更後: {new_text}（files={after.files}, lines={after.lines}）\n"
+    """Render the Issue comment announcing the narrowed allow_paths (language pack text)."""
+    # Resolved through the config module: callers may stub this module's get_config
+    # with a scope-only config (tests/test_cp1_scope_autofix.py).
+    language = config_module.get_config().language
+    none = language.message("scope_breadth.none")
+    return language.message(
+        "scope_breadth.autofix_note",
+        before_files=before.files,
+        before_lines=before.lines,
+        old=", ".join(f"`{p}`" for p in old) or none,
+        new=", ".join(f"`{p}`" for p in new) or none,
+        after_files=after.files,
+        after_lines=after.lines,
     )
 
 
@@ -147,8 +150,8 @@ class ScopeBreadthRules:
         if candidate:
             candidate_text = ", ".join(f"`{p}`" for p in candidate)
             fix_hint = (
-                "allow_paths を次に絞り込めば閾値内に収まります "
-                f"(変更対象ファイル表 + paths_must_exist の合集合): {candidate_text}"
+                "narrowing allow_paths to the following fits within the threshold "
+                f"(union of the changed-files table and paths_must_exist): {candidate_text}"
             )
         else:
             fix_hint = (

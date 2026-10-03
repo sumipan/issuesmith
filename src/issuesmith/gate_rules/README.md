@@ -1,19 +1,19 @@
 # gate_rules
 
-issuesmith のゲートチェック機構。各ゲートが `GateRule` プロトコルを実装し、`GATE_REGISTRY` に登録されることで、Issue body・ラベルに対するバリデーションが実行される。
+issuesmith's gate check mechanism. Each gate implements the `GateRule` protocol and registers itself in `GATE_REGISTRY`; the registered gates then validate an Issue body and its labels.
 
-## GateRule プロトコル
+## GateRule protocol
 
 ```python
 class GateRule(Protocol):
     def check(self, body: str, labels: list[str]) -> list[Violation]: ...
 ```
 
-| 引数 | 型 | 説明 |
+| Argument | Type | Description |
 |------|----|------|
-| `body` | `str` | Issue body 全文（Markdown テキスト） |
-| `labels` | `list[str]` | Issue に付与されたラベル名のリスト |
-| 返り値 | `list[Violation]` | 検出した違反のリスト（問題なければ空リスト） |
+| `body` | `str` | Full Issue body (Markdown text) |
+| `labels` | `list[str]` | Names of the labels on the Issue |
+| Return value | `list[Violation]` | Violations found (an empty list when there are none) |
 
 ## Violation
 
@@ -28,14 +28,16 @@ class Violation:
     fix_hint: str | None
 ```
 
-| フィールド | 型 | 説明 |
+| Field | Type | Description |
 |------------|----|------|
-| `rule_id` | `str` | ルール識別子（例: `cp1.forbidden_word.todo`） |
-| `severity` | `str` | 重大度。`"fail"` はブロッキング違反、`"warn"` は警告 |
-| `message` | `str` | 人間向けエラーメッセージ |
-| `location` | `str \| None` | 違反箇所のテキスト（省略可） |
-| `auto_fixable` | `bool` | B1 フェーズで自動修正できるか |
-| `fix_hint` | `str \| None` | 修正のヒント（省略可） |
+| `rule_id` | `str` | Rule identifier (e.g. `cp1.forbidden_word.todo`) |
+| `severity` | `str` | Severity. `"fail"` is a blocking violation, `"warn"` is a warning |
+| `message` | `str` | Human-readable error message |
+| `location` | `str \| None` | Text of the violating location (optional) |
+| `auto_fixable` | `bool` | Whether the B1 phase can fix it automatically |
+| `fix_hint` | `str \| None` | Hint for the fix (optional) |
+
+Hosts decide on `rule_id`; `message` and `fix_hint` are English literals. Text a gate posts to GitHub (e.g. the `scope_breadth` auto-narrowing note) comes from the language pack (`get_config().language.messages`), and the Issue body headings a gate reads come from `get_config().sections`.
 
 ## GATE_REGISTRY
 
@@ -43,14 +45,14 @@ class Violation:
 GATE_REGISTRY: dict[str, type[GateRule]] = {}
 ```
 
-キーはゲート名（`"cp1"`, `"m2"` など）、値は `GateRule` を実装したクラス（インスタンスではなくクラス自体）。
+Keys are gate names (`"cp1"`, `"m2"`, ...); values are classes implementing `GateRule` (the class itself, not an instance).
 
-`gate_rules/__init__.py` の末尾で各ゲートモジュールが import され、副作用として `GATE_REGISTRY` への登録が行われる。
+The end of `gate_rules/__init__.py` imports every gate module; registration in `GATE_REGISTRY` happens as an import side effect.
 
-## 新規ルール追加手順
+## Adding a new rule
 
-1. `gate_rules/<gate_name>.py` を新規作成する
-2. `GateRule` プロトコルに適合するクラスを定義し、`check()` を実装する
+1. Create `gate_rules/<gate_name>.py`
+2. Define a class that satisfies the `GateRule` protocol and implement `check()`
 
    ```python
    from issuesmith.gate_rules import GATE_REGISTRY, GateRule, Violation
@@ -58,27 +60,27 @@ GATE_REGISTRY: dict[str, type[GateRule]] = {}
    class MyGateRules:
        def check(self, body: str, labels: list[str]) -> list[Violation]:
            violations: list[Violation] = []
-           # チェックロジックを実装
+           # implement the check logic
            return violations
    ```
 
-3. ファイル末尾で `GATE_REGISTRY` に登録する
+3. Register it in `GATE_REGISTRY` at the end of the file
 
    ```python
    GATE_REGISTRY["<gate_name>"] = MyGateRules
    ```
 
-4. `gate_rules/__init__.py` の末尾に import を追加する
+4. Add an import at the end of `gate_rules/__init__.py`
 
    ```python
    import issuesmith.gate_rules.<gate_name>  # noqa: E402, F401
    ```
 
-既存の実装例として `cp1.py`（CP1 ゲート）と `m2.py`（M2 ゲート）を参照。
+See `cp1.py` (CP1 gate) and `m2.py` (M2 gate) for existing examples.
 
-## ユーティリティ（ghdag.workflow.gates.common）
+## Utilities (ghdag.workflow.gates.common)
 
-実装は ghdag へ移設済み（`common.py` / `preflight.py` は本ディレクトリには存在しない）。
+The implementation moved to ghdag (`common.py` / `preflight.py` no longer exist in this directory).
 
 ```python
 from ghdag.workflow.gates.common import strip_code_regions
@@ -86,61 +88,61 @@ from ghdag.workflow.gates.common import strip_code_regions
 stripped = strip_code_regions(body)
 ```
 
-`strip_code_regions(body: str) -> str` は、Issue body からフェンスコードブロック（` ``` ` で囲まれた範囲）とインラインコードスパン（`` `...` ``）を除去したテキストを返す。コードブロック内の禁則語を誤検知しないよう、`check()` 内でパターンマッチを行う前に呼び出す。
+`strip_code_regions(body: str) -> str` returns the Issue body with fenced code blocks (ranges enclosed in ` ``` `) and inline code spans (`` `...` ``) removed. Call it inside `check()` before pattern matching so forbidden words inside code are not false positives.
 
-## 既存ルール一覧
+## Existing rules
 
-### cp1 — 禁則語・意図的保留
+### cp1 — forbidden words and intentional hold
 
-Issue body（コードブロックを除く）に以下のパターンが含まれると `severity="fail"` 違反を返す。
+Returns a `severity="fail"` violation when the Issue body (code excluded) contains one of the following patterns. Non-ASCII patterns are written as Python `\uXXXX` escapes.
 
-| rule_id | 検出パターン | 備考 |
+| rule_id | Pattern | Notes |
 |---------|------------|------|
 | `cp1.forbidden_word.todo` | `TODO:` | |
 | `cp1.forbidden_word.tbd` | `TBD` | |
-| `cp1.forbidden_word.youkakunin` | `要確認` | |
-| `cp1.forbidden_word.mitei` | `未定`（`未定義` は除外） | 正規表現 `未定(?!義)` |
-| `cp1.forbidden_word.kentouchuu` | `検討中` | |
-| `cp1.forbidden_word.user_confirm` | `ユーザーに確認` | |
-| `cp1.intentional_hold` | YAML frontmatter に `cp1_must_fail: true` | 意図的な保留として手動解除が必要（`auto_fixable: false`） |
+| `cp1.forbidden_word.youkakunin` | `\u8981\u78ba\u8a8d` ("needs confirmation") | |
+| `cp1.forbidden_word.mitei` | `\u672a\u5b9a` ("undecided"; `\u672a\u5b9a\u7fa9` "undefined" is excluded) | regex `\u672a\u5b9a(?!\u7fa9)` |
+| `cp1.forbidden_word.kentouchuu` | `\u691c\u8a0e\u4e2d` ("under consideration") | |
+| `cp1.forbidden_word.user_confirm` | `\u30e6\u30fc\u30b6\u30fc\u306b\u78ba\u8a8d` ("ask the user") | |
+| `cp1.intentional_hold` | `cp1_must_fail: true` in the YAML frontmatter | Intentional hold; must be released manually (`auto_fixable: false`) |
 
-禁則語違反はすべて `auto_fixable: true`（B1 フェーズで自動修正可）。
+Every forbidden-word violation is `auto_fixable: true` (fixed automatically in the B1 phase).
 
-### m2 — 受け入れ条件セクション検証
+### m2 — acceptance criteria section check
 
-| rule_id | 条件 | severity |
+| rule_id | Condition | severity |
 |---------|------|---------|
-| `m2.ac_section_missing` | `## 受け入れ条件` セクションが存在しない | `warn` |
-| `m2.unchecked_ac` | セクション内に未チェック checkbox（`- [ ]`）が 1 件以上ある | `fail` |
+| `m2.ac_section_missing` | The acceptance criteria section (`## <sections.acceptance_criteria>`) does not exist | `warn` |
+| `m2.unchecked_ac` | The section has one or more unchecked checkboxes (`- [ ]`) | `fail` |
 
-セクションが存在し、未チェック checkbox が 0 件なら空リストを返す。
+Returns an empty list when the section exists and has zero unchecked checkboxes.
 
 ## gate-preflight CLI
 
-CLI 本体は `ghdag.workflow.gates.__main__` に移設済み。`python -m issuesmith gate-preflight` は issuesmith.gate_rules を import してルール登録した上で ghdag 側 CLI に委譲する薄いエントリポイントで、単一ゲートを任意の Issue body ファイルに対して実行できる。
+The CLI itself moved to `ghdag.workflow.gates.__main__`. `python -m issuesmith gate-preflight` is a thin entry point that imports issuesmith.gate_rules to register the rules and then delegates to the ghdag CLI; it runs a single gate against any Issue body file.
 
 ```bash
-# CP1 ゲートを body.md に対して実行
+# Run the CP1 gate against body.md
 python -m issuesmith gate-preflight --gate cp1 --body-file body.md
 
-# ラベルも考慮する場合（labels.txt は 1 行 1 ラベル）
+# Also consider labels (labels.txt holds one label per line)
 python -m issuesmith gate-preflight --gate cp1 --body-file body.md --labels-file labels.txt
 
-# M2 ゲートの実行例
+# Run the M2 gate
 python -m issuesmith gate-preflight --gate m2 --body-file body.md
 ```
 
-出力は JSON 配列。違反なしの場合は `[]`、違反ありの場合は `Violation` オブジェクトのリスト。
+The output is a JSON array: `[]` when there are no violations, otherwise a list of `Violation` objects.
 
 ```json
 [
   {
     "rule_id": "cp1.forbidden_word.todo",
     "severity": "fail",
-    "message": "TODO: が残存",
+    "message": "TODO: remains",
     "location": null,
     "auto_fixable": true,
-    "fix_hint": "具体的な記述に置換してください"
+    "fix_hint": "replace it with a concrete description"
   }
 ]
 ```

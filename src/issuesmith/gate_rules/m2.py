@@ -8,7 +8,7 @@ from issuesmith.config import get_config
 
 
 def has_acceptance_criteria_section(body: str) -> bool:
-    """AC セクションが存在するかを返す。"""
+    """Return whether the acceptance criteria section exists."""
     heading = get_config().sections["acceptance_criteria"]
     return bool(
         re.search(rf"^##\s+{re.escape(heading)}", body, re.MULTILINE)
@@ -16,7 +16,7 @@ def has_acceptance_criteria_section(body: str) -> bool:
 
 
 def get_unchecked_count(body: str) -> int:
-    """AC セクション内の未チェック checkbox 数を返す。"""
+    """Return the number of unchecked checkboxes in the acceptance criteria section."""
     heading = get_config().sections["acceptance_criteria"]
     match = re.search(
         rf"^##\s+{re.escape(heading)}\s*\n(.*?)(?=^##|\Z)",
@@ -36,7 +36,7 @@ class M2Rules:
             return [Violation(
                 rule_id="m2.ac_section_missing",
                 severity="warn",
-                message=f"{ac}セクションが見つかりません",
+                message=f"## {ac} section not found",
                 location=None,
                 auto_fixable=False,
                 fix_hint=None,
@@ -49,7 +49,7 @@ class M2Rules:
         return [Violation(
             rule_id="m2.unchecked_ac",
             severity="fail",
-            message=f"未チェックの{ac}が {unchecked} 件あります",
+            message=f"{unchecked} unchecked item(s) remain in ## {ac}",
             location=None,
             auto_fixable=False,
             fix_hint=None,
