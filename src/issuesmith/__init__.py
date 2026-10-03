@@ -1,16 +1,16 @@
 """
-issuesmith — ghdag ワークフロー用ツール
+issuesmith — tools for ghdag workflows
 
-主要モジュール:
-    context_hook    — ghdag context_hook (impl/merge ハンドラー用コンテキスト生成)
+Main modules:
+    context_hook    — ghdag context_hook (context generation for impl/merge handlers)
     engine          — LLM role switcher / runner
-    ops             — dispatch / publish / preflight 等の運用コマンド
-    cli             — 統一 CLI（python3 -m issuesmith）
+    ops             — operational commands such as dispatch / publish / preflight
+    cli             — unified CLI (python3 -m issuesmith)
 
-stash 設計書ツール（apply / ingest_review）は tools/stash/ へ移動済み。
+The stash design-doc tools (apply / ingest_review) moved to tools/stash/.
 
-パイプラインのオーケストレーション（polling / DAG 構築 / ラベル遷移 / 冪等性）は
-ghdag WorkflowDispatcher が担う。workflows/issuesmith.yml を参照。
+Pipeline orchestration (polling / DAG construction / label transitions / idempotency)
+is handled by ghdag WorkflowDispatcher. See workflows/issuesmith.yml.
 """
 
 __all__: list[str] = []

@@ -9,8 +9,8 @@ from dataclasses import asdict
 from typing import Sequence
 
 _STASH_MOVED_MSG = (
-    "apply / ingest-review は tools/stash/ に移動しました。"
-    "例: python3 tools/stash/apply.py <path>"
+    "apply / ingest-review moved to tools/stash/. "
+    "Example: python3 tools/stash/apply.py <path>"
 )
 
 _USAGE = """\
@@ -92,7 +92,7 @@ def _cmd_gate(argv: list[str]) -> int:
     if rest:
         return _run_gate_preflight(["--gate", gate_name, *rest])
 
-    print(f"gate {gate_name}: --body-file か issue 番号が必要です", file=sys.stderr)
+    print(f"gate {gate_name}: --body-file or an issue number is required", file=sys.stderr)
     return 2
 
 
