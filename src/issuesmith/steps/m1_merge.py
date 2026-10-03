@@ -20,7 +20,7 @@ from typing import Any
 from ghdag.forge import ForgePort, get_forge
 
 from issuesmith import merge as _merge
-from issuesmith.config import StepConfig
+from issuesmith.config import StepConfig, get_config
 from issuesmith.steps.base import StepContext, StepResult
 
 __all__ = ["run"]
@@ -253,10 +253,10 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
                 try:
                     client.issue_comment(
                         issue_number,
-                        "## M1: companion PR 未承認またはCI未通過\n\n"
-                        f"companion PR (#{companion_pr}, branch: {ctx.branch}-diary) "
-                        "が承認済みかつ CI パス済みになってから再実行してください。\n\n"
-                        "PIPELINE_STATUS: MERGE_PENDING",
+                        get_config().language.message(
+                            "m1_merge.companion_not_ready", pr=companion_pr, branch=ctx.branch
+                        )
+                        + "\n\nPIPELINE_STATUS: MERGE_PENDING",
                     )
                 except Exception as exc:
                     print(f"companion comment failed: {exc}", file=sys.stderr)
@@ -333,11 +333,10 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
         try:
             client.issue_comment(
                 issue_number,
-                "## M1 中断: M2 ゲート未通過\n\n"
-                "PR マージ前の M2 ゲート検査で未解決の問題が検出されました:\n\n- "
-                + "\n- ".join(fail_msgs)
-                + "\n\n受け入れ条件をすべてチェックしてから再実行してください。\n\n"
-                "PIPELINE_STATUS: MERGE_PENDING",
+                get_config().language.message(
+                    "m1_merge.m2_gate_blocked", items="- " + "\n- ".join(fail_msgs)
+                )
+                + "\n\nPIPELINE_STATUS: MERGE_PENDING",
             )
         except Exception as exc:
             print(f"gate comment failed: {exc}", file=sys.stderr)

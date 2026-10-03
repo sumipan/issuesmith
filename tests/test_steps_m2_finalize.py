@@ -294,3 +294,40 @@ def test_proceed_from_merge_ready(gate_patches):
     assert result.exit_code == 0
     assert result.pipeline_status == "MERGE_DONE"
     gate_patches["transition"].assert_called_once_with(42, "issuesmith:merge-done")
+
+
+def test_retry_bodies_render_from_language_pack():
+    from issuesmith.steps.m2_finalize import _retry_body
+
+    impl = _retry_body(_ctx(), ["issuesmith:develop-running"], ["paths_must_exist: a.py"])
+    assert impl.startswith("## M2: acceptance criteria incomplete\n\n")
+    assert "Acceptance criteria YAML contract check failed:\npaths_must_exist: a.py" in impl
+    assert "Make the files listed in `paths_must_exist` exist on main" in impl
+    assert "Recovery (impl context):" in impl
+    assert "--issue 42 --phase merge" in impl
+
+    merge = _retry_body(_ctx(), ["issuesmith:merge-running"], [])
+    assert "Unchecked acceptance criteria remain." in merge
+    assert "1. Check every acceptance criterion" in merge
+    assert "2. Add the `issuesmith:reset` label to reset" in merge
+    assert "--issue 42 --phase merge" in merge
+    assert merge.isascii() and impl.isascii()
+
+
+def test_compaction_failure_comment_from_language_pack(mock_client):
+    gate_result = {"action": "proceed", "unchecked_count": 0, "contract_failures": []}
+    with (
+        patch("issuesmith.steps.m2_finalize._github_client", return_value=mock_client),
+        patch("issuesmith.steps.m2_finalize._run_label_hygiene", return_value=0),
+        patch("issuesmith.steps.m2_finalize._run_gate", return_value=gate_result),
+        patch("issuesmith.steps.m2_finalize._run_guarded_compaction", return_value=3),
+        patch("issuesmith.steps.m2_finalize._cleanup_worktrees"),
+        patch("issuesmith.steps.m2_finalize._transition"),
+        patch("issuesmith.steps.m2_finalize._close_issue_if_open"),
+    ):
+        run(_ctx(source="docs/x.md"))
+
+    comment = mock_client.issue_comment.call_args_list[0].args[1]
+    assert comment.startswith("## M2 compaction failed\n\n")
+    assert "exit code 3" in comment
+    assert comment.endswith("Target: `docs/x.md`")

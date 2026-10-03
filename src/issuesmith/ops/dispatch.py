@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
-"""issuesmith-dispatch.py — shell dispatch 本体のライブ再展開ランナー（#2595 / #2596）.
+"""issuesmith-dispatch.py — live re-render runner for shell dispatch bodies (#2595 / #2596).
 
-ghdag は shell order を enqueue 時に string.Template で展開してファイルへ凍結する。
-一方 LLM テンプレ（m2-compact.md 等）や scripts/ は実行時にディスクから読まれるため、
-DAG 進行中にテンプレ契約を変更すると「凍結された旧 dispatch × ライブの新テンプレ」の
-skew が起きる（#2591 / #2585 の M2 停止）。
+ghdag renders a shell order with string.Template at enqueue time and freezes it
+to a file. LLM templates (m2-compact.md etc.) and scripts/ are read from disk at
+run time, so changing a template contract while a DAG is in flight causes a
+"frozen old dispatch x live new template" skew (the M2 stalls in #2591 / #2585).
 
-本ランナーは凍結 order を「変数値を渡すだけの trampoline」にし、dispatch 本体
-（workflows/issuesmith/<step>.md）を **実行時** に ghdag と同じ意味論
-（string.Template.substitute + 未定義変数チェック）で再展開して実行する。
-これにより dispatch 本体・LLM テンプレ・scripts は常に同一ツリーの同一時点から読まれる。
+This runner turns the frozen order into a trampoline that only passes variable
+values, and re-renders the dispatch body (workflows/issuesmith/<step>.md) **at
+run time** with the same semantics as ghdag (string.Template.substitute plus an
+undefined-variable check), then runs it. The dispatch body, LLM templates and
+scripts are therefore always read from the same tree at the same point in time.
 
 Usage:
     python3 scripts/issuesmith-dispatch.py <step_id> [key=value ...]
 
-Exit code: 展開した dispatch 本体（bash -o pipefail）の終了コードをそのまま返す。
-未定義変数 / テンプレ不在は 2。
+Exit code: the exit code of the rendered dispatch body (bash -o pipefail) as is;
+2 for an undefined variable or a missing template.
 """
 
 from __future__ import annotations
@@ -86,24 +87,24 @@ def parse_context(args: list[str]) -> dict[str, str]:
     context: dict[str, str] = {}
     for arg in args:
         if "=" not in arg:
-            raise ValueError(f"key=value 形式ではありません: {arg!r}")
+            raise ValueError(f"not in key=value form: {arg!r}")
         key, value = arg.split("=", 1)
         context[key] = value
     return context
 
 
 def render(step_id: str, context: dict[str, str], template_dir: Path | None = None) -> tuple[str, str]:
-    """テンプレートを ghdag と同じ意味論で展開し、(本文, テンプレ sha256 先頭 12 桁) を返す。"""
+    """Render the template with ghdag semantics; return (body, first 12 hex of the template sha256)."""
     template_path = (template_dir or TEMPLATE_DIR) / f"{step_id}.md"
     if not template_path.exists():
-        raise FileNotFoundError(f"テンプレートファイルが見つかりません: {template_path}")
+        raise FileNotFoundError(f"template file not found: {template_path}")
     text = template_path.read_text(encoding="utf-8")
     tmpl = string.Template(text)
     missing = sorted(set(template_identifiers(tmpl)) - set(context))
     if missing:
         raise KeyError(
-            f"テンプレート展開エラー ({template_path}): 未定義変数: {missing}, "
-            f"利用可能なキー: {sorted(context)}"
+            f"template render error ({template_path}): undefined variables: {missing}, "
+            f"available keys: {sorted(context)}"
         )
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
     return tmpl.substitute(context), digest

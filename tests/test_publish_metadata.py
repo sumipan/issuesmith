@@ -39,3 +39,24 @@ def test_title_unaffected_by_target_count():
     t2, _ = _build_pr_metadata(1, "sumipan/nexus", "sumipan/nexus", target_count=5)
     assert t1 == t2
     assert t1.endswith("Issue #1")
+
+
+def test_title_and_body_come_from_language_pack():
+    title, body = _build_pr_metadata(7, "sumipan/nexus", "sumipan/nexus")
+    assert title == "Implement Issue #7"
+    assert body == "Auto-generated from the P1/P2 result.\n\nRefs #7"
+    title, _ = _build_pr_metadata(7, "sumipan/issuesmith", "sumipan/nexus")
+    assert title == "Implement sumipan/nexus#7"
+
+
+def test_unrestricted_placeholder_disables_allow_paths_filter():
+    from issuesmith.ops.publish import _UNRESTRICTED_ALLOW_PATHS, _parse_allow_paths
+    from issuesmith.scope_gate import parse_allow_paths_from_ctx
+
+    assert _UNRESTRICTED_ALLOW_PATHS.isascii() is False  # full-width parentheses
+    assert _parse_allow_paths(_UNRESTRICTED_ALLOW_PATHS) is None
+    assert parse_allow_paths_from_ctx(_UNRESTRICTED_ALLOW_PATHS) == []
+    # The legacy placeholder in frozen orders is any full-width-parenthesised word.
+    legacy = chr(0xFF08) + "none" + chr(0xFF09)
+    assert _parse_allow_paths(legacy) is None
+    assert _parse_allow_paths("- src/a.py\n- tests/b.py") == ["src/a.py", "tests/b.py"]

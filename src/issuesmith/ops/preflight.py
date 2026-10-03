@@ -1,25 +1,27 @@
 #!/usr/bin/env python3
-"""issuesmith パイプラインを動かす前の **実行時環境** ヘルスチェック。
+"""**Runtime environment** health check to run before driving the issuesmith pipeline.
 
-テンプレ render テスト（static）と区別される **runtime check**。
-以下が成立していなければ exit 1。テンプレ・yml の変更とは独立に、SHR / dag-runner /
-ghdag_runner で実際に ghdag が動く環境が壊れていないかを検証する。
+A **runtime check**, as opposed to the (static) template render tests. Exits 1
+unless all of the following hold. Independently of template / yml changes, it
+verifies that the environment where ghdag actually runs (SHR / dag-runner /
+ghdag_runner) is not broken.
 
-検査項目:
+Checks:
 
-  1. pyproject.toml に ghdag 直接依存が存在しないこと（推移的依存であることの確認）
-  2. `import ghdag` が成功し `get_adapter('shell')` が正しく解決すること
+  1. pyproject.toml has no direct ghdag dependency (confirms it is transitive)
+  2. `import ghdag` succeeds and `get_adapter('shell')` resolves correctly
 
-ghdag は mltgnt 経由の推移的依存として取得する（#1148）。
-直接依存を持つと diary と mltgnt で異なるバージョンをピンする二重管理が生じる。
+ghdag is obtained as a transitive dependency via mltgnt (#1148). A direct
+dependency would mean double bookkeeping, with diary and mltgnt pinning
+different versions.
 
-過去事故: pip resolve が stale な egg-info を読んで ghdag を v0.15.0 に
-ダウングレードし続け、ShellAdapter が消えて SHR の全 dispatch が失敗。
-テンプレ render テストでは絶対に検出できなかった。
+Past incident: pip resolve read a stale egg-info and kept downgrading ghdag to
+v0.15.0; ShellAdapter disappeared and every SHR dispatch failed. Template render
+tests could never have caught it.
 
-CLAUDE.md ルール: workflows/issuesmith/* / pyproject.toml /
-scripts/diary_hooks.py / scripts/dag-runner.py を変更する PR は、マージ前に
-本スクリプトを **実 Python 環境で** 実行して exit 0 を確認する。
+CLAUDE.md rule: a PR that changes workflows/issuesmith/* / pyproject.toml /
+scripts/diary_hooks.py / scripts/dag-runner.py must run this script **in the
+real Python environment** and confirm exit 0 before merging.
 """
 from __future__ import annotations
 
@@ -44,15 +46,15 @@ _GHDAG_PIN_RE = re.compile(
 
 
 def _check_pyproject_no_direct_pin() -> tuple[bool, str]:
-    """pyproject.toml に ghdag 直接依存がないことを確認する（推移的依存であるべき）。"""
+    """Confirm pyproject.toml has no direct ghdag dependency (it should be transitive)."""
     text = PYPROJECT.read_text(encoding="utf-8")
     m = _GHDAG_PIN_RE.search(text)
     if m:
         return False, (
-            f"pyproject.toml に ghdag 直接依存 pin が存在します: v{m.group(1)}\n"
-            "ghdag は mltgnt 経由の推移的依存として取得してください。直接 pin を削除してください。"
+            f"pyproject.toml has a direct ghdag pin: v{m.group(1)}\n"
+            "Obtain ghdag as a transitive dependency via mltgnt. Remove the direct pin."
         )
-    return True, "pyproject.toml: ghdag 直接依存なし（推移的依存として取得）"
+    return True, "pyproject.toml: no direct ghdag dependency (obtained transitively)"
 
 
 # ghdag names issuesmith reaches at runtime through getattr(..., None) or late imports, so a
@@ -96,26 +98,26 @@ def _check_installed_ghdag() -> tuple[bool, str]:
     try:
         import ghdag  # noqa: F401
     except ImportError as e:
-        return False, f"ghdag を import できない: {e}"
+        return False, f"cannot import ghdag: {e}"
 
     try:
         from importlib.metadata import version as _pkg_version
         actual = _pkg_version("ghdag")
     except Exception as e:
-        return False, f"importlib.metadata.version('ghdag') 失敗: {e}"
+        return False, f"importlib.metadata.version('ghdag') failed: {e}"
 
-    return True, f"installed ghdag: v{actual}（mltgnt 経由の推移的依存）"
+    return True, f"installed ghdag: v{actual} (transitive dependency via mltgnt)"
 
 
 def _check_shell_adapter() -> tuple[bool, str]:
     try:
         from ghdag.workflow import engine as workflow_engine
     except ImportError as e:
-        return False, f"ghdag.workflow.engine の import 失敗: {e}"
+        return False, f"failed to import ghdag.workflow.engine: {e}"
 
     get_adapter = getattr(workflow_engine, "get_adapter", None)
     if get_adapter is None:
-        return False, "ghdag.workflow.engine.get_adapter が見つからない"
+        return False, "ghdag.workflow.engine.get_adapter not found"
     adapter_not_found_error = getattr(
         workflow_engine,
         "AdapterNotFoundError",
@@ -126,14 +128,14 @@ def _check_shell_adapter() -> tuple[bool, str]:
         adapter = get_adapter("shell")
     except (adapter_not_found_error, ValueError) as e:
         return False, (
-            f"get_adapter('shell') が失敗: {e}\n"
-            "  対処: ghdag を v0.34.0 以降に再インストール"
+            f"get_adapter('shell') failed: {e}\n"
+            "  Fix: reinstall ghdag v0.34.0 or later"
         )
     return True, f"shell adapter OK: {type(adapter).__name__}"
 
 
 def _parse_skill_frontmatter(text: str) -> dict | None:
-    """SKILL.md 先頭の --- で囲まれた frontmatter をパースする。不正なら None。"""
+    """Parse the ---delimited frontmatter at the top of SKILL.md; None if malformed."""
     if not text.startswith("---\n"):
         return None
     end = text.find("\n---", 4)
@@ -147,37 +149,37 @@ def _parse_skill_frontmatter(text: str) -> dict | None:
 
 
 def _check_agent_skill_manifests() -> tuple[bool, str]:
-    """Codex が session 初期化時に探索する agent skills の manifest を検証する。
+    """Validate the agent skills manifests Codex scans at session initialization.
 
-    1 つでも不正な SKILL.md（frontmatter 欠落・name/description 空）があると、
-    対象 Issue と無関係でも design role の Codex session 全体が起動失敗する（#2523）。
+    A single malformed SKILL.md (missing frontmatter, empty name/description) makes
+    the whole design role Codex session fail to start, even for unrelated Issues (#2523).
     """
     skills_dir = Path(
         os.environ.get("AGENT_SKILLS_DIR", str(Path.home() / ".agents" / "skills"))
     )
     if not skills_dir.is_dir():
-        return True, f"agent skills: ディレクトリなし（スキップ）: {skills_dir}"
+        return True, f"agent skills: no directory (skipped): {skills_dir}"
 
     bad: list[str] = []
     for manifest in sorted(skills_dir.glob("*/SKILL.md")):
         try:
             text = manifest.read_text(encoding="utf-8")
         except OSError as exc:
-            bad.append(f"{manifest}: 読み込み失敗: {exc}")
+            bad.append(f"{manifest}: read failed: {exc}")
             continue
         fm = _parse_skill_frontmatter(text)
         if fm is None:
-            bad.append(f"{manifest}: frontmatter が欠落または不正 YAML")
+            bad.append(f"{manifest}: frontmatter missing or invalid YAML")
             continue
         name = fm.get("name")
         description = fm.get("description")
         if not (isinstance(name, str) and name.strip()):
-            bad.append(f"{manifest}: name が空")
+            bad.append(f"{manifest}: name is empty")
         if not (isinstance(description, str) and description.strip()):
-            bad.append(f"{manifest}: description が空")
+            bad.append(f"{manifest}: description is empty")
     if bad:
-        return False, "agent skills manifest 不正（Codex design role が起動失敗する）: " + "; ".join(bad)
-    return True, f"agent skills: {skills_dir} の全 SKILL.md manifest OK"
+        return False, "invalid agent skills manifest (the Codex design role fails to start): " + "; ".join(bad)
+    return True, f"agent skills: every SKILL.md manifest in {skills_dir} OK"
 
 
 def _repo_to_pkg_name(repo: str) -> str:
@@ -263,7 +265,7 @@ def _check_post_merge_restart(item: dict) -> tuple[bool, str]:
 
 
 def check_post_merge(items: list[dict]) -> list[tuple[bool, str]]:
-    """post_merge 契約項目の実行時検証。各項目の (ok, message) を返す。"""
+    """Runtime verification of post_merge contract items; returns (ok, message) per item."""
     handlers = {
         "stable_install": _check_post_merge_stable_install,
         "tag": _check_post_merge_tag,
@@ -317,7 +319,7 @@ def main() -> int:
 
     print()
     if failures:
-        print(f"=== PREFLIGHT FAILED ({len(failures)} 件) ===")
+        print(f"=== PREFLIGHT FAILED ({len(failures)} item(s)) ===")
         return 1
     print("=== PREFLIGHT PASSED ===")
     return 0

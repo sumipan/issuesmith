@@ -36,17 +36,17 @@ warnings.warn(
     stacklevel=2,
 )
 
-_MILESTONE_COMMENT = """## P0 中断: scope:milestone イシュー
-このイシューは設計専用です。develop-ready による自動実装は禁止されています。
+_MILESTONE_COMMENT = """## P0 stopped: scope:milestone issue
+This issue is design-only. Automatic implementation via develop-ready is not allowed.
 PIPELINE_STATUS: MILESTONE_BLOCKED"""
 
 _STALE_BASE_COMMENT_TEMPLATE = """\
-## P0 停止: base_branch 同期失敗（rebase 競合）
+## P0 stopped: base_branch sync failed (rebase conflict)
 
-`origin/{base_branch}` との rebase で競合が発生しました。
-手動で競合を解消してから再 dispatch してください。
+Rebasing onto `origin/{base_branch}` hit conflicts.
+Resolve the conflicts manually, then dispatch again.
 
-**競合ファイル:**
+**Conflicting files:**
 ```
 {conflict_files}
 ```
