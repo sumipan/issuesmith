@@ -1115,6 +1115,8 @@ def _run_guarded_order(
         and statuses[0] in success_statuses
     ):
         return 0, proc.stdout
+    if proc.stdout and not proc.stdout.endswith("\n"):
+        print()  # keep the failure status a standalone line (#4530)
     print(f"PIPELINE_STATUS: {failure_status}")
     if proc.returncode != 0:
         print(f"REASON: role process exited with code {proc.returncode}")
@@ -1155,6 +1157,8 @@ def _run_emit_order(
     statuses = _extract_status_values(proc.stdout)
     if proc.returncode == 0 and not statuses:
         return 0, proc.stdout
+    if proc.stdout and not proc.stdout.endswith("\n"):
+        print()  # keep the failure status a standalone line (#4530)
     print(f"PIPELINE_STATUS: {failure_status}")
     if proc.returncode != 0:
         reason = f"role process exited with code {proc.returncode}"
@@ -1388,6 +1392,16 @@ def _run_guarded_with_requires(
             role, template_path, variables, success_statuses, failure_status, cwd, tier
         )
     if rc != 0:
+        # An explicit failure report from the order is never overridden (#4530);
+        # HEAD-ahead only rescues abnormal exits after the LLM committed work.
+        reported = [s for s in _extract_status_values(_stdout) if s not in success_statuses]
+        if reported:
+            print(
+                f"[issuesmith-engine] order reported failure ({', '.join(reported)}); "
+                "not overriding with HEAD-ahead",
+                file=sys.stderr,
+            )
+            return rc
         if _worktree_head_ahead(context):
             print(
                 "[issuesmith-engine] HEAD advanced past base; "
