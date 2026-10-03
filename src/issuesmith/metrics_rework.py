@@ -322,7 +322,9 @@ def compute(
         if ts is None:
             skipped_rows += 1
             continue
-        if issue_filter is not None and _issue_from_row(row) != issue_filter:
+        # LLM rows carry no ``issue``; keep them and attribute via parent_uuid below.
+        row_issue = _issue_from_row(row)
+        if issue_filter is not None and row_issue is not None and row_issue != issue_filter:
             continue
         if since_dt is not None and ts < since_dt:
             continue
@@ -513,6 +515,9 @@ def compute(
         rework_items.append(item)
         issues[issue].humans.append(item)
 
+    week_cost: dict[str, float] = defaultdict(float)
+    week_unpriced_calls: dict[str, int] = defaultdict(int)
+    week_unpriced_tokens: dict[str, int] = defaultdict(int)
     parent_uuids = set(step_started)
     for row in task_rows:
         parent = str(row.get("parent_uuid") or "").strip()
@@ -527,19 +532,24 @@ def compute(
         engine = str(row.get("engine") or "")
         if engine == "shell":
             continue
+        cost_week, _ = _week_info(row["_parsed_ts"])
         cost = row.get("cost_usd")
         if cost is None:
             token_count = row.get("token_count")
             if token_count is None:
                 continue
             issues[issue].unpriced_calls += 1
+            week_unpriced_calls[cost_week] += 1
             if isinstance(token_count, int):
                 issues[issue].unpriced_tokens += token_count
+                week_unpriced_tokens[cost_week] += token_count
         else:
             try:
-                issues[issue].cost_usd += float(cost)
+                value = float(cost)
             except (TypeError, ValueError):
-                pass
+                continue
+            issues[issue].cost_usd += value
+            week_cost[cost_week] += value
 
     done_step = config.metrics.done_step
     done_by_week: dict[str, set[int]] = defaultdict(set)
@@ -613,14 +623,10 @@ def compute(
         andon_raised = andon_by_week.get(week_label, 0)
         q3 = (andon_raised / submitted) if submitted else 0.0
 
-        week_cost = 0.0
-        unpriced_calls = 0
-        unpriced_tokens = 0
-        for issue in active_by_week.get(week_label, set()):
-            week_cost += issues[issue].cost_usd
-            unpriced_calls += issues[issue].unpriced_calls
-            unpriced_tokens += issues[issue].unpriced_tokens
-        q4 = (week_cost / active_issues) if active_issues else 0.0
+        cost_usd = week_cost.get(week_label, 0.0)
+        unpriced_calls = week_unpriced_calls.get(week_label, 0)
+        unpriced_tokens = week_unpriced_tokens.get(week_label, 0)
+        q4 = (cost_usd / active_issues) if active_issues else 0.0
 
         by_step: dict[str, dict[str, int]] = defaultdict(
             lambda: {"runs": 0, "rerun": 0, "repair": 0, "human": 0, "noise": 0}
@@ -676,7 +682,7 @@ def compute(
                 "andon_raised": andon_raised,
                 "submitted_issues": submitted,
                 "q4_cost_per_issue_usd": q4,
-                "cost_usd": week_cost,
+                "cost_usd": cost_usd,
                 "unpriced": {"calls": unpriced_calls, "tokens": unpriced_tokens},
                 "by_step": dict(by_step),
                 "by_cause": by_cause,

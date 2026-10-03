@@ -337,3 +337,36 @@ class TestHelpers:
         )
         assert "2026-W40" in text
         assert "tests.fail" in text
+
+
+class TestCostAttribution:
+    def _rows(self) -> list[dict]:
+        return [
+            {"event": "step_started", "ts": "2026-09-28T01:00:00+00:00", "parent_uuid": "u-1", "issue": 6001, "step": "p1"},
+            {"uuid": "l-1", "engine": "claude", "status": "success", "timestamp": "2026-09-28T01:01:00+00:00", "cost_usd": 1.0, "parent_uuid": "u-1"},
+            {"event": "step_started", "ts": "2026-10-05T01:00:00+00:00", "parent_uuid": "u-2", "issue": 6001, "step": "m2"},
+            {"uuid": "l-2", "engine": "claude", "status": "success", "timestamp": "2026-10-05T01:01:00+00:00", "cost_usd": 2.0, "parent_uuid": "u-2"},
+            {"event": "step_started", "ts": "2026-09-28T02:00:00+00:00", "parent_uuid": "u-3", "issue": 6002, "step": "p1"},
+            {"uuid": "l-3", "engine": "claude", "status": "success", "timestamp": "2026-09-28T02:01:00+00:00", "cost_usd": 4.0, "parent_uuid": "u-3"},
+        ]
+
+    def test_weekly_cost_uses_rows_of_that_week_only(self, tmp_path, monkeypatch):
+        _minimal_config(tmp_path, monkeypatch)
+        from issuesmith.config import get_config
+
+        metrics = tmp_path / "metrics.jsonl"
+        metrics.write_text("\n".join(json.dumps(r) for r in self._rows()) + "\n", encoding="utf-8")
+        result = compute(metrics, config=get_config())
+        weeks = {w["week"]: w for w in result["weeks"]}
+        assert weeks["2026-W40"]["cost_usd"] == pytest.approx(5.0)
+        assert weeks["2026-W41"]["cost_usd"] == pytest.approx(2.0)
+
+    def test_issue_filter_keeps_llm_rows_without_issue(self, tmp_path, monkeypatch):
+        _minimal_config(tmp_path, monkeypatch)
+        from issuesmith.config import get_config
+
+        metrics = tmp_path / "metrics.jsonl"
+        metrics.write_text("\n".join(json.dumps(r) for r in self._rows()) + "\n", encoding="utf-8")
+        result = compute(metrics, config=get_config(), issue_filter=6001)
+        assert [i["issue"] for i in result["issues"]] == [6001]
+        assert result["issues"][0]["cost_usd"] == pytest.approx(3.0)
