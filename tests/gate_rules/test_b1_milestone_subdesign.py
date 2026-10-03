@@ -712,12 +712,15 @@ def _in_vocabulary(body: str, prefix: str, columns, vague: str) -> str:
 
 
 def test_en_pack_sub_header_and_change_table_pass(tmp_path, monkeypatch):
-    from issuesmith.language import EN
-
     _use_pack(tmp_path, monkeypatch)
-    body = _in_vocabulary(_valid_body(), "Sub", EN.change_table_columns, "")
+    body = _in_vocabulary(
+        _valid_body(),
+        "Sub",
+        ["Repository", "File path", "Change type", "Description"],
+        "",
+    )
     assert "#### Sub1:" in body
-    assert "| Repository | File path |" in body
+    assert "| Repository | File path | Change type | Description |" in body
     assert _check(body, MILESTONE_LABELS) == []
 
 
