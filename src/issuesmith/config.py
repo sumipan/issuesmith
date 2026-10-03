@@ -245,6 +245,15 @@ class ScopeSizeConfig:
 
 
 @dataclass(frozen=True)
+class MetricsConfig:
+    """Rework metrics options (``issuesmith.yaml`` ``metrics:`` section, #4431)."""
+
+    done_step: str = "m2"
+    repair_templates: tuple[str, ...] = ()
+    cause_targets: Mapping[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class TestsConfig:
     """Pytest gate options (``issuesmith.yaml`` ``tests:`` section)."""
 
@@ -331,6 +340,7 @@ class IssuesmithConfig:
     scope_coupling: ScopeCouplingConfig = field(default_factory=ScopeCouplingConfig)
     scope_size: ScopeSizeConfig = field(default_factory=ScopeSizeConfig)
     tests: TestsConfig = field(default_factory=TestsConfig)
+    metrics: MetricsConfig = field(default_factory=MetricsConfig)
     derived_allow: DerivedAllowConfig = field(default_factory=DerivedAllowConfig)
     external_leak: ExternalLeakConfig = field(default_factory=ExternalLeakConfig)
     terminal_labels: tuple[str, ...] = _DEFAULT_TERMINAL_LABELS
@@ -714,6 +724,35 @@ def _build_scope_size(raw: Mapping[str, Any] | None) -> ScopeSizeConfig:
     )
 
 
+def _build_metrics(raw: Mapping[str, Any] | None) -> MetricsConfig:
+    defaults = MetricsConfig()
+    if not raw:
+        return defaults
+    allowed = {"done_step", "repair_templates", "cause_targets"}
+    unknown = sorted(str(k) for k in raw if k not in allowed)
+    if unknown:
+        raise ConfigError(
+            f"metrics supports only {sorted(allowed)}; unknown keys: {unknown}"
+        )
+    done_step = str(raw.get("done_step", defaults.done_step)).strip() or defaults.done_step
+    if "repair_templates" in raw:
+        templates_raw = raw["repair_templates"]
+        if not isinstance(templates_raw, list) or not all(isinstance(x, str) for x in templates_raw):
+            raise ConfigError("metrics.repair_templates must be a list of strings")
+        repair_templates = tuple(str(x) for x in templates_raw)
+    else:
+        repair_templates = defaults.repair_templates
+    targets_raw = raw.get("cause_targets", {})
+    if not isinstance(targets_raw, Mapping):
+        raise ConfigError("metrics.cause_targets must be a mapping")
+    cause_targets = {str(k): str(v) for k, v in targets_raw.items()}
+    return MetricsConfig(
+        done_step=done_step,
+        repair_templates=repair_templates,
+        cause_targets=cause_targets,
+    )
+
+
 def _build_tests(raw: Mapping[str, Any] | None) -> TestsConfig:
     defaults = TestsConfig()
     if not raw:
@@ -840,6 +879,7 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         data.get("scope_size") if isinstance(data.get("scope_size"), dict) else None
     )
     tests_raw = data.get("tests") if isinstance(data.get("tests"), dict) else None
+    metrics_raw = data.get("metrics") if isinstance(data.get("metrics"), dict) else None
     derived_allow_raw = (
         data.get("derived_allow") if isinstance(data.get("derived_allow"), dict) else None
     )
@@ -872,6 +912,7 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         scope_coupling=_build_scope_coupling(scope_coupling_raw),
         scope_size=_build_scope_size(scope_size_raw),
         tests=_build_tests(tests_raw),
+        metrics=_build_metrics(metrics_raw),
         derived_allow=_build_derived_allow(derived_allow_raw),
         external_leak=_build_external_leak(external_leak_raw),
         terminal_labels=_build_terminal_labels(data.get("terminal_labels")),

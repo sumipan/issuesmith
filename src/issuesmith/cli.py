@@ -27,6 +27,7 @@ commands:
   milestone  status / resume-progress (sub_issues_summary progress + child table)
   config show
   observe [--apply] [--json]
+  metrics rework [--since YYYY-MM-DD] [--issue N] [--audit PATH] [--json]
   main-health  (run observe.main_health.command on the base branch, write state)
   apply  ingest-review  (moved to tools/stash/; exit 2)
 """
@@ -381,6 +382,19 @@ def _cmd_observe(argv: list[str]) -> int:
     return 0
 
 
+def _cmd_metrics_rework(argv: list[str]) -> int:
+    from issuesmith.metrics_rework import main as metrics_rework_main
+
+    return int(metrics_rework_main(argv))
+
+
+def _cmd_metrics(argv: list[str]) -> int:
+    if not argv or argv[0] != "rework":
+        print("metrics: expected 'rework'", file=sys.stderr)
+        return 2
+    return _cmd_metrics_rework(argv[1:])
+
+
 def _cmd_main_health(_argv: list[str]) -> int:
     from issuesmith.config import get_config
     from issuesmith.observe.main_health import MainHealthError, check, state_path
@@ -436,6 +450,7 @@ _HANDLERS = {
     "milestone": _cmd_milestone,
     "config": _cmd_config,
     "observe": _cmd_observe,
+    "metrics": _cmd_metrics,
     "main-health": _cmd_main_health,
     "apply": _cmd_stash_moved,
     "ingest-review": _cmd_stash_moved,
