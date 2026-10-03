@@ -635,7 +635,9 @@ def test_run_guarded_no_derived_block_when_empty(capsys, fresh_repo: Path):
 # ---------------------------------------------------------------------------
 
 
-def _run_guarded_with_llm_rc(fresh_repo: Path, llm_rc: int, track_loop: list) -> int:
+def _run_guarded_with_llm_rc(
+    fresh_repo: Path, llm_rc: int, track_loop: list, stdout: str = "",
+) -> int:
     from issuesmith.config import StepConfig
     from issuesmith.engine import run_guarded
 
@@ -646,7 +648,7 @@ def _run_guarded_with_llm_rc(fresh_repo: Path, llm_rc: int, track_loop: list) ->
         "allow_paths=- README.md",
         "workflow_name=issuesmith",
     ]
-    with patch("issuesmith.engine._run_emit_order", return_value=(llm_rc, "")):
+    with patch("issuesmith.engine._run_emit_order", return_value=(llm_rc, stdout)):
         with patch(
             "issuesmith.ops.dispatch.run_requires_loop",
             side_effect=lambda *a, **k: track_loop.append(True),
@@ -691,3 +693,89 @@ def test_run_guarded_head_not_advanced_exits_on_llm_failure(fresh_repo: Path):
 
     assert not loop_called
     assert rc == 1
+
+
+# ---------------------------------------------------------------------------
+# #4530: explicit failure report is not overridden by HEAD-ahead
+# ---------------------------------------------------------------------------
+
+
+def test_run_guarded_explicit_failure_not_overridden_by_head_ahead(
+    capsys, fresh_repo: Path,
+):
+    """Order reports IMPL_FAILED on a standalone line → no requires loop, rc 1."""
+    _git(fresh_repo, "checkout", "-b", "feat/impl")
+    (fresh_repo / "extra.txt").write_text("x\n", encoding="utf-8")
+    _git(fresh_repo, "add", "extra.txt")
+    _git(fresh_repo, "commit", "-m", "version bump only")
+
+    loop_called: list[bool] = []
+    rc = _run_guarded_with_llm_rc(
+        fresh_repo, 1, loop_called,
+        stdout="cannot implement\nPIPELINE_STATUS: IMPL_FAILED\n",
+    )
+
+    assert not loop_called, "requires loop must not run on explicit failure"
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "PIPELINE_STATUS: IMPL_DONE" not in captured.out
+    assert (
+        "order reported failure (IMPL_FAILED); not overriding with HEAD-ahead"
+        in captured.err
+    )
+
+
+def _call_order_no_newline(fn_name: str, stdout: str, returncode: int = 1) -> int:
+    from issuesmith import engine
+
+    with patch("issuesmith.engine._render_template", return_value=""):
+        with patch(
+            "issuesmith.engine._execute",
+            return_value=_make_proc(returncode=returncode, stdout=stdout),
+        ):
+            if fn_name == "_run_emit_order":
+                rc, _ = engine._run_emit_order(
+                    "implementation", "fake.md", [], "IMPL_FAILED",
+                )
+            else:
+                rc, _ = engine._run_guarded_order(
+                    "implementation", "fake.md", [], ["IMPL_DONE"], "IMPL_FAILED",
+                )
+    return rc
+
+
+@pytest.mark.parametrize("fn_name", ["_run_emit_order", "_run_guarded_order"])
+def test_failure_status_standalone_when_stdout_lacks_newline(capsys, fn_name: str):
+    """failure status is printed on its own line after unterminated LLM stdout."""
+    from issuesmith.engine import _extract_status_values
+
+    rc = _call_order_no_newline(fn_name, "no newline at end")
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "no newline at end\nPIPELINE_STATUS: IMPL_FAILED\n" in out
+    assert "IMPL_FAILED" in _extract_status_values(out)
+
+
+@pytest.mark.parametrize("fn_name", ["_run_emit_order", "_run_guarded_order"])
+def test_failure_status_standalone_when_stdout_ends_with_status(capsys, fn_name: str):
+    """Unterminated LLM status line and engine status line stay separate."""
+    from issuesmith.engine import _extract_status_values
+
+    rc = _call_order_no_newline(fn_name, "oops\nPIPELINE_STATUS: IMPL_FAILED", returncode=0)
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "PIPELINE_STATUS: IMPL_FAILED\nPIPELINE_STATUS: IMPL_FAILED\n" in out
+    assert _extract_status_values(out).count("IMPL_FAILED") == 2
+
+
+@pytest.mark.parametrize("fn_name", ["_run_emit_order", "_run_guarded_order"])
+def test_failure_status_no_blank_line_when_stdout_ends_with_newline(capsys, fn_name: str):
+    """No extra blank line is added when LLM stdout already ends with a newline."""
+    rc = _call_order_no_newline(fn_name, "line\n")
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "line\nPIPELINE_STATUS: IMPL_FAILED\n" in out
+    assert "line\n\nPIPELINE_STATUS" not in out
