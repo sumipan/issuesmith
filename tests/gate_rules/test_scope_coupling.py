@@ -206,6 +206,33 @@ def test_rules_check_scope_mode_internal_still_checks_deletions(repo):
     assert [v.rule_id for v in violations] == [DELETION_RULE_ID]
 
 
+def _write_language_pack(tmp_path: Path, monkeypatch, **overrides) -> None:
+    """Point the config at a language pack YAML: the EN pack with ``overrides``."""
+    import dataclasses
+
+    import yaml
+
+    from issuesmith.language import EN
+
+    data = {f.name: getattr(EN, f.name) for f in dataclasses.fields(EN)}
+    data.update(overrides)
+    plain = {
+        k: list(v) if isinstance(v, tuple) else dict(v) if isinstance(v, dict) else v
+        for k, v in data.items()
+    }
+    plain["sections"] = dict(EN.sections)
+    plain["messages"] = dict(EN.messages)
+    pack_path = tmp_path / "language_pack.yaml"
+    pack_path.write_text(yaml.safe_dump(plain, allow_unicode=False), encoding="utf-8")
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "sumipan/issuesmith", "language_pack": str(pack_path)}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+
+
 def _write_config(tmp_path: Path, monkeypatch, data: dict) -> None:
     import yaml
 
@@ -326,10 +353,10 @@ def pin_repo(tmp_path: Path) -> Path:
     return root
 
 
-def test_behavior_pinning_deletion_symbol_outside_allow_paths(pin_repo):
-    """Issue body deletes `read_memory_iterative`; uncovered test triggers violation."""
-    delete_phrase = "".join(map(chr, (12434, 21066, 38500, 12377, 12427, 12290)))
-    body_text = f"## Changes\n\n`read_memory_iterative` {delete_phrase}\n"
+def test_behavior_pinning_deletion_symbol_outside_allow_paths(pin_repo, tmp_path, monkeypatch):
+    """Issue body deletes `read_memory_iterative` with a pack removal verb; uncovered test fails."""
+    _write_language_pack(tmp_path, monkeypatch, removal_words=["purge", "retire"])
+    body_text = "## Changes\n\n`read_memory_iterative` is purged.\n"
     allow = ["src/memory.py"]
     violations = check_behavior_pinning(body_text, allow, pin_repo)
     assert len(violations) == 1
@@ -340,10 +367,10 @@ def test_behavior_pinning_deletion_symbol_outside_allow_paths(pin_repo):
     assert "tests/test_memory.py" in (v.fix_hint or "")
 
 
-def test_behavior_pinning_key_value_outside_allow_paths(pin_repo):
+def test_behavior_pinning_key_value_outside_allow_paths(pin_repo, tmp_path, monkeypatch):
     """`mode: iterative` removal; test with `iterative` outside allow_paths triggers violation."""
-    remove_phrase = "".join(map(chr, (12434, 22806, 12377, 12290)))
-    body_text = f"## Changes\n\n`mode: iterative` {remove_phrase}\n"
+    _write_language_pack(tmp_path, monkeypatch, removal_words=["purge", "retire"])
+    body_text = "## Changes\n\n`mode: iterative` is retired.\n"
     allow = ["src/memory.py"]
     violations = check_behavior_pinning(body_text, allow, pin_repo)
     assert len(violations) == 1
@@ -834,3 +861,41 @@ def test_stem_violation_fix_hint_includes_context_suffix(tmp_path):
     hint = v.fix_hint or ""
     assert "tools/import_pkg.py:" in hint
     assert "stem:import" in hint
+
+
+@pytest.mark.parametrize(
+    ("overrides", "verb"),
+    [({}, "deleted"), ({"removal_words": ["purge", "retire"]}, "purged")],
+    ids=["en", "ascii_pack"],
+)
+def test_behavior_pinning_pack_verbs_match_en_decision(
+    pin_repo, tmp_path, monkeypatch, overrides, verb
+):
+    """A removal verb of the configured pack gives the same violation as the EN verb."""
+    _write_language_pack(tmp_path, monkeypatch, **overrides)
+    body_text = f"## Changes\n\n`read_memory_iterative` is {verb}.\n"
+    violations = check_behavior_pinning(body_text, ["src/memory.py"], pin_repo)
+    assert [v.rule_id for v in violations] == [BEHAVIOR_PIN_RULE_ID]
+    assert "tests/test_memory.py" in violations[0].message
+
+
+def test_behavior_pinning_ignores_verbs_outside_pack(pin_repo, tmp_path, monkeypatch):
+    """EN verbs are not removal context when the pack does not list them."""
+    _write_language_pack(tmp_path, monkeypatch, removal_words=["purge"])
+    body_text = "## Changes\n\n`read_memory_iterative` is deleted.\n"
+    assert check_behavior_pinning(body_text, ["src/memory.py"], pin_repo) == []
+
+
+def test_deletion_rows_use_pack_delete_words(tmp_path, monkeypatch):
+    """A change-table row with the pack delete word makes the basename a required key."""
+    from issuesmith.gate_rules.scope_coupling import _extract_search_keys
+
+    _write_language_pack(tmp_path, monkeypatch, delete_words=["drop"])
+    body = (
+        "## Changed Files\n\n| Repository | File path | Change type | Description |\n"
+        "|---|---|---|---|\n"
+        "| sumipan/issuesmith | `scripts/git-sync.py` | drop | retire |\n"
+    )
+    metadata = {"target_repo": "sumipan/issuesmith", "allow_paths": ["scripts/git-sync.py"]}
+    required, _ = _extract_search_keys(body, metadata, tmp_path)
+    assert "git-sync" in required

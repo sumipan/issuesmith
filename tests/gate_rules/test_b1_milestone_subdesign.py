@@ -1,9 +1,11 @@
 """tests/gate_rules/test_b1_milestone_subdesign.py — unit tests for b1_milestone_subdesign gate."""
 from __future__ import annotations
 
+import pytest
+
 import issuesmith.gate_rules.b1_milestone_subdesign  # noqa: F401
 from issuesmith.gate_rules import GATE_REGISTRY
-from tests.legacy_text import CHANGE_TYPE, DESCRIPTION, FILE_PATH, REPOSITORY, SUB, VAGUE_SUCCESS
+from tests.legacy_text import CHANGE_TYPE, DESCRIPTION, FILE_PATH, REPOSITORY, SUB
 
 MILESTONE_LABELS = ["scope:milestone"]
 NON_MILESTONE_LABELS = ["scope:feature"]
@@ -109,7 +111,7 @@ allow_paths:
 | `skills/mltgnt-skill/SKILL.md` | Modify | c30AC_c30A4_c30C9_c30E9_c30A4_c30F3_c8FFD_c52A0 |
 
 **Acceptance Criteria**:
-- [ ] {VAGUE_SUCCESS} result
+- [ ] result works correctly
 - [ ] c30AC_c30A4_c30C9_c30E9_c30A4_c30F3_c304C_c5B58_c5728_c3059_c308B
 
 #### {SUB}3: Phase D
@@ -664,3 +666,103 @@ def test_main_without_prev_report_has_no_oscillation(monkeypatch, capsys):
     )
     assert b1_verify.main() == 1
     assert "oscillation" not in capsys.readouterr().out
+
+
+# --- Language pack vocabulary (nexus #4474) ---
+
+# ASCII vocabulary that differs from the EN pack defaults.
+_ASCII_PACK = {
+    "sub_header_prefix": "Part",
+    "change_table_columns": ["Repo", "Path", "Kind", "Note"],
+    "vague_ac_words": ["mostly fine"],
+}
+
+
+def _use_pack(tmp_path, monkeypatch, **overrides) -> None:
+    """Point the config at a language pack YAML: the EN pack with ``overrides``."""
+    import dataclasses
+
+    import yaml
+
+    from issuesmith.config import reset_config_cache
+    from issuesmith.language import EN
+
+    data = {f.name: getattr(EN, f.name) for f in dataclasses.fields(EN)}
+    data.update(overrides)
+    plain = {k: list(v) if isinstance(v, tuple) else v for k, v in data.items()}
+    plain["sections"] = dict(EN.sections)
+    plain["messages"] = dict(EN.messages)
+    pack_path = tmp_path / "language_pack.yaml"
+    pack_path.write_text(yaml.safe_dump(plain), encoding="utf-8")
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "sumipan/issuesmith", "language_pack": str(pack_path)}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+
+
+def _in_vocabulary(body: str, prefix: str, columns, vague: str) -> str:
+    return (
+        body.replace(f"#### {SUB}", f"#### {prefix}")
+        .replace(_TABLE_HEADER, " | ".join(columns))
+        .replace("VAGUE", vague)
+    )
+
+
+def test_en_pack_sub_header_and_change_table_pass(tmp_path, monkeypatch):
+    from issuesmith.language import EN
+
+    _use_pack(tmp_path, monkeypatch)
+    body = _in_vocabulary(_valid_body(), "Sub", EN.change_table_columns, "")
+    assert "#### Sub1:" in body
+    assert "| Repository | File path |" in body
+    assert _check(body, MILESTONE_LABELS) == []
+
+
+def _vague_ac_body() -> str:
+    return _valid_body().replace("Sub1 c306E_Acceptance Criteria_c9805_c76EE alpha", "VAGUE alpha")
+
+
+def _bad_columns_body() -> str:
+    return _valid_body().replace(_TABLE_HEADER, "A | B | C | D", 1)
+
+
+@pytest.mark.parametrize(
+    "make_body",
+    [_valid_body, _vague_ac_body, _bad_columns_body],
+    ids=["valid", "vague_ac", "bad_columns"],
+)
+def test_ascii_pack_matches_en_decision(tmp_path, monkeypatch, make_body):
+    from issuesmith.language import EN
+
+    en_dir = tmp_path / "en"
+    en_dir.mkdir()
+    _use_pack(en_dir, monkeypatch)
+    en_body = _in_vocabulary(make_body(), "Sub", EN.change_table_columns, EN.vague_ac_words[0])
+    en_ids = sorted(v.rule_id for v in _check(en_body, MILESTONE_LABELS))
+
+    ascii_dir = tmp_path / "ascii"
+    ascii_dir.mkdir()
+    _use_pack(ascii_dir, monkeypatch, **_ASCII_PACK)
+    ascii_body = _in_vocabulary(
+        make_body(), "Part", _ASCII_PACK["change_table_columns"], "mostly fine"
+    )
+    ascii_ids = sorted(v.rule_id for v in _check(ascii_body, MILESTONE_LABELS))
+
+    assert ascii_ids == en_ids
+    if make_body is _vague_ac_body:
+        assert "b1_milestone_subdesign.ac_vague_word" in en_ids
+    if make_body is _bad_columns_body:
+        assert "b1_milestone_subdesign.table_schema" in en_ids
+
+
+def test_ascii_pack_rejects_en_vocabulary(tmp_path, monkeypatch):
+    """With the ASCII pack, EN sub headers are not sub blocks (vocabulary is read from it)."""
+    from issuesmith.language import EN
+
+    _use_pack(tmp_path, monkeypatch, **_ASCII_PACK)
+    body = _in_vocabulary(_valid_body(), "Sub", EN.change_table_columns, "")
+    rule_ids = {v.rule_id for v in _check(body, MILESTONE_LABELS)}
+    assert "b1_milestone_subdesign.sub_count_mismatch" in rule_ids

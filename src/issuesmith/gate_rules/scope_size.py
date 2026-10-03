@@ -21,15 +21,16 @@ from issuesmith.context_hook import parse_issue_metadata
 from issuesmith.contract import extract_change_table_rows
 
 _MILESTONE_LABEL = "scope:milestone"
-# Literal required by contract.SUB_HEADER_RE / milestone_consistency (katakana SA+BU).
-_SUB_HEADER_PREFIX = "".join(map(chr, (0x30B5, 0x30D6)))
-# 4-col change-table header matching b1_milestone_subdesign schema (no CJK literals).
-_CHANGE_TABLE_COLS = (
-    "".join(map(chr, (0x30EA, 0x30DD, 0x30B8, 0x30C8, 0x30EA))),  # repository
-    "".join(map(chr, (0x30D5, 0x30A1, 0x30A4, 0x30EB, 0x30D1, 0x30B9))),  # file path
-    "".join(map(chr, (0x5909, 0x66F4, 0x7A2E, 0x5225))),  # change kind
-    "".join(map(chr, (0x5909, 0x66F4, 0x5185, 0x5BB9))),  # description
-)
+
+
+def _sub_header_prefix() -> str:
+    """``#### <prefix>N:`` sub-design header prefix from the language pack."""
+    return get_config().language.sub_header_prefix
+
+
+def _change_table_header() -> str:
+    """4-column change-table header row (b1_milestone_subdesign schema) from the pack."""
+    return "| " + " | ".join(get_config().language.change_table_columns) + " |"
 
 
 @dataclass(frozen=True)
@@ -148,7 +149,7 @@ def _fix_hint(body: str, measure: SizeMeasure, cfg: ScopeSizeConfig) -> str:
         "milestone_consistency.fix_label_missing() + body_editor.normalize_sub_headers() "
         "+ body_editor.relocate_sub_plan()). Do not hand-edit English Sub headers.",
         f"That helper adds `## {sections['milestone']}` > `### {sections['sub_plan']}`, "
-        f"`#### {_SUB_HEADER_PREFIX}N: <title>` blocks under `## {sections['design']}` with "
+        f"`#### {_sub_header_prefix()}N: <title>` blocks under `## {sections['design']}` with "
         + ", ".join(f"**{name}**" for name in get_config().sub_design_subsections)
         + ", scope:milestone, and the GitHub milestone object. "
         "b1_milestone_subdesign fails when the plan row count and the sub header "
@@ -215,7 +216,7 @@ def _build_sub_block(
     # Column names match b1_milestone_subdesign._check_table_schema expectations.
     table_lines = [
         f"**{changed_label}**:",
-        "| " + " | ".join(_CHANGE_TABLE_COLS) + " |",
+        _change_table_header(),
         "|---|---|---|---|",
     ]
     paths = [path for _, path, _ in rows]
@@ -226,7 +227,7 @@ def _build_sub_block(
             "| split from oversized issue |"
         )
     yaml_paths = "\n".join(f"  - {p}" for p in paths) or "  - []"
-    sub_parts = [f"#### {_SUB_HEADER_PREFIX}{num}: {concern}", ""]
+    sub_parts = [f"#### {_sub_header_prefix()}{num}: {concern}", ""]
     for name in subsections:
         if name == changed_label:
             sub_parts.extend(table_lines)

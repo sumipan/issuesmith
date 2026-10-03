@@ -304,3 +304,90 @@ def test_config_thresholds_are_honoured(tmp_path, monkeypatch):
         {"scope_size": {"max_files": 20, "max_concerns": 4, "delete_with_new": True}},
     )
     assert ScopeSizeRules().check(_fixture("issue_3627_original.md"), []) == []
+
+
+# --- Language pack vocabulary (nexus #4474) ---
+
+# ASCII vocabulary that differs from the EN pack defaults.
+_ASCII_PACK = {
+    "sub_header_prefix": "Part",
+    "change_table_columns": ["Repo", "Path", "Kind", "Note"],
+    "delete_words": ["drop"],
+    "new_words": ["create"],
+}
+
+
+def _use_pack(tmp_path: Path, monkeypatch, **overrides) -> None:
+    """Point the config at a language pack YAML: the EN pack with ``overrides``."""
+    import dataclasses
+
+    from issuesmith.language import EN
+
+    data = {f.name: getattr(EN, f.name) for f in dataclasses.fields(EN)}
+    data.update(overrides)
+    plain = {k: list(v) if isinstance(v, tuple) else v for k, v in data.items()}
+    plain["sections"] = dict(EN.sections)
+    plain["messages"] = dict(EN.messages)
+    pack_path = tmp_path / "language_pack.yaml"
+    pack_path.write_text(yaml.safe_dump(plain), encoding="utf-8")
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "sumipan/issuesmith", "language_pack": str(pack_path)}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+
+
+def _pack_body(columns, rows: list[tuple[str, str]]) -> str:
+    table = "".join(f"| `sumipan/issuesmith` | `{p}` | {k} | x |\n" for p, k in rows)
+    return (
+        "```yaml\ntarget_repo: sumipan/issuesmith\nbase_branch: main\n```\n\n"
+        "## Changed Files\n\n| " + " | ".join(columns) + " |\n|---|---|---|---|\n" + table
+    )
+
+
+_OVERSIZED_ROWS = [(f"src/{d}/f{i}.py", "modify") for d in ("a", "b", "c") for i in range(3)]
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        _OVERSIZED_ROWS,
+        [("src/a/x.py", "delete"), ("src/a/y.py", "new")],
+        [("src/a/x.py", "modify")],
+    ],
+    ids=["oversized", "delete_with_new", "small"],
+)
+def test_ascii_pack_matches_en_decision(tmp_path, monkeypatch, rows):
+    from issuesmith.language import EN
+
+    ascii_kinds = {"delete": "drop", "new": "create", "modify": "modify"}
+    en_dir = tmp_path / "en"
+    en_dir.mkdir()
+    _use_pack(en_dir, monkeypatch)
+    en_ids = _ids(ScopeSizeRules().check(_pack_body(EN.change_table_columns, rows), []))
+
+    ascii_dir = tmp_path / "ascii"
+    ascii_dir.mkdir()
+    _use_pack(ascii_dir, monkeypatch, **_ASCII_PACK)
+    ascii_rows = [(p, ascii_kinds[k]) for p, k in rows]
+    ascii_ids = _ids(
+        ScopeSizeRules().check(_pack_body(_ASCII_PACK["change_table_columns"], ascii_rows), [])
+    )
+    assert ascii_ids == en_ids
+    if len(rows) == 2:
+        assert "scope_size.delete_with_new" in en_ids
+
+
+def test_promote_writes_pack_sub_header_and_columns(tmp_path, monkeypatch):
+    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
+
+    _use_pack(tmp_path, monkeypatch, **_ASCII_PACK)
+    body = _pack_body(_ASCII_PACK["change_table_columns"], _OVERSIZED_ROWS)
+    violations = ScopeSizeRules().check(body, [])
+    assert "scope_size.too_many_files" in _ids(violations)
+    assert all("#### PartN:" in (v.fix_hint or "") for v in violations)
+    promoted = promote_oversized_issue_body(body)
+    assert "#### Part1:" in promoted
+    assert "| Repo | Path | Kind | Note |" in promoted

@@ -58,27 +58,31 @@ _IGNORE_FILENAMES: frozenset[str] = frozenset({
 # Matches backtick-quoted identifiers of 4+ chars (function names, class names, etc.)
 _BACKTICK_IDENT_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]{3,})`")
 
-_DELETE_MOVE_KEYWORDS: tuple[str, ...] = ("削除", "移動", "リネーム", "delete", "move", "rename")
+# Move / rename verbs are not part of the language pack; the pack's delete words are added
+# at call time (see _delete_move_keywords).
+_MOVE_KEYWORDS: tuple[str, ...] = ("move", "rename")
 
 # Data / config file extensions whose modification requires the tests that pin their contents
 # (nexus #3949).
 _DATA_FILE_EXTS: frozenset[str] = frozenset({".yml", ".yaml", ".json", ".toml", ".txt"})
 
-# Keywords that mark removal/deprecation context in headings and table rows.
-_REMOVAL_KEYWORDS: tuple[str, ...] = ("削除", "撤去", "廃止", "delete", "remove")
-
 # Matches ${identifier} template variable syntax inside backticks.
 _BACKTICK_TEMPLATE_VAR_RE = re.compile(r"`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`")
 
-# Keywords indicating a symbol is being removed/replaced in the current Issue.
-_REPLACEMENT_CONTEXT_KEYWORDS: tuple[str, ...] = (
-    "delete", "remove", "replace", "substitute", "deprecate",
-    "".join(map(chr, (21066, 38500))),
-    "".join(map(chr, (22806, 12377))),
-    "".join(map(chr, (32622, 25563))),
-    "".join(map(chr, (32622, 12365, 25563, 12360))),
-    "".join(map(chr, (24259, 27490))),
-)
+
+
+def _removal_keywords() -> tuple[str, ...]:
+    """Removal / replacement verbs (language pack ``removal_words``), lower-cased.
+
+    They mark removal context in headings, table rows and replacement lines.
+    """
+    return tuple(w.lower() for w in get_config().language.removal_words)
+
+
+def _delete_move_keywords() -> tuple[str, ...]:
+    """Change-type words of delete / move / rename rows, lower-cased."""
+    delete_words = tuple(w.lower() for w in get_config().language.delete_words)
+    return delete_words + _MOVE_KEYWORDS
 
 # Matches key:value tokens within backticks (e.g., `mode: iterative`).
 _BACKTICK_KEY_VALUE_RE = re.compile(
@@ -150,16 +154,17 @@ def _git_grep_tests_py(
 def _extract_replacement_targets(body: str) -> tuple[set[str], set[str]]:
     """Return (word_boundary_idents, exact_strings) from replacement/deletion context.
 
-    Scans lines containing ``_REPLACEMENT_CONTEXT_KEYWORDS``.  Backtick-quoted
+    Scans lines containing a removal keyword (:func:`_removal_keywords`).  Backtick-quoted
     key:value tokens (e.g. ``mode: iterative``) are added to exact_strings; their
     values are also added to word_boundary_idents.  Plain identifier tokens are
     added to word_boundary_idents.
     """
     wb: set[str] = set()
     exact: set[str] = set()
+    keywords = _removal_keywords()
     for line in body.splitlines():
         line_lower = line.lower()
-        if not any(kw in line_lower for kw in _REPLACEMENT_CONTEXT_KEYWORDS):
+        if not any(kw in line_lower for kw in keywords):
             continue
         for m in _BACKTICK_KEY_VALUE_RE.finditer(line):
             token = m.group(1).strip()
@@ -197,6 +202,7 @@ def _removal_names(body: str) -> set[str]:
         for m in _BACKTICK_TEMPLATE_VAR_RE.finditer(text):
             names.add(m.group(1))
 
+    removal_keywords = _removal_keywords()
     lines = body.splitlines()
     in_removal_section = False
     current_section_level = 0
@@ -210,7 +216,7 @@ def _removal_names(body: str) -> set[str]:
         # Table rows
         if line.strip().startswith("|"):
             row_lower = line.lower()
-            if any(kw in row_lower for kw in _REMOVAL_KEYWORDS):
+            if any(kw in row_lower for kw in removal_keywords):
                 _extract_from_text(line)
             continue
 
@@ -221,8 +227,8 @@ def _removal_names(body: str) -> set[str]:
                 _flush_section_body()
             level = len(heading_match.group(1))
             heading_text = heading_match.group(2).lower()
-            if any(kw in heading_text for kw in _REMOVAL_KEYWORDS):
-                # The heading itself may name the target (e.g. "## `FOO` の廃止").
+            if any(kw in heading_text for kw in removal_keywords):
+                # The heading itself may name the target (e.g. "## Deprecate `FOO`").
                 _extract_from_text(heading_match.group(2))
                 in_removal_section = True
                 current_section_level = level
@@ -274,12 +280,13 @@ def _extract_search_keys(
             optional.add(base)
 
     # Basenames of delete/move/rename rows in change table
+    delete_move_keywords = _delete_move_keywords()
     for repo, path, change_type in extract_change_table_rows(body):
         if repo and target_repo and repo != target_repo:
             continue
         changed_files.add(path)
         ct_lower = change_type.lower()
-        if any(kw in ct_lower for kw in _DELETE_MOVE_KEYWORDS):
+        if any(kw in ct_lower for kw in delete_move_keywords):
             base = _basename_no_ext(path)
             if _is_valid_key(base):
                 required.add(base)
@@ -332,17 +339,24 @@ def _yaml_list(paths: list[str]) -> str:
 
 PATHS_MUST_NOT_EXIST_RULE_ID = "scope_coupling.paths_must_not_exist_unjustified"
 
-_SUB_MARKER = chr(0x30B5) + chr(0x30D6)
-_FROM_DERIVED = (
-    chr(0x304B) + chr(0x3089) + chr(0x5C0E) + chr(0x51FA)
-)
-_CURRENT_SUB_RE = re.compile(_SUB_MARKER + r"(\d+)\s+" + _FROM_DERIVED)
-_PARENT_ISSUE_HEADING = (
-    chr(0x89AA) + chr(0x30A4) + chr(0x30B7) + chr(0x30E5) + chr(0x30FC)
-)
-_PARENT_NUMBER_RE = re.compile(
-    "^" + _PARENT_ISSUE_HEADING + r":\s*#(\d+)", re.MULTILINE
-)
+
+
+def _current_sub_re() -> re.Pattern[str]:
+    """``<sub_header_prefix>N <derived_from_phrase>`` in a child body (group 1 = N)."""
+    language = get_config().language
+    return re.compile(
+        re.escape(language.sub_header_prefix)
+        + r"(\d+)\s+"
+        + re.escape(language.derived_from_phrase)
+    )
+
+
+def _parent_number_re() -> re.Pattern[str]:
+    """``<parent_issue_label>: #N`` line of a child body (group 1 = N)."""
+    return re.compile(
+        "^" + re.escape(get_config().language.parent_issue_label) + r":\s*#(\d+)",
+        re.MULTILINE,
+    )
 
 
 def _tracked_path_exists(repo_path: Path, base_branch: str, path: str) -> bool:
@@ -372,7 +386,7 @@ def _deleted_paths_in_body(body: str, target_repo: str) -> set[str]:
 
 
 def _current_sub_number(body: str) -> int | None:
-    match = _CURRENT_SUB_RE.search(body)
+    match = _current_sub_re().search(body)
     return int(match.group(1)) if match else None
 
 
@@ -382,7 +396,7 @@ def _body_with_sub_blocks(body: str) -> str | None:
 
     if extract_sub_blocks(body):
         return body
-    parent_match = _PARENT_NUMBER_RE.search(body)
+    parent_match = _parent_number_re().search(body)
     if not parent_match:
         return None
     try:
@@ -1076,7 +1090,7 @@ class ScopeCouplingRules:
                     rule_id="scope_coupling.tests_outside_allow_paths",
                     severity=severity,
                     message=(
-                        "allow_paths は変更に追従が必要なテストを含んでいません: "
+                        "allow_paths is missing tests that must follow this change: "
                         + ", ".join(missing_tests)
                         + over_note
                     ),
@@ -1091,7 +1105,7 @@ class ScopeCouplingRules:
                     rule_id="scope_coupling.callers_outside_allow_paths",
                     severity=severity,
                     message=(
-                        "allow_paths は変更に追従が必要な呼び出し元を含んでいません: "
+                        "allow_paths is missing callers that must follow this change: "
                         + ", ".join(missing_srcs)
                         + over_note
                     ),
@@ -1109,14 +1123,8 @@ def _format_autofix_note(
     added: list[str],
 ) -> str:
     added_text = ", ".join(f"`{p}`" for p in added) or "(none)"
-    return (
-        "## CP1: allow_paths に不足ファイルを自動追加しました\n"
-        "\n"
-        f"**理由**: allow_paths が変更に追従が必要なファイルを含んでいません。"
-        "決定論で検出した不足ファイルを追加しました。\n"
-        "\n"
-        f"- 追加されたファイル: {added_text}\n"
-        f"- 変更後 allow_paths ファイル数: {len(new)}\n"
+    return get_config().language.message(
+        "scope_coupling.autofix_note", added=added_text, count=len(new)
     )
 
 

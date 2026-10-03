@@ -1,4 +1,4 @@
-"""milestone_consistency — 分割計画パターンと scope:milestone ラベルの矛盾検知。"""
+"""milestone_consistency — detect a sub-issue split plan without the scope:milestone label."""
 from __future__ import annotations
 
 import re
@@ -8,15 +8,13 @@ from ghdag.workflow.gates import GATE_REGISTRY, Violation
 
 from issuesmith.body_editor import normalize_sub_headers, relocate_sub_plan
 from issuesmith.config import get_config
+from issuesmith.contract import sub_header_re
 from issuesmith.gate_rules.b1_milestone_subdesign import get_section
 
-_SUB_HEADER_RE = re.compile(r"^####\s+サブ(\d+):", re.MULTILINE)
 _SUB_HEADER_EN_RE = re.compile(
     r"^####\s+[Ss]ub[ \t]+(\d+)[ \t]*:?", re.MULTILINE | re.IGNORECASE
 )
 _MILESTONE_LABEL = "scope:milestone"
-# Katakana SA+BU; matches _SUB_HEADER_RE without CJK literals in added lines.
-_SUB_HEADER_PREFIX = "".join(map(chr, (0x30B5, 0x30D6)))
 
 
 def _sub_plan_heading() -> str:
@@ -31,7 +29,7 @@ def _has_sub_plan_h3(body: str) -> bool:
 def _has_split_plan_pattern(body: str) -> bool:
     return bool(
         _has_sub_plan_h3(body)
-        or _SUB_HEADER_RE.search(body)
+        or sub_header_re().search(body)
         or _SUB_HEADER_EN_RE.search(body)
     )
 
@@ -120,7 +118,9 @@ def apply_auto_fixable_helpers(
 class MilestoneConsistencyRules:
     def check(self, body: str, labels: list[str]) -> list[Violation]:
         violations: list[Violation] = []
-        sections = get_config().sections
+        cfg = get_config()
+        sections = cfg.sections
+        sub_prefix = cfg.language.sub_header_prefix
         has_plan = _has_split_plan_pattern(body)
 
         if has_plan and _MILESTONE_LABEL not in labels:
@@ -129,21 +129,21 @@ class MilestoneConsistencyRules:
                     rule_id="milestone_consistency.label_missing",
                     severity="fail",
                     message=(
-                        "本文にサブイシュー分割計画パターンがあるのに "
-                        f"{_MILESTONE_LABEL} が付いていません"
+                        "body has a sub-issue split plan but no "
+                        f"{_MILESTONE_LABEL} label"
                     ),
                     location=None,
                     auto_fixable=False,
                     fix_hint=(
-                        "scope:milestone を付与し、"
-                        "issuesmith.gate_rules.milestone_consistency.fix_label_missing() "
-                        "で milestone オブジェクト（<issue>-<YYYYMMDD>）を作成・紐付け"
+                        "add scope:milestone and create / attach the milestone object"
+                        " (<issue>-<YYYYMMDD>) with "
+                        "issuesmith.gate_rules.milestone_consistency.fix_label_missing()"
                         ". The label alone is not enough: for every sub plan row, also write "
-                        f"a `#### {_SUB_HEADER_PREFIX}N: <title>` design block under "
+                        f"a `#### {sub_prefix}N: <title>` design block under "
                         f"`## {sections['design']}` "
                         "(changed files table, acceptance criteria); otherwise verify fails "
                         "with b1_milestone_subdesign.sub_count_mismatch. "
-                        "Do not use English Sub headers "
+                        "Do not use the spaced `Sub N` header form "
                         "(milestone_consistency.sub_header_english rejects them)."
                     ),
                 )
@@ -154,10 +154,13 @@ class MilestoneConsistencyRules:
                 Violation(
                     rule_id="milestone_consistency.sub_header_english",
                     severity="fail",
-                    message="英語形式のサブ見出し（#### Sub N:）が残っています",
+                    message=(
+                        "non-canonical sub headers (#### Sub N:) remain; "
+                        f"the canonical form is #### {sub_prefix}N:"
+                    ),
                     location=None,
                     auto_fixable=True,
-                    fix_hint="body_editor.normalize_sub_headers() を適用",
+                    fix_hint="apply body_editor.normalize_sub_headers()",
                 )
             )
 
@@ -169,12 +172,12 @@ class MilestoneConsistencyRules:
                     rule_id="milestone_consistency.sub_plan_misplaced",
                     severity="fail",
                     message=(
-                        f"### {sections['sub_plan']} が ## {sections['design']} 配下にあり、"
-                        f"## {sections['milestone']} 配下にありません"
+                        f"### {sections['sub_plan']} is under ## {sections['design']},"
+                        f" not under ## {sections['milestone']}"
                     ),
                     location=None,
                     auto_fixable=True,
-                    fix_hint="body_editor.relocate_sub_plan() を適用",
+                    fix_hint="apply body_editor.relocate_sub_plan()",
                 )
             )
 
