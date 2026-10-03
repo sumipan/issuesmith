@@ -20,15 +20,15 @@ def _migration_procedure_skeleton() -> str:
     return f"""\
 ## {heading}
 
-（MG1 が実行するコマンドをここに記述する）
+(write the commands MG1 runs here)
 
 ```bash
-# 例: /var/tmp/mltgnt を main 最新に更新
+# e.g. update /var/tmp/mltgnt to the latest main
 cd /var/tmp/mltgnt && git fetch origin && git checkout main && git pull origin main
 pip install -e "/var/tmp/mltgnt/[dev]" --no-deps
 
-# マージ済みファイルの存在確認
-test -f <対象ファイル> && echo "OK: file exists"
+# check that the merged file exists
+test -f <target file> && echo "OK: file exists"
 ```
 """
 
@@ -38,10 +38,10 @@ def _state_survey_skeleton() -> str:
     return f"""\
 ### {heading}
 
-- **永続 state ファイル**: （移行対象コードが読み書きする logs/ ・.pipeline-state/ 等のファイルを列挙。無ければ（該当なし））
-- **untracked 実データ**: （git 管理外に存在する旧版の実データ。無ければ（該当なし））
-- **データ間の不変条件**: （state・snapshot・hash 等が満たすべき整合条件。無ければ（該当なし））
-- **途中停止時の復旧**: （書き込み途中でプロセスが停止した場合に不整合から自己復旧できるか。atomic write の有無）
+- **Persistent state files**: (list the logs/, .pipeline-state/, ... files the migrated code reads or writes; write (none) if there are none)
+- **Untracked live data**: (old-format live data outside git; write (none) if there is none)
+- **Invariants between data**: (consistency conditions state / snapshot / hash must hold; write (none) if there are none)
+- **Recovery from an interrupted run**: (whether a process stopped mid-write can recover from the inconsistency by itself; atomic writes or not)
 """
 
 
@@ -75,7 +75,7 @@ def has_migration_procedure_section(body: str) -> bool:
 
 
 def get_state_survey_section(body: str) -> str | None:
-    """実行時状態調査サブセクションの中身を返す（無ければ None）。"""
+    """Return the runtime state survey subsection content (None when absent)."""
     heading = get_config().sections["migration_state_survey"]
     match = re.search(
         rf"^###\s+{re.escape(heading)}\s*\n(.*?)(?=^#{{1,3}}\s|\Z)",
@@ -86,7 +86,7 @@ def get_state_survey_section(body: str) -> str | None:
 
 
 def ac_contract_has_test_path(body: str) -> bool:
-    """AC YAML の paths_must_exist に tests/ 配下のパスが含まれるか。"""
+    """Return whether the AC YAML paths_must_exist lists a path under tests/."""
     section = get_ac_section(body)
     if section is None:
         return False
@@ -182,7 +182,7 @@ class B1MigrationRules:
             violations.append(Violation(
                 rule_id="b1_migration.migration_procedure_missing",
                 severity="fail",
-                message=f"## {migration} セクションが存在しません",
+                message=f"## {migration} section is missing",
                 location=None,
                 auto_fixable=True,
                 fix_hint=_migration_procedure_skeleton(),
@@ -194,9 +194,9 @@ class B1MigrationRules:
                 rule_id="b1_migration.state_survey_missing",
                 severity="fail",
                 message=(
-                    f"### {survey} サブセクションが存在しません"
-                    "（永続 state・untracked 実データ・不変条件・途中停止時の復旧を"
-                    "調査し、該当なしの場合もその旨を明記すること）"
+                    f"### {survey} subsection is missing"
+                    " (survey persistent state, untracked live data, invariants and"
+                    " recovery from an interrupted run; say so explicitly when none apply)"
                 ),
                 location=None,
                 auto_fixable=True,
@@ -208,16 +208,16 @@ class B1MigrationRules:
                 rule_id="b1_migration.verification_test_missing",
                 severity="fail",
                 message=(
-                    f"## {ac} の ```yaml ブロックの paths_must_exist に"
-                    " tests/ 配下の移行検証テストが含まれていません"
-                    "（旧フォーマット fixture を使うテストをコミットし、"
-                    "そのパスを paths_must_exist に列挙すること）"
+                    f"## {ac} ```yaml block: paths_must_exist does not list"
+                    " a migration verification test under tests/"
+                    " (commit a test that uses an old-format fixture and"
+                    " list its path in paths_must_exist)"
                 ),
                 location=None,
                 auto_fixable=True,
                 fix_hint=(
                     "```yaml\npaths_must_exist:\n"
-                    "  - tests/<領域>/test_<対象>_migration.py\n```"
+                    "  - tests/<area>/test_<target>_migration.py\n```"
                 ),
             ))
 
@@ -226,8 +226,8 @@ class B1MigrationRules:
                 rule_id="b1_migration.post_merge_missing",
                 severity="fail",
                 message=(
-                    f"## {ac} の ```yaml ブロックに post_merge が含まれていません"
-                    "（マージ後の stable install・tag 発行・プロセス再起動を列挙すること）"
+                    f"## {ac} ```yaml block does not contain post_merge"
+                    " (list the post-merge stable install, tag and process restarts)"
                 ),
                 location=None,
                 auto_fixable=True,
@@ -239,8 +239,8 @@ class B1MigrationRules:
                 rule_id="b1_migration.removed_trees_missing",
                 severity="fail",
                 message=(
-                    f"## {ac} の ```yaml ブロックに removed_trees が含まれていません"
-                    "（git 追跡下から削除すべきディレクトリプレフィックスを列挙すること）"
+                    f"## {ac} ```yaml block does not contain removed_trees"
+                    " (list the directory prefixes to remove from git tracking)"
                 ),
                 location=None,
                 auto_fixable=True,

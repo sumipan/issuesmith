@@ -13,7 +13,6 @@ def _check(body: str, labels: list[str]):
 NON_MILESTONE_LABELS = ["scope:feature", "issuesmith:develop-ready"]
 MILESTONE_LABELS = ["scope:milestone"]
 
-# ASCII fixture data.
 BODY_WITH_AC_AND_YAML = """\
 ## Background
 some background
@@ -27,17 +26,15 @@ paths_must_not_exist:
   - legacy/old_*
 ```
 
-- [ ] c4F55_c304B_c306E_c30C1_c30A7_c30C3_c30AF
+- [ ] some check
 """
 
-# ASCII fixture data.
 BODY_WITH_AC_NO_YAML = """\
 ## Acceptance Criteria
 
-- [ ] c4F55_c304B_c306E_c30C1_c30A7_c30C3_c30AF
+- [ ] some check
 """
 
-# ASCII fixture data.
 BODY_NO_AC_SECTION = """\
 ## Background
 
@@ -48,7 +45,6 @@ some text
 some design
 """
 
-# ASCII fixture data.
 BODY_WITH_INVALID_YAML = """\
 ## Acceptance Criteria
 
@@ -60,7 +56,6 @@ paths_must_exist:
 ```
 """
 
-# ASCII fixture data.
 BODY_WITH_UNPARSEABLE_YAML = """\
 ## Acceptance Criteria
 
@@ -70,7 +65,6 @@ BODY_WITH_UNPARSEABLE_YAML = """\
 ```
 """
 
-# ASCII fixture data.
 BODY_WITH_ALL_ALLOWED_KEYS = """\
 ## Acceptance Criteria
 
@@ -85,7 +79,6 @@ references_must_resolve:
 ```
 """
 
-# ASCII fixture data.
 BODY_WITH_DESIGN_TABLE = """\
 ## Design
 
@@ -93,8 +86,8 @@ BODY_WITH_DESIGN_TABLE = """\
 
 | File Path | Change Type | Description |
 |---|---|---|
-| `tools/foo/new_file.py` | Add | c306A_c306B_c304B |
-| `tools/foo/existing.py` | Change | c306A_c306B_c304B |
+| `tools/foo/new_file.py` | Add | something |
+| `tools/foo/existing.py` | Change | something |
 
 ## Acceptance Criteria
 
@@ -235,7 +228,6 @@ def test_registered_in_gate_registry():
 
 
 def test_yaml_block_missing_fix_hint_derives_from_design_table():
-    # ASCII fixture data.
     body = """\
 ## Design
 
@@ -243,18 +235,18 @@ def test_yaml_block_missing_fix_hint_derives_from_design_table():
 
 | File Path | Change Type | Description |
 |---|---|---|
-| `tools/new_gate.py` | Add | c8FFD_c52A0 |
+| `tools/new_gate.py` | Add | add |
 | `tools/existing.py` | Change | Modify |
 
 ## Acceptance Criteria
 
-- [ ] c30C1_c30A7_c30C3_c30AF
+- [ ] check
 """
     violations = _check(body, MILESTONE_LABELS)
     assert len(violations) == 1
     v = violations[0]
     assert v.rule_id == "b1_ac_format.yaml_block_missing"
-    assert "paths_must_exist" in (v.fix_hint or "")
+    assert v.fix_hint == "```yaml\npaths_must_exist:\n  - tools/new_gate.py\n```"
 
 
 # ---------------------------------------------------------------------------
@@ -476,3 +468,43 @@ def test_unparseable_yaml_without_milestone_label_when_yaml_present():
     violations = _check(BODY_WITH_UNPARSEABLE_YAML, NON_MILESTONE_LABELS)
     assert len(violations) == 1
     assert violations[0].rule_id == "b1_ac_format.yaml_invalid"
+
+
+def test_yaml_block_missing_fix_hint_reads_new_words_from_pack(tmp_path, monkeypatch):
+    """The "new" change-type vocabulary comes from the language pack (#4476)."""
+    import dataclasses
+
+    import yaml
+
+    from issuesmith.config import reset_config_cache
+    from issuesmith.language import EN, LanguagePack
+
+    data = {}
+    for f in dataclasses.fields(LanguagePack):
+        value = getattr(EN, f.name)
+        data[f.name] = list(value) if isinstance(value, tuple) else (
+            value if isinstance(value, str) else dict(value)
+        )
+    data["new_words"] = ["Create"]
+    pack = tmp_path / "pack.yaml"
+    pack.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    cfg = tmp_path / "issuesmith.yaml"
+    cfg.write_text(f"repo: example/app\nlanguage_pack: {pack}\n", encoding="utf-8")
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg))
+    reset_config_cache()
+
+    body = """\
+## Design
+
+| Repository | File path | Change type | Description |
+|---|---|---|---|
+| `example/app` | `tools/created.py` | create | add a gate |
+| `example/app` | `tools/added.py` | Add | not new under this pack |
+
+## Acceptance Criteria
+
+- [ ] check
+"""
+    violations = _check(body, MILESTONE_LABELS)
+    assert [v.rule_id for v in violations] == ["b1_ac_format.yaml_block_missing"]
+    assert violations[0].fix_hint == "```yaml\npaths_must_exist:\n  - tools/created.py\n```"

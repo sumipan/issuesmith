@@ -3,45 +3,40 @@
 from issuesmith.gate_rules import GATE_REGISTRY
 from issuesmith.gate_rules.m2 import M2Rules
 
-# ASCII fixture data.
 BODY_WITH_UNCHECKED = """\
 ## Acceptance Criteria
 
-- [x] c5B8C_c4E86_c3057_c305F_c9805_c76EE
-- [ ] c672A_c5B8C_c4E86_c306E_c9805_c76EE
+- [x] completed item
+- [ ] unfinished item
 """
 
-# ASCII fixture data.
 BODY_ALL_CHECKED = """\
 ## Acceptance Criteria
 
-- [x] c5B8C_c4E86_c3057_c305F_c9805_c76EE
-- [x] c3053_c308C_c3082_c5B8C_c4E86
+- [x] completed item
+- [x] this is done too
 """
 
-# ASCII fixture data.
 BODY_NO_AC_SECTION = """\
 ## Background
 
-c7121_c95A2_c4FC2_c306A_c30B3_c30F3_c30C6_c30F3_c30C4_c3002
+Unrelated content.
 
-- [ ] c3053_c308C_c306F_c30BB_c30AF_c30B7_c30E7_c30F3_c5916_c306E_c30C1_c30A7_c30C3_c30AF_c30DC_c30C3_c30AF_c30B9
+- [ ] this checkbox is outside the section
 """
 
-# ASCII fixture data.
 BODY_AC_SECTION_NO_CHECKBOXES = """\
 ## Acceptance Criteria
 
-Acceptance Criteria_c3092_c81EA_c7531_c8A18_c8FF0_c3067_c8A18_c8F09_c3059_c308B_c3002_c30C1_c30A7_c30C3_c30AF_c30DC_c30C3_c30AF_c30B9_None_c3002
+The criteria are written as free text. No checkboxes.
 """
 
-# ASCII fixture data.
 BODY_MULTIPLE_UNCHECKED = """\
 ## Acceptance Criteria
 
-- [ ] c672A_c5B8C_c4E86 1
-- [ ] c672A_c5B8C_c4E86 2
-- [ ] c672A_c5B8C_c4E86 3
+- [ ] unfinished 1
+- [ ] unfinished 2
+- [ ] unfinished 3
 """
 
 
@@ -105,3 +100,13 @@ def test_labels_param_not_used():
 def test_gate_registry_registered():
     import issuesmith.gate_rules.m2  # noqa: F401 — ensure module loaded
     assert GATE_REGISTRY.get("m2") is M2Rules
+
+
+def test_messages_name_the_configured_section():
+    from issuesmith.config import get_config
+
+    heading = get_config().sections["acceptance_criteria"]
+    [missing] = M2Rules().check(BODY_NO_AC_SECTION, [])
+    assert missing.message == f"## {heading} section not found"
+    [unchecked] = M2Rules().check(BODY_MULTIPLE_UNCHECKED, [])
+    assert unchecked.message == f"3 unchecked item(s) remain in ## {heading}"

@@ -34,7 +34,11 @@ def extract_yaml_block(section: str) -> str | None:
 
 
 def _extract_new_file_paths_from_design(body: str) -> list[str]:
-    """design セクション内の変更対象テーブルから「新規」行のパスを抽出する。"""
+    """Return the paths of "new" rows in the change table inside the design section.
+
+    The change-type cell (the cell right after the backticked path) is matched
+    case-insensitively against the configured ``new_words`` vocabulary.
+    """
     design = get_config().sections["design"]
     match = re.search(
         rf"^##\s+{re.escape(design)}\s*\n(.*?)(?=^##[^#]|\Z)",
@@ -44,12 +48,18 @@ def _extract_new_file_paths_from_design(body: str) -> list[str]:
     if not match:
         return []
     design_section = match.group(1)
+    new_words = get_config().scope_size.new_words
     paths: list[str] = []
     for line in design_section.splitlines():
-        if "新規" in line:
-            path_match = re.search(r"`([^`]+\.[a-z]+)`", line)
-            if path_match:
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        for i, cell in enumerate(cells[:-1]):
+            path_match = re.fullmatch(r"`([^`]+\.[a-z]+)`", cell)
+            if path_match is None:
+                continue
+            kind = cells[i + 1].lower()
+            if any(word in kind for word in new_words):
                 paths.append(path_match.group(1))
+            break
     return paths
 
 
@@ -101,7 +111,7 @@ class B1AcFormatRules:
             return [Violation(
                 rule_id="b1_ac_format.yaml_invalid",
                 severity="fail",
-                message="YAML ブロックのパースに失敗しました",
+                message="failed to parse the YAML block",
                 location=None,
                 auto_fixable=False,
                 fix_hint=None,
@@ -111,7 +121,7 @@ class B1AcFormatRules:
             return [Violation(
                 rule_id="b1_ac_format.yaml_invalid",
                 severity="fail",
-                message="YAML ブロックはマッピングである必要があります",
+                message="the YAML block must be a mapping",
                 location=None,
                 auto_fixable=False,
                 fix_hint=None,
@@ -122,7 +132,7 @@ class B1AcFormatRules:
             return [Violation(
                 rule_id="b1_ac_format.yaml_invalid",
                 severity="fail",
-                message=f"許可されていないキーが含まれています: {sorted(unknown_keys)}",
+                message=f"the YAML block contains disallowed keys: {sorted(unknown_keys)}",
                 location=None,
                 auto_fixable=False,
                 fix_hint=None,
