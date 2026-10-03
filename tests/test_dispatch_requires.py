@@ -1039,6 +1039,97 @@ class TestRepairOscillation:
         assert "reject" in andon_arg.options
 
 
+# ---------------------------------------------------------------------------
+# #4337: group note for shared pytest failure root cause in repair prompt
+# ---------------------------------------------------------------------------
+
+
+def _pytest_v(message: str) -> Violation:
+    return Violation(
+        rule_id="tests.pytest_failure",
+        severity="fail",
+        message=message,
+        location=None,
+        auto_fixable=False,
+        fix_hint=None,
+    )
+
+
+class TestRepairGroupNote:
+    """Repair prompt includes a grouping note when 2+ pytest failures share an exception class."""
+
+    def _repair_text(self, violations: list[Violation], context: dict | None = None) -> str:
+        from issuesmith.ops.dispatch import _run_repair_step
+
+        captured: dict = {}
+
+        def fake_step(step_id, ctx):
+            captured.update(ctx)
+            return 0
+
+        ctx = context or {"issue_number": "42"}
+        with patch("issuesmith.ops.dispatch._try_python_step", side_effect=fake_step):
+            assert _run_repair_step(violations, "p1", ctx) is None
+        return captured["repair_violations"]
+
+    def test_group_note_when_same_exception_class(self):
+        violations = [
+            _pytest_v("WriteGuardError: side effect outside tmp: a"),
+            _pytest_v("WriteGuardError: side effect outside tmp: b"),
+            _pytest_v("WriteGuardError: side effect outside tmp: c"),
+        ]
+        text = self._repair_text(violations)
+        assert (
+            "Note: 3 tests share the same root cause (WriteGuardError). "
+            "Fix all 3 of them in a single commit before running the test suite.\n"
+        ) in text
+
+    def test_no_group_note_for_single_pytest_failure(self):
+        text = self._repair_text([_pytest_v("WriteGuardError: side effect outside tmp")])
+        assert "share the same root cause" not in text
+
+    def test_no_group_note_when_exception_classes_differ(self):
+        violations = [
+            _pytest_v("WriteGuardError: side effect outside tmp"),
+            _pytest_v("AssertionError: expected 1 == 2"),
+        ]
+        text = self._repair_text(violations)
+        assert "share the same root cause" not in text
+
+    def test_no_group_note_for_non_pytest_violations(self):
+        text = self._repair_text([
+            _v(rule_id="lint.E501", auto_fixable=False),
+            _v(rule_id="pr_scope.out_of_allow", auto_fixable=False),
+        ])
+        assert "share the same root cause" not in text
+
+    def test_group_note_uses_largest_exception_class_group(self):
+        violations = [
+            _pytest_v("WriteGuardError: side effect outside tmp: a"),
+            _pytest_v("WriteGuardError: side effect outside tmp: b"),
+            _pytest_v("AssertionError: expected 1 == 2"),
+        ]
+        text = self._repair_text(violations)
+        assert (
+            "Note: 2 tests share the same root cause (WriteGuardError). "
+            "Fix all 2 of them in a single commit before running the test suite.\n"
+        ) in text
+        assert "AssertionError" not in text.split("share the same root cause")[0]
+
+    def test_group_note_unit_no_match(self):
+        from issuesmith.ops.dispatch import _group_note
+
+        assert _group_note([_pytest_v("failed without a class name")]) == ""
+
+    def test_group_note_unit_ignores_non_pytest_failures(self):
+        from issuesmith.ops.dispatch import _group_note
+
+        assert _group_note([
+            _v(rule_id="lint.E501"),
+            _pytest_v("WriteGuardError: side effect outside tmp"),
+        ]) == ""
+
+
 class TestPassSummary:
     def test_format_pass_summary_counts_per_gate(self):
         from issuesmith.ops.dispatch import _format_pass_summary

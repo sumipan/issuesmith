@@ -470,6 +470,28 @@ def _get_previous_commits(context: dict[str, str]) -> str:
         return ""
 
 
+def _group_note(violations: list) -> str:
+    """Return a grouping note when 2+ test failures share an exception class."""
+    import re
+
+    pattern = re.compile(r"([A-Z][a-zA-Z]*(?:Error|Exception|Warning))")
+    counts: dict[str, int] = {}
+    for v in violations:
+        if v.rule_id == "tests.pytest_failure":
+            m = pattern.search(v.message)
+            if m:
+                counts[m.group(1)] = counts.get(m.group(1), 0) + 1
+    if not counts:
+        return ""
+    exc, n = max(counts.items(), key=lambda x: x[1])
+    if n < 2:
+        return ""
+    return (
+        f"Note: {n} tests share the same root cause ({exc}). "
+        f"Fix all {n} of them in a single commit before running the test suite.\n"
+    )
+
+
 def _run_repair_step(
     violations: list,
     step_id: str,
@@ -493,7 +515,9 @@ def _run_repair_step(
         scope_line = "Do not touch files outside allow_paths.\n"
     repair_ctx["repair_violations"] = (
         "Fix only the violations below with the smallest possible diff. "
-        + scope_line + violation_lines
+        + scope_line
+        + _group_note(violations)
+        + violation_lines
     )
     repair_ctx["repair_step_origin"] = step_id
     repair_ctx["previous_commits"] = _get_previous_commits(context)
