@@ -11,6 +11,7 @@ from __future__ import annotations
 import fnmatch
 import json
 import subprocess
+import sys
 import time
 from collections import Counter
 from dataclasses import dataclass
@@ -55,8 +56,9 @@ def resolve_scope_root(metadata: dict, cfg: IssuesmithConfig) -> Path | None:
     the CP1 breadth gate (``gate_rules.scope_breadth``), ``gate-preflight``, and
     the P0 step. Same directory layout ``context_hook.target_clone_path`` builds
     and ``worktree`` clones into, so every caller measures the same tree.
-    Returns ``None`` when the target is cross-repo and no clone exists yet —
-    callers must fail closed, never substitute a default.
+    Returns ``None`` when the target is cross-repo and no clone exists yet, or
+    when the clone cannot be fast-forwarded to ``origin/<base_branch>`` (#4452)
+    — callers must fail closed, never substitute a default.
     """
     target_repo = (metadata.get("target_repo") or "").strip()
     if not target_repo or target_repo == "sumipan/nexus":
@@ -67,7 +69,84 @@ def resolve_scope_root(metadata: dict, cfg: IssuesmithConfig) -> Path | None:
     external = cfg.paths.external_dir / parts[1]
     if not (external / ".git").exists():
         return None
+    reason = _freshen_clone(external, metadata.get("base_branch") or "main")
+    if reason is not None:
+        print(f"scope_root: {target_repo} stale: {reason}", file=sys.stderr)
+        return None
     return external
+
+
+_FETCH_THROTTLE_SEC = 60
+_GIT_TIMEOUT_SEC = 60
+
+
+def _git_run(args: list[str]) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", *args],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=_GIT_TIMEOUT_SEC,
+    )
+
+
+def _freshen_clone(root: Path, base: str) -> str | None:
+    """Fast-forward the clone's checkout to ``origin/<base>`` (#4452).
+
+    Returns ``None`` on success (or when the clone has no origin to follow),
+    otherwise a one-line reason. Never resets, checks out, or touches dirty
+    tracked files; untracked files (P0's ``worktrees/``) are ignored.
+    """
+    try:
+        return _freshen_clone_inner(root, base)
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return f"git failed: {type(exc).__name__}: {exc}"
+
+
+def _freshen_clone_inner(root: Path, base: str) -> str | None:
+    # --git-dir keeps git from walking up to a parent repo when .git is bogus.
+    origin = _git_run(["--git-dir", str(root / ".git"), "config", "--get", "remote.origin.url"])
+    if origin.returncode != 0:
+        return None
+
+    c = ["-C", str(root)]
+    fetch_head = root / ".git" / "FETCH_HEAD"
+    try:
+        recent = time.time() - fetch_head.stat().st_mtime <= _FETCH_THROTTLE_SEC
+    except OSError:
+        recent = False
+    fetch_err = ""
+    if not recent:
+        fetch = _git_run([*c, "fetch", "-q", "origin", base])
+        if fetch.returncode != 0:
+            last = (fetch.stderr or "").strip().splitlines()[-1:]
+            fetch_err = f" (fetch failed: {last[0] if last else 'unknown error'})"
+
+    def _heads() -> tuple[str, str | None]:
+        head = _git_run([*c, "rev-parse", "HEAD"]).stdout.strip()
+        upstream = _git_run([*c, "rev-parse", "--verify", "-q", f"origin/{base}"])
+        return head, upstream.stdout.strip() if upstream.returncode == 0 else None
+
+    head, upstream = _heads()
+    if upstream is None:
+        return f"origin/{base} not found{fetch_err}"
+    if head == upstream:
+        return None
+
+    branch = _git_run([*c, "rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
+    if branch != base:
+        return f"checked out {branch or '?'} instead of {base}{fetch_err}"
+    status = _git_run([*c, "status", "--porcelain", "--untracked-files=no"])
+    if status.returncode != 0 or status.stdout.strip():
+        return f"tracked files modified{fetch_err}"
+
+    merge = _git_run([*c, "merge", "--ff-only", "-q", f"origin/{base}"])
+    head, upstream = _heads()
+    if upstream is not None and head == upstream:
+        return None
+    if merge.returncode != 0:
+        return f"cannot fast-forward to origin/{base}{fetch_err}"
+    return f"HEAD differs from origin/{base}{fetch_err}"
 
 
 def record_p0_trip_metric(cfg: IssuesmithConfig, issue_number: int) -> None:
