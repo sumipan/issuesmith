@@ -1291,9 +1291,6 @@ def run_guarded(
     emit_status: str | None = None,
     requires_step: str | None = None,
 ) -> int:
-    from issuesmith.metrics_events import record_step_started
-
-    record_step_started(get_config().paths)
     for status in success_statuses:
         if status.endswith("_SKIPPED"):
             raise ValueError(
@@ -1469,9 +1466,6 @@ def run_verified(
     契約違反として扱う（自然言語の書式ゆらぎで制御が壊れるクラスを排除）。
     Verify PASS 後に engine が唯一の `PIPELINE_STATUS: {emit_status}` を出力する。
     """
-    from issuesmith.metrics_events import record_step_started
-
-    record_step_started(get_config().paths)
     if emit_status:
         emit_rc, _stdout = _run_emit_order(
             role, template_path, variables, failure_status, cwd, tier
@@ -1648,6 +1642,10 @@ def main(argv: list[str] | None = None) -> int:
             return exec_file(
                 args.role, args.input_path, args.cwd, args.tier, args.engine
             )
+        if args.action in ("run-guarded", "run-verified"):
+            from issuesmith.metrics_events import record_step_started
+
+            record_step_started(get_config().paths)
         if args.action == "run-guarded":
             return run_guarded(
                 args.role,

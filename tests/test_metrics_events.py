@@ -76,7 +76,6 @@ class TestRecordStepStarted:
         )
         import dataclasses
 
-
         paths = dataclasses.replace(
             get_config().paths,
             exec_jsonl=exec_path,
@@ -224,6 +223,7 @@ class TestConftestGuards:
     def test_path_open_write_outside_tmp_raises(self):
         with pytest.raises(AssertionError, match="side effect outside tmp"):
             Path("outside.jsonl").open("a")
+
 
 class TestDispatchRequiresRepairRuleIds:
     def test_requires_repair_passes_blocking_rule_ids(self, tmp_path, monkeypatch):
