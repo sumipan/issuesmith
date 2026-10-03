@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 from issuesmith.ops.publish import (
     _bump_versions_in_range,
@@ -159,6 +159,8 @@ def test_maybe_bump_version_runs_when_no_bump_commit(tmp_path: Path):
          patch("issuesmith.ops.publish._run_version_bump", return_value=ok) as run_bump:
         assert _maybe_bump_version(tmp_path, "main", "sumipan/ghdag", "sumipan/nexus") is None
     run_bump.assert_called_once()
+    # Compare against the fetched remote ref; local main may be stale (#4508).
+    run_bump.assert_called_with(ANY, "origin/main")
 
 
 def test_publish_reports_pr_list_failure_instead_of_crashing(tmp_path: Path):
