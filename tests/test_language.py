@@ -370,11 +370,11 @@ def test_language_module_exports():
 
 
 def test_partial_pack_falls_back_to_english_without_mutation():
-    data = {"sections": {"design": "設計"}, "messages": {}}
+    data = {"sections": {"design": "Custom design"}, "messages": {}}
     pack = language_pack_from_mapping(data)
     assert pack.out_of_scope_heading == EN.out_of_scope_heading
-    assert pack.sections["design"] == "設計"
+    assert pack.sections["design"] == "Custom design"
     assert pack.sections["background"] == EN.sections["background"]
     assert dict(pack.messages) == dict(EN.messages)
-    assert data == {"sections": {"design": "設計"}, "messages": {}}
+    assert data == {"sections": {"design": "Custom design"}, "messages": {}}
     assert language_pack_from_mapping({}) == EN
