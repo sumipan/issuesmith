@@ -469,7 +469,7 @@ def language_pack_from_mapping(data: Any, *, source: str = "language pack") -> L
     """
     if not isinstance(data, Mapping):
         raise _config_error(f"{source} must be a mapping")
-    defaults = {
+    defaults: dict[str, Any] = {
         key: list(value) if isinstance(value, tuple) else value
         for key, value in dataclasses.asdict(EN).items()
     }
