@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import os
 import shlex
-from dataclasses import dataclass, field
+import warnings
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal, Mapping
 
 import yaml
+
+from issuesmith.language import EN, LanguagePack, load_language_pack
 
 
 class ConfigError(ValueError):
@@ -29,8 +32,8 @@ def _package_fallback_yaml() -> Path:
     return _PACKAGE_FILE.parents[2] / _CONFIG_FILENAME
 
 
-# nexus 固有のリポジトリ一覧は issuesmith.yaml の supported_repos: に書く。
-# パッケージ既定は空（未設定のままでは cross-repo 検証がすべて拒否される）。
+# Host-specific repositories go in issuesmith.yaml ``supported_repos:``.
+# The package default is empty (every cross-repo check is rejected until set).
 _DEFAULT_SUPPORTED_REPOS: frozenset[str] = frozenset()
 
 _DEFAULT_REL_PATHS: dict[str, str] = {
@@ -60,8 +63,8 @@ _DEFAULT_ENGINES: dict[str, dict[str, Any]] = {
         },
         "light_model": {
             "claude": "claude-sonnet-4-6",
-            # gpt-5.4-mini は ChatGPT アカウント認証の codex で 400 になり
-            # nexus の allowlist から外れた（2026-09-09、B1 light tier が 2 度停止）。
+            # gpt-5.4-mini returns 400 on codex with ChatGPT account auth and was
+            # dropped from the nexus allowlist (2026-09-09, B1 light tier stopped twice).
             "codex": "gpt-5.5",
         },
         "timeout_sec": 1800,
@@ -94,8 +97,8 @@ class PathsConfig:
     workflow: Path
     template_dir: Path
     engine_state: Path
-    # budget-brake 用。未指定時は _build_paths が quota_state へフォールバックする。
-    # 手動構築のテスト互換のため default None（None は quota_state と同義）。
+    # For the budget brake. When unset, _build_paths falls back to quota_state.
+    # Defaults to None for manually built test configs (None means quota_state).
     brake_state: Path | None = None
 
 
@@ -168,26 +171,6 @@ _DEFAULT_STEPS: dict[str, StepConfig] = {
     ),
 }
 
-_DEFAULT_SECTIONS: dict[str, str] = {
-    "acceptance_criteria": "受け入れ条件",
-    "migration": "マイグレーション手順",
-    "migration_state_survey": "実行時状態の調査",
-    "sub_plan": "サブイシュー分割計画",
-    "design": "設計",
-    "background": "背景・目的",
-    "dependencies": "依存（先行）",
-    "impact_survey": "影響範囲調査",
-    "milestone": "マイルストーン",
-    "changed_files": "変更対象ファイル",
-}
-
-_DEFAULT_SUB_DESIGN_SUBSECTIONS: tuple[str, ...] = (
-    "スコープ",
-    "設計方針",
-    "変更対象ファイル",
-    "受け入れ条件",
-)
-
 # PR diff scope gate defaults (#3178). Mirrored in issuesmith.yaml.
 _DEFAULT_FORBIDDEN_PR_PATHS: tuple[str, ...] = (
     "jobs/**",
@@ -235,13 +218,13 @@ class ScopeSizeConfig:
     exclude_prefixes: tuple[str, ...] = (
         "tests/", "docs/", "README.md", "CHANGELOG.md", "pyproject.toml",
     )
-    # Vocabulary of the host's Issue bodies (change-table kind column, sub-plan example).
-    # Defaults are English; a host that writes Issues in another language sets these
-    # in issuesmith.yaml (this package stays ASCII). Kind words are matched case-insensitively.
-    delete_words: tuple[str, ...] = ("delete",)
-    new_words: tuple[str, ...] = ("new", "add")
-    sub_plan_header: str = "| # | Title | Target repo | Content | Depends on |"
-    no_deps_word: str = "none"
+    # Vocabulary of the host's Issue bodies, derived from the language pack
+    # (``Config.language``). The legacy ``scope_size.*`` keys still override it for
+    # one release. Kind words are matched case-insensitively.
+    delete_words: tuple[str, ...] = EN.delete_words
+    new_words: tuple[str, ...] = EN.new_words
+    sub_plan_header: str = EN.sub_plan_header
+    no_deps_word: str = EN.no_deps_word
 
 
 @dataclass(frozen=True)
@@ -332,8 +315,8 @@ class IssuesmithConfig:
     milestone_chain: MilestoneChainConfig = field(default_factory=MilestoneChainConfig)
     triage: TriageConfig = field(default_factory=TriageConfig)
     phases: tuple[PhaseConfig, ...] = _DEFAULT_PHASES
-    sections: Mapping[str, str] = field(default_factory=lambda: dict(_DEFAULT_SECTIONS))
-    sub_design_subsections: tuple[str, ...] = _DEFAULT_SUB_DESIGN_SUBSECTIONS
+    sections: Mapping[str, str] = field(default_factory=lambda: dict(EN.sections))
+    sub_design_subsections: tuple[str, ...] = EN.sub_design_subsections
     steps: Mapping[str, StepConfig] = field(default_factory=lambda: dict(_DEFAULT_STEPS))
     forbidden_pr_paths: tuple[str, ...] = _DEFAULT_FORBIDDEN_PR_PATHS
     scope_gate: ScopeGateConfig = field(default_factory=ScopeGateConfig)
@@ -346,6 +329,7 @@ class IssuesmithConfig:
     terminal_labels: tuple[str, ...] = _DEFAULT_TERMINAL_LABELS
     observe: ObserveConfig = field(default_factory=ObserveConfig)
     api_brake: ApiBreakConfig = field(default_factory=ApiBreakConfig)
+    language: LanguagePack = EN
 
 
 _cached: IssuesmithConfig | None = None
@@ -435,8 +419,8 @@ def _build_paths(raw: Mapping[str, Any] | None, root: Path) -> PathsConfig:
             if key in raw and raw[key] is not None:
                 src[key] = str(raw[key])
     resolved = {k: _abs(root, v) for k, v in src.items()}
-    # brake_state は固定既定を持たず、未指定時は同一設定の quota_state にフォールバック
-    # （既存利用者は単一 gate のまま動く）。
+    # brake_state has no fixed default: when unset it falls back to quota_state of the
+    # same config (existing users keep a single gate).
     if raw and raw.get("brake_state") is not None:
         resolved["brake_state"] = _abs(root, str(raw["brake_state"]))
     else:
@@ -553,8 +537,8 @@ def _build_phases(raw: Any) -> tuple[PhaseConfig, ...]:
     return tuple(phases)
 
 
-def _build_sections(raw: Mapping[str, Any] | None) -> dict[str, str]:
-    sections = dict(_DEFAULT_SECTIONS)
+def _build_sections(raw: Mapping[str, Any] | None, base: Mapping[str, str]) -> dict[str, str]:
+    sections = dict(base)
     if raw:
         for key, value in raw.items():
             if value is None:
@@ -563,12 +547,105 @@ def _build_sections(raw: Mapping[str, Any] | None) -> dict[str, str]:
     return sections
 
 
-def _build_sub_design_subsections(raw: Any) -> tuple[str, ...]:
+def _build_sub_design_subsections(raw: Any, base: tuple[str, ...]) -> tuple[str, ...]:
     if raw is None:
-        return _DEFAULT_SUB_DESIGN_SUBSECTIONS
+        return base
     if not isinstance(raw, list):
         raise ValueError("sub_design_subsections must be a list of strings")
     return tuple(str(x) for x in raw)
+
+
+# Legacy vocabulary keys superseded by ``language_pack`` (read for one release).
+_LEGACY_SCOPE_SIZE_VOCAB: tuple[str, ...] = (
+    "delete_words", "new_words", "sub_plan_header", "no_deps_word",
+)
+
+
+def _legacy_vocab_keys(data: Mapping[str, Any]) -> list[str]:
+    keys = [k for k in ("sections", "sub_design_subsections") if data.get(k) is not None]
+    scope_size_raw = data.get("scope_size")
+    if isinstance(scope_size_raw, Mapping):
+        keys += [f"scope_size.{k}" for k in _LEGACY_SCOPE_SIZE_VOCAB if k in scope_size_raw]
+    return keys
+
+
+def _validate_legacy_scope_size_vocab(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate legacy ``scope_size`` vocabulary keys; return the normalized values present."""
+    out: dict[str, Any] = {}
+    for key in ("delete_words", "new_words"):
+        if key not in raw:
+            continue
+        value = raw[key]
+        if (
+            not isinstance(value, (list, tuple))
+            or not value
+            or not all(isinstance(x, str) and x.strip() for x in value)
+        ):
+            raise ConfigError(f"scope_size.{key} must be a non-empty list of strings")
+        out[key] = tuple(x.strip().lower() for x in value)
+    for key in ("sub_plan_header", "no_deps_word"):
+        if key not in raw:
+            continue
+        value = raw[key]
+        if not isinstance(value, str) or not value.strip():
+            raise ConfigError(f"scope_size.{key} must be a non-empty string")
+        out[key] = value.strip()
+    return out
+
+
+def _header_columns(header: str) -> tuple[str, ...]:
+    """``| a | b |`` -> ``("a", "b")``."""
+    return tuple(cell.strip() for cell in header.strip().strip("|").split("|"))
+
+
+def _build_language(data: Mapping[str, Any], *, root: Path) -> LanguagePack:
+    """Resolve ``Config.language``: ``language_pack`` file, else EN plus legacy keys.
+
+    Legacy keys (``sections``, ``sub_design_subsections`` and the ``scope_size``
+    vocabulary) emit a ``DeprecationWarning``. With ``language_pack`` set they are
+    ignored; without it they override the matching :data:`EN` fields.
+    """
+    pack_raw = data.get("language_pack")
+    legacy = _legacy_vocab_keys(data)
+    scope_size_raw = data.get("scope_size")
+    legacy_scope = (
+        _validate_legacy_scope_size_vocab(scope_size_raw)
+        if isinstance(scope_size_raw, Mapping)
+        else {}
+    )
+    if pack_raw is not None:
+        if not isinstance(pack_raw, str) or not pack_raw.strip():
+            raise ConfigError("language_pack must be a path string")
+        pack = load_language_pack(_abs(root, pack_raw.strip()))
+        if legacy:
+            warnings.warn(
+                f"issuesmith.yaml: {', '.join(legacy)} ignored because language_pack is set;"
+                " remove them (they will be dropped in the next release)",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        return pack
+    if not legacy:
+        return EN
+    warnings.warn(
+        f"issuesmith.yaml: {', '.join(legacy)} are deprecated; move them to a"
+        " language_pack file (they will be dropped in the next release)",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    sections_raw = data.get("sections") if isinstance(data.get("sections"), dict) else None
+    overrides: dict[str, Any] = {
+        "sections": _build_sections(sections_raw, EN.sections),
+        "sub_design_subsections": _build_sub_design_subsections(
+            data.get("sub_design_subsections"), EN.sub_design_subsections
+        ),
+    }
+    for key in ("delete_words", "new_words", "no_deps_word"):
+        if key in legacy_scope:
+            overrides[key] = legacy_scope[key]
+    if "sub_plan_header" in legacy_scope:
+        overrides["sub_plan_columns"] = _header_columns(legacy_scope["sub_plan_header"])
+    return replace(EN, **overrides)
 
 
 def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
@@ -679,8 +756,16 @@ def _build_scope_coupling(raw: Mapping[str, Any] | None) -> ScopeCouplingConfig:
     )
 
 
-def _build_scope_size(raw: Mapping[str, Any] | None) -> ScopeSizeConfig:
-    defaults = ScopeSizeConfig()
+def _build_scope_size(
+    raw: Mapping[str, Any] | None, language: LanguagePack = EN
+) -> ScopeSizeConfig:
+    vocab = {
+        "delete_words": tuple(w.strip().lower() for w in language.delete_words),
+        "new_words": tuple(w.strip().lower() for w in language.new_words),
+        "sub_plan_header": language.sub_plan_header,
+        "no_deps_word": language.no_deps_word,
+    }
+    defaults = ScopeSizeConfig(**vocab)
     if not raw:
         return defaults
     limits: dict[str, int] = {}
@@ -695,32 +780,13 @@ def _build_scope_size(raw: Mapping[str, Any] | None) -> ScopeSizeConfig:
         if not isinstance(ex_raw, list) or not all(isinstance(x, str) for x in ex_raw):
             raise ConfigError("scope_size.exclude_prefixes must be a list of strings")
         exclude_prefixes = tuple(ex_raw)
-    words: dict[str, tuple[str, ...]] = {}
-    for key in ("delete_words", "new_words"):
-        value = raw.get(key, getattr(defaults, key))
-        if (
-            not isinstance(value, (list, tuple))
-            or not value
-            or not all(isinstance(x, str) and x.strip() for x in value)
-        ):
-            raise ConfigError(f"scope_size.{key} must be a non-empty list of strings")
-        words[key] = tuple(x.strip().lower() for x in value)
-    texts: dict[str, str] = {}
-    for key in ("sub_plan_header", "no_deps_word"):
-        value = raw.get(key, getattr(defaults, key))
-        if not isinstance(value, str) or not value.strip():
-            raise ConfigError(f"scope_size.{key} must be a non-empty string")
-        texts[key] = value.strip()
     return ScopeSizeConfig(
         enabled=bool(raw.get("enabled", defaults.enabled)),
         max_files=limits["max_files"],
         max_concerns=limits["max_concerns"],
         delete_with_new=bool(raw.get("delete_with_new", defaults.delete_with_new)),
         exclude_prefixes=exclude_prefixes,
-        delete_words=words["delete_words"],
-        new_words=words["new_words"],
-        sub_plan_header=texts["sub_plan_header"],
-        no_deps_word=texts["no_deps_word"],
+        **vocab,
     )
 
 
@@ -852,7 +918,7 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     repo_raw = data.get("repo")
     if not repo_raw or not str(repo_raw).strip():
         raise ValueError(
-            "issuesmith.yaml に repo: owner/name を設定してください"
+            "issuesmith.yaml must set repo: owner/name"
         )
     repo = str(repo_raw).strip()
     label_namespace = str(data.get("label_namespace") or "issuesmith")
@@ -867,7 +933,6 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     concurrency_raw = data.get("concurrency") if isinstance(data.get("concurrency"), dict) else None
     milestone_raw = data.get("milestone_chain") if isinstance(data.get("milestone_chain"), dict) else None
     triage_raw = data.get("triage") if isinstance(data.get("triage"), dict) else None
-    sections_raw = data.get("sections") if isinstance(data.get("sections"), dict) else None
     steps_raw = data.get("steps") if isinstance(data.get("steps"), dict) else None
     scope_gate_raw = (
         data.get("scope_gate") if isinstance(data.get("scope_gate"), dict) else None
@@ -890,6 +955,7 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     api_brake_raw = (
         data.get("api_brake") if isinstance(data.get("api_brake"), dict) else None
     )
+    language = _build_language(data, root=root.resolve())
     return IssuesmithConfig(
         repo=repo,
         label_namespace=label_namespace,
@@ -902,15 +968,13 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         milestone_chain=_build_milestone_chain(milestone_raw),
         triage=_build_triage(triage_raw),
         phases=_build_phases(data.get("phases")),
-        sections=_build_sections(sections_raw),
-        sub_design_subsections=_build_sub_design_subsections(
-            data.get("sub_design_subsections")
-        ),
+        sections=dict(language.sections),
+        sub_design_subsections=language.sub_design_subsections,
         steps=_build_steps(steps_raw),
         forbidden_pr_paths=_build_forbidden_pr_paths(data.get("forbidden_pr_paths")),
         scope_gate=_build_scope_gate(scope_gate_raw),
         scope_coupling=_build_scope_coupling(scope_coupling_raw),
-        scope_size=_build_scope_size(scope_size_raw),
+        scope_size=_build_scope_size(scope_size_raw, language),
         tests=_build_tests(tests_raw),
         metrics=_build_metrics(metrics_raw),
         derived_allow=_build_derived_allow(derived_allow_raw),
@@ -918,4 +982,5 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         terminal_labels=_build_terminal_labels(data.get("terminal_labels")),
         observe=_build_observe(observe_raw, root.resolve()),
         api_brake=_build_api_brake(api_brake_raw),
+        language=language,
     )

@@ -7,8 +7,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Breaking
+
+- Built-in Issue-body vocabulary is English (nexus #4469). Without a `language_pack`, sections, sub-design subsections, the sub-design header (`#### Sub<N>:`) and change-table columns are read with the `issuesmith.language.EN` words; the previous built-in Japanese defaults are gone. Hosts that write Issues in another language must set `language_pack:` (see README "Language packs") before upgrading.
+
+### Deprecated
+
+- `sections`, `sub_design_subsections` and `scope_size.delete_words` / `new_words` / `sub_plan_header` / `no_deps_word` in `issuesmith.yaml` emit a `DeprecationWarning`. Without `language_pack` they still override the `EN` fields (same results as before); with `language_pack` they are ignored. They will be removed in the next release.
+
 ### Added
 
+- Language packs (nexus #4469): `issuesmith.language.LanguagePack`, the English pack `EN` (the only pack shipped) and `load_language_pack()`. `issuesmith.yaml` `language_pack: <path>` (relative to the config file) replaces every field; unknown / missing keys, wrong types and a `messages` key set that differs from `EN` raise `ConfigError`. The resolved pack is `get_config().language`; `sections`, `sub_design_subsections` and `scope_size` vocabulary are derived from it. The pack defines the Issue-body vocabulary and the GitHub-posted text (`messages`, keyed `<module>.<id>`) that later releases read from it.
+- `contract.sub_header_re()` builds the sub-design header regex from the configured pack. `SUB_HEADER_RE` is now a lazy object that delegates to it (importing `issuesmith.contract` still does not load the config).
 - `TestsGate` reruns newly failing tests on the branch worktree up to `tests.flaky_reruns` times (default `2`; set `0` to disable). Tests that pass on any rerun are recorded as `tests.flaky` (severity `warn`, non-blocking) instead of blocking the pipeline with `tests.pytest_failure` (nexus #3922).
 - `evaluate_requires()` now classifies violations whose severity is not `fail` into `RequiresResult.warnings` instead of `blocking`, so `tests.flaky` and other warn-level gate results do not launch the repair loop (same treatment as `b1_verify` #4076).
 

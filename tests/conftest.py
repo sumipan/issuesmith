@@ -13,21 +13,31 @@ from unittest.mock import patch
 
 import pytest
 
-import issuesmith.config as config_module
+# Keep the suite independent of the host config the runner inherits (a host
+# language_pack must not leak into tests). Popped before any module calls get_config().
+os.environ.pop("ISSUESMITH_CONFIG", None)
 
-_ENGLISH_SECTIONS = {
-    "acceptance_criteria": "Acceptance Criteria",
-    "migration": "Migration Steps",
-    "migration_state_survey": "Runtime State Survey",
-    "sub_plan": "Sub-issue Plan",
-    "design": "Design",
-    "background": "Background",
-    "dependencies": "Dependencies",
-    "impact_survey": "Impact Survey",
-    "milestone": "Milestone",
-    "changed_files": "Changed Files",
-}
-_ENGLISH_SUBSECTIONS = ("Scope", "Design Policy", "Changed Files", "Acceptance Criteria")
+import issuesmith.config as config_module  # noqa: E402
+from issuesmith.language import EN  # noqa: E402
+from tests import legacy_text
+
+_ENGLISH_SECTIONS = dict(EN.sections)
+_ENGLISH_SUBSECTIONS = EN.sub_design_subsections
+
+# The EN pack with the legacy sub-header prefix and change-table columns: modules not
+# yet migrated to the language pack (scope_size, milestone_consistency, sub1_create, ...)
+# still write and read those words, and their tests build bodies from tests.legacy_text.
+# Drop the overrides once every module reads the vocabulary from the pack (#4347).
+TEST_LANGUAGE_PACK = dataclasses.replace(
+    EN,
+    sub_header_prefix=legacy_text.SUB,
+    change_table_columns=(
+        legacy_text.REPOSITORY,
+        legacy_text.FILE_PATH,
+        legacy_text.CHANGE_TYPE,
+        legacy_text.DESCRIPTION,
+    ),
+)
 
 
 def _is_write_mode(mode: str) -> bool:
@@ -57,13 +67,8 @@ def _redirect_metrics_paths(english_section_defaults, monkeypatch, tmp_path_fact
 
 @pytest.fixture(autouse=True)
 def english_section_defaults(monkeypatch):
-    """Exercise section parsing with ASCII-only configured names."""
-    monkeypatch.setattr(config_module, "_DEFAULT_SECTIONS", _ENGLISH_SECTIONS)
-    monkeypatch.setattr(
-        config_module,
-        "_DEFAULT_SUB_DESIGN_SUBSECTIONS",
-        _ENGLISH_SUBSECTIONS,
-    )
+    """Exercise section parsing with the EN pack's ASCII section names."""
+    monkeypatch.setattr(config_module, "EN", TEST_LANGUAGE_PACK)
     config_module.reset_config_cache()
     yield
     config_module.reset_config_cache()
