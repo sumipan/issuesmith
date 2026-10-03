@@ -19,24 +19,18 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from tests.legacy_text import (
-    ACCEPTANCE_CRITERIA,
     CHANGE_TYPE,
-    CHANGED_FILES,
-    CONTENT,
-    DEPENDENCY,
     DESCRIPTION,
-    DESIGN,
     FILE_PATH,
     MODIFY,
-    NONE,
     REPOSITORY,
     SUB,
-    TARGET_REPOSITORY,
-    TITLE,
 )
 
+from issuesmith.config import get_config as _real_get_config
 from issuesmith.config import reset_config_cache
 from issuesmith.engine import RoleSelection, _extract_status_values
+from issuesmith.language import EN
 from issuesmith.milestone import (
     PlanRow,
     allow_paths_for_row,
@@ -53,6 +47,14 @@ from issuesmith.milestone import (
 )
 from issuesmith.steps import sub1_create as sub1
 from issuesmith.steps.base import StepContext
+
+# Split-plan / section vocabulary comes from the language pack (EN in tests); the
+# sub-header prefix and change-table columns still use the legacy test pack (conftest).
+_, TITLE, TARGET_REPOSITORY, CONTENT, DEPENDENCY = EN.sub_plan_columns
+NONE = EN.no_deps_word
+DESIGN = EN.sections["design"]
+ACCEPTANCE_CRITERIA = EN.sections["acceptance_criteria"]
+CHANGED_FILES = EN.sections["changed_files"]
 
 _CHANGE_TABLE_HEADER = f"{REPOSITORY} | {FILE_PATH} | {CHANGE_TYPE} | {DESCRIPTION}"
 
@@ -439,6 +441,7 @@ def test_run_creates_child_and_returns_sub_created() -> None:
         ),
         patch("issuesmith.milestone.get_config") as cfg,
     ):
+        cfg.return_value.language = _real_get_config().language
         cfg.return_value.supported_repos = frozenset(
             {"sumipan/nexus", "sumipan/issuesmith", "sumipan/ghdag"}
         )
@@ -510,6 +513,7 @@ def test_run_auto_creates_milestone_when_unset() -> None:
         patch("issuesmith.convert_to_milestone.get_config") as ctm_cfg,
         patch("issuesmith.milestone.get_config") as cfg,
     ):
+        cfg.return_value.language = _real_get_config().language
         ctm_cfg.return_value.timezone = "Asia/Tokyo"
         cfg.return_value.supported_repos = frozenset({"sumipan/nexus"})
         # ASCII fixture data.
@@ -560,6 +564,7 @@ def test_run_all_rows_fail_validation_exits_nonzero() -> None:
         patch("issuesmith.milestone.get_forge", return_value=client),
         patch("issuesmith.milestone.get_config") as cfg,
     ):
+        cfg.return_value.language = _real_get_config().language
         cfg.return_value.supported_repos = frozenset({"sumipan/nexus"})
         # ASCII fixture data.
         cfg.return_value.sections = {
@@ -672,6 +677,7 @@ def test_run_guarded_body_value_error_exits_nonzero(capsys) -> None:
         patch("issuesmith.engine.resolve", side_effect=ValueError("tier must be one of: heavy, light")),
         patch("issuesmith.milestone.get_config") as cfg,
     ):
+        cfg.return_value.language = _real_get_config().language
         _cfg_mock(cfg)
         with pytest.raises(SystemExit) as exc_info:
             sub1.run(_ctx())
@@ -740,6 +746,7 @@ def test_run_guarded_body_timeout_warns_and_continues(capsys) -> None:
         ),
         patch("issuesmith.milestone.get_config") as cfg,
     ):
+        cfg.return_value.language = _real_get_config().language
         _cfg_mock(cfg)
         sub1.run(_ctx())
 
@@ -765,6 +772,7 @@ def test_run_all_rows_guarded_body_fail_exits_nonzero(capsys) -> None:
         ),
         patch("issuesmith.milestone.get_config") as cfg,
     ):
+        cfg.return_value.language = _real_get_config().language
         _cfg_mock(cfg)
         with pytest.raises(SystemExit) as exc_info:
             sub1.run(_ctx())
@@ -846,6 +854,7 @@ def test_run_guarded_body_template_expansion_does_not_raise_on_execution_constra
         patch("issuesmith.engine.run_guarded", side_effect=fake_run_guarded),
         patch("issuesmith.milestone.get_config") as cfg,
     ):
+        cfg.return_value.language = _real_get_config().language
         cfg.return_value.paths.template_dir = tmp_path
         rc = run_guarded_sub1_body(
             ctx, row=row, body_path=tmp_path / "b.md", template_name="sub-ready.md"
@@ -873,6 +882,7 @@ def test_run_row_with_unreadable_change_table_creates_no_child() -> None:
         patch("issuesmith.milestone.get_forge", return_value=client),
         patch("issuesmith.milestone.get_config") as cfg,
     ):
+        cfg.return_value.language = _real_get_config().language
         cfg.return_value.supported_repos = frozenset({"sumipan/nexus"})
         cfg.return_value.sections = {
             "sub_plan": "Sub-issue Plan",

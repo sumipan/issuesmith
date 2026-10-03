@@ -1,4 +1,4 @@
-"""targets.py — multi-target Issue モデル（#2866）"""
+"""targets.py — multi-target Issue model (#2866)."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ def _empty_contract() -> ContractDict:
 
 
 def _parse_ac_contracts(body: str | None) -> tuple[dict[str, ContractDict] | None, ContractDict]:
-    """受け入れ条件 YAML を旧形式契約と per-repo 契約に分割する。"""
+    """Split the acceptance-criteria YAML into the legacy contract and per-repo contracts."""
     if not body:
         return None, _empty_contract()
     ac = extract_contract_from_body(body)
@@ -43,18 +43,18 @@ def _parse_ac_contracts(body: str | None) -> tuple[dict[str, ContractDict] | Non
 
     raw_targets = ac["targets"]
     if not isinstance(raw_targets, list):
-        raise ValueError("受け入れ条件の targets は list である必要があります")
+        raise ValueError("acceptance criteria targets must be a list")
 
     per_repo: dict[str, ContractDict] = {}
     for item in raw_targets:
         if not isinstance(item, dict):
-            raise ValueError("受け入れ条件の targets 各要素は dict である必要があります")
+            raise ValueError("each acceptance criteria targets entry must be a dict")
         repo = item.get("repo")
         if not repo:
-            raise ValueError("受け入れ条件の targets 各要素に repo が必要です")
+            raise ValueError("each acceptance criteria targets entry needs a repo")
         contract = item.get("contract", {})
         if not isinstance(contract, dict):
-            raise ValueError("contract は dict である必要があります")
+            raise ValueError("contract must be a dict")
         per_repo[str(repo)] = {
             k: list(v) if isinstance(v, list) else v for k, v in contract.items()
         }
@@ -89,16 +89,16 @@ def _targets_from_metadata_list(
     legacy: ContractDict,
 ) -> list[Target]:
     if not raw_targets:
-        raise ValueError("metadata targets が空です")
+        raise ValueError("metadata targets is empty")
 
     built: list[Target] = []
     primary_count = 0
     for item in raw_targets:
         if not isinstance(item, dict):
-            raise ValueError("metadata targets 各要素は dict である必要があります")
+            raise ValueError("each metadata targets entry must be a dict")
         repo = str(item.get("repo", ""))
         if not repo:
-            raise ValueError("metadata targets 各要素に repo が必要です")
+            raise ValueError("each metadata targets entry needs a repo")
         primary = bool(item.get("primary", False))
         if primary:
             primary_count += 1
@@ -118,7 +118,7 @@ def _targets_from_metadata_list(
 
     if primary_count != 1:
         raise ValueError(
-            f"primary=True のターゲットは 1 つである必要があります (got {primary_count})"
+            f"exactly one target must have primary=True (got {primary_count})"
         )
 
     built.sort(key=lambda t: (not t.primary, t.repo))
@@ -131,10 +131,10 @@ def targets_from_issue(
     issue_repo: str,
     body: str | None = None,
 ) -> list[Target]:
-    """Issue body の YAML メタデータから Target リストを生成する。
+    """Build the Target list from the Issue body's YAML metadata.
 
-    primary=True が先頭、secondary が後続。len >= 1。
-    primary=True は常に 1 つ。2 つ以上なら ValueError。
+    The primary=True target comes first, secondaries follow. len >= 1.
+    Exactly one target has primary=True; two or more raise ValueError.
     """
     base = str(body_metadata.get("base_branch", "main"))
     per_repo, legacy = _parse_ac_contracts(body)
@@ -142,7 +142,7 @@ def targets_from_issue(
     if "targets" in body_metadata:
         raw = body_metadata["targets"]
         if not isinstance(raw, list):
-            raise ValueError("metadata targets は list である必要があります")
+            raise ValueError("metadata targets must be a list")
         return _targets_from_metadata_list(
             raw, base=base, per_repo=per_repo, legacy=legacy
         )

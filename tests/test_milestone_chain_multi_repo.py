@@ -5,19 +5,14 @@ from __future__ import annotations
 import pytest
 
 from issuesmith.config import reset_config_cache
+from issuesmith.language import EN
 from issuesmith.milestone import validate_children
-from tests.legacy_text import (
-    CHANGE_TYPE,
-    CONTENT,
-    DEPENDENCY,
-    DESCRIPTION,
-    FILE_PATH,
-    MODIFY,
-    NONE,
-    REPOSITORY,
-    TARGET_REPOSITORY,
-    TITLE,
-)
+from tests.legacy_text import CHANGE_TYPE, DESCRIPTION, FILE_PATH, MODIFY, REPOSITORY
+
+# Split-plan / section vocabulary comes from the language pack (EN in tests); the
+# sub-header prefix and change-table columns still use the legacy test pack (conftest).
+_, TITLE, TARGET_REPOSITORY, CONTENT, DEPENDENCY = EN.sub_plan_columns
+NONE = EN.no_deps_word
 
 
 def _yaml_block(target_repo: str, allow_paths: list[str]) -> str:

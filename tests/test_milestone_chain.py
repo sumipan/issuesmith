@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from issuesmith.config import MilestoneChainConfig, reset_config_cache
+from issuesmith.language import EN
 from issuesmith.milestone import (
     PlanRow,
     _list_open_milestones,
@@ -25,18 +26,12 @@ from issuesmith.milestone import (
 )
 from issuesmith.queue_store import QueueStore
 from issuesmith.queue_triage import DONE_LABEL
-from tests.legacy_text import (
-    ADD,
-    CHANGE_TYPE,
-    CONTENT,
-    DEPENDENCY,
-    DESCRIPTION,
-    FILE_PATH,
-    NONE,
-    REPOSITORY,
-    TARGET_REPOSITORY,
-    TITLE,
-)
+from tests.legacy_text import ADD, CHANGE_TYPE, DESCRIPTION, FILE_PATH, REPOSITORY
+
+# Split-plan / section vocabulary comes from the language pack (EN in tests); the
+# sub-header prefix and change-table columns still use the legacy test pack (conftest).
+_, TITLE, TARGET_REPOSITORY, CONTENT, DEPENDENCY = EN.sub_plan_columns
+NONE = EN.no_deps_word
 
 _NOW = datetime.now(timezone.utc).isoformat()
 

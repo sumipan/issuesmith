@@ -5,8 +5,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 from issuesmith.dep_extractor import (
-    _DEP_PREFIX_RE,
-    _PARENT_ISSUE_RE,
     UNPARSED_DEPENDENCY_SECTION,
     DepStatus,
     check_dependencies,
@@ -15,9 +13,11 @@ from issuesmith.dep_extractor import (
     is_satisfied,
     unparsed_dependency_refs,
 )
+from issuesmith.language import EN
 
-_DEP_PREFIX = _DEP_PREFIX_RE.pattern[1:_DEP_PREFIX_RE.pattern.index(":")]
-_PARENT_PREFIX = _PARENT_ISSUE_RE.pattern[1:_PARENT_ISSUE_RE.pattern.index(":")]
+# Inline labels come from the language pack (the tests run with the EN vocabulary).
+_DEP_PREFIX = EN.sub_plan_columns[4]
+_PARENT_PREFIX = EN.parent_issue_label
 
 # --- extract_dependencies ---
 
@@ -371,3 +371,53 @@ def test_get_dep_status_and_is_satisfied_public_api():
     status = get_dep_status(client, 100)
     assert isinstance(status, DepStatus)
     assert is_satisfied(status) is True
+
+
+# --- language pack vocabulary ---
+
+
+def _use_custom_pack(tmp_path, monkeypatch, **overrides):
+    """Write an ASCII pack that differs from EN to tmp YAML and make it the default."""
+    import dataclasses
+
+    import yaml
+
+    import issuesmith.config as config_module
+    from issuesmith.config import reset_config_cache
+    from issuesmith.language import LanguagePack, load_language_pack
+
+    data = {}
+    for f in dataclasses.fields(LanguagePack):
+        value = getattr(EN, f.name)
+        data[f.name] = list(value) if isinstance(value, tuple) else (
+            value if isinstance(value, str) else dict(value)
+        )
+    data.update(overrides)
+    path = tmp_path / "pack.yaml"
+    path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    monkeypatch.setattr(config_module, "EN", load_language_pack(path))
+    reset_config_cache()
+
+
+def test_custom_pack_labels_give_same_result_as_default(tmp_path, monkeypatch):
+    def body(parent: str, dep: str, heading: str) -> str:
+        return (
+            f"{parent}: #3985\n{dep}: #300\n\n## {heading}\n\n"
+            "- #301\n\nparallel with #3985\n"
+        )
+
+    default_body = body(_PARENT_PREFIX, _DEP_PREFIX, "Dependencies")
+    expected = (extract_dependencies(default_body), unparsed_dependency_refs(default_body))
+    assert expected == ([300, 301], [])
+
+    columns = ["No", "Name", "Repo", "Work", "After"]
+    sections = {key: f"X {heading}" for key, heading in EN.sections.items()}
+    _use_custom_pack(
+        tmp_path, monkeypatch,
+        sub_plan_columns=columns, parent_issue_label="Parent", sections=sections,
+    )
+    custom_body = body("Parent", "After", sections["dependencies"])
+    assert extract_dependencies(custom_body) == expected[0]
+    assert unparsed_dependency_refs(custom_body) == expected[1]
+    # The default labels are plain prose under the custom pack.
+    assert extract_dependencies(default_body) == []
