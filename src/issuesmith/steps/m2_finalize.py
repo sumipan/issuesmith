@@ -172,12 +172,7 @@ def _handle_migrate(
     labels: list[str],
 ) -> StepResult:
     issue_number = int(ctx.issue_number)
-    client.issue_comment(
-        issue_number,
-        "## M2: 受け入れ条件が未完了です\n\n"
-        "未チェックの受け入れ条件が残っています。マイグレーション完了後に "
-        "`issuesmith:migrate-ready` を付与してください。",
-    )
+    client.issue_comment(issue_number, get_config().language.message("m2_finalize.migrate"))
     label_set = set(labels)
     if "issuesmith:migrate-ready" in label_set:
         print("FINALIZER: issuesmith:migrate-ready already present (noop)")
@@ -197,37 +192,18 @@ def _retry_body(
     labels: list[str],
     contract_failures: list[str],
 ) -> str:
+    pack = get_config().language
     if contract_failures:
-        detail = "受け入れ条件 YAML 契約の検証に失敗しました:\n" + "\n".join(contract_failures)
-        step1 = (
-            f"1. `paths_must_exist` に列挙したファイルが {ctx.base_branch} に実在するよう"
-            "修正する（不足ファイルの追加 or 契約の修正）"
+        detail = pack.message(
+            "m2_finalize.contract_failed_detail", failures="\n".join(contract_failures)
         )
+        step1 = pack.message("m2_finalize.contract_failed_step1", base_branch=ctx.base_branch)
     else:
-        detail = "未チェックの受け入れ条件が残っています。"
-        step1 = "1. 受け入れ条件をすべてチェックする"
+        detail = pack.message("m2_finalize.unchecked_detail")
+        step1 = pack.message("m2_finalize.unchecked_step1")
 
-    issue_number = ctx.issue_number
-    if "issuesmith:develop-running" in labels:
-        return (
-            f"## M2: 受け入れ条件が未完了です\n\n{detail}\n\n"
-            "復旧手順（impl コンテキスト）:\n"
-            f"{step1}\n"
-            f"2. `python3 -m issuesmith queue enqueue --issue {issue_number} --phase merge "
-            "--source recovery --actor-kind human --priority high --requested-by <login> --force` "
-            "を実行する\n"
-            "   ※ impl の冪等キーは消費済みだが、merge の冪等キーは未使用のため reset 不要"
-        )
-    return (
-        f"## M2: 受け入れ条件が未完了です\n\n{detail}\n\n"
-        "復旧手順:\n"
-        f"{step1}\n"
-        "2. `issuesmith:reset` ラベルを付与してリセットする\n"
-        "3. ghdag が次のサイクルでリセットを処理するのを待つ（約30秒）\n"
-        f"4. `python3 -m issuesmith queue enqueue --issue {issue_number} --phase merge "
-        "--source recovery --actor-kind human --priority high --requested-by <login> --force` "
-        "を実行して再投入する"
-    )
+    key = "m2_finalize.retry_impl" if "issuesmith:develop-running" in labels else "m2_finalize.retry"
+    return pack.message(key, detail=detail, step1=step1, issue=ctx.issue_number)
 
 
 def _handle_retry(
@@ -462,17 +438,15 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
         if rc != 0:
             client.issue_comment(
                 issue_number,
-                "## M2 コンパクション失敗\n\n"
-                f"コンパクション LLM ステップが終了コード {rc} で失敗しました"
-                "（プロバイダ拒否・タイムアウト等の可能性）。\n"
-                "PR マージは完了済みです。source ドキュメントへのコンパクションを手動で行ってください。\n"
-                f"対象: `{ctx.source}`",
+                get_config().language.message(
+                    "m2_finalize.compaction_failed", rc=rc, source=ctx.source
+                ),
             )
             print(f"COMPACTION: failed rc={rc} (non-blocking)")
         else:
             print("COMPACTION: done")
     else:
-        print("COMPACTION: skipped (source 未指定)")
+        print("COMPACTION: skipped (no source specified)")
 
     _cleanup_worktrees(ctx)
 

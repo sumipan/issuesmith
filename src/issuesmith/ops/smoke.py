@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""issuesmith パイプラインの実 Issue スモーク。
+"""Real-Issue smoke test of the issuesmith pipeline.
 
-dispatcher と同じ手順で:
-  1. 指定された実 Issue 番号から build_context() で context を作る
-  2. workflows/issuesmith.yml の全 handler の全 step を実 context で展開
-  3. shell step は bash -n で構文検証
-  4. KeyError / bash 構文エラーが 1 件でもあれば exit 1
+Following the same steps as the dispatcher:
+  1. Build a context with build_context() from the given real Issue numbers
+  2. Render every step of every handler in workflows/issuesmith.yml with that context
+  3. Syntax-check shell steps with bash -n
+  4. Exit 1 on any KeyError / bash syntax error
 
-`workflows/issuesmith/*.md` や `workflows/issuesmith.yml` を変更した PR は
-**マージ前に必ず本スクリプトを実行して exit 0 を確認すること**。
+A PR that changes `workflows/issuesmith/*.md` or `workflows/issuesmith.yml`
+**must run this script and confirm exit 0 before merging**.
 
 Usage:
     python3 scripts/issuesmith-smoke.py 901 903 906
-    # 引数なしで実行すると open な reset / ready ラベル付き Issue を自動収集
+    # Without arguments, open Issues with a reset / ready label are collected automatically
 """
 from __future__ import annotations
 
@@ -72,16 +72,16 @@ def _smoke_one_issue(issue_number: int, yml: dict) -> list[str]:
             template_name = step["template"]
             depends = step.get("depends", [])
 
-            # 順序整合性
+            # Ordering consistency
             for d in depends:
                 if d not in prev_ids:
                     errors.append(
-                        f"#{issue_number} {handler_name}.{step_id}: depends '{d}' が"
-                        f"前段に存在しない（yml の steps 順序が壊れている）"
+                        f"#{issue_number} {handler_name}.{step_id}: depends '{d}'"
+                        f" is not an earlier step (the yml steps order is broken)"
                     )
             prev_ids.add(step_id)
 
-            # 実 context を組み立て
+            # Build the real context
             ctx = build_context(issue_number, body=body)
             ctx.update({
                 "issue_number": str(issue_number),
@@ -98,7 +98,7 @@ def _smoke_one_issue(issue_number: int, yml: dict) -> list[str]:
 
             tpath = TEMPLATE_DIR / f"{template_name}.md"
             if not tpath.exists():
-                errors.append(f"#{issue_number} {handler_name}.{step_id}: テンプレ未存在: {tpath}")
+                errors.append(f"#{issue_number} {handler_name}.{step_id}: template missing: {tpath}")
                 continue
 
             try:
@@ -144,7 +144,7 @@ def _line_uses_deprecated_state_machine_cli(line: str) -> bool:
 
 
 def _check_no_deprecated_state_machine_references() -> list[str]:
-    """workflows/ と scripts/ に旧ラベル遷移 CLI 参照が残っていないか検査。"""
+    """Check that no deprecated label transition CLI references remain in workflows/ and scripts/."""
     errors: list[str] = []
     for base in (REPO_ROOT / "workflows", REPO_ROOT / "scripts"):
         for path in sorted(base.rglob("*")):
@@ -155,7 +155,7 @@ def _check_no_deprecated_state_machine_references() -> list[str]:
             ):
                 if _line_uses_deprecated_state_machine_cli(line):
                     rel = path.relative_to(REPO_ROOT)
-                    errors.append(f"{rel}:{lineno}: 旧ラベル遷移 CLI 参照: {line.strip()}")
+                    errors.append(f"{rel}:{lineno}: deprecated label transition CLI reference: {line.strip()}")
     return errors
 
 
@@ -166,10 +166,10 @@ def _check_issuesmith_yml_state_machine(workflow_name: str = "issuesmith") -> li
     yml = yaml.safe_load(WORKFLOW_YAML.read_text(encoding="utf-8"))
     ns = yml.get("label_namespace") or ""
     if ns != workflow_name:
-        errors.append(f"{workflow_name}.yml: label_namespace: {workflow_name} が未定義")
+        errors.append(f"{workflow_name}.yml: label_namespace: {workflow_name} is not defined")
     reset_lbl = f"{ns}:reset"
     if yml.get("reset_label") != reset_lbl:
-        errors.append(f'{workflow_name}.yml: reset_label: "{reset_lbl}" が未定義')
+        errors.append(f'{workflow_name}.yml: reset_label: "{reset_lbl}" is not defined')
     transitions = yml.get("transitions") or {}
     required_edges: list[tuple[str, str]] = []
     for pname, running in RUNNING_LABEL.items():
@@ -178,12 +178,12 @@ def _check_issuesmith_yml_state_machine(workflow_name: str = "issuesmith") -> li
             required_edges.append((running, done))
     for src, dst in required_edges:
         if dst not in (transitions.get(src) or []):
-            errors.append(f"{workflow_name}.yml: transitions に {src} → {dst} が無い")
+            errors.append(f"{workflow_name}.yml: transitions lacks {src} → {dst}")
     return errors
 
 
 def _check_templates_use_state_machine_cli() -> list[str]:
-    """テンプレートのラベル遷移 CLI が state_machine + --workflow 形式か検査。"""
+    """Check that label transition CLIs in templates use the state_machine + --workflow form."""
     errors: list[str] = []
     transition_re = re.compile(
         r"python\s+-m\s+ghdag\.workflow\.state_machine\s+transition"
@@ -194,25 +194,25 @@ def _check_templates_use_state_machine_cli() -> list[str]:
                 continue
             if "state_machine transition --workflow workflows/issuesmith.yml" not in line:
                 errors.append(
-                    f"{tpath.name}:{lineno}: state_machine CLI が --workflow 形式ではない:"
+                    f"{tpath.name}:{lineno}: state_machine CLI is not in --workflow form:"
                     f" {line.strip()}"
                 )
     return errors
 
 
 def _check_raw_add_label_in_templates() -> list[str]:
-    """テンプレート内に raw `gh issue edit --add-label issuesmith:*` が残っていないか検査。
+    """Check that no raw `gh issue edit --add-label issuesmith:*` remains in templates.
 
-    --remove-label のみのクリーンアップは許容。--add-label を含む場合のみエラー。
+    Cleanup with only --remove-label is allowed; only lines with --add-label are errors.
     """
     errors: list[str] = []
     for tpath in sorted(TEMPLATE_DIR.glob("*.md")):
         for lineno, line in enumerate(tpath.read_text(encoding="utf-8").splitlines(), 1):
             if _RAW_ADD_LABEL_PATTERN.search(line):
                 errors.append(
-                    f"{tpath.name}:{lineno}: raw `gh issue edit --add-label issuesmith:*` を検出。"
-                    f" `{_STATE_MACHINE_CLI}` に置換してください。"
-                    f" 該当行: {line.strip()}"
+                    f"{tpath.name}:{lineno}: raw `gh issue edit --add-label issuesmith:*` found."
+                    f" Replace it with `{_STATE_MACHINE_CLI}`."
+                    f" Line: {line.strip()}"
                 )
     return errors
 
@@ -231,24 +231,24 @@ def main(argv: list[str]) -> int:
         if not issues:
             ns = _cfg.label_namespace
             print(
-                f"ERROR: 検査対象の Issue が無い。引数で Issue 番号を渡すか、"
-                f"{ns}:reset / ready ラベル付きの open Issue を用意",
+                f"ERROR: no Issues to check. Pass Issue numbers as arguments or prepare"
+                f" open Issues with a {ns}:reset / ready label",
                 file=sys.stderr,
             )
             return 2
 
     all_errors: list[str] = []
 
-    print("\n=== テンプレート静的チェック: 旧ラベル遷移 CLI 参照 ===")
+    print("\n=== Template static check: deprecated label transition CLI references ===")
     lsm_errors = _check_no_deprecated_state_machine_references()
     if lsm_errors:
         all_errors.extend(lsm_errors)
         for e in lsm_errors:
             print(f"  FAIL: {e}")
     else:
-        print("  OK  workflows/ scripts/ に旧ラベル遷移 CLI 参照なし")
+        print("  OK  no deprecated label transition CLI references in workflows/ scripts/")
 
-    print(f"\n=== {workflow_name}.yml state machine 宣言 ===")
+    print(f"\n=== {workflow_name}.yml state machine declarations ===")
     yml_sm_errors = _check_issuesmith_yml_state_machine(workflow_name)
     if yml_sm_errors:
         all_errors.extend(yml_sm_errors)
@@ -257,23 +257,23 @@ def main(argv: list[str]) -> int:
     else:
         print("  OK  label_namespace / reset_label / transitions")
 
-    print("\n=== テンプレート静的チェック: state_machine CLI 形式 ===")
+    print("\n=== Template static check: state_machine CLI form ===")
     cli_errors = _check_templates_use_state_machine_cli()
     if cli_errors:
         all_errors.extend(cli_errors)
         for e in cli_errors:
             print(f"  FAIL: {e}")
     else:
-        print("  OK  全テンプレートが state_machine --workflow 形式")
+        print("  OK  every template uses the state_machine --workflow form")
 
-    print("\n=== テンプレート静的チェック: raw add-label 検出 ===")
+    print("\n=== Template static check: raw add-label detection ===")
     static_errors = _check_raw_add_label_in_templates()
     if static_errors:
         all_errors.extend(static_errors)
         for e in static_errors:
             print(f"  WARN: {e}")
     else:
-        print("  OK  raw `gh issue edit --add-label issuesmith:*` なし")
+        print("  OK  no raw `gh issue edit --add-label issuesmith:*`")
 
     yml = yaml.safe_load(WORKFLOW_YAML.read_text(encoding="utf-8"))
     for n in issues:
@@ -285,11 +285,11 @@ def main(argv: list[str]) -> int:
         print("=== E2E SMOKE FAILED ===")
         for e in all_errors:
             print(f"  FAIL: {e}")
-        print(f"\n合計 {len(all_errors)} 件の問題を検出。修正してから再実行すること。")
+        print(f"\n{len(all_errors)} problem(s) found in total. Fix them and re-run.")
         return 1
 
-    print(f"=== E2E SMOKE PASSED ({len(issues)} issues × 全 step) ===")
-    print("実 Issue body で dispatcher の全 step が KeyError / bash 構文エラーなしで render される。")
+    print(f"=== E2E SMOKE PASSED ({len(issues)} issues x all steps) ===")
+    print("Every dispatcher step renders with real Issue bodies without KeyError / bash syntax errors.")
     return 0
 
 

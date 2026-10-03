@@ -15,10 +15,12 @@ from typing import NamedTuple
 
 from ghdag.forge import get_forge
 
+from issuesmith.config import get_config
 from issuesmith.gate_rules.cp1 import (
     check_test_version_exact_assert,
     check_version_line_in_diff,
 )
+from issuesmith.scope_gate import parse_allow_paths_from_ctx
 
 RUNTIME_LOG_EXCLUDES: tuple[str, ...] = (
     "jobs/audit.jsonl",
@@ -34,7 +36,10 @@ RUNTIME_DIR_EXCLUDES: tuple[str, ...] = (
     "logs/**",
 )
 
-_UNRESTRICTED_ALLOW_PATHS = "（制限なし）"
+# Placeholder context_hook writes when the Issue has no allow_paths. It keeps the
+# full-width parentheses scope_gate matches on; any full-width-parenthesised
+# placeholder (including the legacy one in frozen orders) still means "no filter".
+_UNRESTRICTED_ALLOW_PATHS = "\N{FULLWIDTH LEFT PARENTHESIS}unrestricted\N{FULLWIDTH RIGHT PARENTHESIS}"
 
 
 class PublishResult(NamedTuple):
@@ -63,12 +68,13 @@ def _parse_porcelain_path(line: str) -> str:
 def _parse_allow_paths(raw: str | None) -> list[str] | None:
     """Parse context_hook format (`- path\\n- path`) into a list.
 
-    Empty / ``（制限なし）`` / None → None (no allow_paths filtering).
+    Empty / the unrestricted placeholder / None → None (no allow_paths filtering).
     """
     if raw is None:
         return None
     text = raw.strip()
-    if not text or text == _UNRESTRICTED_ALLOW_PATHS:
+    # scope_gate owns placeholder detection; it parses a placeholder to no paths.
+    if not parse_allow_paths_from_ctx(text):
         return None
     paths: list[str] = []
     for line in text.splitlines():
@@ -143,7 +149,7 @@ def _commit_if_needed(
     if not dirty:
         return
 
-    # 後方互換: allow_paths 未指定時は従来の git add -A + RUNTIME_LOG_EXCLUDES 除外
+    # Backward compat: without allow_paths, keep the old git add -A minus RUNTIME_LOG_EXCLUDES
     if allow_paths is None:
         if not any(not _is_runtime_log(p) for p in dirty):
             return
@@ -153,7 +159,7 @@ def _commit_if_needed(
         if exclude_staged:
             _report_excluded(exclude_staged)
             _run_git(worktree, "reset", "HEAD", "--", *exclude_staged)
-        _run_git(worktree, "commit", "-m", f"実装: Issue #{issue_number}")
+        _run_git(worktree, "commit", "-m", f"Implement Issue #{issue_number}")
         return
 
     candidates, excluded = _select_commit_candidates(dirty, allow_paths)
@@ -161,7 +167,7 @@ def _commit_if_needed(
     if not candidates:
         return
     _run_git(worktree, "add", "--", *candidates)
-    _run_git(worktree, "commit", "-m", f"実装: Issue #{issue_number}")
+    _run_git(worktree, "commit", "-m", f"Implement Issue #{issue_number}")
 
 
 def _ahead_commit_count(worktree: Path, base_branch: str) -> int:
@@ -175,28 +181,29 @@ def _build_pr_metadata(
     issue_repo: str,
     target_count: int = 1,
 ) -> tuple[str, str]:
-    # GitHub の "Closes #N" auto-close は一切使わない（target_count・same-repo/cross-repo
-    # を問わない）。issue を閉じるのは常に M2 finalize（issue_repo 側での merge-done
-    # 遷移 + issue_close()）の役目であり、GitHub の自動 close はそれより早く発火しうる
-    # 副作用の強い機構だった。実測: #2852（diary companion 側）・#2873（da499bf で
-    # cross-repo の qualified Closes が実際に発火するようになった回帰）と、同じ
-    # クラスの premature close 事故が 2 回起きている。"Refs #N" は PR 本文の検索
-    # マーカーとして queue.py 側で引き続き使う（_closes_issue_marker 参照）。
+    # Never use GitHub's "Closes #N" auto-close (regardless of target_count or
+    # same-repo / cross-repo). Closing the issue is always M2 finalize's job (the
+    # merge-done transition on the issue_repo side + issue_close()); GitHub's
+    # auto-close can fire earlier and was a mechanism with strong side effects.
+    # Observed: #2852 (diary companion side) and #2873 (a regression in da499bf that
+    # made cross-repo qualified Closes actually fire) were two premature-close
+    # incidents of the same class. "Refs #N" stays as the PR body search marker used
+    # by queue.py (see _closes_issue_marker).
+    pack = get_config().language
+    body = pack.message("publish.pr_body")
     if repo != issue_repo:
         return (
-            f"実装: {issue_repo}#{issue_number}",
-            f"P1/P2 result より自動生成。\n\nRefs {issue_repo}#{issue_number}",
+            pack.message("publish.pr_title_cross_repo", issue_repo=issue_repo, issue=issue_number),
+            f"{body}\n\nRefs {issue_repo}#{issue_number}",
         )
     return (
-        f"実装: Issue #{issue_number}",
-        f"P1/P2 result より自動生成。\n\nRefs #{issue_number}",
+        pack.message("publish.pr_title", issue=issue_number),
+        f"{body}\n\nRefs #{issue_number}",
     )
 
 
 def _run_version_bump(worktree: Path, base_branch: str) -> subprocess.CompletedProcess[str]:
     # Prefer the scripts/ shim so frozen orders and subprocess callers keep working.
-    from issuesmith.config import get_config
-
     script = get_config().root / "scripts" / "issuesmith-version-bump.py"
     return subprocess.run(
         [sys.executable, str(script), "--worktree", str(worktree), "--base", base_branch],
@@ -284,10 +291,10 @@ def _maybe_bump_version(
     repo: str,
     issue_repo: str,
 ) -> PublishResult | None:
-    """cross-repo かつ pyproject.toml があるときだけ決定論バンプを実行する.
+    """Run the deterministic bump only for cross-repo publishes that have pyproject.toml.
 
-    失敗時は PublishResult(status="BUMP_FAILED") を返す。成功・スキップ時は None。
-    既に HEAD が publish の bump commit なら再バンプしない（再実行の冪等性、#3794）。
+    Returns PublishResult(status="BUMP_FAILED") on failure, None on success or skip.
+    Does not bump again when a publish bump commit is already in range (rerun idempotency, #3794).
     """
     if repo == issue_repo:
         return None
@@ -310,10 +317,10 @@ def _maybe_bump_version(
 
 
 def _check_commit_diff_gates(worktree: Path, base_branch: str) -> PublishResult | None:
-    """commit 後・bump 前に version 行 / テスト完全一致 assert を検査する (#3065).
+    """Check version lines / exact-match test asserts after commit, before bump (#3065).
 
-    三点ドット差分（merge-base 起点）を使う。二点ドットだと base が進んだだけで
-    逆方向の version 差分が写り、偽陽性になる（#3221）。
+    Uses a three-dot diff (from the merge-base). A two-dot diff would show a reverse
+    version diff just because base moved ahead, a false positive (#3221).
     """
     bump_versions = _bump_versions_in_range(worktree, base_branch)
     diff = _run_git(worktree, "diff", f"origin/{base_branch}...HEAD").stdout
@@ -617,13 +624,13 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--allow-paths",
         default=None,
-        help='context_hook format: "- path1\\n- path2". Omit or "（制限なし）" for no filter.',
+        help='context_hook format: "- path1\\n- path2". Omit or pass the unrestricted placeholder for no filter.',
     )
     parser.add_argument(
         "--target-count",
         type=int,
         default=1,
-        help="Issue のターゲット数。2 以上のとき PR 本文は Refs を使用する",
+        help="Number of Issue targets. The PR body uses Refs when it is 2 or more",
     )
     return parser.parse_args(argv)
 
