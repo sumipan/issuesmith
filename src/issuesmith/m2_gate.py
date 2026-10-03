@@ -1,8 +1,8 @@
 """
-m2_gate.py — M2 AC checkbox ゲート（薄ラッパ）
+m2_gate.py — M2 AC checkbox gate (thin wrapper)
 
-ロジックは gate_rules/m2.py の M2Rules に委譲する。
-has_acceptance_criteria_section / get_unchecked_count を re-export して後方互換を維持。
+The logic is delegated to M2Rules in gate_rules/m2.py.
+has_acceptance_criteria_section / get_unchecked_count are re-exported for backward compatibility.
 """
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ from pathlib import Path
 
 from ghdag.forge import get_forge
 
-from issuesmith.config import get_config
 from issuesmith.gate_rules.m2 import (
     M2Rules,
     get_unchecked_count,
@@ -42,11 +41,11 @@ def _fmt_failure(prefix: str, record: dict) -> str:
 def synthesize_contract_failures(
     records_by_root: dict[str, list[dict]],
 ) -> list[str]:
-    """複数 root の run_checks 結果を合成して人間可読の failure 文字列を返す。
+    """Combine run_checks results of several roots into human-readable failure strings.
 
-    合成ルール:
-    - paths_must_exist / references_must_resolve: いずれかの root で充足すれば充足（OR）
-    - paths_must_not_exist: 全 root で不在のときのみ充足（AND）
+    Combination rules:
+    - paths_must_exist / references_must_resolve: satisfied if satisfied in any root (OR)
+    - paths_must_not_exist: satisfied only when absent in every root (AND)
     """
     all_records: list[tuple[str, dict]] = []
     for prefix, records in records_by_root.items():
@@ -88,7 +87,7 @@ def synthesize_contract_failures(
 
 
 def _contract_failures_failopen(body: str, repo_root: Path | None = None) -> list[str]:
-    """AC YAML 契約を実行し FAIL を返す。実行系エラーは fail-open。"""
+    """Run the AC YAML contract and return FAILs. Execution errors fail open."""
     try:
         from issuesmith.ac_contract import contract_failures
 
@@ -104,7 +103,7 @@ def _proceed_or_contract_retry(
     has_migration_label: bool,
     repo_root: Path | None = None,
 ) -> dict:
-    """checkbox ゲート通過後の最終判定。YAML 契約 FAIL があれば retry に落とす。"""
+    """Final verdict after the checkbox gate passed. A YAML contract FAIL falls back to retry."""
     failures = _contract_failures_failopen(body, repo_root=repo_root)
     if failures:
         return {
@@ -148,9 +147,10 @@ def check_gate_multi_root(
     *,
     contracts: dict[str, dict] | None = None,
 ) -> dict:
-    """ターゲットごとの契約を multi-root 合成して M2 ゲート判定する。
+    """M2 gate verdict combining per-target contracts across multiple roots.
 
-    contracts を省略した場合は body 全体を単一契約として各 root に適用する（後方互換）。
+    Without contracts, the whole body is applied to each root as a single contract
+    (backward compatible).
     """
     has_migration_label = "scope:migration" in labels
     violations = M2Rules().check(body, labels)
@@ -208,12 +208,13 @@ def check_gate_multi_root(
 
 
 def check_gate(body: str, labels: list[str], repo_root: Path | None = None) -> dict:
-    """M2 ゲートの判定結果を返す。
+    """Return the M2 gate verdict.
 
     Args:
-        body: Issue body。
-        labels: Issue ラベル名のリスト。
-        repo_root: AC YAML の相対パス解決ルート。省略時は ac_contract 既定（nexus ルート）。
+        body: Issue body.
+        labels: list of Issue label names.
+        repo_root: root that resolves the AC YAML relative paths. Defaults to the
+            ac_contract default (the configured repository root).
 
     Returns:
         dict with keys:
@@ -221,7 +222,7 @@ def check_gate(body: str, labels: list[str], repo_root: Path | None = None) -> d
           - unchecked_count: int
           - has_section: bool
           - has_migration_label: bool
-          - contract_failures: list[str]（AC YAML 契約の FAIL。checkbox 通過時のみ実行）
+          - contract_failures: list[str] (AC YAML contract FAILs; run only after the checkbox gate passes)
     """
     has_migration_label = "scope:migration" in labels
     violations = M2Rules().check(body, labels)
@@ -258,11 +259,11 @@ def _parse_repo_roots(values: list[str]) -> dict[str, Path]:
     roots: dict[str, Path] = {}
     for item in values:
         if "=" not in item:
-            raise ValueError(f"--repo-roots の形式は repo=path です: {item!r}")
+            raise ValueError(f"--repo-roots entries must be repo=path: {item!r}")
         repo, path = item.split("=", 1)
         repo = repo.strip()
         if not repo:
-            raise ValueError(f"--repo-roots の repo が空です: {item!r}")
+            raise ValueError(f"--repo-roots repo is empty: {item!r}")
         roots[repo] = Path(path)
     return roots
 
@@ -275,17 +276,14 @@ def main() -> None:
         "--repo-root",
         type=Path,
         default=None,
-        help=(
-            f"(非推奨) {get_config().sections['acceptance_criteria']}"
-            " の相対パスを解決する単一ルート"
-        ),
+        help="(deprecated) single root that resolves acceptance criteria relative paths",
     )
     parser.add_argument(
         "--repo-roots",
         nargs="+",
         default=None,
         metavar="REPO=PATH",
-        help="ターゲットごとの repo-root（例: sumipan/nexus=/path/to/nexus）",
+        help="per-target repo-root (e.g. owner/repo=/path/to/repo)",
     )
     args = parser.parse_args()
 

@@ -52,6 +52,13 @@ DONE_LABEL: dict[str, str] = _build_phase_labels("done")
 _MILESTONE_LABEL = "scope:milestone"
 _SUB_LABEL_PREFIX = "issuesmith:sub-"
 
+
+def _msg(key: str, /, **kwargs: Any) -> str:
+    """Render a ``queue_triage.*`` language-pack message (posted as an Issue comment)."""
+    from issuesmith.config import get_config
+
+    return get_config().language.message(f"queue_triage.{key}", **kwargs)
+
 def _build_terminal_without_merge() -> frozenset[str]:
     from issuesmith.config import get_config
     ns = get_config().label_namespace
@@ -88,7 +95,8 @@ _BUMP_RE = re.compile(
     re.IGNORECASE,
 )
 _README_RE = re.compile(
-    r"^(?P<repo>\S+):\s*v?(?P<ver>\d+\.\d+\.\d+)\s+に合わせて\s*README\.md\s*を書き直す\s*$",
+    # Wording around the version and README.md is free: hosts title these in their language.
+    r"^(?P<repo>\S+):\s*v?(?P<ver>\d+\.\d+\.\d+)\s+.*\bREADME\.md\b.*$",
 )
 _SEMVER_RE = re.compile(r"v?(\d+\.\d+\.\d+)")
 
@@ -97,7 +105,6 @@ COMMENT_MARKER = "<!-- ISSUESMITH_QUEUE_REQUEST:{request_id}:{outcome} -->"
 # LLM reject reasons that mean "waiting for deps" — keep, do not reject (AC-12).
 _DEPS_REJECT_REASON_RE = re.compile(
     r"(deps?[_\s-]?(blocked|waiting|not[_\s-]?resolved|unresolved|pending))"
-    r"|(依存\s*(未解決|待ち|ブロック|未充足))"
     r"|(waiting\s+for\s+deps?)"
     r"|(dependencies?\s+(not\s+)?(met|resolved|ready))",
     re.IGNORECASE,
@@ -218,37 +225,37 @@ def deterministic_decision(
     done = DONE_LABEL[phase]
 
     if state == "CLOSED":
-        # force=True かつフェーズ未完了 → keep に進む（PR 自動クローズ後の merge 復旧）。
+        # force=True and the phase is not done -> go on to keep (merge recovery after PR auto-close).
         if force and done not in labels:
             pass
         else:
-            return Decision(kind="closed", reason=f"issue #{request.issue} is CLOSED", comment=True)
+            return Decision(kind="closed", reason=_msg("closed", issue=request.issue), comment=True)
 
     ready = READY_LABEL[phase]
     running = RUNNING_LABEL[phase]
     if ready in labels:
         return Decision(
             kind="already_processed",
-            reason=f"{ready} already present",
+            reason=_msg("already_present", label=ready),
             comment=False,
         )
     if running in labels:
         return Decision(
             kind="already_processed",
-            reason=f"{running} already present",
+            reason=_msg("already_present", label=running),
             comment=True,
         )
     if done in labels and not force:
         return Decision(
             kind="already_processed",
-            reason=f"{done} already present",
+            reason=_msg("already_present", label=done),
             comment=True,
         )
 
     if phase == "sub" and _MILESTONE_LABEL not in labels:
         return Decision(
             kind="rejected",
-            reason="sub phase requires scope:milestone label",
+            reason=_msg("sub_requires_milestone"),
             comment=True,
             add_rejected_label=True,
         )
@@ -256,19 +263,16 @@ def deterministic_decision(
     if phase == "develop" and _MILESTONE_LABEL in labels:
         return Decision(
             kind="rejected",
-            reason=(
-                "scope:milestone issues cannot enter develop phase "
-                "(P0 raises MILESTONE_BLOCKED; reject at queue intake)"
-            ),
+            reason=_msg("milestone_no_develop"),
             comment=True,
             add_rejected_label=True,
         )
 
-    # force=True: done ラベルが付いていても再ディスパッチを許可する。
-    # CP2 FAIL 等でフェーズが *-done に差し戻された Issue を、案内された
-    # `enqueue --force` で再投入する経路（2026-09-04 に発覚した回帰）。
-    # ready（既に投入中）は force でも bypass しない — #2813 の二重投入
-    # レース対策と矛盾するため。
+    # force=True: allow redispatch even when the done label is present.
+    # This is the path for re-enqueueing, via the suggested `enqueue --force`, an Issue
+    # whose phase was sent back to *-done by a CP2 FAIL etc. (regression found 2026-09-04).
+    # ready (already enqueued) is not bypassed even with force, since that would
+    # contradict the double-enqueue race fix of #2813.
 
     # Same-kind newer SemVer supersedes.
     title = str(issue.get("title") or "")
@@ -294,7 +298,7 @@ def deterministic_decision(
             top_num, top_ver = newer[0]
             return Decision(
                 kind="superseded",
-                reason=f"superseded by #{top_num} (v{top_ver})",
+                reason=_msg("superseded", issue=top_num, version=top_ver),
                 close_issue=True,
                 comment=True,
             )
@@ -305,7 +309,7 @@ def deterministic_decision(
         if missing:
             return Decision(
                 kind="repair",
-                reason=f"missing YAML fields: {', '.join(missing)}",
+                reason=_msg("missing_yaml", fields=", ".join(missing)),
                 comment=True,
                 add_rejected_label=False,
             )
@@ -629,6 +633,7 @@ def triage(
         "Reject ONLY for permanent problems (duplicate, obsolete, unsupported repo).\n"
         "Do NOT reject for missing YAML — deterministic intake sends those to repair; use keep.\n"
         "Do NOT reject for unresolved dependencies / deps waiting — that is normal queue wait; use keep.\n"
+        "Write every reason in English.\n"
         f"requests={json.dumps(payload_requests, ensure_ascii=False)}\n"
     )
 

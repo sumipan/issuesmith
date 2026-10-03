@@ -1,7 +1,7 @@
 """
-cp1_gate.py — CP1 パターン検査ゲート（薄ラッパ）
+cp1_gate.py — CP1 pattern check gate (thin wrapper)
 
-検査ロジックは gate_rules.cp1.Cp1Rules に委譲する。
+The check logic is delegated to gate_rules.cp1.Cp1Rules.
 """
 
 from __future__ import annotations
@@ -19,23 +19,24 @@ from issuesmith.gate_rules.scope_coupling import ScopeCouplingRules
 
 
 def check_gate(body: str, labels: list[str] | None = None) -> dict:
-    """CP1 ゲートの判定結果を返す。
+    """Return the CP1 gate verdict.
 
-    scope:migration の Issue には migration 決定論ルール
-    （手順・実行時状態調査・移行検証テスト契約）も CP1 で強制する。
-    B1 preflight は advisory（B1 は不備で失敗しない）ため、
-    機械ブロックの enforcement point はここになる。
+    For scope:migration Issues, CP1 also enforces the migration deterministic rules
+    (steps, runtime state survey, migration verification test contract). The B1
+    preflight is advisory (B1 does not fail on defects), so this is the enforcement
+    point of the mechanical block.
 
-    分割計画パターンと scope:milestone の矛盾はラベル有無に依存せず常に検査する
-    （ラベルが無いこと自体が違反のため条件付きスキップは不可）。
+    A contradiction between a split-plan pattern and scope:milestone is always checked
+    regardless of labels (the missing label is itself the violation, so a conditional
+    skip is not possible).
 
-    allow_paths が幅ゲートを超過していても、変更対象ファイル表 + paths_must_exist
-    から決定論で絞り込める場合 ScopeBreadthRules.check は violation を出さず続行する
-    （#3487）。絞り込みが起きたときは autofix_note / autofix_new_allow_paths に
-    書き換え内容が入る（Issue body の実際の永続化は main() が forge 経由で行う）。
+    Even when allow_paths exceeds the breadth gate, ScopeBreadthRules.check emits no
+    violation and continues if it can narrow them deterministically from the changed
+    files table + paths_must_exist (#3487). When narrowing happens, autofix_note /
+    autofix_new_allow_paths hold the rewrite (main() persists the Issue body via forge).
 
-    ScopeCouplingRules は allow_paths に不足しているファイルを検出し、auto-widen で
-    追加する (#3520)。coupling の autofix が breadth の autofix より優先される。
+    ScopeCouplingRules detects files missing from allow_paths and adds them with
+    auto-widen (#3520). The coupling autofix wins over the breadth autofix.
 
     Returns:
         {"status": "PASS"|"FAIL", "reasons": list[str], "intentional_hold": bool,

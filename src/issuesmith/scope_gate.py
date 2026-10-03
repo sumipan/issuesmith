@@ -16,7 +16,7 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
-from issuesmith.config import IssuesmithConfig, ScopeGateConfig
+from issuesmith.config import IssuesmithConfig, ScopeGateConfig, get_config
 
 __all__ = [
     "ScopeMeasure",
@@ -195,50 +195,42 @@ def evaluate(
 
 
 def format_comment(verdict: ScopeVerdict, *, preflight_contradiction: bool = False) -> str:
-    """Markdown Issue comment for SCOPE_TOO_LARGE."""
+    """Markdown Issue comment for SCOPE_TOO_LARGE (text from the language pack)."""
+    lang = get_config().language
     m = verdict.measure
-    rows = "\n".join(f"| `{d}` | {n} |" for d, n in m.by_dir.items()) or "| (none) | 0 |"
+    rows = "\n".join(f"| `{d}` | {n} |" for d, n in m.by_dir.items()) or lang.message(
+        "scope_gate.no_rows"
+    )
     contradiction_note = (
-        (
-            "\n**事前ゲート通過後の超過＝ゲート矛盾**: この Issue は CP1 (`scope_breadth`) "
-            "を通過して P0 まで進みました。P0 は安全網であり、本来ここで超過は発火しません。"
-            "CP1 側の自動絞り込みロジックにワークフロー欠陥がある可能性があります。\n"
-        )
-        if preflight_contradiction
-        else ""
+        lang.message("scope_gate.preflight_contradiction") if preflight_contradiction else ""
     )
-    return (
-        "## P0 中断: allow_paths のスコープが大きすぎます\n"
-        f"{contradiction_note}"
-        "\n"
-        f"**理由**: `{verdict.reason}`\n"
-        "\n"
-        "| 指標 | 値 |\n"
-        "|---|---|\n"
-        f"| ファイル数 | {m.files} |\n"
-        f"| 行数（テキスト） | {m.lines} |\n"
-        f"| バイナリ（行数除外） | {m.skipped_binary} |\n"
-        f"| `*.jsonl`（行数除外） | {m.skipped_jsonl} |\n"
-        "\n"
-        "### ディレクトリ別ファイル数（上位 5）\n"
-        "\n"
-        "| ディレクトリ | ファイル数 |\n"
-        "|---|---|\n"
-        f"{rows}\n"
-        "\n"
-        "### 分割ヒント\n"
-        "\n"
-        "Issue をディレクトリ単位（上表の上位エントリ）や機能単位に分割し、"
-        "各子 Issue の `allow_paths` を狭めてから "
-        "`issuesmith:scope-too-large` を外して `issuesmith:develop-ready` を付与してください。\n"
-        "\n"
-        "PIPELINE_STATUS: SCOPE_TOO_LARGE\n"
+    body = lang.message(
+        "scope_gate.too_large",
+        contradiction_note=contradiction_note,
+        reason=verdict.reason,
+        files=m.files,
+        lines=m.lines,
+        skipped_binary=m.skipped_binary,
+        skipped_jsonl=m.skipped_jsonl,
+        rows=rows,
     )
+    # Machine marker stays outside the pack so hosts cannot break parsers by translating it.
+    return f"{body}\nPIPELINE_STATUS: SCOPE_TOO_LARGE\n"
+
+
+# context_hook writes a parenthesised "no restriction" placeholder in full-width
+# parentheses when the Issue has no allow_paths; no real path starts with one.
+_FULLWIDTH_PARENS = (chr(0xFF08), chr(0xFF09))
+
+
+def _is_unrestricted_placeholder(raw: str) -> bool:
+    s = raw.strip()
+    return "\n" not in s and s.startswith(_FULLWIDTH_PARENS[0]) and s.endswith(_FULLWIDTH_PARENS[1])
 
 
 def parse_allow_paths_from_ctx(raw: str) -> list[str]:
     """Parse StepContext.allow_paths (`- path` lines or comma-separated)."""
-    if not raw or raw.strip() in {"", "（制限なし）"}:
+    if not raw or not raw.strip() or _is_unrestricted_placeholder(raw):
         return []
     paths: list[str] = []
     for line in raw.replace(",", "\n").splitlines():
