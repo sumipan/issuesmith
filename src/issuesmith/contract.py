@@ -1,6 +1,6 @@
 """Canonical contract types and extractors for issuesmith (#3487, #4272).
 
-Workflow design rule (nexus docs/ISSUESMITH.md "ワークフロー設計規約" R1):
+Workflow design rule (nexus docs/ISSUESMITH.md, workflow design conventions R1):
 every gate that validates a contract section and every step that consumes it
 MUST call the same function from this module. Defining a second parser for
 the same section anywhere else is a convention violation and is detected by
@@ -8,9 +8,11 @@ the same section anywhere else is a convention violation and is detected by
 
 Sections covered here:
 
-* ``変更対象ファイル`` (change table) — bold-label form ``**変更対象ファイル**:``
-  used inside ``#### サブN`` blocks and the H2/H3 heading form used at Issue top
-  level. Both forms resolve through :func:`extract_change_table_rows`.
+* the changed-files section (change table) — bold-label form
+  ``**<changed_files>**:`` used inside ``#### <sub_header_prefix>N:`` blocks and the
+  H2/H3 heading form used at Issue top level. Both forms resolve through
+  :func:`extract_change_table_rows`. Heading words and table columns come from the
+  configured language pack (``get_config().language``).
 
 Step contract types (:class:`StepContext`, :class:`StepResult`, :class:`Andon`,
 :class:`Verdict`) are the canonical definitions for dispatch and step runners.
@@ -22,6 +24,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Literal
 
 import yaml
@@ -32,7 +35,50 @@ if TYPE_CHECKING:
     from issuesmith.engine import RetrySignal
 
 _SECTION_END = r"(?=^##(?!#)|\Z)"
-SUB_HEADER_RE = re.compile(r"^####\s+サブ(\d+):", re.MULTILINE)
+
+
+@lru_cache(maxsize=8)
+def _compile_sub_header(prefix: str) -> re.Pattern[str]:
+    return re.compile(rf"^####\s+{re.escape(prefix)}[ \t]*(\d+):", re.MULTILINE)
+
+
+def sub_header_re() -> re.Pattern[str]:
+    """Regex of a sub-design header ``#### <sub_header_prefix>N:`` (group 1 = N).
+
+    The prefix comes from the configured language pack, read at call time.
+    """
+    return _compile_sub_header(get_config().language.sub_header_prefix)
+
+
+class _LazySubHeaderRe:
+    """``SUB_HEADER_RE`` compatibility object delegating to :func:`sub_header_re`.
+
+    Resolved on every call so importing this module never loads the config.
+    """
+
+    def search(self, *args: Any, **kwargs: Any) -> re.Match[str] | None:
+        return sub_header_re().search(*args, **kwargs)
+
+    def match(self, *args: Any, **kwargs: Any) -> re.Match[str] | None:
+        return sub_header_re().match(*args, **kwargs)
+
+    def finditer(self, *args: Any, **kwargs: Any) -> Any:
+        return sub_header_re().finditer(*args, **kwargs)
+
+    def findall(self, *args: Any, **kwargs: Any) -> list[Any]:
+        return sub_header_re().findall(*args, **kwargs)
+
+    def sub(self, *args: Any, **kwargs: Any) -> str:
+        return sub_header_re().sub(*args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(sub_header_re(), name)
+
+    def __repr__(self) -> str:
+        return "<lazy SUB_HEADER_RE (see contract.sub_header_re)>"
+
+
+SUB_HEADER_RE = _LazySubHeaderRe()
 _H1_H3_RE = re.compile(r"^#{1,3}\s", re.MULTILINE)
 _TABLE_ROW_RE = re.compile(r"^\|")
 _TABLE_SEP_RE = re.compile(r"^\|[\s\-:|]+\|$")
@@ -145,25 +191,23 @@ def extract_change_table_rows(text: str) -> list[tuple[str, str, str]]:
 
     ``repo`` is ``""`` when the table has no repository column.
     """
+    columns = get_config().language.change_table_columns
     result: list[tuple[str, str, str]] = []
     for region in _change_table_bodies(text):
         rows = parse_table_rows(region)
         if len(rows) <= 1:
             continue
         header = [c.lower() for c in rows[0]]
+        repo_col, path_col, type_col = (c.lower() for c in columns[:3])
         try:
-            repo_idx = next(i for i, c in enumerate(header) if "リポジトリ" in c)
-            path_idx = next(
-                i for i, c in enumerate(header) if "ファイルパス" in c or "パス" in c
-            )
-            type_idx = next(
-                i for i, c in enumerate(header) if "変更種別" in c or "種別" in c
-            )
+            repo_idx = next(i for i, c in enumerate(header) if repo_col in c)
+            path_idx = next(i for i, c in enumerate(header) if path_col in c)
+            type_idx = next(i for i, c in enumerate(header) if type_col in c)
         except StopIteration:
             # 3-column legacy form without repo column: | path | type | desc |
-            if len(rows[0]) >= 2 and "ファイル" not in rows[0][0]:
+            if len(rows[0]) >= 2 and path_col not in rows[0][0].lower():
                 for row in rows:
-                    if len(row) >= 2 and "ファイル" not in row[0]:
+                    if len(row) >= 2 and path_col not in row[0].lower():
                         path = _normalize_path(row[0] if "`" in row[0] else row[1])
                         change_type = (
                             row[1] if "`" in row[0] else (row[2] if len(row) > 2 else "")
@@ -202,13 +246,13 @@ def change_paths_for_repo(text: str, repo: str | None = None) -> list[str]:
 
 
 def iter_sub_blocks(text: str) -> list[tuple[int, str]]:
-    """Return (sub_num, block_text) for every SUB_HEADER_RE header in text, in order.
+    """Return (sub_num, block_text) for every sub_header_re() header in text, in order.
 
-    A block runs from its header to the earliest of: the next SUB_HEADER_RE header,
+    A block runs from its header to the earliest of: the next sub_header_re() header,
     the next heading of level 1-3 (^#{1,3}\\s), or the end of text.
     ``####`` and deeper headings do not terminate a block.
     """
-    headers = list(SUB_HEADER_RE.finditer(text))
+    headers = list(sub_header_re().finditer(text))
     if not headers:
         return []
     result: list[tuple[int, str]] = []
@@ -257,7 +301,7 @@ def validate_frontmatter(body: str) -> list[str]:
 
 
 def sub_block(body: str, sub_num: int) -> str:
-    """Text of ``#### Sub<sub_num>:`` block ("" if absent).
+    """Text of the ``#### <sub_header_prefix><sub_num>:`` block ("" if absent).
 
     Shared by the B1 gate (per-block checks) and SUB1 (child allow_paths) so both
     look at the same text. Block ends at the next sub header, next H1-H3 heading,

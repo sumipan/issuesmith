@@ -183,6 +183,22 @@ Top-level `issuesmith.__all__` is empty (`[]`); import submodules directly.
 | `split_h2_sections` | Split body into H2 sections |
 | `upsert_section` | Insert or replace an H2 section |
 
+### `issuesmith.language`
+
+| Symbol | Notes |
+|---|---|
+| `LanguagePack` | Frozen dataclass of Issue-body vocabulary and GitHub-posted text |
+| `EN` | Built-in English pack (the only pack shipped) |
+| `load_language_pack` | Load and validate a pack YAML file |
+| `language_pack_from_mapping` | Validate a parsed mapping into a `LanguagePack` |
+
+### `issuesmith.contract`
+
+| Symbol | Notes |
+|---|---|
+| `sub_header_re` | Sub-design header regex built from the configured pack |
+| `SUB_HEADER_RE` | Lazy object delegating `search` / `match` / `finditer` / `findall` / `sub` to `sub_header_re()` |
+
 ### `issuesmith.gates`
 
 | Symbol | Notes |
@@ -492,8 +508,9 @@ Config file resolution order: explicit path argument → `ISSUESMITH_CONFIG` →
 | `milestone_chain` | `enabled: false` | Milestone chain automation |
 | `triage` | `enabled: true` | Queue tick LLM reorder |
 | `phases` | draft/sub/develop/merge | Phase → role → entry step mapping |
-| `sections` | section heading map | Issue body section name map |
-| `sub_design_subsections` | fixed tuple | Required sub-design subsections |
+| `language_pack` | (unset: built-in English pack `EN`) | Path to a language pack YAML (relative to the config file); see [Language packs](#language-packs) |
+| `sections` | (deprecated) | Legacy section heading map; use `language_pack` |
+| `sub_design_subsections` | (deprecated) | Legacy sub-design subsections; use `language_pack` |
 | `steps` | `m2-role-dispatch` | Step definitions (`module`, `template`, `requires`) |
 | `forbidden_pr_paths` | `jobs/**`, `logs/**`, … | Paths excluded from PR scope |
 | `scope_gate` | `enabled: true`, `max_files: 80`, … | P0 allow_paths size gate |
@@ -508,7 +525,42 @@ Config file resolution order: explicit path argument → `ISSUESMITH_CONFIG` →
 
 Nested `paths` keys (relative to config root unless absolute): `queue`, `queue_state`, `queue_lock`, `triage_log`, `seed`, `night_state`, `exec_jsonl`, `done_dir`, `quota_state`, `metrics`, `worktrees_dir`, `external_dir`, `workflow`, `template_dir`, `engine_state`, `brake_state` (defaults to `quota_state`).
 
+Legacy `scope_size` vocabulary keys `delete_words`, `new_words`, `sub_plan_header` and `no_deps_word` are deprecated as well (see below).
+
 Nested `observe.main_health` keys: `worktree` (required when enabled), `command`, `base_branch` (`main`), `timeout_seconds` (`1800`).
+
+### Language packs
+
+A language pack holds the vocabulary issuesmith uses to read the host's Issue bodies and the text it posts to GitHub (Issue comments, andon summaries, PR titles). The package ships the English pack `issuesmith.language.EN` only; a host that writes Issues in another language keeps its own pack file and points `language_pack:` at it:
+
+```yaml
+language_pack: configs/issuesmith-lang.xx.yaml
+```
+
+The pack file is a YAML mapping whose keys are the `LanguagePack` field names. Every field is required; unknown keys, missing keys, wrong types and a `messages` key set that differs from `EN` raise `ConfigError` when the config is loaded. The resolved pack is `get_config().language`; `get_config().sections`, `.sub_design_subsections` and `.scope_size.*` vocabulary are derived from it.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `sections` | mapping (10 keys) | H2 section headings: `acceptance_criteria`, `migration`, `migration_state_survey`, `sub_plan`, `design`, `background`, `dependencies`, `impact_survey`, `milestone`, `changed_files` |
+| `sub_design_subsections` | list (4) | Bold-label subsections of a sub design: scope, design policy, changed files, acceptance criteria |
+| `sub_header_prefix` | string | Sub-design header prefix: `#### <prefix>N:` (`contract.sub_header_re()`) |
+| `sub_plan_columns` | list (5) | Sub-issue plan table columns: `#`, title, target repo, content, depends on |
+| `change_table_columns` | list (4) | Change table columns: repository, file path, change type, description |
+| `no_deps_word` | string | Depends-on cell value meaning "no dependency" |
+| `delete_words` | list | Change-type words for deletions (case-insensitive substring) |
+| `new_words` | list | Change-type words for new files |
+| `removal_words` | list | Scope verbs that announce a removal (`scope_coupling`) |
+| `placeholder_words` | list | Placeholder words of an unfilled value (milestone V3) |
+| `vague_ac_words` | list | Words that make an acceptance criterion too vague (`b1_milestone_subdesign`) |
+| `derived_from_phrase` | string | Phrase a child Issue body uses to name its parent sub design |
+| `parent_issue_label` | string | Label in front of the parent Issue reference in a child body |
+| `dependencies_table_header` | string | Header row of the dependency table SUB1 writes into a child body |
+| `out_of_scope_heading` | string | H2 heading of the out-of-scope section (`relocate_sub_plan` inserts the milestone section before it) |
+| `messages` | mapping | GitHub-posted text keyed `<module>.<id>`; values are `str.format` templates with keyword placeholders. Copy the keys from `issuesmith.language.EN.messages` |
+
+Logs, exception messages, CLI help / stderr and Violation `message` / `fix_hint` stay English and are not part of a pack. Machine markers (HTML comments, `PIPELINE_STATUS:` lines, `Refs #N`) are appended outside the templates.
+
+**Legacy keys (deprecated, removed in the next release).** Without `language_pack`, the keys `sections`, `sub_design_subsections` and `scope_size.delete_words` / `new_words` / `sub_plan_header` / `no_deps_word` still override the matching `EN` fields and emit a `DeprecationWarning`. With `language_pack` set they are ignored (with a warning).
 
 ## Error Reference
 
