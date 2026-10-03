@@ -611,6 +611,9 @@ def _record_task_metrics(
         "role": role,
         "template": template or "",
     }
+    parent_uuid = os.environ.get("GHDAG_TASK_UUID", "").strip()
+    if parent_uuid:
+        tags["parent_uuid"] = parent_uuid
     if failure_class is not None:
         tags["failure_class"] = failure_class
     if failure_detail:
@@ -1639,6 +1642,10 @@ def main(argv: list[str] | None = None) -> int:
             return exec_file(
                 args.role, args.input_path, args.cwd, args.tier, args.engine
             )
+        if args.action in ("run-guarded", "run-verified"):
+            from issuesmith.metrics_events import record_step_started
+
+            record_step_started(get_config().paths)
         if args.action == "run-guarded":
             return run_guarded(
                 args.role,

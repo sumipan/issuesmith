@@ -5,7 +5,6 @@ id format: <workflow>:<issue>:<step>:<gen>
 """
 from __future__ import annotations
 
-import json
 import logging
 import re
 from dataclasses import asdict, dataclass, field
@@ -185,10 +184,19 @@ def _iter_open_entries(client: Any) -> Iterator[_OpenEntry]:
         yield from entries
 
 
-def _write_metrics(path: Path, event: str, andon_id: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps({"event": event, "andon_id": andon_id}) + "\n")
+def _write_metrics(path: Path, event: str, andon: Andon) -> None:
+    from issuesmith.metrics_events import append_event
+
+    append_event(
+        path,
+        {
+            "event": event,
+            "andon_id": andon.id,
+            "issue": andon.issue,
+            "step": andon.step,
+            "kind": andon.kind,
+        },
+    )
 
 
 def _call_resume_hook(client: Any, andon_id: str, action: str) -> None:
@@ -314,7 +322,7 @@ def raise_andon(
         sink.emit(andon)
 
     path = metrics_path if metrics_path is not None else _default_metrics_path()
-    _write_metrics(path, "andon_raised", andon.id)
+    _write_metrics(path, "andon_raised", andon)
 
 
 def list_open(client: Any) -> list[Andon]:
@@ -374,7 +382,7 @@ def answer(
     client.issue_update(target.issue, labels_remove=[label])
 
     path = metrics_path if metrics_path is not None else _default_metrics_path()
-    _write_metrics(path, "andon_answered", andon_id)
+    _write_metrics(path, "andon_answered", target)
     _call_resume_hook(client, andon_id, action)
 
 
@@ -415,4 +423,4 @@ def answer_if_open(
     client.issue_update(target.issue, labels_remove=[label])
 
     path = metrics_path if metrics_path is not None else _default_metrics_path()
-    _write_metrics(path, "andon_answered", andon_id)
+    _write_metrics(path, "andon_answered", target)

@@ -4,6 +4,7 @@ Shared pytest fixtures for the issuesmith test suite.
 
 import builtins
 import contextlib
+import dataclasses
 import os
 import shutil
 import tempfile
@@ -27,6 +28,31 @@ _ENGLISH_SECTIONS = {
     "changed_files": "Changed Files",
 }
 _ENGLISH_SUBSECTIONS = ("Scope", "Design Policy", "Changed Files", "Acceptance Criteria")
+
+
+def _is_write_mode(mode: str) -> bool:
+    return bool(set(mode) & set("wax+"))
+
+
+@pytest.fixture(autouse=True)
+def _redirect_metrics_paths(english_section_defaults, monkeypatch, tmp_path_factory):
+    """Route metrics and exec.jsonl to pytest basetemp; set METRICS_JSONL_PATH."""
+    basetemp = tmp_path_factory.getbasetemp().resolve()
+    metrics_path = basetemp / "metrics.jsonl"
+    exec_path = basetemp / "exec.jsonl"
+    monkeypatch.setenv("METRICS_JSONL_PATH", str(metrics_path))
+    config_module.reset_config_cache()
+    cfg = config_module.get_config()
+    redirected = dataclasses.replace(
+        cfg,
+        paths=dataclasses.replace(
+            cfg.paths,
+            metrics=metrics_path,
+            exec_jsonl=exec_path,
+        ),
+    )
+    monkeypatch.setattr(config_module, "_cached", redirected)
+    yield
 
 
 @pytest.fixture(autouse=True)
@@ -131,6 +157,13 @@ def _no_side_effects(tmp_path_factory):
         _guard(target)
         return _Path_rename(self, target, *args, **kwargs)
 
+    _Path_open = Path.open
+
+    def _path_open(self, mode="r", *args, **kwargs):
+        if _is_write_mode(mode):
+            _guard(self)
+        return _Path_open(self, mode, *args, **kwargs)
+
     _os_makedirs = os.makedirs
 
     def _makedirs(name, *args, **kwargs):
@@ -232,6 +265,7 @@ def _no_side_effects(tmp_path_factory):
         stack.enter_context(patch.object(Path, "touch", _touch))
         stack.enter_context(patch.object(Path, "unlink", _unlink))
         stack.enter_context(patch.object(Path, "rename", _rename_path))
+        stack.enter_context(patch.object(Path, "open", _path_open))
         stack.enter_context(patch("os.makedirs", _makedirs))
         stack.enter_context(patch("os.mkdir", _os_mkdir_guard))
         stack.enter_context(patch("os.remove", _remove))
