@@ -1,0 +1,20 @@
+{"event": "requires_check", "step": "p1", "issue": 99}
+{"event": "step_started", "ts": "2026-09-29T01:00:00+00:00", "parent_uuid": "u-m2-4401", "issue": 4401, "step": "m2", "workflow": "impl"}
+{"uuid": "u-m2-4401", "engine": "shell", "status": "success", "timestamp": "2026-09-29T01:01:00+00:00", "step": "m2", "issue": "4401"}
+{"uuid": "llm-4401", "engine": "claude", "status": "success", "timestamp": "2026-09-29T01:00:30+00:00", "cost_usd": 1.6, "parent_uuid": "u-m2-4401", "token_count": 1000}
+{"event": "step_started", "ts": "2026-09-28T02:00:00+00:00", "parent_uuid": "u-p1-4402", "issue": 4402, "step": "p1", "workflow": "impl"}
+{"event": "requires_repair", "ts": "2026-09-28T02:05:00+00:00", "parent_uuid": "u-p1-4402", "issue": 4402, "step": "p1", "rule_ids": ["tests.pytest_failure"]}
+{"event": "step_started", "ts": "2026-09-29T03:00:00+00:00", "parent_uuid": "u-m2-4402", "issue": 4402, "step": "m2", "workflow": "impl"}
+{"uuid": "u-m2-4402", "engine": "shell", "status": "success", "timestamp": "2026-09-29T03:01:00+00:00", "step": "m2", "issue": "4402"}
+{"uuid": "llm-4402", "engine": "cursor", "status": "success", "timestamp": "2026-09-29T03:00:30+00:00", "cost_usd": null, "parent_uuid": "u-m2-4402", "token_count": 2000}
+{"event": "step_started", "ts": "2026-09-28T04:00:00+00:00", "parent_uuid": "u-p1-4403-a", "issue": 4403, "step": "p1", "workflow": "impl"}
+{"uuid": "u-p1-4403-a", "engine": "claude", "status": "failed", "timestamp": "2026-09-28T04:01:00+00:00", "parent_uuid": "u-p1-4403-a", "step": "p1", "issue": "4403", "failure_class": "TIMEOUT"}
+{"event": "step_started", "ts": "2026-09-28T05:00:00+00:00", "parent_uuid": "u-p1-4403-b", "issue": 4403, "step": "p1", "workflow": "impl"}
+{"event": "step_started", "ts": "2026-09-29T06:00:00+00:00", "parent_uuid": "u-cp2-4404", "issue": 4404, "step": "cp2", "workflow": "impl"}
+{"event": "andon_raised", "ts": "2026-09-29T06:05:00+00:00", "parent_uuid": "u-cp2-4404", "issue": 4404, "step": "cp2", "kind": "scope", "andon_id": "a1"}
+{"event": "andon_answered", "ts": "2026-09-29T06:10:00+00:00", "parent_uuid": "u-cp2-4404", "issue": 4404, "step": "cp2", "kind": "scope", "andon_id": "a1"}
+{"event": "step_started", "ts": "2026-09-28T07:00:00+00:00", "parent_uuid": "u-p1-4407-a", "issue": 4407, "step": "p1", "workflow": "impl"}
+{"uuid": "u-p1-4407-a", "engine": "claude", "status": "failed", "timestamp": "2026-09-28T07:01:00+00:00", "parent_uuid": "u-p1-4407-a", "step": "p1", "issue": "4407", "failure_class": "PIPELINE_FAILED"}
+{"event": "step_started", "ts": "2026-09-28T08:00:00+00:00", "parent_uuid": "u-p1-4407-b", "issue": 4407, "step": "p1", "workflow": "impl"}
+{"event": "step_started", "ts": "2026-09-28T09:00:00+00:00", "parent_uuid": "u-dup", "issue": 4406, "step": "b1", "workflow": "impl"}
+{"event": "step_started", "ts": "2026-09-28T09:00:01+00:00", "parent_uuid": "u-dup", "issue": 4406, "step": "b1", "workflow": "impl"}

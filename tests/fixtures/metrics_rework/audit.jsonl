@@ -1,0 +1,2 @@
+{"event": "task_failed", "uuid": "u-p1-4403-a", "failure_class": "TIMEOUT", "timestamp": "2026-09-28T04:01:00+00:00"}
+{"event": "task_failed", "uuid": "u-p1-4407-a", "failure_class": "PIPELINE_FAILED", "timestamp": "2026-09-28T07:01:00+00:00"}
