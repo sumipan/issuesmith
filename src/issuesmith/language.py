@@ -464,11 +464,20 @@ def _as_str_map(where: str, value: Any, expected: tuple[str, ...]) -> Mapping[st
 def language_pack_from_mapping(data: Any, *, source: str = "language pack") -> LanguagePack:
     """Build a :class:`LanguagePack` from a parsed mapping, validating every field.
 
-    Unknown keys, missing keys, wrong types and a ``messages`` key set that
-    differs from :data:`EN` raise ``ConfigError``.
+    Missing fields and mapping entries fall back to :data:`EN`.
+    Unknown keys and invalid supplied values raise ``ConfigError``.
     """
     if not isinstance(data, Mapping):
         raise _config_error(f"{source} must be a mapping")
+    defaults: dict[str, Any] = {
+        key: list(value) if isinstance(value, tuple) else value
+        for key, value in dataclasses.asdict(EN).items()
+    }
+    merged = {**defaults, **data}
+    for name in ("sections", "messages"):
+        if isinstance(data.get(name), Mapping):
+            merged[name] = {**defaults[name], **data[name]}
+    data = merged
     keys = {str(k) for k in data}
     missing = sorted(set(FIELD_NAMES) - keys)
     unknown = sorted(keys - set(FIELD_NAMES))

@@ -759,7 +759,7 @@ def _build_scope_coupling(raw: Mapping[str, Any] | None) -> ScopeCouplingConfig:
 def _build_scope_size(
     raw: Mapping[str, Any] | None, language: LanguagePack = EN
 ) -> ScopeSizeConfig:
-    vocab = {
+    vocab: dict[str, Any] = {
         "delete_words": tuple(w.strip().lower() for w in language.delete_words),
         "new_words": tuple(w.strip().lower() for w in language.new_words),
         "sub_plan_header": language.sub_plan_header,

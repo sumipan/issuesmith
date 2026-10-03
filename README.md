@@ -537,7 +537,7 @@ A language pack holds the vocabulary issuesmith uses to read the host's Issue bo
 language_pack: configs/issuesmith-lang.xx.yaml
 ```
 
-The pack file is a YAML mapping whose keys are the `LanguagePack` field names. Every field is required; unknown keys, missing keys, wrong types and a `messages` key set that differs from `EN` raise `ConfigError` when the config is loaded. The resolved pack is `get_config().language`; `get_config().sections`, `.sub_design_subsections` and `.scope_size.*` vocabulary are derived from it.
+The pack file is a YAML mapping whose keys are the `LanguagePack` field names. Fields the pack leaves out, and keys it leaves out of `sections` and `messages`, fall back to the `EN` values, so a pack written for an older release keeps loading after a release adds a field or message. Unknown keys and wrong types in the values the pack does supply raise `ConfigError` when the config is loaded. The resolved pack is `get_config().language`; `get_config().sections`, `.sub_design_subsections` and `.scope_size.*` vocabulary are derived from it.
 
 | Field | Type | Meaning |
 |---|---|---|

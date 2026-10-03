@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Protocol
 
 
 def _utc_ts() -> str:
@@ -61,10 +61,12 @@ def _find_exec_row(exec_path: Path, task_uuid: str) -> dict | None:
     return None
 
 
-@dataclass(frozen=True)
-class _PathsLike:
-    exec_jsonl: Path
-    metrics: Path
+class _PathsLike(Protocol):
+    @property
+    def exec_jsonl(self) -> Path: ...
+
+    @property
+    def metrics(self) -> Path: ...
 
 
 def record_step_started(paths: _PathsLike) -> None:

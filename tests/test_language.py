@@ -160,14 +160,11 @@ def test_language_pack_key_replaces_every_field(tmp_path, monkeypatch):
     "mutate",
     [
         pytest.param(lambda d: d.update(unknown_field="x"), id="unknown-key"),
-        pytest.param(lambda d: d.pop("parent_issue_label"), id="missing-key"),
         pytest.param(lambda d: d.update(sub_header_prefix=["Sub"]), id="str-wrong-type"),
         pytest.param(lambda d: d.update(delete_words="delete"), id="list-wrong-type"),
         pytest.param(lambda d: d.update(new_words=[]), id="list-empty"),
         pytest.param(lambda d: d.update(sub_plan_columns=["#", "a"]), id="columns-length"),
-        pytest.param(lambda d: d["sections"].pop("design"), id="section-missing"),
         pytest.param(lambda d: d["sections"].update(extra="x"), id="section-unknown"),
-        pytest.param(lambda d: d["messages"].popitem(), id="message-missing"),
         pytest.param(lambda d: d["messages"].update({"m.extra": "x"}), id="message-unknown"),
         pytest.param(lambda d: d["messages"].update({next(iter(d["messages"])): 3}), id="message-type"),
     ],
@@ -370,3 +367,14 @@ def test_module_has_no_cjk(module):
 
 def test_language_module_exports():
     assert language.FIELD_NAMES == tuple(f.name for f in dataclasses.fields(LanguagePack))
+
+
+def test_partial_pack_falls_back_to_english_without_mutation():
+    data = {"sections": {"design": "Custom design"}, "messages": {}}
+    pack = language_pack_from_mapping(data)
+    assert pack.out_of_scope_heading == EN.out_of_scope_heading
+    assert pack.sections["design"] == "Custom design"
+    assert pack.sections["background"] == EN.sections["background"]
+    assert dict(pack.messages) == dict(EN.messages)
+    assert data == {"sections": {"design": "Custom design"}, "messages": {}}
+    assert language_pack_from_mapping({}) == EN
