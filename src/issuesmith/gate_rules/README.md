@@ -94,16 +94,16 @@ stripped = strip_code_regions(body)
 
 ### cp1 — forbidden words and intentional hold
 
-Returns a `severity="fail"` violation when the Issue body (code excluded) contains one of the following patterns. Non-ASCII patterns are written as Python `\uXXXX` escapes.
+Returns a `severity="fail"` violation when the Issue body (code excluded) contains one of the following patterns. Non-ASCII patterns are identified by rule ID; see `cp1.py` for their definitions.
 
 | rule_id | Pattern | Notes |
 |---------|------------|------|
 | `cp1.forbidden_word.todo` | `TODO:` | |
 | `cp1.forbidden_word.tbd` | `TBD` | |
-| `cp1.forbidden_word.youkakunin` | `\u8981\u78ba\u8a8d` ("needs confirmation") | |
-| `cp1.forbidden_word.mitei` | `\u672a\u5b9a` ("undecided"; `\u672a\u5b9a\u7fa9` "undefined" is excluded) | regex `\u672a\u5b9a(?!\u7fa9)` |
-| `cp1.forbidden_word.kentouchuu` | `\u691c\u8a0e\u4e2d` ("under consideration") | |
-| `cp1.forbidden_word.user_confirm` | `\u30e6\u30fc\u30b6\u30fc\u306b\u78ba\u8a8d` ("ask the user") | |
+| `cp1.forbidden_word.youkakunin` | Non-ASCII forbidden word | Means "needs confirmation" |
+| `cp1.forbidden_word.mitei` | Non-ASCII forbidden word | Means "undecided"; the longer word meaning "undefined" is excluded |
+| `cp1.forbidden_word.kentouchuu` | Non-ASCII forbidden word | Means "under consideration" |
+| `cp1.forbidden_word.user_confirm` | Non-ASCII forbidden phrase | Means "ask the user" |
 | `cp1.intentional_hold` | `cp1_must_fail: true` in the YAML frontmatter | Intentional hold; must be released manually (`auto_fixable: false`) |
 
 Every forbidden-word violation is `auto_fixable: true` (fixed automatically in the B1 phase).
