@@ -125,11 +125,11 @@ def _iter_issuesmith_exec_uuids() -> list[str]:
 
 
 def _issue_from_idempotency_key(key: str) -> int | None:
-    """``issuesmith:<handler>:<issue>[:<generation>]`` から issue 番号を取り出す。
+    """Extract the issue number from ``issuesmith:<handler>:<issue>[:<generation>]``.
 
-    2026-09-09 まで末尾要素を issue とみなしていたため、世代付きキー
-    （``issuesmith:impl:2959:1``、redispatch で ghdag が付与）が issue=1 と誤解釈され、
-    in_flight に無い「孤児」として ``_dispatch_pipeline_ready`` を塞いでいた。
+    Until 2026-09-09 the last element was taken as the issue, so a generation key
+    (``issuesmith:impl:2959:1``, added by ghdag on redispatch) was misread as issue=1
+    and blocked ``_dispatch_pipeline_ready`` as an "orphan" not in in_flight.
     """
     parts = key.split(":")
     if len(parts) < 3 or parts[0] != WORKFLOW_NAME:
@@ -141,9 +141,9 @@ def _issue_from_idempotency_key(key: str) -> int | None:
 def _iter_issuesmith_exec_records() -> list[tuple[str, int | None]]:
     """Return (uuid, issue_number) for every issuesmith-prefixed exec.jsonl row.
 
-    ``idempotency_key`` は ``issuesmith:<phase>:<issue_number>`` 形式（例:
-    ``issuesmith:impl:2969``）。末尾が数字でなければ issue_number は None
-    （現状 issuesmith プレフィックスの key は常に末尾が issue 番号）。
+    ``idempotency_key`` has the form ``issuesmith:<phase>:<issue_number>`` (e.g.
+    ``issuesmith:impl:2969``). issue_number is None when the last element is not a
+    number (currently issuesmith-prefixed keys always end with the issue number).
     """
     if not EXEC_PATH.exists():
         return []
@@ -252,17 +252,18 @@ def _dispatch_pipeline_ready(
 ) -> bool:
     """Admission idle gate.
 
-    「mid-flight のステップが無いこと」を要求するが、その issue が
-    ``snap.in_flight`` で追跡済みなら未完了で当然なので許容する
-    （#2867 の per-engine concurrency 導入後、他 issue の並行実行時に
-    実行中の issue 自身の後続ステップ未完了が誤って「pipeline not idle」
-    と判定され、別 engine の新規ディスパッチまで巻き添えでブロックされて
-    いた）。in_flight に無い issue の未完了ステップは、in_flight リークや
-    クラッシュ後の孤児タスクを示すため、引き続きブロック対象とする。
+    Requires "no mid-flight steps", but tolerates unfinished steps of an issue
+    already tracked in ``snap.in_flight`` since those are expected to be unfinished
+    (after the per-engine concurrency of #2867, while other issues ran in parallel,
+    the running issue's own pending follow-up steps were misjudged as "pipeline not
+    idle" and also blocked new dispatches on other engines). Unfinished steps of
+    issues not in in_flight indicate an in_flight leak or orphan tasks after a
+    crash, so they still block.
 
-    ただし、in_flight に無い issue でも DAG が running（#3662）であれば塞がない。
-    CLOSED だが DAG が動いている issue（例: merge 直後に GitHub が自動クローズした）も同様。
-    DAG が pending（隙間・孤児）の場合は今どおり塞ぐ。
+    However, an issue not in in_flight does not block while its DAG is running
+    (#3662). The same applies to a CLOSED issue whose DAG is still running (e.g.
+    GitHub auto-closed it right after merge). A pending DAG (gap / orphan) still
+    blocks as before.
     """
     from issuesmith.observe.dag_state import load_dag_states
 
@@ -294,9 +295,9 @@ _DEFAULT_ROLE_ENGINES = {"design": "claude", "implementation": "claude"}
 
 
 def _required_engines(engine_state_path: Path | None = None) -> dict[str, str]:
-    """role → engine を .pipeline-state/issuesmith-engine.yml から読む。
+    """Read role -> engine from .pipeline-state/issuesmith-engine.yml.
 
-    読めない場合は既定（design/implementation とも claude）に倒す。
+    Falls back to the default (claude for both design and implementation) when unreadable.
     """
     path = engine_state_path or ENGINE_STATE_PATH
     try:
@@ -529,10 +530,10 @@ def _in_flight_should_release(client: ForgePort, entry: dict[str, Any]) -> bool:
     if DONE_LABEL.get("sub", "") in labels and DONE_LABEL.get("sub", "") and not (
         labels & {READY_LABEL.get("sub", ""), RUNNING_LABEL.get("sub", "")} - {""}
     ):
-        # milestone 親は sub-done で自分の DAG を終え、実装は子 Issue が担う。親は
-        # 子が全部マージされるまで CLOSE されないので、ここで解放しないと親と
-        # allow_paths が重なる子の develop が競合ゲートで永久に待つ
-        # （2026-09-10、#2934 → #2999 / #3000 で実測）。
+        # A milestone parent ends its own DAG at sub-done; child Issues do the
+        # implementation. The parent is not CLOSED until every child merges, so unless
+        # it is released here, a child whose allow_paths overlap the parent waits on
+        # the conflict gate forever (observed 2026-09-10, #2934 -> #2999 / #3000).
         return True
     # B1-failed design slot: release when the design exec completed but draft-done was
     # never written (BRUSHUP_FAILED), provided no active phase labels are present (#4178).
@@ -671,18 +672,18 @@ def _required_engines_paused(
     role: str | None = None,
     brake_path: Path | None = None,
 ) -> list[str]:
-    """投入に必要なロールの engine のうち paused なものを返す。
+    """Return the paused engines among those required for dispatch.
 
-    global quota gate と budget gate の和集合で判定する。どちらか一方で
-    ``paused`` なら対象に含める。
+    Judged on the union of the global quota gate and the budget gate: an engine
+    ``paused`` in either one is included.
 
-    ``role`` 指定時はそのロールの engine のみ。未指定時は design / implementation
-    両ロールの和集合（後方互換）。フェーズ別判定は ``dispatch_one`` が
-    ``role=_phase_role_map()[phase]`` で呼ぶ（#3091）。
+    With ``role`` only that role's engine is considered; without it, the union of
+    the design / implementation roles (backward compatible). ``dispatch_one`` calls
+    it per phase with ``role=_phase_role_map()[phase]`` (#3091).
 
-    ``quota_path`` のみ明示し ``brake_path`` を省略した既存呼び出しでは、
-    同じパスを両 gate に使ってテスト互換を維持する。同一パス時は snapshot を
-    一度だけ読む。
+    Existing callers that pass only ``quota_path`` and omit ``brake_path`` use the
+    same path for both gates to keep tests compatible. With the same path the
+    snapshot is read only once.
     """
     resolved_quota = quota_path or QUOTA_STATE_PATH
     if brake_path is not None:
@@ -719,7 +720,7 @@ def _required_engines_paused(
 
 
 def _all_engines_paused(quota_path: Path | None = None) -> bool:
-    """後方互換ラッパ。必要ロールの engine が 1 つでも paused なら True。"""
+    """Backward-compatible wrapper: True if any required role's engine is paused."""
     return bool(_required_engines_paused(quota_path))
 
 
@@ -748,10 +749,10 @@ def _format_in_flight_status(snap: QueueSnapshot) -> str:
 
 def _closes_issue_marker(issue_number: int) -> re.Pattern[str]:
     # Digit boundary: avoid Closes #12 matching #123.
-    # publish.py はもう "Closes" を発行しない（GitHub auto-close の副作用を避けるため。
-    # #2852 / #2873 で premature close が実測された）。ここは "Closes" と "Refs" の
-    # 両方にマッチさせ、旧世代（Closes）の PR が残っていても・新世代（Refs）の PR でも
-    # 「この issue に紐づく PR を発見する」役目を引き続き果たす。
+    # publish.py no longer emits "Closes" (to avoid GitHub auto-close side effects;
+    # premature closes were observed in #2852 / #2873). Match both "Closes" and "Refs"
+    # so this still finds "the PR linked to this issue" for both old-generation
+    # (Closes) and new-generation (Refs) PRs.
     return re.compile(rf"(?i)\b(?:closes|refs)\s+#{issue_number}(?!\d)")
 
 
@@ -938,11 +939,11 @@ _MAX_GENERATION_SCAN = 16
 
 
 def _handler_key_consumed(handler: str, issue: int) -> bool:
-    """このハンドラーの冪等キー（世代付きを含む）が exec.jsonl で消費済みか。
+    """Whether this handler's idempotency key (including generations) is consumed in exec.jsonl.
 
-    消費済みなら ready ラベルを付け直しても ghdag watcher は
-    「dispatch skipped (already dispatched)」で起動しない（2026-09-09、#2980 の
-    CP2 FAIL 復旧で実測）。その場合は世代を上げて起動し直す必要がある。
+    If consumed, re-adding the ready label does not start the ghdag watcher
+    ("dispatch skipped (already dispatched)"; observed 2026-09-09 while recovering the
+    CP2 FAIL of #2980). The generation must then be bumped to start it again.
     """
     if not EXEC_PATH.exists():
         return False
@@ -954,7 +955,7 @@ def _handler_key_consumed(handler: str, issue: int) -> bool:
 
 
 def _trigger_ghdag_redispatch(issue: int, handler: str, reason: str) -> int:
-    """ghdag の世代を上げてハンドラーを起動する（`ghdag trigger --redispatch` と同じ）。"""
+    """Bump the ghdag generation and start the handler (same as `ghdag trigger --redispatch`)."""
     cmd = [
         sys.executable,
         "-m",
@@ -1157,18 +1158,13 @@ def _apply_repair(
             request_id,
             req.issue,
             "rejected",
-            f"{reason} (repair limit reached)",
+            get_config().language.message("queue.repair_limit", reason=reason),
             add_rejected_label=True,
             comment=True,
         )
         return
 
-    body = (
-        "## Intake check: asked B1 to fix the Issue body\n\n"
-        f"{reason}\n\n"
-        "The queue will re-run draft (B1) to fix the Issue body, then re-check this request "
-        "after draft completes."
-    )
+    body = get_config().language.message("queue.intake_repair", reason=reason)
     _ensure_comment(client, req.issue, request_id, "repair", body)
     apply_redispatch_labels(client, req.issue, "draft", label_names(issue))
     store.enqueue(
@@ -1596,14 +1592,16 @@ def dispatch_one(
                 # P0 requires: re-check deletion referrers on the dispatch-time base (#3953).
                 refs = deletion_references_for_body(str(issue.get("body") or ""))
                 if refs:
+                    lang = get_config().language
+                    references = format_deletion_references(
+                        refs, lang.message("queue.deletion_refs_lead_dispatch")
+                    )
                     _ensure_comment(
                         client,
                         req.issue,
                         rid,
                         "scope_coupling_blocked",
-                        "## Gate: uncovered references to deleted files (before dispatch)\n\n"
-                        + format_deletion_references(refs, "On the base at dispatch time, ")
-                        + "\n\nDispatch stopped. Fix the Issue body; the next tick re-checks it.",
+                        lang.message("queue.deletion_refs_before_dispatch", references=references),
                     )
                     continue
 
@@ -1623,22 +1621,25 @@ def dispatch_one(
             handler = _phase_handler_map().get(req.phase)
             redispatch_note = ""
             if handler and _handler_key_consumed(handler, req.issue):
-                # ラベルだけでは watcher が冪等キーで skip する。世代を上げて起動する。
+                # A label alone makes the watcher skip on the idempotency key; bump the generation.
                 rc = _trigger_ghdag_redispatch(
                     req.issue, handler, reason=f"queue request {rid} ({req.source})"
                 )
                 redispatch_note = (
-                    " ghdag generation bumped (redispatch)."
+                    get_config().language.message("queue.redispatch_ok")
                     if rc == 0
-                    else f" WARNING: ghdag redispatch failed (rc={rc}); "
-                    f"run `ghdag trigger {req.issue} --handler {handler} --redispatch` manually."
+                    else get_config().language.message(
+                        "queue.redispatch_failed", rc=rc, issue=req.issue, handler=handler
+                    )
                 )
             _ensure_comment(
                 client,
                 req.issue,
                 rid,
                 "dispatched",
-                f"issuesmith queue dispatched `{label}` for request `{rid}`.{redispatch_note}",
+                get_config().language.message(
+                    "queue.dispatched", label=label, request_id=rid, note=redispatch_note
+                ),
             )
             store.add_in_flight(
                 req.issue,
@@ -1943,7 +1944,7 @@ def _cmd_skip(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
     else:
-        body = f"issuesmith queue: skipped issue #{issue} from last_issue. reason: {reason}"
+        body = get_config().language.message("queue.skipped", issue=issue, reason=reason)
         try:
             client.issue_comment(issue, body)
         except Exception as exc:
@@ -1990,7 +1991,9 @@ def _cmd_dequeue(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
         else:
-            body = f"issuesmith queue: dequeued request {request_id}. reason: {reason}"
+            body = get_config().language.message(
+                "queue.dequeued", request_id=request_id, reason=reason
+            )
             try:
                 client.issue_comment(req.issue, body)
             except Exception as exc:

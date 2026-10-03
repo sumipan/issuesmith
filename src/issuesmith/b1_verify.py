@@ -1,11 +1,11 @@
-"""b1_verify.py — B1 成果物の決定論 Verify（#2541 Verify→Recover→Re-verify 契約）。
+"""b1_verify.py — deterministic Verify of B1 output (#2541 Verify->Recover->Re-verify contract).
 
-既存の gate rules（cp1 / b1_ac_format / b1_migration）を 1 コマンドに束ね、
-violations を VERIFY_FAILED_CHECKS 形式のレポートとして出力する。
-新しい検証ロジックは持たない（ルールの単一情報源は gate_rules/）。
+Bundles the existing gate rules (cp1 / b1_ac_format / b1_migration) into one command
+and prints the violations as a VERIFY_FAILED_CHECKS report.
+It has no verification logic of its own (gate_rules/ is the single source of rules).
 
-除外: `cp1.intentional_hold`（cp1_must_fail / scope:milestone による意図的保留）は
-B1 成果物の不備ではなく CP1 判定用のシグナルなので、Verify 失敗として扱わない。
+Excluded: `cp1.intentional_hold` (intentional hold via cp1_must_fail / scope:milestone)
+is a signal for the CP1 verdict, not a defect in the B1 output, so it is not a Verify failure.
 Violations whose severity is not `fail` (e.g. `warn`) are not counted as Verify failures either (#4076).
 
 Oscillation detection: when the previous report is passed via `--prev-report FILE` (`-` for stdin),

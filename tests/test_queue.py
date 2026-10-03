@@ -2081,6 +2081,7 @@ class TestCp2DevelopDispatch:
         monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
         monkeypatch.setattr(qmod, "advance_milestone_chains", lambda *a, **k: None)
         from issuesmith.config import MilestoneChainConfig
+        from issuesmith.language import EN
 
         monkeypatch.setattr(
             qmod,
@@ -2093,6 +2094,8 @@ class TestCp2DevelopDispatch:
                         default=1, per_engine={"claude": 2, "cursor": 2}
                     ),
                     "milestone_chain": MilestoneChainConfig(enabled=False),
+                    # queue comments are rendered from Config.language (#4472).
+                    "language": EN,
                 },
             )(),
         )

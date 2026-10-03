@@ -295,3 +295,40 @@ def test_run_checks_references_none_source_fails_without_raising(tmp_path, monke
     assert r["result"] == "FAIL"
     assert "invalid reference entry" in r["detail"]
     assert r["git_log"] == ""
+
+
+def test_extract_contract_reads_en_pack_heading(monkeypatch):
+    """The shipped EN pack heading is enough to read paths_must_exist (#4472)."""
+    import issuesmith.config as config_module
+    from issuesmith.language import EN
+
+    monkeypatch.setattr(config_module, "EN", EN)
+    config_module.reset_config_cache()
+    try:
+        heading = config_module.get_config().sections["acceptance_criteria"]
+        assert heading == EN.sections["acceptance_criteria"]
+        body = (
+            f"## {heading}\n\n```yaml\npaths_must_exist:\n  - src/app.py\n```\n\n"
+            "- [ ] done\n"
+        )
+        assert extract_contract_from_body(body) == {"paths_must_exist": ["src/app.py"]}
+    finally:
+        config_module.reset_config_cache()
+
+
+def test_extract_contract_follows_custom_pack_heading(tmp_path, monkeypatch):
+    import dataclasses
+
+    import issuesmith.config as config_module
+    from issuesmith.language import EN
+
+    sections = dict(EN.sections, acceptance_criteria="Done When")
+    pack = dataclasses.replace(EN, sections=sections)
+    cfg = dataclasses.replace(
+        config_module.get_config(), language=pack, sections=dict(pack.sections)
+    )
+    monkeypatch.setattr(config_module, "_cached", cfg)
+    body = "## Done When\n\n```yaml\npaths_must_exist:\n  - a.py\n```\n"
+    assert extract_contract_from_body(body) == {"paths_must_exist": ["a.py"]}
+    en_body = "## Acceptance Criteria\n\n```yaml\npaths_must_exist:\n  - a.py\n```\n"
+    assert extract_contract_from_body(en_body) is None

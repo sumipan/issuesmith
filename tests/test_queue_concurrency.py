@@ -677,3 +677,55 @@ def test_dispatch_skips_ghdag_redispatch_when_key_unused(
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not be called")),
     )
     assert qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True).dispatched
+
+
+def test_dispatch_comments_use_language_pack(tmp_path, monkeypatch, issuesmith_config):
+    """The dispatched / redispatch-failed comment comes from Config.language (#4472)."""
+    from issuesmith.language import EN
+
+    messages = {key: f"[custom-pack] {value}" for key, value in EN.messages.items()}
+    pack_data = {}
+    for name in EN.__dataclass_fields__:
+        value = getattr(EN, name)
+        pack_data[name] = list(value) if isinstance(value, tuple) else (
+            value if isinstance(value, str) else dict(value)
+        )
+    pack_data["messages"] = messages
+    pack_path = tmp_path / "pack.yaml"
+    pack_path.write_text(yaml.safe_dump(pack_data), encoding="utf-8")
+    payload = yaml.safe_load(issuesmith_config.read_text(encoding="utf-8"))
+    payload["language_pack"] = str(pack_path)
+    issuesmith_config.write_text(yaml.safe_dump(payload), encoding="utf-8")
+    reset_config_cache()
+    _patch_paths(tmp_path, monkeypatch, issuesmith_config)
+
+    from issuesmith import queue as qmod
+
+    store = _store(tmp_path)
+    r = store.enqueue(
+        issue=100,
+        phase="draft",
+        source="recovery",
+        actor_kind="human",
+        priority="high",
+        requested_by=["alice"],
+        requested_at=_NOW,
+    )
+    client = _DispatchClient({100: {"state": "OPEN", "labels": []}})
+    now = datetime(2026, 9, 5, 12, 0, tzinfo=_JST)
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
+    monkeypatch.setattr(qmod, "_handler_key_consumed", lambda handler, issue: True)
+    monkeypatch.setattr(qmod, "_trigger_ghdag_redispatch", lambda issue, handler, reason: 2)
+
+    result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
+
+    assert result.dispatched is True
+    bodies = [body for number, body in client.comments if number == 100]
+    note = "[custom-pack]  WARNING: ghdag redispatch failed (rc=2); run `ghdag trigger 100"
+    assert any(
+        body.startswith(
+            f"[custom-pack] issuesmith queue dispatched `issuesmith:draft-ready`"
+            f" for request `{r.request_id}`.{note}"
+        )
+        for body in bodies
+    ), bodies

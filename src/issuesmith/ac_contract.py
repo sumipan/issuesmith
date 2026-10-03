@@ -1,12 +1,12 @@
-"""ac_contract.py — AC YAML 契約（paths_must_exist 等）の抽出と実行。
+"""ac_contract.py — extract and run the AC YAML contract (paths_must_exist etc.).
 
-Issue body の AC セクション内 ```yaml ブロックを契約として解釈し、
-paths_must_exist / paths_must_not_exist / references_must_resolve を
-リポジトリ実体に対して検証する。
+Interprets the ```yaml block in the Issue body's acceptance criteria section
+(heading from the language pack) as a contract and checks paths_must_exist /
+paths_must_not_exist / references_must_resolve against the repository.
 
-呼び出し元:
-- scripts/milestone-postcheck.py（CLI・スキーマ検証付き）
-- issuesmith.m2_gate（M2 クローズゲート・fail-open）
+Callers:
+- scripts/milestone-postcheck.py (CLI, with schema validation)
+- issuesmith.m2_gate (M2 close gate, fail-open)
 """
 from __future__ import annotations
 
@@ -98,7 +98,7 @@ def dual_gate_roots(
         if secondary_root is not None:
             cleanup_gate_root(secondary_repo_cwd, secondary_root)
 
-# リポジトリ（worktree）ルート — 互換のためモジュール定数として公開
+# Repository (worktree) root — exposed as a module constant for compatibility
 REPO_ROOT = get_config().root
 _PATH_SUFFIXES = (".py", ".yaml", ".yml", ".json", ".toml", ".md", ".sh")
 
@@ -190,7 +190,7 @@ def normalize_reference_entry(ref: Any) -> tuple[str | None, str | None, str | N
 
 
 def extract_key_path_values(data: Any, key_path: str) -> list[Any]:
-    """key_path の * を 1 階層のみ展開して値を収集する。"""
+    """Collect values along key_path, expanding ``*`` one level only."""
     parts = key_path.split(".")
     current: list[Any] = [data]
 
@@ -216,10 +216,11 @@ def extract_key_path_values(data: Any, key_path: str) -> list[Any]:
 
 
 def extract_contract_from_body(body: str) -> dict | None:
-    """AC セクション内の最初の ```yaml ブロックを抽出してパースする。
+    """Extract and parse the first ```yaml block in the acceptance criteria section.
 
-    番号付き・括弧付きの変形ヘッダ（例: ``## 7. AC（Acceptance Criteria）``）にも対応する。
-    契約として解釈できない場合は None。
+    The heading is ``get_config().sections["acceptance_criteria"]`` (from the language
+    pack); numbered or decorated variants (e.g. ``## 7. Acceptance Criteria (AC)``)
+    also match. Returns None when no contract can be read.
     """
     heading = get_config().sections["acceptance_criteria"]
     match = re.search(
@@ -464,9 +465,9 @@ def pending_manual_checks(records: list[dict]) -> list[str]:
 
 
 def contract_failures(body: str, repo_root: Path | None = None) -> list[str]:
-    """Issue body の契約を実行し、FAIL 記録を人間可読の文字列で返す。
+    """Run the Issue body's contract and return FAIL records as human-readable strings.
 
-    契約ブロックが無い場合は空リスト（fail-open）。
+    Returns an empty list when there is no contract block (fail-open).
     """
     contract = extract_contract_from_body(body)
     if contract is None:

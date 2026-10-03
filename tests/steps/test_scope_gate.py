@@ -192,3 +192,50 @@ def test_ac4_issue_3339_regression_134_files_exceeds(tmp_path: Path) -> None:
     verdict = evaluate(measure, ScopeGateConfig())
     assert verdict.exceeded is True
     assert verdict.reason == "files: 134 > 80"
+
+
+def _verdict() -> ScopeVerdict:
+    measure = ScopeMeasure(
+        files=134, lines=5000, by_dir={"tests/": 125}, skipped_binary=1, skipped_jsonl=9
+    )
+    return ScopeVerdict(exceeded=True, reason="files: 134 > 80", measure=measure)
+
+
+def test_format_comment_uses_language_pack(tmp_path: Path, monkeypatch) -> None:
+    from tests.test_queue_language_pack import install_custom_pack
+
+    pack = install_custom_pack(tmp_path, monkeypatch)
+    text = format_comment(_verdict(), preflight_contradiction=True)
+
+    expected = pack.message(
+        "scope_gate.too_large",
+        contradiction_note=pack.message("scope_gate.preflight_contradiction"),
+        reason="files: 134 > 80",
+        files=134,
+        lines=5000,
+        skipped_binary=1,
+        skipped_jsonl=9,
+        rows="| `tests/` | 125 |",
+    )
+    assert text == f"{expected}\nPIPELINE_STATUS: SCOPE_TOO_LARGE\n"
+    assert text.startswith("[custom-pack]")
+
+
+def test_format_comment_en_default_keeps_marker_and_no_rows() -> None:
+    measure = ScopeMeasure(files=0, lines=0, by_dir={}, skipped_binary=0, skipped_jsonl=0)
+    text = format_comment(ScopeVerdict(exceeded=True, reason="r", measure=measure))
+    assert text.startswith("## P0 stopped: allow_paths scope is too large\n")
+    assert "| (none) | 0 |" in text
+    assert "pre-gate" not in text
+    assert text.endswith("\n\nPIPELINE_STATUS: SCOPE_TOO_LARGE\n")
+
+
+def test_parse_allow_paths_treats_fullwidth_placeholder_as_unrestricted() -> None:
+    from issuesmith.scope_gate import parse_allow_paths_from_ctx
+
+    # context_hook's "no restriction" placeholder: a word in full-width parentheses.
+    placeholder = chr(0xFF08) + "none" + chr(0xFF09)
+    assert parse_allow_paths_from_ctx(placeholder) == []
+    assert parse_allow_paths_from_ctx(f"  {placeholder}\n") == []
+    assert parse_allow_paths_from_ctx("") == []
+    assert parse_allow_paths_from_ctx("- src/**\n- tests/**") == ["src/**", "tests/**"]
