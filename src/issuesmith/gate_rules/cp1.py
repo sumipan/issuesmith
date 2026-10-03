@@ -17,29 +17,42 @@ from issuesmith.gate_rules.b1_milestone_subdesign import (
 _YAML_CONTRACT_FIXES: dict[str, tuple[bool, str]] = {
     "missing_required": (
         True,
-        "冒頭 YAML ブロックに `target_repo: sumipan/nexus`（nexus 本体）または"
-        " `target_repo: sumipan/<repo>` を追加してください",
+        "add `target_repo: sumipan/nexus` (nexus itself) or"
+        " `target_repo: sumipan/<repo>` to the leading YAML block",
     ),
     "annotation_in_path": (
         True,
-        "allow_paths から括弧付き注記（`(...)` 形式）を除去し、ファイルパスのみを記載してください",
+        "remove parenthesized notes (`(...)`) from allow_paths and list file paths only",
     ),
     "invalid_path_format": (
         True,
-        "allow_paths から `/var/tmp/` で始まるパスを除去してください",
+        "remove paths starting with `/var/tmp/` from allow_paths",
     ),
 }
-_YAML_CONTRACT_DEFAULT_FIX = (False, "target_repo を対応リポジトリに修正してください")
+_YAML_CONTRACT_DEFAULT_FIX = (False, "set target_repo to the matching repository")
+# Parent ACs about the milestone process itself (not covered by any sub AC).
 _META_AC_PATTERN = re.compile(
-    r"(PR\s*#\d+|子\s*Issue\s*起票|本\s*Issue\s*を\s*close|サブイシューすべての実装)"
+    r"(PR\s*#\d+"
+    r"|child\s+issues?\s+(?:are\s+)?(?:created|filed)"
+    r"|close\s+this\s+issue"
+    r"|all\s+sub-?issues?\s+(?:are\s+)?implemented)",
+    re.IGNORECASE,
 )
-_OPTIONAL_AC_PATTERN = re.compile(r"^（オプション）")
+_OPTIONAL_AC_PATTERN = re.compile(r"^\(optional\)", re.IGNORECASE)
+# Token separators: ASCII ones plus the CJK symbols / punctuation, katakana middle dot
+# and fullwidth punctuation ranges (named escapes keep this file free of CJK literals).
+_KEYWORD_TOKEN_SEP_RE = re.compile(
+    r"[\s:()/\N{IDEOGRAPHIC SPACE}-\N{IDEOGRAPHIC HALF FILL SPACE}"
+    r"\N{KATAKANA MIDDLE DOT}\N{FULLWIDTH EXCLAMATION MARK}-\N{FULLWIDTH SOLIDUS}"
+    r"\N{FULLWIDTH COLON}-\N{FULLWIDTH COMMERCIAL AT}]"
+)
 _VERSION_ASSIGN_LINE = re.compile(r"^\s*version\s*=")
 _VERSION_EXACT_ASSERT = re.compile(r'version["\]\s]*\s*==\s*["\'][0-9]+\.[0-9]+')
 _GIT_PIN_EXACT = re.compile(r"git\+https://[^\"']*@v[0-9]+\.[0-9]")
 _COUNT_EQ_ONE = re.compile(r"count\s*\(.*\)\s*==\s*1")
 _TEST_VERSION_ASSERT_HINT = (
-    "版・pin は下限（`>=`）で検査するか、テストを書かない。bump は publish が決定論的に行う"
+    "check versions / pins with a lower bound (`>=`) or do not test them;"
+    " publish bumps them deterministically"
 )
 
 
@@ -49,10 +62,10 @@ def _is_tests_path(path: str) -> bool:
 
 
 def check_version_line_in_diff(diff: str) -> list[Violation]:
-    """LLM が提出した unified diff に pyproject.toml の `version =` 変更があれば拒否する (#2766).
+    """Reject an LLM unified diff that changes pyproject.toml ``version =`` (#2766).
 
-    バージョンバンプは `scripts/issuesmith-version-bump.py` が決定論的に行うため、
-    実装 LLM が version 行を書き換える経路を構造的に封じる。
+    ``scripts/issuesmith-version-bump.py`` bumps the version deterministically, so the
+    path for the implementing LLM to rewrite the version line is closed structurally.
     """
     in_pyproject = False
     for line in diff.splitlines():
@@ -74,14 +87,14 @@ def check_version_line_in_diff(diff: str) -> list[Violation]:
                     rule_id="cp1.version_line_in_diff",
                     severity="fail",
                     message=(
-                        "pyproject.toml の version = 行が LLM diff に含まれています。"
-                        "バージョンバンプは issuesmith-version-bump.py が決定論的に行います"
+                        "the LLM diff changes the pyproject.toml version = line;"
+                        " issuesmith-version-bump.py bumps the version deterministically"
                     ),
                     location="pyproject.toml",
                     auto_fixable=False,
                     fix_hint=(
-                        "diff から version = 行の変更を取り除いてください。"
-                        "バンプは publish ステップで自動適用されます"
+                        "drop the version = line change from the diff;"
+                        " the publish step applies the bump automatically"
                     ),
                 )
             ]
@@ -89,10 +102,10 @@ def check_version_line_in_diff(diff: str) -> list[Violation]:
 
 
 def check_test_version_exact_assert(diff: str) -> list[Violation]:
-    """tests/ 配下の版・pin 完全一致 assert を unified diff の + 行から検出する (#3065).
+    """Detect exact version / pin asserts under tests/ from unified diff + lines (#3065).
 
-    パターン a: ``version == "X.Y.Z"`` / ``project["version"] == "..."``
-    パターン b: ``git+https://...@vX.Y.Z`` を ``==`` / ``count(...) == 1`` で検査
+    Pattern a: ``version == "X.Y.Z"`` / ``project["version"] == "..."``
+    Pattern b: ``git+https://...@vX.Y.Z`` checked with ``==`` / ``count(...) == 1``
     """
     in_tests = False
     file_has_count_eq_one = False
@@ -104,8 +117,8 @@ def check_test_version_exact_assert(diff: str) -> list[Violation]:
                 rule_id="cp1.test_version_exact_assert",
                 severity="fail",
                 message=(
-                    "tests/ に版または git pin の完全一致 assert が含まれています。"
-                    "publish の決定論 bump で連鎖的に壊れます"
+                    "tests/ contains an exact version or git pin assert;"
+                    " the deterministic publish bump breaks it in cascade"
                 ),
                 location="tests/",
                 auto_fixable=False,
@@ -171,12 +184,12 @@ def _check_scope_gate_hard_max(metadata: dict) -> list[Violation]:
             Violation(
                 rule_id="cp1.yaml_contract.scope_gate_over_hard_max",
                 severity="fail",
-                message="scope_gate.max_files が整数ではありません",
+                message="scope_gate.max_files is not an integer",
                 location="scope_gate.max_files",
                 auto_fixable=True,
                 fix_hint=(
-                    f"scope_gate.max_files を "
-                    f"{get_config().scope_gate.hard_max_files} 以下の整数にしてください"
+                    "set scope_gate.max_files to an integer <= "
+                    f"{get_config().scope_gate.hard_max_files}"
                 ),
             )
         ]
@@ -188,12 +201,12 @@ def _check_scope_gate_hard_max(metadata: dict) -> list[Violation]:
             rule_id="cp1.yaml_contract.scope_gate_over_hard_max",
             severity="fail",
             message=(
-                f"scope_gate.max_files ({max_files}) が "
-                f"hard_max_files ({hard}) を超えています"
+                f"scope_gate.max_files ({max_files}) exceeds "
+                f"hard_max_files ({hard})"
             ),
             location="scope_gate.max_files",
             auto_fixable=True,
-            fix_hint=f"scope_gate.max_files を {hard} 以下にしてください",
+            fix_hint=f"set scope_gate.max_files to {hard} or less",
         )
     ]
 
@@ -212,22 +225,53 @@ def _extract_ac_checkbox_items(section: str) -> list[str]:
     return re.findall(r"^\s*-\s+\[[ xX]\]\s+(.*)$", section, re.MULTILINE)
 
 
+def _sub_location(sub_num: int) -> str:
+    return f"#### {get_config().language.sub_header_prefix}{sub_num}"
+
+
+def _is_new_or_modify(change_type: str) -> bool:
+    """True for a non-empty change-type cell that is not a delete word of the pack."""
+    lowered = change_type.strip().lower()
+    if not lowered:
+        return False
+    return not any(w.lower() in lowered for w in get_config().language.delete_words)
+
+
 def _keyword_tokens(text: str) -> list[str]:
     return [
         t
-        for t in re.split(r"[\s・、。：:（）/]", text.strip())
+        for t in _KEYWORD_TOKEN_SEP_RE.split(text.strip())
         if len(t) >= 3
     ]
 
 
+_CONCRETE_HINT = "replace it with a concrete description"
+
+
 class Cp1Rules:
+    # (pattern, rule_id, message, fix_hint). Rule ids keep their historical names.
     FAIL_PATTERNS: list[tuple[str, str, str, str]] = [
-        (r"TODO:", "cp1.forbidden_word.todo", "TODO: が残存", "具体的な記述に置換してください"),
-        (r"TBD", "cp1.forbidden_word.tbd", "TBD が残存", "具体的な記述に置換してください"),
-        (r"要確認", "cp1.forbidden_word.youkakunin", "「要確認」が残存", "具体的な記述に置換してください"),
-        (r"未定(?!義)", "cp1.forbidden_word.mitei", "「未定」が残存", "具体的な記述に置換してください"),
-        (r"検討中", "cp1.forbidden_word.kentouchuu", "「検討中」が残存", "具体的な記述に置換してください"),
-        (r"ユーザーに確認", "cp1.forbidden_word.user_confirm", "「ユーザーに確認」が残存", "具体的な記述に置換してください"),
+        (r"TODO:", "cp1.forbidden_word.todo", "TODO: remains", _CONCRETE_HINT),
+        (r"TBD", "cp1.forbidden_word.tbd", "TBD remains", _CONCRETE_HINT),
+        (
+            r"(?i)\b(?:needs confirmation|to be confirmed)\b",
+            "cp1.forbidden_word.youkakunin",
+            '"needs confirmation" remains',
+            _CONCRETE_HINT,
+        ),
+        (r"(?i)\bundecided\b", "cp1.forbidden_word.mitei", '"undecided" remains', _CONCRETE_HINT),
+        (
+            r"(?i)\bunder consideration\b",
+            "cp1.forbidden_word.kentouchuu",
+            '"under consideration" remains',
+            _CONCRETE_HINT,
+        ),
+        (
+            r"(?i)\b(?:confirm|check) with the user\b",
+            "cp1.forbidden_word.user_confirm",
+            '"confirm with the user" remains',
+            _CONCRETE_HINT,
+        ),
     ]
 
     def _parse_must_fail(self, body: str) -> bool:
@@ -256,33 +300,32 @@ class Cp1Rules:
             violations.append(Violation(
                 rule_id="cp1.intentional_hold",
                 severity="fail",
-                message="cp1_must_fail: true が設定されている",
+                message="cp1_must_fail: true is set",
                 location=None,
                 auto_fixable=False,
                 fix_hint=None,
             ))
 
-        # YAML 契約検証。冒頭ブロックの欠落・パース不能は missing_block として fail。
-        # スキップすると「YAML の無い draft-done」が素通りし、develop 入口の P0 で
-        # 初めて停止する（#2539/#2541）。
+        # YAML contract check. A missing or unparsable leading block fails as missing_block.
+        # Skipping it would let a "draft-done without YAML" through until P0 at the
+        # develop entrance stops it (#2539/#2541).
         try:
             metadata = parse_issue_metadata(body)
         except (ValueError, yaml.YAMLError) as exc:
             violations.append(Violation(
                 rule_id="cp1.yaml_contract.missing_block",
                 severity="fail",
-                message=f"冒頭の yaml メタデータブロックが欠落またはパース不能です: {exc}",
+                message=f"the leading yaml metadata block is missing or unparsable: {exc}",
                 location=None,
                 auto_fixable=True,
                 fix_hint=(
-                    "Issue body の先頭に以下の形式の yaml ブロックを新設する"
-                    f"（allow_paths は「{get_config().sections['changed_files']}」"
-                    "テーブルから導出、"
-                    "外部リポジトリ対象なら target_repo を明記）:\n"
+                    "add a yaml block of this form at the top of the Issue body"
+                    f" (derive allow_paths from the \"{get_config().sections['changed_files']}\""
+                    " table; name target_repo when the target is an external repository):\n"
                     "```yaml\n"
                     "base_branch: main\n"
                     "allow_paths:\n"
-                    "  - \"<変更対象のパスパターン>\"\n"
+                    "  - \"<changed path pattern>\"\n"
                     "```"
                 ),
             ))
@@ -303,7 +346,7 @@ class Cp1Rules:
             violations.append(Violation(
                 rule_id="cp1.intentional_hold",
                 severity="fail",
-                message="scope:milestone ラベルが付与されている（CP1 常時 FAIL）",
+                message="scope:milestone label is set (CP1 always fails)",
                 location=None,
                 auto_fixable=False,
                 fix_hint=None,
@@ -324,8 +367,8 @@ class Cp1Rules:
                     violations.append(Violation(
                         rule_id=f"{rule_id}.sub{sub_num}",
                         severity="fail",
-                        message=f"サブ{sub_num}: {message}",
-                        location=f"#### サブ{sub_num}",
+                        message=f"Sub {sub_num}: {message}",
+                        location=_sub_location(sub_num),
                         auto_fixable=True,
                         fix_hint=fix_hint,
                     ))
@@ -340,8 +383,8 @@ class Cp1Rules:
                 violations.append(Violation(
                     rule_id="cp1.milestone.sub_ac_yaml_missing",
                     severity="fail",
-                    message=f"サブ{sub_num} の{ac}セクションが存在しません",
-                    location=f"#### サブ{sub_num}",
+                    message=f"Sub {sub_num}: no {ac} section",
+                    location=_sub_location(sub_num),
                     auto_fixable=False,
                     fix_hint=None,
                 ))
@@ -350,10 +393,10 @@ class Cp1Rules:
                 violations.append(Violation(
                     rule_id="cp1.milestone.sub_ac_yaml_missing",
                     severity="fail",
-                    message=f"サブ{sub_num} の{ac}に ```yaml ブロックがありません",
-                    location=f"#### サブ{sub_num}",
+                    message=f"Sub {sub_num}: {ac} has no ```yaml block",
+                    location=_sub_location(sub_num),
                     auto_fixable=True,
-                    fix_hint=f"{ac}先頭に paths_must_exist YAML ブロックを追加してください",
+                    fix_hint=f"add a paths_must_exist YAML block at the top of {ac}",
                 ))
         return violations
 
@@ -388,7 +431,7 @@ class Cp1Rules:
                 violations.append(Violation(
                     rule_id="cp1.milestone.parent_ac_orphan",
                     severity="fail",
-                    message=f"親 AC がいずれのサブ AC でもカバーされていません: {item[:80]}",
+                    message=f"parent AC is not covered by any sub AC: {item[:80]}",
                     location=f"## {ac_heading}",
                     auto_fixable=False,
                     fix_hint=None,
@@ -418,7 +461,7 @@ class Cp1Rules:
         mapped_paths: set[str] = set()
         for _, block in extract_sub_blocks(body):
             for _, path, change_type in _extract_paths_from_change_table(block):
-                if "新規" in change_type or "修正" in change_type:
+                if _is_new_or_modify(change_type):
                     mapped_paths.add(path)
 
         violations: list[Violation] = []
@@ -432,8 +475,8 @@ class Cp1Rules:
                     rule_id="cp1.milestone.paths_must_exist_unmapped",
                     severity="fail",
                     message=(
-                        f"paths_must_exist の `{normalized}` が"
-                        " いずれのサブの「新規」または「修正」行にも記載されていません"
+                        f"paths_must_exist `{normalized}` is not listed in"
+                        " any sub's new or modify change-table row"
                     ),
                     location=f"## {ac_heading}",
                     auto_fixable=False,

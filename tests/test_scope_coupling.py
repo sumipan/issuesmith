@@ -1088,24 +1088,42 @@ class TestDataFileTests:
 
 _DELETED_SKILL_PATH = "skills/project_summary/fetch.py"
 
-_SUB_MARKER = chr(0x30B5) + chr(0x30D6)
-_PARENT_ISSUE_HEADING = (
-    chr(0x89AA) + chr(0x30A4) + chr(0x30B7) + chr(0x30E5) + chr(0x30FC)
-)
-_DESIGN_HEADING = chr(0x8A2D) + chr(0x8A08)
-_CHANGED_FILES_HEADING = (
-    chr(0x5909)
-    + chr(0x66F4)
-    + chr(0x5BFE)
-    + chr(0x8C61)
-    + chr(0x30D5)
-    + chr(0x30A1)
-    + chr(0x30A4)
-    + chr(0x30EB)
-)
-_FROM_DERIVED = (
-    chr(0x304B) + chr(0x3089) + chr(0x5C0E) + chr(0x51FA)
-)
+# Vocabulary of an ASCII language pack that differs from the EN defaults (#4474).
+_SUB_MARKER = "Part"
+_PARENT_ISSUE_HEADING = "Parent ticket"
+_DESIGN_HEADING = "Design"
+_CHANGED_FILES_HEADING = "Changed Files"
+_FROM_DERIVED = "spun off"
+
+
+@pytest.fixture()
+def sibling_language_pack(tmp_path, monkeypatch):
+    """Config whose language pack uses the vocabulary above."""
+    import dataclasses
+
+    from issuesmith.config import load_config
+    from issuesmith.language import EN
+
+    data = {f.name: getattr(EN, f.name) for f in dataclasses.fields(EN)}
+    data.update(
+        sub_header_prefix=_SUB_MARKER,
+        parent_issue_label=_PARENT_ISSUE_HEADING,
+        derived_from_phrase=_FROM_DERIVED,
+    )
+    plain = {k: list(v) if isinstance(v, tuple) else v for k, v in data.items()}
+    plain["sections"] = dict(EN.sections)
+    plain["messages"] = dict(EN.messages)
+    pack_path = tmp_path / "language_pack.yaml"
+    pack_path.write_text(yaml.safe_dump(plain), encoding="utf-8")
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "sumipan/issuesmith", "language_pack": str(pack_path)}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    return load_config()
+
 
 _MILESTONE_PARENT_BODY = (
     "```yaml\n"
@@ -1188,6 +1206,7 @@ def _sub_issue_body(sub_num: int, parent_num: int = 4000) -> str:
     )
 
 
+@pytest.mark.usefixtures("sibling_language_pack")
 class TestSiblingDeletionReferences:
     def test_sibling_owned_referrer_is_not_uncovered(self, tmp_path):
         from issuesmith.gate_rules.scope_coupling import check_deletion_references
@@ -1251,3 +1270,35 @@ class TestSiblingDeletionReferences:
             )
         combined = "\n".join((v.message or "") + (v.fix_hint or "") for v in violations)
         assert "sibling sub #3" in combined.lower()
+
+
+@pytest.mark.usefixtures("sibling_language_pack")
+class TestChildBodyVocabulary:
+    """The child-body sub number and parent number are read with the pack vocabulary."""
+
+    def test_current_sub_number_uses_pack_phrase(self):
+        from issuesmith.gate_rules.scope_coupling import _current_sub_number
+
+        assert _current_sub_number(_sub_issue_body(3)) == 3
+
+    def test_current_sub_number_ignores_other_vocabulary(self):
+        from issuesmith.gate_rules.scope_coupling import _current_sub_number
+
+        assert _current_sub_number("> Parent issue #4000 Sub3 derived\n") is None
+
+    def test_parent_number_uses_pack_label(self):
+        from issuesmith.gate_rules.scope_coupling import _parent_number_re
+
+        match = _parent_number_re().search(_sub_issue_body(2, parent_num=4321))
+        assert match is not None
+        assert match.group(1) == "4321"
+
+    def test_body_with_sub_blocks_fetches_parent_by_pack_label(self):
+        from issuesmith.gate_rules.scope_coupling import _body_with_sub_blocks
+
+        forge = mock.Mock()
+        forge.issue_get.return_value = {"body": _MILESTONE_PARENT_BODY}
+        with mock.patch("ghdag.forge.get_forge", return_value=forge):
+            parent = _body_with_sub_blocks(_sub_issue_body(2, parent_num=4321))
+        forge.issue_get.assert_called_once_with(4321, fields=["body"])
+        assert parent == _MILESTONE_PARENT_BODY

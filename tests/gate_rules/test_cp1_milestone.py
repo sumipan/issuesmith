@@ -1,6 +1,8 @@
 """tests/gate_rules/test_cp1_milestone.py — unit tests for CP1 milestone checks 8–11."""
 from __future__ import annotations
 
+import pytest
+
 from issuesmith.gate_rules.cp1 import Cp1Rules, _keyword_tokens
 from tests.legacy_text import (
     ADD,
@@ -8,7 +10,6 @@ from tests.legacy_text import (
     DESCRIPTION,
     FILE_PATH,
     MODIFY,
-    OPTIONAL_PREFIX,
     REPOSITORY,
     SUB,
 )
@@ -176,7 +177,7 @@ def test_check10_keyword_cover_passes():
 def test_check10_optional_prefix_passes():
     # ASCII fixture data.
     body = _milestone_body(parent_ac=[
-        OPTIONAL_PREFIX + "deferred integration",
+        "(optional) deferred integration",
         "PR #9001 merged",
         "PR #9002 merged",
     ])
@@ -187,7 +188,7 @@ def test_check10_optional_prefix_passes():
 def test_check10_optional_prefix_midtext_fails():
     # ASCII fixture data.
     body = _milestone_body(parent_ac=[
-        "ghdag " + OPTIONAL_PREFIX + " deferred integration",
+        "ghdag (optional) deferred integration",
         "PR #9001 merged",
         "PR #9002 merged",
     ])
@@ -339,3 +340,98 @@ def test_check11_paths_must_exist_unmapped_skipped_without_sub_blocks():
     body = _milestone_body_without_sub_blocks()
     violations = Cp1Rules().check(body, MILESTONE_LABELS)
     assert not any(v.rule_id == "cp1.milestone.paths_must_exist_unmapped" for v in violations)
+
+
+# --- Language pack vocabulary (nexus #4474) ---
+
+# ASCII vocabulary that differs from the EN pack defaults.
+_ASCII_PACK = {
+    "sub_header_prefix": "Part",
+    "change_table_columns": ["Repo", "Path", "Kind", "Note"],
+    "delete_words": ["drop"],
+}
+
+
+def _use_pack(tmp_path, monkeypatch, **overrides) -> None:
+    """Point the config at a language pack YAML: the EN pack with ``overrides``."""
+    import dataclasses
+
+    import yaml
+
+    from issuesmith.config import reset_config_cache
+    from issuesmith.language import EN
+
+    data = {f.name: getattr(EN, f.name) for f in dataclasses.fields(EN)}
+    data.update(overrides)
+    plain = {k: list(v) if isinstance(v, tuple) else v for k, v in data.items()}
+    plain["sections"] = dict(EN.sections)
+    plain["messages"] = dict(EN.messages)
+    pack_path = tmp_path / "language_pack.yaml"
+    pack_path.write_text(yaml.safe_dump(plain), encoding="utf-8")
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "sumipan/issuesmith", "language_pack": str(pack_path)}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+
+
+def _pack_body(prefix: str, columns, change_type: str, *, sub_extra: str = "") -> str:
+    return (
+        _milestone_body(sub_extra=sub_extra)
+        .replace(f"#### {SUB}", f"#### {prefix}")
+        .replace(_TABLE_HEADER, " | ".join(columns))
+        .replace(f"| {ADD} |", f"| {change_type} |")
+    )
+
+
+@pytest.mark.parametrize(
+    ("en_kind", "ascii_kind", "sub_extra"),
+    [
+        ("Add", "Add", ""),
+        ("delete", "drop", ""),
+        ("Add", "Add", "TODO: fill in\n"),
+    ],
+    ids=["mapped", "deleted_row_unmapped", "sub_forbidden_word"],
+)
+def test_ascii_pack_matches_en_decision(tmp_path, monkeypatch, en_kind, ascii_kind, sub_extra):
+    from issuesmith.language import EN
+
+    en_dir = tmp_path / "en"
+    en_dir.mkdir()
+    _use_pack(en_dir, monkeypatch)
+    en_body = _pack_body("Sub", EN.change_table_columns, en_kind, sub_extra=sub_extra)
+    en = sorted(
+        (v.rule_id, v.location or "") for v in Cp1Rules().check(en_body, MILESTONE_LABELS)
+    )
+
+    ascii_dir = tmp_path / "ascii"
+    ascii_dir.mkdir()
+    _use_pack(ascii_dir, monkeypatch, **_ASCII_PACK)
+    ascii_body = _pack_body(
+        "Part", _ASCII_PACK["change_table_columns"], ascii_kind, sub_extra=sub_extra
+    )
+    ascii_v = sorted(
+        (v.rule_id, (v.location or "").replace("Part", "Sub"))
+        for v in Cp1Rules().check(ascii_body, MILESTONE_LABELS)
+    )
+
+    assert ascii_v == en
+    en_ids = {rule_id for rule_id, _ in en}
+    if en_kind == "delete":
+        assert "cp1.milestone.paths_must_exist_unmapped" in en_ids
+    else:
+        assert "cp1.milestone.paths_must_exist_unmapped" not in en_ids
+    if sub_extra:
+        assert ("cp1.forbidden_word.todo.sub1", "#### Sub1") in en
+
+
+def test_sub_location_uses_pack_prefix(tmp_path, monkeypatch):
+    _use_pack(tmp_path, monkeypatch, **_ASCII_PACK)
+    body = _pack_body(
+        "Part", _ASCII_PACK["change_table_columns"], "Add", sub_extra="TODO: fill in\n"
+    )
+    violations = Cp1Rules().check(body, MILESTONE_LABELS)
+    todo = next(v for v in violations if v.rule_id == "cp1.forbidden_word.todo.sub1")
+    assert todo.location == "#### Part1"

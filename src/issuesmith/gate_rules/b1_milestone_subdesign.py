@@ -16,12 +16,14 @@ from issuesmith.contract import (  # noqa: F401 — re-exported for legacy impor
     parse_table_rows,
 )
 
-_VAGUE_AC_WORDS = ("正しく動作", "適切に", "問題なく", "きちんと", "ちゃんと", "必要に応じて")
 _SUB_HEADER_RE = SUB_HEADER_RE
-# Katakana SA+BU; matches contract.SUB_HEADER_RE without CJK literals in added lines.
-_SUB_HEADER_PREFIX = "".join(map(chr, (0x30B5, 0x30D6)))
 _BACKTICK_PATH_RE = re.compile(r"`([^`]+)`")
 _FILE_REF_RE = re.compile(r"`([^`]+\.[a-zA-Z0-9]+)`|(?:^|[\s(/])([\w./-]+\.[a-zA-Z0-9]+)")
+
+
+def _sub_location(sub_num: int) -> str:
+    """``#### <sub_header_prefix>N`` location of a sub design block."""
+    return f"#### {get_config().language.sub_header_prefix}{sub_num}"
 
 
 def extract_sub_blocks(body: str) -> list[tuple[int, str]]:
@@ -130,15 +132,17 @@ class B1MilestoneSubdesignRules:
         return violations
 
     def _check_sub_count(self, body: str) -> list[Violation]:
-        sections = get_config().sections
+        cfg = get_config()
+        sections = cfg.sections
+        sub_prefix = cfg.language.sub_header_prefix
         plan_count = _count_sub_plan_rows(body)
         if plan_count is None:
             return [Violation(
                 rule_id="b1_milestone_subdesign.sub_plan_missing",
                 severity="fail",
                 message=(
-                    f"## {sections['milestone']} 内に "
-                    f"### {sections['sub_plan']} テーブルが存在しません"
+                    f"no ### {sections['sub_plan']} table under "
+                    f"## {sections['milestone']}"
                 ),
                 location=None,
                 auto_fixable=False,
@@ -153,19 +157,19 @@ class B1MilestoneSubdesignRules:
                 rule_id="b1_milestone_subdesign.sub_count_mismatch",
                 severity="fail",
                 message=(
-                    f"{sections['sub_plan']}テーブルの行数 ({plan_count}) と"
-                    f" #### サブN ヘッダ数 ({header_count}) が一致しません"
+                    f"{sections['sub_plan']} table row count ({plan_count}) does not match"
+                    f" the #### {sub_prefix}N header count ({header_count})"
                 ),
                 location=None,
                 auto_fixable=False,
                 fix_hint=(
                     f"For every `{sections['sub_plan']}` row N, add a "
-                    f"`#### {_SUB_HEADER_PREFIX}N: <title>` block "
+                    f"`#### {sub_prefix}N: <title>` block "
                     f"under `## {sections['design']}` with the required subsections "
                     + " / ".join(
-                        f"**{name}**" for name in get_config().sub_design_subsections
+                        f"**{name}**" for name in cfg.sub_design_subsections
                     )
-                    + ". Do not use English Sub headers "
+                    + ". Do not use the spaced `Sub N` header form "
                     "(milestone_consistency.sub_header_english rejects them)."
                 ),
             )]
@@ -178,8 +182,8 @@ class B1MilestoneSubdesignRules:
                 violations.append(Violation(
                     rule_id="b1_milestone_subdesign.subsection_missing",
                     severity="fail",
-                    message=f"サブ{sub_num} に必須サブセクション **{name}** がありません",
-                    location=f"#### サブ{sub_num}",
+                    message=f"Sub {sub_num}: required subsection **{name}** is missing",
+                    location=_sub_location(sub_num),
                     auto_fixable=False,
                     fix_hint=None,
                 ))
@@ -199,36 +203,35 @@ class B1MilestoneSubdesignRules:
             return [Violation(
                 rule_id="b1_milestone_subdesign.table_schema",
                 severity="fail",
-                message=f"サブ{sub_num} の{changed}テーブルが空です",
-                location=f"#### サブ{sub_num}",
+                message=f"Sub {sub_num}: the {changed} table is empty",
+                location=_sub_location(sub_num),
                 auto_fixable=False,
                 fix_hint=None,
             )]
         header = rows[0]
+        expected = get_config().language.change_table_columns
         if len(header) != 4:
             return [Violation(
                 rule_id="b1_milestone_subdesign.table_schema",
                 severity="fail",
                 message=(
-                    f"サブ{sub_num} の{changed}テーブルが 4 列スキーマ"
-                    f"（リポジトリ / ファイルパス / 変更種別 / 変更内容）ではありません"
-                    f"（{len(header)} 列）"
+                    f"Sub {sub_num}: the {changed} table does not have the 4-column schema"
+                    f" ({' / '.join(expected)}; got {len(header)} columns)"
                 ),
-                location=f"#### サブ{sub_num}",
+                location=_sub_location(sub_num),
                 auto_fixable=False,
                 fix_hint=None,
             )]
-        expected = ("リポジトリ", "ファイルパス", "変更種別", "変更内容")
         for col, exp in zip(header, expected):
             if exp not in col:
                 return [Violation(
                     rule_id="b1_milestone_subdesign.table_schema",
                     severity="fail",
                     message=(
-                        f"サブ{sub_num} の{changed}テーブル列名が不正です"
-                        f"（期待: {' / '.join(expected)}）"
+                        f"Sub {sub_num}: invalid {changed} table column names"
+                        f" (expected: {' / '.join(expected)})"
                     ),
-                    location=f"#### サブ{sub_num}",
+                    location=_sub_location(sub_num),
                     auto_fixable=False,
                     fix_hint=None,
                 )]
@@ -249,7 +252,7 @@ class B1MilestoneSubdesignRules:
                         f" the target_repo / diary_allow_paths of any metadata block"
                         f" ({path})"
                     ),
-                    location=f"#### サブ{sub_num}",
+                    location=_sub_location(sub_num),
                     auto_fixable=True,
                     fix_hint=(
                         "add a separate ```yaml metadata block for this repo at the top of the"
@@ -280,20 +283,24 @@ class B1MilestoneSubdesignRules:
         for repo in repos:
             if change_paths_for_repo(block, repo or None):
                 continue
-            changed = get_config().sections["changed_files"]
+            cfg = get_config()
+            changed = cfg.sections["changed_files"]
+            repository_col, file_path_col = cfg.language.change_table_columns[:2]
+            header = "| " + " | ".join(cfg.language.change_table_columns) + " |"
             violations.append(Violation(
                 rule_id="b1_milestone_subdesign.change_paths_unreadable",
                 severity="fail",
                 message=(
-                    f"サブ{sub_num} の{changed}表から `{repo or '(repo なし)'}` の"
-                    " ファイルパスを抽出できません（SUB1 は同じ抽出で子の allow_paths を作るため、"
-                    "このままでは子を作れません）"
+                    f"Sub {sub_num}: no file paths for `{repo or '(no repo)'}` can be"
+                    f" extracted from the {changed} table (SUB1 builds the child"
+                    " allow_paths with the same extraction, so no child can be created)"
                 ),
-                location=f"#### サブ{sub_num}",
+                location=_sub_location(sub_num),
                 auto_fixable=False,
                 fix_hint=(
-                    f"**{changed}**: の直後に | リポジトリ | ファイルパス | 変更種別 | 変更内容 |"
-                    " の 4 列表を置き、リポジトリ列に owner/repo、ファイルパス列に / を含むパスを書く"
+                    f"put the 4-column table {header} right after **{changed}**:,"
+                    f" with owner/repo in the {repository_col} column and a path containing"
+                    f" / in the {file_path_col} column"
                 ),
             ))
         return violations
@@ -306,19 +313,20 @@ class B1MilestoneSubdesignRules:
             violations.append(Violation(
                 rule_id="b1_milestone_subdesign.ac_count",
                 severity="fail",
-                message=f"サブ{sub_num} の{ac}が {len(items)} 件（3 件以上必要）",
-                location=f"#### サブ{sub_num}",
+                message=f"Sub {sub_num}: {ac} has {len(items)} item(s) (3 or more required)",
+                location=_sub_location(sub_num),
                 auto_fixable=False,
                 fix_hint=None,
             ))
+        vague_words = get_config().language.vague_ac_words
         for item in items:
-            for word in _VAGUE_AC_WORDS:
+            for word in vague_words:
                 if word in item:
                     violations.append(Violation(
                         rule_id="b1_milestone_subdesign.ac_vague_word",
                         severity="fail",
-                        message=f"サブ{sub_num} の{ac}に曖昧語 `{word}` が含まれます",
-                        location=f"#### サブ{sub_num}",
+                        message=f"Sub {sub_num}: {ac} contains the vague word `{word}`",
+                        location=_sub_location(sub_num),
                         auto_fixable=False,
                         fix_hint=None,
                     ))
@@ -351,7 +359,7 @@ class B1MilestoneSubdesignRules:
                 rule_id="b1_milestone_subdesign.file_union_missing_in_subs",
                 severity="fail",
                 message=(
-                    f"親の{changed}にあってサブにないパス: "
+                    f"paths in the parent {changed} but in no sub: "
                     + ", ".join(sorted(missing_in_subs))
                 ),
                 location=f"## {changed}",
@@ -363,7 +371,7 @@ class B1MilestoneSubdesignRules:
                 rule_id="b1_milestone_subdesign.file_union_missing_in_parent",
                 severity="fail",
                 message=(
-                    f"サブの{changed}にあって親にないパス: "
+                    f"paths in a sub {changed} but not in the parent: "
                     + ", ".join(sorted(missing_in_parent))
                 ),
                 location=f"## {changed}",
@@ -375,7 +383,7 @@ class B1MilestoneSubdesignRules:
             violations.append(Violation(
                 rule_id="b1_milestone_subdesign.file_union_duplicate",
                 severity="fail",
-                message=f"サブ間で重複する{changed}: " + ", ".join(sorted(duplicates)),
+                message=f"{changed} duplicated across subs: " + ", ".join(sorted(duplicates)),
                 location=f"## {design}",
                 auto_fixable=False,
                 fix_hint=None,
@@ -405,8 +413,8 @@ class B1MilestoneSubdesignRules:
                     rule_id="b1_milestone_subdesign.impact_scope_pollution",
                     severity="fail",
                     message=(
-                        f"{impact_name}のファイル参照 `{ref}` が"
-                        f" 親またはサブの{changed}に含まれません"
+                        f"{impact_name} file reference `{ref}` is not in"
+                        f" the parent or sub {changed}"
                     ),
                     location=f"## {impact_name}",
                     auto_fixable=False,
