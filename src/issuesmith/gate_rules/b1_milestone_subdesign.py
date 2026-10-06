@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from ghdag.workflow.gates import GATE_REGISTRY, Violation
 
 from issuesmith.config import get_config
-from issuesmith.context_hook import parse_issue_metadata_blocks
+from issuesmith.context_hook import parse_issue_metadata, parse_issue_metadata_blocks
 from issuesmith.contract import (  # noqa: F401 — re-exported for legacy importers
     SUB_HEADER_RE,
     _normalize_path,
@@ -19,6 +20,31 @@ from issuesmith.contract import (  # noqa: F401 — re-exported for legacy impor
 _SUB_HEADER_RE = SUB_HEADER_RE
 _BACKTICK_PATH_RE = re.compile(r"`([^`]+)`")
 _FILE_REF_RE = re.compile(r"`([^`]+\.[a-zA-Z0-9]+)`|(?:^|[\s(/])([\w./-]+\.[a-zA-Z0-9]+)")
+
+# Sub design text announcing that the sub fails the tests on its own (#4518).
+# src/ must stay CJK-free (tests/test_no_cjk_src.py) and the language pack has no field for
+# these phrases yet, so only the EN wording is matched.
+_STANDALONE_FAIL_RES: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"\b(?:this\s+sub|sub\s*\d+)\s+(?:alone|on\s+its\s+own|standalone)\b"
+        r"[^\n.]*?(?:ImportError|\btests?\b|\bcollect)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:full|whole|entire)\s+test\s+(?:suite\s+)?pass\b[^\n.]*\bparent\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\btests?\s+(?:are\s+|is\s+)?(?:followed|updated|fixed|handled)\s+(?:up\s+)?"
+        r"(?:in|by)\s+(?:another|a\s+sibling|a\s+separate|a\s+different)\s+sub\b",
+        re.IGNORECASE,
+    ),
+)
+# Acceptance criteria wording that requires the whole test suite to pass.
+_FULL_SUITE_AC_RE = re.compile(
+    r"\b(?:existing\s+tests|all\s+tests|full\s+test\s+suite|tests?\s+pass|collection)\b",
+    re.IGNORECASE,
+)
 
 
 def _sub_location(sub_num: int) -> str:
@@ -129,6 +155,10 @@ class B1MilestoneSubdesignRules:
             violations.extend(self._check_sub_ac(sub_num, block))
         violations.extend(self._check_file_union(body, sub_blocks))
         violations.extend(self._check_impact_scope(body, sub_blocks))
+        violations.extend(self._check_deletion_reference_orphan(body, sub_blocks))
+        violations.extend(self._check_behavior_test_in_sibling(sub_blocks))
+        for sub_num, block in sub_blocks:
+            violations.extend(self._check_sub_ac_contradiction(sub_num, block))
         return violations
 
     def _check_sub_count(self, body: str) -> list[Violation]:
@@ -421,6 +451,114 @@ class B1MilestoneSubdesignRules:
                     fix_hint=None,
                 ))
         return violations
+
+    def _check_deletion_reference_orphan(
+        self,
+        body: str,
+        sub_blocks: list[tuple[int, str]],
+    ) -> list[Violation]:
+        """B1 twin of ``scope_coupling.deletion_reference_uncovered`` (#4518).
+
+        A deleted file whose referrers no sub change table owns makes the deleting
+        sub fail P1 with nobody allowed to fix the referrers.
+        """
+        from issuesmith.gate_rules import scope_coupling
+
+        keywords = scope_coupling._delete_move_keywords()
+        if not any(
+            any(word in change_type.lower() for word in keywords)
+            for _, block in sub_blocks
+            for _, _, change_type in _extract_paths_from_change_table(block)
+        ):
+            return []
+        try:
+            metadata = parse_issue_metadata(body)
+        except Exception:
+            return []
+        if scope_coupling.resolve_scope_root(metadata, get_config()) is None:
+            return []
+        refs = scope_coupling.deletion_references_for_body(body)
+        design = get_config().sections["design"]
+        return [
+            Violation(
+                rule_id="b1_milestone_subdesign.deletion_reference_orphan",
+                severity="fail",
+                message=(
+                    f"files referencing deleted `{path}` are in no sub change table: "
+                    + ", ".join(files)
+                ),
+                location=f"## {design}",
+                auto_fixable=False,
+                fix_hint=(
+                    "add each referrer to some sub's change table, or stage the deletion"
+                    " (keep an alias first, delete it in the last sub)"
+                ),
+            )
+            for path, files in refs.items()
+        ]
+
+    def _check_behavior_test_in_sibling(
+        self,
+        sub_blocks: list[tuple[int, str]],
+    ) -> list[Violation]:
+        """Reject an impl file whose mirror test sits in a sibling sub (#4518)."""
+        owned = [
+            (sub_num, repo, path)
+            for sub_num, block in sub_blocks
+            for repo, path, _ in _extract_paths_from_change_table(block)
+        ]
+        tests = [row for row in owned if row[2].startswith("tests/")]
+        violations: list[Violation] = []
+        for sub_num, repo, path in owned:
+            if path.startswith("tests/"):
+                continue
+            stem = Path(path).stem
+            stem_re = re.compile(rf"(?<![A-Za-z0-9]){re.escape(stem)}(?![A-Za-z0-9])")
+            for test_sub, test_repo, test_path in tests:
+                if test_sub == sub_num or test_repo != repo:
+                    continue
+                if not stem_re.search(Path(test_path).stem):
+                    continue
+                violations.append(Violation(
+                    rule_id="b1_milestone_subdesign.behavior_test_in_sibling",
+                    severity="fail",
+                    message=(
+                        f"Sub {sub_num}: `{path}` is changed here but its test"
+                        f" `{test_path}` is in Sub {test_sub}"
+                    ),
+                    location=_sub_location(sub_num),
+                    auto_fixable=False,
+                    fix_hint=(
+                        "move the test into the same sub's change table as the impl,"
+                        " or merge the two subs"
+                    ),
+                ))
+        return violations
+
+    def _check_sub_ac_contradiction(self, sub_num: int, block: str) -> list[Violation]:
+        """Reject a sub that says it fails tests alone yet requires a full pass (#4518)."""
+        ac = get_config().sections["acceptance_criteria"]
+        design_text = re.split(rf"\*\*{re.escape(ac)}\*\*", block, maxsplit=1)[0]
+        if not any(pattern.search(design_text) for pattern in _STANDALONE_FAIL_RES):
+            return []
+        full_suite = any(_FULL_SUITE_AC_RE.search(item) for item in _extract_ac_items(block))
+        if not full_suite:
+            return []
+        return [Violation(
+            rule_id="b1_milestone_subdesign.sub_ac_contradiction",
+            severity="fail",
+            message=(
+                f"Sub {sub_num}: the design says this sub fails the tests on its own,"
+                f" but its {ac} require the whole test suite to pass"
+            ),
+            location=_sub_location(sub_num),
+            auto_fixable=False,
+            fix_hint=(
+                f"drop the whole-suite requirement from {ac}, or remove the"
+                " 'another sub handles it' split (move the referrers into this sub,"
+                " or stage the change)"
+            ),
+        )]
 
 
 GATE_REGISTRY["b1_milestone_subdesign"] = B1MilestoneSubdesignRules
