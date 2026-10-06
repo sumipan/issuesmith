@@ -769,3 +769,223 @@ def test_ascii_pack_rejects_en_vocabulary(tmp_path, monkeypatch):
     body = _in_vocabulary(_valid_body(), "Sub", EN.change_table_columns, "")
     rule_ids = {v.rule_id for v in _check(body, MILESTONE_LABELS)}
     assert "b1_milestone_subdesign.sub_count_mismatch" in rule_ids
+
+
+# ---------------------------------------------------------------------------
+# #4518 — milestone splits that P1 cannot implement
+# ---------------------------------------------------------------------------
+
+_ORPHAN_RULE = "b1_milestone_subdesign.deletion_reference_orphan"
+_SIBLING_TEST_RULE = "b1_milestone_subdesign.behavior_test_in_sibling"
+_CONTRADICTION_RULE = "b1_milestone_subdesign.sub_ac_contradiction"
+
+_STANDALONE_IMPORT_ERROR = "This sub alone raises ImportError in test collection."
+_PARENT_FULL_PASS = "The full test pass is checked by the parent."
+_EXISTING_TESTS_PASS = "All existing tests pass"
+
+
+def _rule_ids(violations) -> list[str]:
+    return [v.rule_id for v in violations]
+
+
+def _milestone_body(
+    subs: list[tuple[str, list[tuple[str, str]]]],
+    *,
+    allow_paths: tuple[str, ...] = ("docs/**",),
+) -> str:
+    """Milestone parent body; ``subs`` is ``[(design policy, [(path, change type)])]``."""
+    blocks: list[str] = []
+    plan_rows: list[str] = []
+    for num, (policy, rows) in enumerate(subs, start=1):
+        table = "\n".join(
+            f"| `sumipan/nexus` | `{path}` | {change_type} | Description |"
+            for path, change_type in rows
+        )
+        blocks.append(f"""\
+#### {SUB}{num}: sub{num}
+
+**Scope**: scope {num}
+**Design Policy**: {policy}
+**Changed Files**:
+| {_TABLE_HEADER} |
+|---|---|---|---|
+{table}
+
+**Acceptance Criteria**:
+- [ ] Sub{num} alpha
+- [ ] Sub{num} beta
+- [ ] Sub{num} gamma
+""")
+        plan_rows.append(f"| {num} | sub{num} | scope{num} | None |")
+    allow = "\n".join(f"  - {p}" for p in allow_paths)
+    return f"""\
+```yaml
+target_repo: sumipan/nexus
+base_branch: main
+allow_paths:
+{allow}
+```
+
+## Design
+
+{chr(10).join(blocks)}
+## Milestone
+
+### Sub-issue Plan
+| # | Title | c5185_c5BB9 | Dependency |
+|---|--------|------|------|
+{chr(10).join(plan_rows)}
+"""
+
+
+def _git_repo(root, files: dict[str, str]):
+    import subprocess
+
+    for rel, text in files.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    for cmd in (
+        ["git", "init", "-q"],
+        ["git", "add", "-A"],
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"],
+    ):
+        subprocess.run(cmd, cwd=root, check=True)
+    return root
+
+
+@pytest.fixture
+def deletion_repo(tmp_path, monkeypatch):
+    """Clone with ``old.py`` imported by ``user.py``; resolve_scope_root points at it."""
+    root = _git_repo(tmp_path / "repo", {
+        "src/pkg/old.py": "VALUE = 1\n",
+        "src/pkg/user.py": "from pkg.old import VALUE\n",
+    })
+    monkeypatch.setattr(
+        "issuesmith.gate_rules.scope_coupling.resolve_scope_root",
+        lambda metadata, cfg: root,
+    )
+    return root
+
+
+def test_deletion_reference_orphan_when_no_sub_covers_referrer(deletion_repo):
+    body = _milestone_body([
+        ("drop old", [("src/pkg/old.py", "Delete")]),
+        ("docs", [("docs/a.md", "Modify")]),
+    ])
+    orphans = [v for v in _check(body, MILESTONE_LABELS) if v.rule_id == _ORPHAN_RULE]
+    assert len(orphans) == 1
+    assert "src/pkg/old.py" in orphans[0].message
+    assert "src/pkg/user.py" in orphans[0].message
+    assert orphans[0].fix_hint
+
+
+def test_deletion_reference_orphan_passes_when_sibling_covers_referrer(deletion_repo):
+    body = _milestone_body([
+        ("drop old", [("src/pkg/old.py", "Delete")]),
+        ("follow", [("src/pkg/user.py", "Modify")]),
+    ])
+    assert _ORPHAN_RULE not in _rule_ids(_check(body, MILESTONE_LABELS))
+
+
+def test_deletion_reference_orphan_skipped_without_clone(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(
+        "issuesmith.gate_rules.scope_coupling.resolve_scope_root",
+        lambda metadata, cfg: None,
+    )
+    monkeypatch.setattr(
+        "issuesmith.gate_rules.scope_coupling.deletion_references_for_body",
+        lambda body: calls.append(body) or {"src/pkg/old.py": ["src/pkg/user.py"]},
+    )
+    body = _milestone_body([
+        ("drop old", [("src/pkg/old.py", "Delete")]),
+        ("docs", [("docs/a.md", "Modify")]),
+    ])
+    assert _ORPHAN_RULE not in _rule_ids(_check(body, MILESTONE_LABELS))
+    assert calls == []
+
+
+def test_deletion_reference_orphan_not_run_without_delete_rows(monkeypatch):
+    def _boom(*_a, **_k):
+        raise AssertionError("must not resolve the clone without delete rows")
+
+    monkeypatch.setattr("issuesmith.gate_rules.scope_coupling.resolve_scope_root", _boom)
+    body = _milestone_body([
+        ("add", [("src/pkg/new.py", "Add")]),
+        ("docs", [("docs/a.md", "Modify")]),
+    ])
+    assert _ORPHAN_RULE not in _rule_ids(_check(body, MILESTONE_LABELS))
+
+
+def test_behavior_test_in_sibling_detected():
+    body = _milestone_body([
+        ("impl", [("src/mltgnt/config/language.py", "Modify")]),
+        ("tests", [("tests/config/test_language.py", "Modify")]),
+    ])
+    hits = [v for v in _check(body, MILESTONE_LABELS) if v.rule_id == _SIBLING_TEST_RULE]
+    assert len(hits) == 1
+    assert "src/mltgnt/config/language.py" in hits[0].message
+    assert "tests/config/test_language.py" in hits[0].message
+    assert hits[0].location == f"#### {SUB}1"
+    assert hits[0].fix_hint
+
+
+def test_behavior_test_in_same_sub_passes():
+    body = _milestone_body([
+        ("impl", [
+            ("src/mltgnt/config/language.py", "Modify"),
+            ("tests/config/test_language.py", "Modify"),
+        ]),
+        ("docs", [("docs/a.md", "Modify")]),
+    ])
+    assert _SIBLING_TEST_RULE not in _rule_ids(_check(body, MILESTONE_LABELS))
+
+
+def test_behavior_test_in_sibling_ignores_partial_stem_match():
+    body = _milestone_body([
+        ("impl", [("src/pkg/a.py", "Modify")]),
+        ("tests", [("tests/test_data.py", "Modify")]),
+    ])
+    assert _SIBLING_TEST_RULE not in _rule_ids(_check(body, MILESTONE_LABELS))
+
+
+def _contradiction_body(policy: str, ac_items: list[str]) -> str:
+    block = _sub_block(1, "drop", "tools/foo/a.py", ac_items=ac_items).replace(
+        "**Design Policy**: Sub1 c306E_Design Policy", f"**Design Policy**: {policy}"
+    )
+    return _valid_body().replace(_sub_block(1, "foo", "tools/foo/a.py"), block)
+
+
+_PLAIN_AC = ["Sub1 alpha", "Sub1 beta", "Sub1 gamma"]
+
+
+def test_sub_ac_contradiction_detected():
+    body = _contradiction_body(
+        f"{_STANDALONE_IMPORT_ERROR} {_PARENT_FULL_PASS}",
+        [*_PLAIN_AC, _EXISTING_TESTS_PASS],
+    )
+    hits = [v for v in _check(body, MILESTONE_LABELS) if v.rule_id == _CONTRADICTION_RULE]
+    assert len(hits) == 1
+    assert hits[0].location == f"#### {SUB}1"
+    assert hits[0].fix_hint
+
+
+def test_sub_ac_contradiction_needs_both_conditions():
+    only_a = _contradiction_body(_STANDALONE_IMPORT_ERROR, _PLAIN_AC)
+    only_b = _contradiction_body("plain policy", [*_PLAIN_AC, _EXISTING_TESTS_PASS])
+    assert _CONTRADICTION_RULE not in _rule_ids(_check(only_a, MILESTONE_LABELS))
+    assert _CONTRADICTION_RULE not in _rule_ids(_check(only_b, MILESTONE_LABELS))
+
+
+def test_new_checks_skip_non_milestone(deletion_repo):
+    bodies = [
+        _milestone_body([
+            ("drop old", [("src/pkg/old.py", "Delete")]),
+            ("tests", [("tests/pkg/test_user.py", "Modify")]),
+            ("impl", [("src/pkg/user.py", "Modify")]),
+        ]),
+        _contradiction_body(_STANDALONE_IMPORT_ERROR, [*_PLAIN_AC, _EXISTING_TESTS_PASS]),
+    ]
+    for body in bodies:
+        assert _check(body, NON_MILESTONE_LABELS) == []
