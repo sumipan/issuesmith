@@ -5,7 +5,7 @@ import pytest
 
 import issuesmith.gate_rules.b1_milestone_subdesign  # noqa: F401
 from issuesmith.gate_rules import GATE_REGISTRY
-from tests.legacy_text import CHANGE_TYPE, DESCRIPTION, FILE_PATH, REPOSITORY, SUB
+from tests.legacy_text import CHANGE_TYPE, DEPENDENCY, DESCRIPTION, FILE_PATH, REPOSITORY, SUB
 
 MILESTONE_LABELS = ["scope:milestone"]
 NON_MILESTONE_LABELS = ["scope:feature"]
@@ -989,3 +989,97 @@ def test_new_checks_skip_non_milestone(deletion_repo):
     ]
     for body in bodies:
         assert _check(body, NON_MILESTONE_LABELS) == []
+
+
+# ---------------------------------------------------------------------------
+# #4742 — sub design execution-order text vs split-plan dependency column
+# ---------------------------------------------------------------------------
+
+_ORDER_DEP_RULE = "b1_milestone_subdesign.sub_execution_order_dep"
+_AFTER_COMPLETE = chr(0x5B8C) + chr(0x4E86) + chr(0x540E)
+
+
+def _order_dep_body(
+    *,
+    sub2_policy: str,
+    sub2_dep: str = "None",
+) -> str:
+    sub1 = _sub_block(1, "foo", "tools/foo/a.py")
+    sub2 = _sub_block(2, "bar", "tools/foo/b.py").replace(
+        "**Design Policy**: Sub2 c306E_Design Policy",
+        f"**Design Policy**: {sub2_policy}",
+    )
+    return f"""\
+```yaml
+target_repo: sumipan/nexus
+base_branch: main
+allow_paths:
+  - tools/foo/**
+```
+
+## Design
+
+{sub1}
+{sub2}
+
+## Milestone
+
+### Sub-issue Plan
+| # | Title | c5185_c5BB9 | {DEPENDENCY} |
+|---|--------|------|------|
+| 1 | foo | scope1 | None |
+| 2 | bar | scope2 | {sub2_dep} |
+
+## Changed Files
+| {_TABLE_HEADER} |
+|---|---|---|---|
+| `sumipan/nexus` | `tools/foo/a.py` | Add | add a |
+| `sumipan/nexus` | `tools/foo/b.py` | Add | add b |
+
+## Acceptance Criteria
+
+```yaml
+paths_must_exist:
+  - tools/foo/a.py
+  - tools/foo/b.py
+```
+"""
+
+
+def test_sub_execution_order_dep_detected_when_plan_dep_missing():
+    body = _order_dep_body(sub2_policy=f"{SUB}1 complete before this sub starts")
+    hits = [v for v in _check(body, MILESTONE_LABELS) if v.rule_id == _ORDER_DEP_RULE]
+    assert len(hits) == 1
+    assert "Sub 2" in hits[0].message
+    assert "Sub 1" in hits[0].message
+    assert hits[0].location == f"#### {SUB}2"
+    assert hits[0].auto_fixable is True
+    assert "#1" in (hits[0].fix_hint or "")
+
+
+def test_sub_execution_order_dep_detected_with_cjk_phrase():
+    body = _order_dep_body(sub2_policy=f"{SUB}1 {_AFTER_COMPLETE}")
+    hits = [v for v in _check(body, MILESTONE_LABELS) if v.rule_id == _ORDER_DEP_RULE]
+    assert len(hits) == 1
+
+
+def test_sub_execution_order_dep_passes_when_plan_dep_lists_ref():
+    body = _order_dep_body(
+        sub2_policy=f"{SUB}1 merged before this sub starts",
+        sub2_dep="#1",
+    )
+    assert _ORDER_DEP_RULE not in _rule_ids(_check(body, MILESTONE_LABELS))
+
+
+def test_sub_execution_order_dep_no_indicator():
+    assert _ORDER_DEP_RULE not in _rule_ids(_check(_valid_body(), MILESTONE_LABELS))
+
+
+def test_sub_execution_order_dep_ignores_self_reference():
+    body = _order_dep_body(sub2_policy=f"{SUB}2 complete on its own")
+    assert _ORDER_DEP_RULE not in _rule_ids(_check(body, MILESTONE_LABELS))
+
+
+def test_sub_execution_order_dep_skips_non_milestone():
+    body = _order_dep_body(sub2_policy=f"{SUB}1 complete before this sub starts")
+    assert _check(body, NON_MILESTONE_LABELS) == []

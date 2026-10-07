@@ -57,6 +57,82 @@ def extract_sub_blocks(body: str) -> list[tuple[int, str]]:
     return iter_sub_blocks(design or "")
 
 
+def _extract_sub_plan_dep_map(body: str) -> dict[int, str]:
+    """Return ``{sub_num: dependency_column_raw}`` from the split-plan table."""
+    sections = get_config().sections
+    milestone = get_section(body, sections["milestone"])
+    if not milestone:
+        return {}
+    plan = sections["sub_plan"]
+    plan_match = re.search(
+        rf"###\s+{re.escape(plan)}\s*\n(.*?)(?=^###|\Z)",
+        milestone,
+        re.MULTILINE | re.DOTALL,
+    )
+    if not plan_match:
+        return {}
+    rows = parse_table_rows(plan_match.group(1))
+    if len(rows) <= 1:
+        return {}
+    header = [cell.strip().strip("`") for cell in rows[0]]
+    columns = get_config().language.sub_plan_columns
+
+    def _idx(*names: str) -> int | None:
+        for name in names:
+            for i, cell in enumerate(header):
+                if cell == name or name in cell:
+                    return i
+        return None
+
+    num_i = _idx(columns[0])
+    dep_i = _idx(columns[4])
+    if dep_i is None:
+        for i, cell in enumerate(header):
+            if re.search(r"depend", cell, re.IGNORECASE):
+                dep_i = i
+                break
+    if dep_i is None and num_i is not None and len(header) >= 2:
+        dep_i = len(header) - 1
+    if num_i is None or dep_i is None:
+        return {}
+
+    dep_map: dict[int, str] = {}
+    for row in rows[1:]:
+        if len(row) <= max(num_i, dep_i):
+            continue
+        num_raw = row[num_i].strip()
+        if not num_raw.isdigit():
+            continue
+        dep_map[int(num_raw)] = row[dep_i].strip()
+    return dep_map
+
+
+def _order_indicator_re(sub_prefix: str) -> re.Pattern[str]:
+    """Match design text that says sub M must finish before this sub runs."""
+    after_complete = chr(0x5B8C) + chr(0x4E86) + chr(0x540E)
+    after_impl = chr(0x306E) + chr(0x5B9F) + chr(0x88C5) + chr(0x540E)
+    after_merge = chr(0x306E) + chr(0x30DE) + chr(0x30FC) + chr(0x30B8) + chr(0x540E)
+    impl_after = chr(0x5B9F) + chr(0x88C5) + chr(0x540E)
+    merge_complete = (
+        chr(0x306E)
+        + chr(0x30DE)
+        + chr(0x30FC)
+        + chr(0x30B8)
+        + chr(0x304C)
+        + chr(0x5B8C)
+        + chr(0x4E86)
+    )
+    cjk = (
+        f"(?:{after_complete}|{after_impl}|{after_merge}|{impl_after}|{merge_complete})"
+    )
+    en = r"(?:complete|merged|done)"
+    prefix = re.escape(sub_prefix)
+    return re.compile(
+        rf"{prefix}[ \t]*(\d+)[^\n]*?(?:{cjk}|{en})",
+        re.IGNORECASE,
+    )
+
+
 def _count_sub_plan_rows(body: str) -> int | None:
     sections = get_config().sections
     milestone = get_section(body, sections["milestone"])
@@ -159,6 +235,7 @@ class B1MilestoneSubdesignRules:
         violations.extend(self._check_behavior_test_in_sibling(sub_blocks))
         for sub_num, block in sub_blocks:
             violations.extend(self._check_sub_ac_contradiction(sub_num, block))
+        violations.extend(self._check_sub_execution_order_dep(body, sub_blocks))
         return violations
 
     def _check_sub_count(self, body: str) -> list[Violation]:
@@ -531,6 +608,50 @@ class B1MilestoneSubdesignRules:
                     fix_hint=(
                         "move the test into the same sub's change table as the impl,"
                         " or merge the two subs"
+                    ),
+                ))
+        return violations
+
+    def _check_sub_execution_order_dep(
+        self,
+        body: str,
+        sub_blocks: list[tuple[int, str]],
+    ) -> list[Violation]:
+        """Reject a sub whose design orders after sub M but the plan row omits #M."""
+        dep_map = _extract_sub_plan_dep_map(body)
+        if not dep_map:
+            return []
+
+        cfg = get_config()
+        sub_prefix = cfg.language.sub_header_prefix
+        plan_name = cfg.sections["sub_plan"]
+        dep_col = cfg.language.sub_plan_columns[4]
+        ac = cfg.sections["acceptance_criteria"]
+        order_re = _order_indicator_re(sub_prefix)
+
+        violations: list[Violation] = []
+        for sub_num, block in sub_blocks:
+            design_text = re.split(rf"\*\*{re.escape(ac)}\*\*", block, maxsplit=1)[0]
+            dep_raw = dep_map.get(sub_num, "")
+            for match in order_re.finditer(design_text):
+                ref_num = int(match.group(1))
+                if ref_num == sub_num:
+                    continue
+                if f"#{ref_num}" in dep_raw:
+                    continue
+                violations.append(Violation(
+                    rule_id="b1_milestone_subdesign.sub_execution_order_dep",
+                    severity="fail",
+                    message=(
+                        f"Sub {sub_num}: design text orders after Sub {ref_num}"
+                        f" but the {plan_name} row dependency column"
+                        f" ({dep_col}) does not include #{ref_num}"
+                    ),
+                    location=_sub_location(sub_num),
+                    auto_fixable=True,
+                    fix_hint=(
+                        f"### {plan_name} table Sub{sub_num} row:"
+                        f" add #{ref_num} to the {dep_col} column"
                     ),
                 ))
         return violations
