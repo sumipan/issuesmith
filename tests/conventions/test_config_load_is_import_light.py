@@ -17,7 +17,6 @@ from pathlib import Path
 import yaml
 
 from issuesmith.gates import GATE_REGISTRY
-from tests.conftest import NEXUS_TEST_PHASES
 from tests.conventions._util import REPO_ROOT
 
 
@@ -27,7 +26,6 @@ def _write_config(tmp_path: Path, requires: list[str], input_kind: str) -> Path:
         yaml.safe_dump(
             {
                 "repo": "example/repo",
-                "phases": NEXUS_TEST_PHASES,
                 "steps": {
                     "s1": {"module": "issuesmith.worktree", "requires": requires, "input_kind": input_kind}
                 },

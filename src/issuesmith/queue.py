@@ -22,7 +22,7 @@ from ghdag.forge import ForgePort, get_forge
 from ghdag.quota import QuotaGate
 
 from issuesmith.config import get_config
-from issuesmith.dep_extractor import check_dependencies, extract_dependencies, unparsed_dependency_refs
+from issuesmith.dep_extractor import check_dependencies
 from issuesmith.forge_api import api_request
 from issuesmith.gate_rules.scope_coupling import (
     deletion_references_for_body,
@@ -41,9 +41,7 @@ from issuesmith.queue_store import (
     in_flight_by_engine,
 )
 from issuesmith.queue_triage import (
-    DONE_LABEL,
     READY_LABEL,
-    RUNNING_LABEL,
     append_cas_conflict_log,
     append_circuit_open_log,
     apply_deterministic_order_constraints,

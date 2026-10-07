@@ -219,7 +219,8 @@ def test_sub_design_subsections_default_and_custom(tmp_path, monkeypatch):
 def test_terminal_labels_default(tmp_path, monkeypatch):
     _builtin_defaults(tmp_path, monkeypatch)
     cfg = load_config()
-    assert cfg.terminal_labels == ()
+    assert "issuesmith:merge-done" in cfg.terminal_labels
+    assert "bump:done" in cfg.terminal_labels
 
 
 def test_terminal_labels_custom(tmp_path, monkeypatch):
@@ -232,11 +233,7 @@ def test_terminal_labels_custom(tmp_path, monkeypatch):
         },
     )
     cfg = get_config()
-    assert cfg.terminal_labels == (
-        "issuesmith:merge-done",
-        "bump:done",
-        "custom:done",
-    )
+    assert cfg.terminal_labels == ("issuesmith:merge-done", "bump:done", "custom:done")
 
 
 def test_terminal_labels_unset_uses_default(tmp_path, monkeypatch):
@@ -246,4 +243,4 @@ def test_terminal_labels_unset_uses_default(tmp_path, monkeypatch):
         {"repo": "example/app"},
     )
     cfg = get_config()
-    assert cfg.terminal_labels == ()
+    assert cfg.terminal_labels == ("issuesmith:merge-done", "bump:done")

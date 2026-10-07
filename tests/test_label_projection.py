@@ -34,7 +34,7 @@ class TestFinalStepProjection:
 
     @pytest.mark.parametrize(
         ("step", "phase"),
-        [("b1", "draft"), ("sub1", "sub"), ("cp2", "develop"), ("m2-role-dispatch", "merge")],
+        [("b1", "draft"), ("sub-ready", "sub"), ("cp2", "develop"), ("m2", "merge")],
     )
     def test_entry_step_is_final_and_done_projects_phase_done(self, step, phase):
         from dataclasses import replace
@@ -50,11 +50,7 @@ class TestFinalStepProjection:
         current = [f"{ns}:{phase}-running", "scope:milestone"]
         state = state_from_labels(current, cfg)
         desired = project_state(replace(state, phases={**state.phases, phase: "done"}), cfg)
-        expected_add = [f"{ns}:{phase}-done"]
-        if phase in {"sub", "develop"}:
-            expected_add.append(f"{ns}:draft-done")
-        assert set(diff(current, desired, cfg)[0]) == set(expected_add)
-        assert diff(current, desired, cfg)[1] == [f"{ns}:{phase}-running"]
+        assert diff(current, desired, cfg) == ([f"{ns}:{phase}-done"], [f"{ns}:{phase}-running"])
 
     def test_declared_steps_make_only_the_last_one_final(self, tmp_path, monkeypatch):
         import yaml
@@ -67,20 +63,12 @@ class TestFinalStepProjection:
             yaml.safe_dump({
                 "repo": "sumipan/issuesmith",
                 "phases": [
-                    {
-                        "name": "draft",
-                        "role": "design",
-                        "entry_step": "b1",
-                        "handler": "brushup",
-                        "advance_when": ["deps_terminal"],
-                    },
+                    {"name": "draft", "role": "design", "entry_step": "b1"},
                     {
                         "name": "merge",
                         "role": "implementation",
                         "entry_step": "m2",
-                        "handler": "merge",
                         "steps": ["m1", "m2-role-dispatch"],
-                        "advance_when": ["deps_terminal", "closing_pr_exists"],
                     },
                 ],
             }),
@@ -101,7 +89,7 @@ class TestFinalStepProjection:
 # ---------------------------------------------------------------------------
 
 class TestMapStepResultLabelProjection:
-    """StepResult(done) of merge's final step projects merge-done."""
+    """StepResult(done) of ``m2`` (merge's final step by default) projects merge-done."""
 
     def _run(self) -> tuple[int, MagicMock]:
         from issuesmith.contract import StepResult
@@ -112,7 +100,7 @@ class TestMapStepResultLabelProjection:
         with patch("issuesmith.ops.dispatch.get_forge", return_value=forge):
             rc = map_step_result(
                 StepResult(status="done", markers=["MERGE_DONE"]),
-                step_id="m2-role-dispatch",
+                step_id="m2",
                 context={"issue_number": "42", "workflow_name": "issuesmith"},
             )
         return rc, forge
@@ -148,28 +136,14 @@ class TestProjectPreservePreconditions:
             yaml.safe_dump({
                 "repo": "sumipan/issuesmith",
                 "phases": [
-                    {
-                        "name": "draft",
-                        "role": "design",
-                        "entry_step": "b1",
-                        "handler": "brushup",
-                        "advance_when": ["deps_terminal"],
-                    },
+                    {"name": "draft", "role": "design", "entry_step": "b1"},
                     {
                         "name": "develop",
                         "role": "implementation",
                         "entry_step": "cp2",
-                        "handler": "impl",
                         "preconditions": ["draft-done"],
-                        "advance_when": ["deps_terminal"],
                     },
-                    {
-                        "name": "merge",
-                        "role": "implementation",
-                        "entry_step": "m2",
-                        "handler": "merge",
-                        "advance_when": ["deps_terminal", "closing_pr_exists"],
-                    },
+                    {"name": "merge", "role": "implementation", "entry_step": "m2"},
                 ],
             }),
             encoding="utf-8",
@@ -228,27 +202,9 @@ class TestProjectPreservePreconditions:
             yaml.safe_dump({
                 "repo": "sumipan/issuesmith",
                 "phases": [
-                    {
-                        "name": "draft",
-                        "role": "design",
-                        "entry_step": "b1",
-                        "handler": "brushup",
-                        "advance_when": ["deps_terminal"],
-                    },
-                    {
-                        "name": "develop",
-                        "role": "implementation",
-                        "entry_step": "cp2",
-                        "handler": "impl",
-                        "advance_when": ["deps_terminal"],
-                    },
-                    {
-                        "name": "merge",
-                        "role": "implementation",
-                        "entry_step": "m2",
-                        "handler": "merge",
-                        "advance_when": ["deps_terminal", "closing_pr_exists"],
-                    },
+                    {"name": "draft", "role": "design", "entry_step": "b1"},
+                    {"name": "develop", "role": "implementation", "entry_step": "cp2"},
+                    {"name": "merge", "role": "implementation", "entry_step": "m2"},
                 ],
             }),
             encoding="utf-8",

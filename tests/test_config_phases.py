@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 from issuesmith import engine
-from issuesmith.config import ConfigError, PhaseConfig, get_config, load_config, reset_config_cache
+from issuesmith.config import ConfigError, get_config, load_config, reset_config_cache
 from tests.conftest import NEXUS_TEST_PHASES
 
 

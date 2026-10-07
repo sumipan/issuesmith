@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING
 
 from ghdag.forge import get_forge
 
-from issuesmith import queue as queue_module
 from issuesmith.config import get_config
 from issuesmith.queue import apply_redispatch_labels, handler_for_failed_step
 from issuesmith.queue_store import QueueStore

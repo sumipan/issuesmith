@@ -35,27 +35,19 @@ def _write_config(tmp_path: Path, monkeypatch, payload: dict) -> Path:
 
 
 def _minimal_config(tmp_path: Path, monkeypatch, **metrics_kwargs) -> None:
-    from tests.conftest import NEXUS_TEST_PHASES
-
-    payload = {"repo": "example/app", "timezone": "Asia/Tokyo", "phases": NEXUS_TEST_PHASES}
+    payload = {"repo": "example/app", "timezone": "Asia/Tokyo"}
     if metrics_kwargs:
         payload["metrics"] = metrics_kwargs
     _write_config(tmp_path, monkeypatch, payload)
 
 
 def _run_cli(*args: str, cwd: Path = REPO_ROOT) -> subprocess.CompletedProcess[str]:
-    import os
-
-    env = {**os.environ, "PYTHONPATH": str(REPO_ROOT / "src")}
-    cfg_path = cwd / "issuesmith.yaml"
-    if cfg_path.is_file():
-        env["ISSUESMITH_CONFIG"] = str(cfg_path)
     return subprocess.run(
         [sys.executable, "-m", "issuesmith", "metrics", "rework", *args],
         cwd=str(cwd),
         capture_output=True,
         text=True,
-        env=env,
+        env={**dict(__import__("os").environ), "PYTHONPATH": str(REPO_ROOT / "src")},
     )
 
 

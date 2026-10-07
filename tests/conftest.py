@@ -92,7 +92,7 @@ os.environ["ISSUESMITH_CONFIG"] = str(_TEST_CONFIG_PATH)
 
 import issuesmith.config as config_module  # noqa: E402
 from issuesmith.language import EN  # noqa: E402
-from tests import legacy_text
+from tests import legacy_text  # noqa: E402
 
 _ENGLISH_SECTIONS = dict(EN.sections)
 _ENGLISH_SUBSECTIONS = EN.sub_design_subsections

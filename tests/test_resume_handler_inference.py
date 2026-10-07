@@ -13,7 +13,6 @@ import pytest
 
 import issuesmith.config as config_module
 from issuesmith.config import _build_config
-from tests.conftest import NEXUS_TEST_PHASES
 
 _ISSUE = 3762
 _WORKFLOW = "issuesmith"
@@ -50,14 +49,7 @@ def _fs(tmp_path: Path, records: list[dict]):
         (jobs / f"20260925000000-shell-order-{rec['uuid']}.md").write_text(
             rec["command"], encoding="utf-8"
         )
-    cfg = _build_config(
-        {
-            "repo": "sumipan/nexus",
-            "workflow": "issuesmith.yaml",
-            "phases": NEXUS_TEST_PHASES,
-        },
-        root=tmp_path,
-    )
+    cfg = _build_config({"repo": "sumipan/nexus", "workflow": "issuesmith.yaml"}, root=tmp_path)
     return jobs, cfg
 
 

@@ -130,15 +130,11 @@ def test_retry_projects_waiting_and_next_start_clears_it(gate, monkeypatch, caps
     sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=None, role="implementation")
     with patch("issuesmith.ops.dispatch.get_forge", return_value=forge):
         dispatch_mod._handle_retry_signal(sig, "cp2", 42, quota_gate=gate, task_uuid="t-1")
-        assert forge.labels == {
-            f"{ns}:draft-done",
-            f"{ns}:develop-running",
-            f"{ns}:waiting",
-        }
+        assert forge.labels == {f"{ns}:develop-running", f"{ns}:waiting"}
 
         with patch("issuesmith.ops.dispatch._try_python_step", return_value=0):
             assert dispatch_mod.main(["cp2", "issue_number=42"]) == 0
-    assert forge.labels == {f"{ns}:draft-done", f"{ns}:develop-running"}
+    assert forge.labels == {f"{ns}:develop-running"}
     assert "PIPELINE_STATUS: DEFERRED" in capsys.readouterr().out
 
 
