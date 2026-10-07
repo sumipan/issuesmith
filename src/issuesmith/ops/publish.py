@@ -381,6 +381,42 @@ def _resolve_changelog_conflicts(changelog_path: Path) -> bool:
     return True
 
 
+# Transient fetch failures (shared .git ref lock, network) are retried before
+# giving up (sumipan/nexus#4747). Delays in seconds between attempts.
+_FETCH_RETRY_DELAYS: tuple[float, ...] = (2.0, 5.0)
+
+
+def _fetch_failure_detail(
+    returncode: int, stderr: str | None, stdout: str | None, base_branch: str
+) -> str:
+    return (stderr or "").strip() or (stdout or "").strip() or (
+        f"git fetch origin {base_branch} failed with exit {returncode}"
+    )
+
+
+def _fetch_with_retry(worktree: Path, base_branch: str) -> PublishResult | None:
+    """``git fetch origin <base>`` with backoff; ``FETCH_FAILED`` once retries run out."""
+    attempts = len(_FETCH_RETRY_DELAYS) + 1
+    detail = ""
+    for attempt in range(1, attempts + 1):
+        try:
+            fetched = _run_git(worktree, "fetch", "origin", base_branch)
+            returncode, stderr, stdout = fetched.returncode, fetched.stderr, fetched.stdout
+        except subprocess.CalledProcessError as exc:
+            returncode, stderr, stdout = exc.returncode, exc.stderr, exc.output
+        if returncode == 0:
+            return None
+        detail = _fetch_failure_detail(returncode, stderr, stdout, base_branch)
+        if attempt == attempts:
+            break
+        print(
+            f"git fetch failed (attempt {attempt}/{attempts}): {detail[-300:]}",
+            file=sys.stderr,
+        )
+        time.sleep(_FETCH_RETRY_DELAYS[attempt - 1])
+    return PublishResult(status="FETCH_FAILED", stderr=detail, exit_code=1)
+
+
 def _ensure_rebased(
     worktree: Path,
     base_branch: str,
@@ -388,13 +424,15 @@ def _ensure_rebased(
 ) -> PublishResult | None:
     """fetch + rebase onto origin/<base> when HEAD is behind (#3221 / #3227).
 
-    Returns None on success, PublishResult on failure (``DIRTY_WORKTREE`` or
-    ``REBASE_CONFLICT``). Before rebasing, discards RUNTIME_DIR_EXCLUDES dirt
+    Returns None on success, PublishResult on failure (``FETCH_FAILED``,
+    ``DIRTY_WORKTREE`` or ``REBASE_CONFLICT``). Before rebasing, discards RUNTIME_DIR_EXCLUDES dirt
     that is outside allow_paths so nexus worktrees can rebase past jobs/chat
     noise.
     """
     paths = allow_paths or []
-    _run_git(worktree, "fetch", "origin", base_branch)
+    fetch_fail = _fetch_with_retry(worktree, base_branch)
+    if fetch_fail is not None:
+        return fetch_fail
     ancestor = _run_git(
         worktree,
         "merge-base",
@@ -639,16 +677,25 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str]) -> int:
     args = _parse_args(argv)
-    result = publish(
-        issue_number=args.issue,
-        branch=args.branch,
-        base_branch=args.base,
-        worktree=Path(args.worktree),
-        repo=args.repo,
-        issue_repo=args.issue_repo,
-        allow_paths=_parse_allow_paths(args.allow_paths),
-        target_count=args.target_count,
-    )
+    try:
+        result = publish(
+            issue_number=args.issue,
+            branch=args.branch,
+            base_branch=args.base,
+            worktree=Path(args.worktree),
+            repo=args.repo,
+            issue_repo=args.issue_repo,
+            allow_paths=_parse_allow_paths(args.allow_paths),
+            target_count=args.target_count,
+        )
+    except subprocess.CalledProcessError as exc:
+        # Keep git's own diagnosis instead of a bare traceback (sumipan/nexus#4747).
+        cmd = " ".join(exc.cmd) if isinstance(exc.cmd, (list, tuple)) else str(exc.cmd)
+        print(f"command failed with exit {exc.returncode}: {cmd}", file=sys.stderr)
+        for stream in (exc.stderr, exc.output):
+            if stream and stream.strip():
+                print(stream.strip(), file=sys.stderr)
+        return 1
 
     if result.stderr:
         print(result.stderr, file=sys.stderr)
