@@ -60,6 +60,9 @@ class LanguagePack:
     dependencies_table_header: str
     # H2 heading of the out-of-scope section.
     out_of_scope_heading: str
+    # Words in sub design text that order a sub after another sub's completion
+    # (``b1_milestone_subdesign.sub_order_without_dependency``).
+    order_after_words: tuple[str, ...]
 
     # --- GitHub-posted text ----------------------------------------------------
     # ``<module>.<id>`` -> ``str.format`` template with keyword placeholders.
@@ -421,6 +424,7 @@ EN = LanguagePack(
     parent_issue_label="Parent issue",
     dependencies_table_header="| # | Dependency | State |",
     out_of_scope_heading="Out of Scope",
+    order_after_words=("after", "once", "depends on"),
     messages=dict(_EN_MESSAGES),
 )
 

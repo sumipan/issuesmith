@@ -515,6 +515,7 @@ The pack file is a YAML mapping whose keys are `LanguagePack` field names. **Fie
 | `parent_issue_label` | string | `Parent issue` |
 | `dependencies_table_header` | string | `\| # \| Dependency \| State \|` |
 | `out_of_scope_heading` | string | `Out of Scope` |
+| `order_after_words` | list | `after`, `once`, `depends on`: words in sub design text that order a sub after another sub's completion |
 | `messages` | mapping | GitHub-posted text keyed `<module>.<id>`; `str.format` templates with keyword placeholders. Copy the keys from `EN.messages` |
 
 Logs, exception messages, CLI help and stderr, and violation `message` / `fix_hint` text stay English and are not part of a pack. Machine markers (HTML comments, `PIPELINE_STATUS:` lines, `Refs #N`) are added outside the templates.
