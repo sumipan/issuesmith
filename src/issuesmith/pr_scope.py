@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
+import posixpath
 import re
 import sys
 import urllib.parse
@@ -29,6 +30,27 @@ _DERIVED_ENTRY_RE = re.compile(r"^[^\s/][^\s]*$|^[a-zA-Z0-9_./\-*]+\*\*$")
 
 class DerivedAllowPathsError(ValueError):
     """Raised when ``derived_allow_paths_from_result`` finds malformed entries."""
+
+
+def _strip_path(path: str) -> str:
+    """Strip leading ``./`` and apply ``posixpath.normpath`` (no validation)."""
+    stripped = path.strip()
+    while stripped.startswith("./"):
+        stripped = stripped[2:]
+    return posixpath.normpath(stripped) if stripped else stripped
+
+
+def normalize_allow_path(path: str) -> str:
+    """Normalize a repo-relative allow path; reject empty, ``.``, absolute or ``..`` paths (#4813)."""
+    normalized = _strip_path(path)
+    if (
+        not normalized
+        or normalized == "."
+        or normalized.startswith("/")
+        or ".." in path.strip().split("/")
+    ):
+        raise ValueError(f"invalid allow path: {path!r}")
+    return normalized
 
 
 def _is_fixture_path(filename: str) -> bool:
@@ -94,16 +116,20 @@ def check_pr_diff_scope(
     if forbidden_patterns is None:
         forbidden_patterns = list(get_config().forbidden_pr_paths)
 
+    # Normalize both sides before matching so ``./CHANGELOG.md`` matches
+    # ``CHANGELOG.md`` (#4813). Violations keep the original diff filename.
+    allow_paths = [_strip_path(p) for p in allow_paths]
     by_name = _entries_by_filename(file_entries)
     violations: list[Violation] = []
     for filename in filenames:
-        if _is_publish_only_change(filename, by_name.get(filename)):
+        name = _strip_path(filename)
+        if _is_publish_only_change(name, by_name.get(filename)):
             continue
 
-        is_fixture = _is_fixture_path(filename)
+        is_fixture = _is_fixture_path(name)
         if not is_fixture:
             matched_forbidden = next(
-                (pat for pat in forbidden_patterns if fnmatch.fnmatch(filename, pat)),
+                (pat for pat in forbidden_patterns if fnmatch.fnmatch(name, pat)),
                 None,
             )
             if matched_forbidden is not None:
@@ -123,7 +149,7 @@ def check_pr_diff_scope(
                 continue
 
         if allow_paths and not any(
-            fnmatch.fnmatch(filename, pat) for pat in allow_paths
+            fnmatch.fnmatch(name, pat) for pat in allow_paths
         ):
             violations.append(
                 Violation(
@@ -323,11 +349,17 @@ def unchecked_ac_count(body: str) -> int:
     return get_unchecked_count(body)
 
 
-def _validate_derived_entry(entry: str) -> None:
-    if not entry or entry.startswith("/") or ".." in entry.split("/"):
-        raise DerivedAllowPathsError(f"invalid derived_allow_paths entry: {entry!r}")
+def _validate_derived_entry(entry: str) -> str:
+    """Validate and normalize a derived entry with the same rules as ``allow_paths``."""
+    try:
+        normalized = normalize_allow_path(entry)
+    except ValueError:
+        raise DerivedAllowPathsError(
+            f"invalid derived_allow_paths entry: {entry!r}"
+        ) from None
     if not _DERIVED_ENTRY_RE.match(entry):
         raise DerivedAllowPathsError(f"invalid derived_allow_paths entry: {entry!r}")
+    return normalized
 
 
 def derived_allow_paths_from_result(path: Path | str) -> list[str]:
@@ -352,15 +384,18 @@ def derived_allow_paths_from_result(path: Path | str) -> list[str]:
             stripped = line.strip()
             if line.startswith("  - ") and stripped[2:].strip():
                 entry = stripped[2:].strip()
-                _validate_derived_entry(entry)
-                derived.append(entry)
+                derived.append(_validate_derived_entry(entry))
                 continue
             in_block = False
     return derived
 
 
 def allow_paths_from_issue_body(body: str) -> list[str]:
-    """Extract ``allow_paths`` from issue YAML metadata."""
+    """Extract normalized ``allow_paths`` from issue YAML metadata.
+
+    Entries are normalized via ``normalize_allow_path``; invalid entries
+    (empty, ``.``, absolute, ``..``) raise ``ValueError`` (#4813).
+    """
     try:
         meta = parse_issue_metadata(body)
     except ValueError:
@@ -370,7 +405,9 @@ def allow_paths_from_issue_body(body: str) -> list[str]:
         raw = [raw]
     if not isinstance(raw, list):
         return []
-    return [str(p) for p in raw if p is not None and str(p).strip()]
+    return [
+        normalize_allow_path(str(p)) for p in raw if p is not None and str(p).strip()
+    ]
 
 
 def check_pr_scope_with_derived(
@@ -419,6 +456,7 @@ __all__ = [
     "derived_allow_paths_from_result",
     "filenames_from_pr_files",
     "find_pr_for_branch",
+    "normalize_allow_path",
     "pr_diff_lines",
     "unchecked_ac_count",
 ]
