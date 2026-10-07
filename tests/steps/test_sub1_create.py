@@ -1,4 +1,4 @@
-"""Fixture tests for issuesmith.milestone SUB1 API and steps.sub1_create shim (#3166 / #4276).
+"""Fixture tests for issuesmith.milestone SUB1 API (#3166 / #4276).
 
 Issue create fixtures were captured 2026-09-13 from live GitHub REST via
 ``GitHubClient`` (CLAUDE.md §10):
@@ -29,10 +29,12 @@ from tests.legacy_text import (
 
 from issuesmith.config import get_config as _real_get_config
 from issuesmith.config import reset_config_cache
+from issuesmith.contract import StepContext
 from issuesmith.engine import RoleSelection, _extract_status_values
 from issuesmith.language import EN
 from issuesmith.milestone import (
     PlanRow,
+    Sub1State,
     allow_paths_for_row,
     build_child_body,
     check_v1_target_repo,
@@ -45,8 +47,6 @@ from issuesmith.milestone import (
     run_sub1_create,
     validate_children,
 )
-from issuesmith.steps import sub1_create as sub1
-from issuesmith.steps.base import StepContext
 
 # Split-plan / section vocabulary comes from the language pack (EN in tests); the
 # sub-header prefix and change-table columns still use the legacy test pack (conftest).
@@ -166,14 +166,6 @@ def test_milestone_public_api_exports_sub1_helpers() -> None:
     assert callable(run_sub1_create)
 
 
-def test_sub1_shim_run_delegates_to_milestone() -> None:
-    ctx = _ctx()
-    with patch("issuesmith.steps.sub1_create.run_sub1_create") as mock_run:
-        mock_run.return_value = MagicMock(exit_code=0, pipeline_status="SUB_CREATED")
-        sub1.run(ctx)
-    mock_run.assert_called_once()
-
-
 def test_issue_create_fixtures_are_real_strings() -> None:
     success = json.loads(ISSUE_CREATE_SUCCESS_JSON)
     assert success["number"] == 3000
@@ -186,12 +178,13 @@ def test_create_issue_success_returns_number_from_real_shape() -> None:
     client = MagicMock()
     payload = json.loads(ISSUE_CREATE_SUCCESS_JSON)
     client.issue_create.return_value = int(payload["number"])
-    number = sub1._create_child_issue(
-        client,
-        title="t",
-        body="b",
-        labels=["issuesmith:draft-done"],
-        milestone=None,
+    number = int(
+        client.issue_create(
+            "t",
+            "b",
+            labels=["issuesmith:draft-done"],
+            milestone=None,
+        )
     )
     assert number == 3000
     client.issue_create.assert_called_once()
@@ -201,7 +194,7 @@ def test_create_issue_failure_propagates_real_error_message() -> None:
     client = MagicMock()
     client.issue_create.side_effect = RuntimeError(ISSUE_CREATE_FAILURE_MESSAGE)
     with pytest.raises(RuntimeError, match="422.*Validation Failed"):
-        sub1._create_child_issue(client, title="", body="x", labels=None, milestone=None)
+        client.issue_create("", "x", labels=None, milestone=None)
 
 
 @pytest.mark.parametrize("engine", ["claude", "cursor", "codex"])
@@ -253,7 +246,7 @@ def test_v1_v2_v3_helpers_used_by_validate_children_and_sub1() -> None:
         assert v1.called and v2.called and v3.called
 
     # ASCII fixture data.
-    failures = sub1._prevalidate_child_body(
+    failures = prevalidate_child_body(
         body=child_body,
         row_repo="sumipan/nexus",
         parent_issue_number=100,
@@ -276,7 +269,7 @@ def test_v1_v2_v3_helpers_used_by_validate_children_and_sub1() -> None:
             wraps=check_v3_cjk_placeholders,
         ) as sv3,
     ):
-        sub1._prevalidate_child_body(
+        prevalidate_child_body(
             body=child_body,
             row_repo="sumipan/nexus",
             parent_issue_number=100,
@@ -285,78 +278,6 @@ def test_v1_v2_v3_helpers_used_by_validate_children_and_sub1() -> None:
             supported=frozenset({"sumipan/nexus"}),
         )
         assert sv1.called and sv2.called and sv3.called
-
-
-def test_prevalidate_child_body_rejects_scope_breadth_too_large() -> None:
-    """V6: scope_breadth.too_large adds a failure and skips sub issue creation."""
-    from ghdag.workflow.gates import Violation
-
-    child_body = (
-        _yaml("sumipan/nexus", ["src/**", "tests/**"])
-        + "\n**Changed Files**:\n"
-        f"| {_CHANGE_TABLE_HEADER} |\n"
-        "|---|---|---|---|\n"
-        f"| `sumipan/nexus` | `src/a.py` | {MODIFY} | x |\n"
-    )
-    client = MagicMock()
-    client.issue_get.return_value = {"number": 101}
-
-    scope_violation = Violation(
-        rule_id="scope_breadth.too_large",
-        severity="fail",
-        message="allow_paths scope too large (lines: 21490 > 20000).",
-        location=None,
-        auto_fixable=False,
-        fix_hint=None,
-    )
-
-    with patch("issuesmith.steps.sub1_create.ScopeBreadthRules") as mock_rules_cls:
-        mock_rules_cls.return_value.check.return_value = [scope_violation]
-        failures = sub1._prevalidate_child_body(
-            body=child_body,
-            row_repo="sumipan/nexus",
-            parent_issue_number=100,
-            resolved_dep=NONE,
-            client=client,
-            supported=frozenset({"sumipan/nexus"}),
-        )
-
-    assert len(failures) == 1
-    assert failures[0].startswith("V6: scope_breadth.too_large:")
-    assert "21490" in failures[0]
-
-
-def test_prevalidate_child_body_passes_when_scope_within_limit() -> None:
-    """V6 does not fire when scope_breadth is within limits."""
-    child_body = (
-        _yaml("sumipan/nexus", ["src/a.py"])
-        + "\n**Changed Files**:\n"
-        f"| {_CHANGE_TABLE_HEADER} |\n"
-        "|---|---|---|---|\n"
-        f"| `sumipan/nexus` | `src/a.py` | {MODIFY} | x |\n"
-    )
-    client = MagicMock()
-    client.issue_get.return_value = {"number": 101}
-
-    with patch("issuesmith.steps.sub1_create.ScopeBreadthRules") as mock_rules_cls:
-        mock_rules_cls.return_value.check.return_value = []
-        failures = sub1._prevalidate_child_body(
-            body=child_body,
-            row_repo="sumipan/nexus",
-            parent_issue_number=100,
-            resolved_dep=NONE,
-            client=client,
-            supported=frozenset({"sumipan/nexus"}),
-        )
-
-    assert failures == []
-
-
-def test_prevalidate_child_body_patched_on_milestone_module() -> None:
-    """sub1_create shim replaces milestone.prevalidate_child_body for SUB1 flow."""
-    import issuesmith.milestone as milestone
-
-    assert milestone.prevalidate_child_body is sub1.prevalidate_child_body
 
 
 def test_parse_plan_table_by_header_names_not_column_order() -> None:
@@ -368,7 +289,7 @@ def test_parse_plan_table_by_header_names_not_column_order() -> None:
         "|------|------|----------|---|----------------|\n"
         f"| {NONE} | scope | my title | 2 | `sumipan/ghdag` |\n"
     )
-    rows, has_repo = sub1._parse_split_plan(body, parent_target_repo="sumipan/nexus")
+    rows, has_repo = parse_split_plan(body, parent_target_repo="sumipan/nexus")
     assert has_repo is True
     assert len(rows) == 1
     assert rows[0].row_num == 2
@@ -387,7 +308,7 @@ def test_four_column_plan_falls_back_to_parent_target_repo() -> None:
         "|---|--------|------|------|\n"
         f"| 1 | t | c | {NONE} |\n"
     )
-    rows, has_repo = sub1._parse_split_plan(body, parent_target_repo="sumipan/nexus")
+    rows, has_repo = parse_split_plan(body, parent_target_repo="sumipan/nexus")
     assert has_repo is False
     assert rows[0].repo == "sumipan/nexus"
 
@@ -453,7 +374,7 @@ def test_run_creates_child_and_returns_sub_created() -> None:
             "changed_files": "Changed Files",
             "dependencies": "Dependencies",
         }
-        result = sub1.run(_ctx())
+        result = run_sub1_create(_ctx())
 
     assert result.exit_code == 0
     assert result.pipeline_status == "SUB_CREATED"
@@ -524,7 +445,7 @@ def test_run_auto_creates_milestone_when_unset() -> None:
             "changed_files": "Changed Files",
             "dependencies": "Dependencies",
         }
-        result = sub1.run(_ctx())
+        result = run_sub1_create(_ctx())
 
     assert result.exit_code == 0
     assert result.pipeline_status == "SUB_CREATED"
@@ -574,7 +495,7 @@ def test_run_all_rows_fail_validation_exits_nonzero() -> None:
             "changed_files": "Changed Files",
             "dependencies": "Dependencies",
         }
-        result = sub1.run(_ctx())
+        result = run_sub1_create(_ctx())
 
     assert result.exit_code == 1
     assert result.pipeline_status == "IMPL_FAILED"
@@ -583,9 +504,9 @@ def test_run_all_rows_fail_validation_exits_nonzero() -> None:
 
 def test_resolve_dependencies_replaces_refs_token_wise() -> None:
     """Regression: after "#2" -> "#3382", "#3" must not match inside "#3382" (was "#3383382")."""
-    state = sub1.Sub1State()
+    state = Sub1State()
     client = MagicMock()
-    out = sub1._resolve_dependencies(
+    out = resolve_dependencies(
         "#2, #3",
         table_row_count=8,
         row_to_issue={2: 3382, 3: 3383},
@@ -598,10 +519,10 @@ def test_resolve_dependencies_replaces_refs_token_wise() -> None:
 
 
 def test_resolve_dependencies_keeps_forward_ref_and_drops_milestone() -> None:
-    state = sub1.Sub1State()
+    state = Sub1State()
     client = MagicMock()
     client.issue_get.return_value = {"labels": [{"name": "scope:milestone"}]}
-    out = sub1._resolve_dependencies(
+    out = resolve_dependencies(
         "#1, #7, #3301",
         table_row_count=8,
         row_to_issue={1: 3381},
@@ -680,7 +601,7 @@ def test_run_guarded_body_value_error_exits_nonzero(capsys) -> None:
         cfg.return_value.language = _real_get_config().language
         _cfg_mock(cfg)
         with pytest.raises(SystemExit) as exc_info:
-            sub1.run(_ctx())
+            run_sub1_create(_ctx())
 
     assert exc_info.value.code != 0
     captured = capsys.readouterr()
@@ -748,7 +669,7 @@ def test_run_guarded_body_timeout_warns_and_continues(capsys) -> None:
     ):
         cfg.return_value.language = _real_get_config().language
         _cfg_mock(cfg)
-        sub1.run(_ctx())
+        run_sub1_create(_ctx())
 
     captured = capsys.readouterr()
     assert "WARN" in captured.err
@@ -775,7 +696,7 @@ def test_run_all_rows_guarded_body_fail_exits_nonzero(capsys) -> None:
         cfg.return_value.language = _real_get_config().language
         _cfg_mock(cfg)
         with pytest.raises(SystemExit) as exc_info:
-            sub1.run(_ctx())
+            run_sub1_create(_ctx())
 
     assert exc_info.value.code != 0
 
@@ -891,7 +812,7 @@ def test_run_row_with_unreadable_change_table_creates_no_child() -> None:
             "changed_files": "Changed Files",
             "dependencies": "Dependencies",
         }
-        result = sub1.run(_ctx())
+        result = run_sub1_create(_ctx())
     assert result.exit_code == 1
     assert result.pipeline_status == "IMPL_FAILED"
     client.issue_create.assert_not_called()
