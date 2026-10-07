@@ -2,8 +2,9 @@
 
 Verifies that _execute() raises RetrySignal immediately when engines are
 paused (removing the 6h wait loop), and that dispatch.main() catches it
-to register a defer via QuotaGate.defer, apply the <ns>:waiting label, and
-return exit code 0 (no DEP_FAILED).
+to register a defer via QuotaGate.defer, project the <ns>:waiting label (asserted
+as the net add / remove label diff, not forge call counts), and return exit
+code 0 (no DEP_FAILED).
 
 claude / cursor / codex adapters all produce the same RetrySignal (parent AC-7).
 """
@@ -268,14 +269,70 @@ class TestEngineEnvironmentError:
 
 # ==================== dispatch.main() handles RetrySignal ====================
 
+try:  # contract constant for the waiting-state label suffix (parent #4788)
+    from issuesmith.contract import WAITING as _WAITING_SUFFIX
+except ImportError:  # pragma: no cover - until the contract constant lands
+    _WAITING_SUFFIX = "waiting"
+
+_NS = "issuesmith"
+_UNMANAGED = "scope:docs"
+
+
+class _FakeForge:
+    """In-memory forge: records label state so tests assert on the projected diff.
+
+    Assertions use the net add / remove sets between the initial and final label
+    state of each issue, not how many times (or through which API) labels changed.
+    """
+
+    def __init__(self) -> None:
+        self._initial: dict[int, set[str]] = {}
+        self._labels: dict[int, set[str]] = {}
+        self._other = MagicMock()
+
+    def seed(self, issue_number: int, labels: set[str]) -> None:
+        self._initial[issue_number] = set(labels)
+        self._labels[issue_number] = set(labels)
+
+    def _current(self, issue_number: int) -> set[str]:
+        self._initial.setdefault(issue_number, set())
+        return self._labels.setdefault(issue_number, set())
+
+    def add_label(self, issue_number, label, *args, **kwargs):
+        self._current(issue_number).add(label)
+
+    def remove_label(self, issue_number, label, *args, **kwargs):
+        self._current(issue_number).discard(label)
+
+    def issue_update(self, issue_number, *args, labels_add=None, labels_remove=None, **kwargs):
+        current = self._current(issue_number)
+        current.update(labels_add or ())
+        current.difference_update(labels_remove or ())
+
+    def issue_get(self, issue_number, *args, **kwargs):
+        names = sorted(self._current(issue_number))
+        return {"number": issue_number, "labels": [{"name": n} for n in names]}
+
+    def diff(self, issue_number: int) -> tuple[set[str], set[str]]:
+        initial = self._initial.get(issue_number, set())
+        final = self._labels.get(issue_number, set())
+        return final - initial, initial - final
+
+    def touched(self) -> set[int]:
+        return {n for n in self._labels if self.diff(n) != (set(), set())}
+
+    def __getattr__(self, name):
+        return getattr(self._other, name)
+
+
 @pytest.fixture
 def dispatch_mocks(monkeypatch, tmp_path):
     from issuesmith.ops import dispatch
 
     quota_gate_mock = MagicMock()
-    forge_mock = MagicMock()
+    forge = _FakeForge()
     cfg_mock = MagicMock()
-    cfg_mock.label_namespace = "issuesmith"
+    cfg_mock.label_namespace = _NS
     cfg_mock.paths.quota_state = tmp_path / "quota.json"
 
     monkeypatch.setattr(dispatch, "_STEP_MODULES", {})
@@ -285,7 +342,7 @@ def dispatch_mocks(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         "issuesmith.ops.dispatch.get_forge",
-        MagicMock(return_value=forge_mock),
+        MagicMock(return_value=forge),
     )
     monkeypatch.setattr(
         "issuesmith.ops.dispatch.get_config",
@@ -294,9 +351,13 @@ def dispatch_mocks(monkeypatch, tmp_path):
     return {
         "dispatch": dispatch,
         "quota_gate": quota_gate_mock,
-        "forge": forge_mock,
+        "forge": forge,
         "cfg": cfg_mock,
     }
+
+
+def _waiting_label(cfg) -> str:
+    return f"{cfg.label_namespace}:{_WAITING_SUFFIX}"
 
 
 class TestDispatchHandlesRetrySignal:
@@ -330,37 +391,74 @@ class TestDispatchHandlesRetrySignal:
         )
         assert "PIPELINE_STATUS: DEFERRED" in capsys.readouterr().out
 
-    def test_applies_waiting_label(self, dispatch_mocks, monkeypatch):
+    def test_retry_projects_waiting_add(self, dispatch_mocks, monkeypatch):
+        """retry / defer input → projected diff adds <ns>:waiting."""
         dispatch = dispatch_mocks["dispatch"]
+        forge = dispatch_mocks["forge"]
+        waiting = _waiting_label(dispatch_mocks["cfg"])
+        forge.seed(42, {_UNMANAGED})
         sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=None, role="design")
         monkeypatch.setattr(dispatch, "_try_python_step", MagicMock(side_effect=sig))
 
         dispatch.main(["test-step", "issue_number=42"])
 
-        dispatch_mocks["forge"].issue_update.assert_called_with(
-            42, labels_add=["issuesmith:waiting"]
-        )
+        add, remove = forge.diff(42)
+        assert add == {waiting}
+        assert remove == set()
 
-    def test_removes_waiting_label_on_normal_rerun(self, dispatch_mocks, monkeypatch):
-        """On normal step execution (no RetrySignal), waiting label is removed at start."""
+    def test_retry_while_already_waiting_keeps_waiting(self, dispatch_mocks, monkeypatch):
+        """Deferred again while waiting → waiting stays on, unmanaged labels untouched."""
         dispatch = dispatch_mocks["dispatch"]
+        forge = dispatch_mocks["forge"]
+        waiting = _waiting_label(dispatch_mocks["cfg"])
+        forge.seed(42, {waiting, _UNMANAGED})
+        sig = RetrySignal(reason=RetryReason.RATE_LIMITED, after=None, role="design")
+        monkeypatch.setattr(dispatch, "_try_python_step", MagicMock(side_effect=sig))
+
+        dispatch.main(["test-step", "issue_number=42"])
+
+        add, remove = forge.diff(42)
+        assert waiting not in remove
+        assert _UNMANAGED not in remove
+        assert forge.issue_get(42)["labels"] == [
+            {"name": n} for n in sorted({waiting, _UNMANAGED})
+        ]
+
+    def test_step_start_projects_waiting_remove(self, dispatch_mocks, monkeypatch):
+        """Next step start (no RetrySignal) → projected diff removes <ns>:waiting."""
+        dispatch = dispatch_mocks["dispatch"]
+        forge = dispatch_mocks["forge"]
+        waiting = _waiting_label(dispatch_mocks["cfg"])
+        forge.seed(42, {waiting, _UNMANAGED})
         monkeypatch.setattr(dispatch, "_try_python_step", MagicMock(return_value=0))
 
         dispatch.main(["test-step", "issue_number=42"])
 
-        dispatch_mocks["forge"].remove_label.assert_called_with(
-            42, "issuesmith:waiting"
-        )
+        add, remove = forge.diff(42)
+        assert add == set()
+        assert remove == {waiting}
+        assert _UNMANAGED not in remove
+
+    def test_step_start_without_waiting_has_empty_diff(self, dispatch_mocks, monkeypatch):
+        """Step start on an issue that is not waiting → no projected label change."""
+        dispatch = dispatch_mocks["dispatch"]
+        forge = dispatch_mocks["forge"]
+        forge.seed(42, {_UNMANAGED})
+        monkeypatch.setattr(dispatch, "_try_python_step", MagicMock(return_value=0))
+
+        dispatch.main(["test-step", "issue_number=42"])
+
+        assert forge.diff(42) == (set(), set())
 
     def test_no_issue_number_skips_label_ops(self, dispatch_mocks, monkeypatch):
-        """When context has no issue_number, label operations are skipped."""
+        """When context has no issue_number, no label diff is projected."""
         dispatch = dispatch_mocks["dispatch"]
         monkeypatch.setattr(dispatch, "_try_python_step", MagicMock(return_value=0))
 
         rc = dispatch.main(["test-step"])
 
         assert rc == 0
-        dispatch_mocks["forge"].remove_label.assert_not_called()
+        assert dispatch_mocks["forge"].touched() == set()
 
     def test_retry_signal_without_issue_number_still_returns_0(
         self, dispatch_mocks, monkeypatch
@@ -371,3 +469,4 @@ class TestDispatchHandlesRetrySignal:
 
         rc = dispatch.main(["test-step"])
         assert rc == 0
+        assert dispatch_mocks["forge"].touched() == set()
