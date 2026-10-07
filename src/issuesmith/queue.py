@@ -1337,7 +1337,6 @@ def dispatch_one(
             issue,
             open_issues=open_issues,
             force=store.is_force(snap, rid),
-            soft_preconditions=True,
         )
         if decision.kind == "keep":
             continue
@@ -1571,7 +1570,6 @@ def dispatch_one(
                 issue,
                 open_issues=open_issues,
                 force=store.is_force(snap, rid),
-                soft_preconditions=True,
             )
             if decision.kind == "repair":
                 _apply_repair(store, client, rid, req, issue, decision.reason)

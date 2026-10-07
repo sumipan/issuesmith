@@ -79,6 +79,11 @@ def test_projection_uses_declared_phases(tmp_path, monkeypatch):
     assert labels == {running}
 
 
-def test_terminal_without_merge_empty_without_declaration(tmp_path, monkeypatch):
+def test_terminal_without_merge_only_terminal_labels_without_declaration(
+    tmp_path, monkeypatch
+):
     _write_corklab(tmp_path, monkeypatch)
-    assert get_terminal_without_merge() == frozenset()
+    cfg = get_config()
+    assert cfg.terminal_without_merge == ()
+    merge_done = {lab for lab in cfg.terminal_labels if lab.endswith(":merge-done")}
+    assert get_terminal_without_merge() == frozenset(cfg.terminal_labels) - merge_done

@@ -240,7 +240,6 @@ def deterministic_decision(
     *,
     open_issues: list[dict[str, Any]] | None = None,
     force: bool = False,
-    soft_preconditions: bool = False,
 ) -> Decision:
     state = str(issue.get("state", "")).upper()
     labels = label_names(issue)
@@ -282,7 +281,7 @@ def deterministic_decision(
         ph = cfg.phase(phase)
     except KeyError:
         ph = None
-    if ph is not None and not soft_preconditions:
+    if ph is not None:
         for excl in cfg.excluded_labels(ph.name):
             if excl in labels:
                 return Decision(
@@ -291,8 +290,11 @@ def deterministic_decision(
                     comment=True,
                     add_rejected_label=True,
                 )
+        # Labels in our own namespace (e.g. a prior phase's done label) are waited on
+        # by phase_preconditions; only missing foreign labels are rejected here.
+        own_prefix = f"{cfg.label_namespace}:"
         for req in cfg.required_labels(ph.name):
-            if req not in labels:
+            if not req.startswith(own_prefix) and req not in labels:
                 return Decision(
                     kind="rejected",
                     reason=_msg("phase_requires_label", phase=ph.name, label=req),

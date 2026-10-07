@@ -863,9 +863,10 @@ def _build_scope_gate(raw: Mapping[str, Any] | None) -> ScopeGateConfig:
     )
 
 
-def _build_terminal_labels(raw: Any, *, using_default_phases: bool = False) -> tuple[str, ...]:
+def _build_terminal_labels(raw: Any) -> tuple[str, ...]:
     if raw is None:
-        return _DEFAULT_TERMINAL_LABELS if using_default_phases else ()
+        # Kept even when phases are declared; emptying the default is #4881.
+        return _DEFAULT_TERMINAL_LABELS
     if not isinstance(raw, list):
         raise ValueError("terminal_labels must be a list of strings")
     return tuple(str(x) for x in raw)
@@ -1142,9 +1143,7 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         metrics=_build_metrics(metrics_raw),
         derived_allow=_build_derived_allow(derived_allow_raw),
         external_leak=_build_external_leak(external_leak_raw),
-        terminal_labels=_build_terminal_labels(
-            data.get("terminal_labels"), using_default_phases=using_default_phases
-        ),
+        terminal_labels=_build_terminal_labels(data.get("terminal_labels")),
         terminal_without_merge=_build_terminal_without_merge(
             data.get("terminal_without_merge"),
             using_default_phases=using_default_phases,
