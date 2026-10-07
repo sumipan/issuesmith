@@ -40,6 +40,11 @@ class SizeMeasure:
     kinds: frozenset[str]                  # subset of {"delete", "new", "modify"}
 
 
+def _concern_display_name(concern: str) -> str:
+    """Display name for a concern key; root-level files (key ``.``) show as ``root``."""
+    return "root" if concern == "." else concern
+
+
 def _normalize_kind(change_type: str, cfg: ScopeSizeConfig) -> str:
     """Map a change-table kind cell to ``delete`` / ``new`` / ``modify``.
 
@@ -160,7 +165,8 @@ def _fix_hint(body: str, measure: SizeMeasure, cfg: ScopeSizeConfig) -> str:
     ]
     for i, (concern, paths) in enumerate(measure.concerns.items(), start=1):
         lines.append(
-            f"| {i} | {concern} | {target_repo} | {', '.join(paths)} | {cfg.no_deps_word} |"
+            f"| {i} | {_concern_display_name(concern)} | {target_repo} "
+            f"| {', '.join(paths)} | {cfg.no_deps_word} |"
         )
     return "\n".join(lines)
 
@@ -227,6 +233,7 @@ def _build_sub_block(
             "| split from oversized issue |"
         )
     yaml_paths = "\n".join(f"  - {p}" for p in paths) or "  - []"
+    concern = _concern_display_name(concern)
     sub_parts = [f"#### {_sub_header_prefix()}{num}: {concern}", ""]
     for name in subsections:
         if name == changed_label:
@@ -312,7 +319,8 @@ def promote_oversized_issue_body(body: str, cfg: ScopeSizeConfig | None = None) 
     for i, (concern, rows) in enumerate(concerns.items(), start=1):
         paths = ", ".join(path for _, path, _ in rows)
         plan_lines.append(
-            f"| {i} | {concern} | {target_repo} | {paths} | {cfg.no_deps_word} |"
+            f"| {i} | {_concern_display_name(concern)} | {target_repo} "
+            f"| {paths} | {cfg.no_deps_word} |"
         )
         sub_blocks.append(
             _build_sub_block(
@@ -396,7 +404,7 @@ class ScopeSizeRules:
                 )
             )
         if len(measure.concerns) > cfg.max_concerns:
-            dirs = ", ".join(measure.concerns)
+            dirs = ", ".join(_concern_display_name(c) for c in measure.concerns)
             violations.append(
                 _violation(
                     "scope_size.too_many_concerns",
