@@ -183,3 +183,93 @@ def test_engine_resolve_unchanged_across_phase_role_change(tmp_path, monkeypatch
     assert before == after
     for eng_name in ("claude", "cursor", "codex"):
         assert eng_name in before
+
+
+# ---------------------------------------------------------------------------
+# phases[].steps and label_write_guard (#4807)
+# ---------------------------------------------------------------------------
+
+
+def test_steps_default_to_entry_step(tmp_path, monkeypatch):
+    from issuesmith.projection import phase_steps
+
+    _write_config(tmp_path, monkeypatch, {"repo": "example/app"})
+    cfg = load_config()
+    assert all(p.steps == () for p in cfg.phases)
+    assert {p.name: phase_steps(p) for p in cfg.phases} == {
+        name: (step,) for name, step in _DEFAULT_ENTRY_STEPS.items()
+    }
+
+
+def test_steps_are_read_in_order(tmp_path, monkeypatch):
+    _write_config(tmp_path, monkeypatch, {
+        "repo": "example/app",
+        "phases": [
+            {"name": "draft", "role": "design", "entry_step": "b1", "steps": ["b1"]},
+            {
+                "name": "develop",
+                "role": "implementation",
+                "entry_step": "cp2",
+                "steps": ["p0", "p1", "p3", "cp2"],
+            },
+        ],
+    })
+    cfg = load_config()
+    assert [p.steps for p in cfg.phases] == [("b1",), ("p0", "p1", "p3", "cp2")]
+
+
+def test_steps_must_be_a_list(tmp_path, monkeypatch):
+    _write_config(tmp_path, monkeypatch, {
+        "repo": "example/app",
+        "phases": [{"name": "draft", "role": "design", "entry_step": "b1", "steps": "b1"}],
+    })
+    with pytest.raises(ValueError, match="steps"):
+        load_config()
+
+
+def test_duplicate_step_across_phases_is_config_error(tmp_path, monkeypatch):
+    from issuesmith.config import ConfigError
+
+    _write_config(tmp_path, monkeypatch, {
+        "repo": "example/app",
+        "phases": [
+            {"name": "draft", "role": "design", "entry_step": "b1", "steps": ["b1", "p0"]},
+            {"name": "develop", "role": "implementation", "entry_step": "cp2", "steps": ["p0", "cp2"]},
+        ],
+    })
+    with pytest.raises(ConfigError, match="p0"):
+        load_config()
+
+
+def test_duplicate_implicit_entry_step_is_config_error(tmp_path, monkeypatch):
+    from issuesmith.config import ConfigError
+
+    _write_config(tmp_path, monkeypatch, {
+        "repo": "example/app",
+        "phases": [
+            {"name": "draft", "role": "design", "entry_step": "b1"},
+            {"name": "develop", "role": "implementation", "entry_step": "b1"},
+        ],
+    })
+    with pytest.raises(ConfigError):
+        load_config()
+
+
+def test_label_write_guard_defaults_to_warn(tmp_path, monkeypatch):
+    _write_config(tmp_path, monkeypatch, {"repo": "example/app"})
+    assert load_config().label_write_guard == "warn"
+
+
+@pytest.mark.parametrize("mode", ["warn", "enforce"])
+def test_label_write_guard_accepts_known_modes(tmp_path, monkeypatch, mode):
+    _write_config(tmp_path, monkeypatch, {"repo": "example/app", "label_write_guard": mode})
+    assert load_config().label_write_guard == mode
+
+
+@pytest.mark.parametrize("mode", ["off", "Enforce", True, 1])
+def test_label_write_guard_rejects_other_values(tmp_path, monkeypatch, mode):
+    from issuesmith.config import ConfigError
+
+    _write_config(tmp_path, monkeypatch, {"repo": "example/app", "label_write_guard": mode})
+    with pytest.raises(ConfigError, match="label_write_guard"):
+        load_config()

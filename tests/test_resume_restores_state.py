@@ -19,7 +19,12 @@ from issuesmith.queue_store import QueueStore
 @pytest.fixture
 def env(tmp_path: Path, monkeypatch):
     cfg = tmp_path / "issuesmith.yaml"
-    cfg.write_text(yaml.safe_dump({"repo": "example/repo"}), encoding="utf-8")
+    phases = [
+        {"name": "draft", "role": "design", "entry_step": "b1"},
+        {"name": "develop", "role": "implementation", "entry_step": "cp2", "preconditions": ["draft-done"]},
+        {"name": "merge", "role": "implementation", "entry_step": "m2"},
+    ]
+    cfg.write_text(yaml.safe_dump({"repo": "example/repo", "phases": phases}), encoding="utf-8")
     monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg))
     monkeypatch.setenv("ISSUESMITH_QUEUE_DIR", str(tmp_path / "queue"))
     (tmp_path / "queue").mkdir()
@@ -122,3 +127,28 @@ def test_force_resets_succeeded_markers_and_results(env, monkeypatch):
     assert not (done_dir / "u-p2").exists() and not (done_dir / "u-p3").exists()
     assert (tmp_path / "result-p1.md").exists()
     assert not (tmp_path / "result-p2.md").exists() and not (tmp_path / "result-p3.md").exists()
+
+
+def test_running_state_is_restored_through_project_issue(env, monkeypatch):
+    """The label change of resume --from is a state change applied by project_issue (#4807)."""
+    import issuesmith.ops.labels as labels_mod
+    from issuesmith.config import get_config
+    from issuesmith.projection import diff, project, state_from_labels
+
+    tmp_path, client, number = env
+    seen: list = []
+
+    def spy(cl, issue_number, change):
+        cfg = get_config()
+        current = [lb["name"] for lb in cl.issue_get(issue_number, fields=["labels"])["labels"]]
+        delta = diff(current, project(change(state_from_labels(current, cfg)), cfg), cfg)
+        seen.append((issue_number, delta))
+        return delta
+
+    monkeypatch.setattr(labels_mod, "project_issue", spy, raising=False)
+    monkeypatch.setattr(resume_mod, "_generation_keys_available", lambda: True)
+    monkeypatch.setattr(resume_mod, "_load_step_statuses", lambda *a, **k: _steps(tmp_path))
+    monkeypatch.setattr(resume_mod, "_run_ghdag_recover", lambda *a, **k: 0)
+
+    assert resume_mod.resume(number, from_step="p2", handler="impl") == 0
+    assert seen == [(number, (["issuesmith:develop-running"], ["issuesmith:develop-ready"]))]

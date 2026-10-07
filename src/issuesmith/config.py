@@ -146,6 +146,8 @@ class PhaseConfig:
     entry_step: str
     handler: str = ""
     preconditions: tuple[str, ...] = ()
+    # Steps of the phase in run order; empty means ``(entry_step,)`` (#4807).
+    steps: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -325,6 +327,7 @@ class IssuesmithConfig:
     observe: ObserveConfig = field(default_factory=ObserveConfig)
     api_brake: ApiBreakConfig = field(default_factory=ApiBreakConfig)
     language: LanguagePack = EN
+    label_write_guard: Literal["warn", "enforce"] = "warn"
 
 
 _cached: IssuesmithConfig | None = None
@@ -518,6 +521,13 @@ def _build_phases(raw: Any) -> tuple[PhaseConfig, ...]:
             preconditions: tuple[str, ...] = tuple(str(x) for x in raw_preconds if x)
         else:
             preconditions = ()
+        raw_steps = item.get("steps")
+        if raw_steps is None:
+            steps: tuple[str, ...] = ()
+        elif isinstance(raw_steps, list):
+            steps = tuple(str(x) for x in raw_steps if x)
+        else:
+            raise ValueError(f"phases[{i}].steps must be a list of step ids")
         phases.append(
             PhaseConfig(
                 name=str(name),
@@ -525,11 +535,28 @@ def _build_phases(raw: Any) -> tuple[PhaseConfig, ...]:
                 entry_step=str(entry_step),
                 handler=handler,
                 preconditions=preconditions,
+                steps=steps,
             )
         )
     if not phases:
         raise ValueError("phases must not be empty")
+    owner: dict[str, str] = {}
+    for phase in phases:
+        for step in phase.steps or (phase.entry_step,):
+            if step in owner and owner[step] != phase.name:
+                raise ConfigError(
+                    f"step {step!r} is declared by phases {owner[step]!r} and {phase.name!r}"
+                )
+            owner[step] = phase.name
     return tuple(phases)
+
+
+def _build_label_write_guard(raw: Any) -> Literal["warn", "enforce"]:
+    if raw is None:
+        return "warn"
+    if raw == "warn" or raw == "enforce":
+        return raw
+    raise ConfigError(f"label_write_guard must be 'warn' or 'enforce', got {raw!r}")
 
 
 def _build_sections(raw: Mapping[str, Any] | None, base: Mapping[str, str]) -> dict[str, str]:
@@ -978,4 +1005,5 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         observe=_build_observe(observe_raw, root.resolve()),
         api_brake=_build_api_brake(api_brake_raw),
         language=language,
+        label_write_guard=_build_label_write_guard(data.get("label_write_guard")),
     )
