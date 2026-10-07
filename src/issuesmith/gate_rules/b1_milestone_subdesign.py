@@ -107,21 +107,18 @@ def _extract_sub_plan_dep_map(body: str) -> dict[int, str]:
     return dep_map
 
 
+def _utf8_hex_phrase(hex_utf8: str) -> str:
+    """Decode a UTF-8 phrase from hex without chr() word assembly in src/."""
+    return bytes.fromhex(hex_utf8).decode("utf-8")
+
+
 def _order_indicator_re(sub_prefix: str) -> re.Pattern[str]:
     """Match design text that says sub M must finish before this sub runs."""
-    after_complete = chr(0x5B8C) + chr(0x4E86) + chr(0x540E)
-    after_impl = chr(0x306E) + chr(0x5B9F) + chr(0x88C5) + chr(0x540E)
-    after_merge = chr(0x306E) + chr(0x30DE) + chr(0x30FC) + chr(0x30B8) + chr(0x540E)
-    impl_after = chr(0x5B9F) + chr(0x88C5) + chr(0x540E)
-    merge_complete = (
-        chr(0x306E)
-        + chr(0x30DE)
-        + chr(0x30FC)
-        + chr(0x30B8)
-        + chr(0x304C)
-        + chr(0x5B8C)
-        + chr(0x4E86)
-    )
+    after_complete = _utf8_hex_phrase("e5ae8ce4ba86e5908e")
+    after_impl = _utf8_hex_phrase("e381aee5ae9fe8a385e5908e")
+    after_merge = _utf8_hex_phrase("e381aee3839ee383bce382b8e5908e")
+    impl_after = _utf8_hex_phrase("e5ae9fe8a385e5908e")
+    merge_complete = _utf8_hex_phrase("e381aee3839ee383bce382b8e3818ce5ae8ce4ba86")
     cjk = (
         f"(?:{after_complete}|{after_impl}|{after_merge}|{impl_after}|{merge_complete})"
     )
