@@ -300,7 +300,12 @@ _EN_MESSAGES: dict[str, str] = {
     "milestone.chain_no_children": "No child Issues were created. Check the SUB1 result.",
     "milestone.chain_validation_failed": "Child Issue validation failed.\n{items}",
     "milestone.chain_validation_item": "- #{issue}: {failures}",
-    "milestone.chain_closed_without_merge": "Needs review: #{issue} closed without {label}",
+    "milestone.chain_closed_without_merge": (
+        "Needs review: {issues} closed without {label}. If a child was consolidated "
+        "into a merged sibling, run `issuesmith milestone consolidate <child> --into "
+        "<sibling>` and then `issuesmith milestone resume {parent}`."
+    ),
+    "milestone.consolidated_into": "Consolidated into #{sibling}.",
     "milestone.chain_all_done_closed": "All sub-issues done ({children})",
     "milestone.chain_all_done_manual": "All sub-issues done. A human closes the parent.",
     "milestone.sub1_dup_design": "## SUB1 error: duplicate `## {design}` section",

@@ -24,7 +24,7 @@ commands:
   engine  dispatch  publish  labels  doctor  smoke  gen-live  version-bump
   resume --from <step> | --phase <phase>
   recover  redispatch  convert-to-milestone
-  milestone  status / resume-progress (sub_issues_summary progress + child table)
+  milestone  status / resume / prune / consolidate <child> --into <sibling>
   config show
   observe [--apply] [--json]
   metrics rework [--since YYYY-MM-DD] [--issue N] [--audit PATH] [--json]
