@@ -102,8 +102,8 @@ class TestMapStepResultLabelProjection:
     """MERGE_DONE / IMPL_DONE / REPORT_DONE markers trigger label projection."""
 
     def _run_marker(self, marker: str) -> tuple[int, MagicMock]:
+        from issuesmith.contract import StepResult
         from issuesmith.ops.dispatch import map_step_result
-        from issuesmith.steps.base import StepResult
 
         forge = MagicMock()
         with patch("issuesmith.ops.dispatch.get_forge", return_value=forge):

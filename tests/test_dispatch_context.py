@@ -5,9 +5,6 @@ Also covers step contract canonical location in issuesmith.contract (#4272).
 
 from __future__ import annotations
 
-import warnings
-
-import issuesmith.steps.base as legacy_base
 from issuesmith.contract import Andon, StepContext, StepResult, Verdict
 from issuesmith.ops.dispatch import _context_to_step
 
@@ -18,28 +15,6 @@ def test_contract_exports_step_types() -> None:
     assert StepResult is not None
     assert Andon is not None
     assert Verdict is not None
-
-
-def test_steps_base_reexports_same_types() -> None:
-    """AC: steps/base.py re-exports contract types without duplicating definitions."""
-    assert legacy_base.StepContext is StepContext
-    assert legacy_base.StepResult is StepResult
-    assert legacy_base.Andon is Andon
-    assert legacy_base.Verdict is Verdict
-
-
-def test_steps_base_import_emits_deprecation_warning() -> None:
-    """AC: legacy import path warns once per import."""
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        import importlib
-
-        importlib.reload(__import__("issuesmith.steps.base", fromlist=["*"]))
-    assert any(
-        issubclass(w.category, DeprecationWarning)
-        and "issuesmith.contract" in str(w.message)
-        for w in caught
-    )
 
 
 def test_step_result_compat_from_contract() -> None:

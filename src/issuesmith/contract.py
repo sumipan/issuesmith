@@ -16,8 +16,7 @@ Sections covered here:
 
 Step contract types (:class:`StepContext`, :class:`StepResult`, :class:`Andon`,
 :class:`Verdict`) are the canonical definitions for dispatch and step runners.
-Import them from this module; ``issuesmith.steps.base`` re-exports them for one
-release only.
+Import them from this module.
 """
 
 from __future__ import annotations

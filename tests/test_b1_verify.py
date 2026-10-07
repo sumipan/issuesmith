@@ -597,7 +597,7 @@ def test_check_paths_must_not_exist_validity_wrapper(tmp_path, monkeypatch):
     )
     try:
         with mock.patch(
-            "issuesmith.steps.scope_gate.resolve_scope_root",
+            "issuesmith.scope_gate.resolve_scope_root",
             return_value=repo,
         ):
             violations = check_paths_must_not_exist_validity(body)

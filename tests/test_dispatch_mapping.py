@@ -9,38 +9,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import issuesmith.steps.base as legacy_base
 from issuesmith.contract import Andon, StepResult, Verdict
 from issuesmith.engine import RetryReason, RetrySignal
 from issuesmith.ops.dispatch import map_step_result
-
-# ---------------------------------------------------------------------------
-# Contract canonical location (#4272)
-# ---------------------------------------------------------------------------
-
-
-class TestContractTypeIdentity:
-    """Dispatch mapping accepts contract types; legacy re-exports are identical."""
-
-    def test_legacy_andon_is_contract_andon(self):
-        assert legacy_base.Andon is Andon
-
-    def test_legacy_step_result_is_contract_step_result(self):
-        assert legacy_base.StepResult is StepResult
-
-    def test_legacy_verdict_is_contract_verdict(self):
-        assert legacy_base.Verdict is Verdict
-
-    def test_contract_step_result_maps_done(self, capsys):
-        rc = map_step_result(
-            StepResult(status="done", markers=["M1_DONE"]),
-            step_id="m1",
-            context=_make_context(),
-        )
-        assert rc == 0
-        out = capsys.readouterr().out
-        assert "PIPELINE_STATUS: M1_DONE" in out
-
 
 # ---------------------------------------------------------------------------
 # Helpers

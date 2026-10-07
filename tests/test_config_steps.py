@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import importlib
-import warnings
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -23,12 +21,6 @@ def _clear_config_cache():
     dispatch_mod._STEP_MODULES = None
 
 
-_DEFAULT_M2 = StepConfig(
-    module="issuesmith.steps.m2_finalize",
-    template="m2-compact.md",
-)
-
-
 def _write_config(tmp_path, monkeypatch, payload: dict) -> None:
     cfg_path = tmp_path / "issuesmith.yaml"
     cfg_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
@@ -36,16 +28,11 @@ def _write_config(tmp_path, monkeypatch, payload: dict) -> None:
     reset_config_cache()
 
 
-def test_default_steps_resolve_m2_role_dispatch(tmp_path, monkeypatch):
+def test_default_steps_has_no_m2_role_dispatch(tmp_path, monkeypatch):
     _write_config(tmp_path, monkeypatch, {"repo": "example/app"})
     cfg = load_config()
 
-    assert "m2-role-dispatch" in cfg.steps
-    assert cfg.steps["m2-role-dispatch"] == _DEFAULT_M2
-
-    resolved = dispatch_mod.resolve_step_config("m2-role-dispatch")
-    assert resolved.module == "issuesmith.steps.m2_finalize"
-    assert resolved.template == "m2-compact.md"
+    assert "m2-role-dispatch" not in cfg.steps
 
 
 def test_custom_step_module_loaded_by_dispatch(tmp_path, monkeypatch):
@@ -64,8 +51,6 @@ def test_custom_step_module_loaded_by_dispatch(tmp_path, monkeypatch):
         module="issuesmith.steps.custom",
         template=None,
     )
-    # Default entries remain after partial override
-    assert cfg.steps["m2-role-dispatch"] == _DEFAULT_M2
 
     loaded: dict[str, object] = {}
 
@@ -109,18 +94,152 @@ def test_custom_step_module_loaded_by_dispatch(tmp_path, monkeypatch):
     assert loaded["step"] == StepConfig(module="issuesmith.steps.custom", template=None)
 
 
-def test_unknown_step_falls_back_to_hyphen_module(tmp_path, monkeypatch):
+def test_unknown_step_returns_empty_config_without_warning(tmp_path, monkeypatch):
     _write_config(tmp_path, monkeypatch, {"repo": "example/app"})
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        resolved = dispatch_mod.resolve_step_config("some-new-step")
-    assert resolved.module == "issuesmith.steps.some_new_step"
+    resolved = dispatch_mod.resolve_step_config("some-new-step")
+    assert resolved.module == ""
     assert resolved.template is None
-    assert any(
-        issubclass(w.category, DeprecationWarning)
-        and "some-new-step" in str(w.message)
-        for w in caught
+
+
+def test_unregistered_step_runs_bash_template(tmp_path, monkeypatch):
+    _write_config(tmp_path, monkeypatch, {"repo": "example/app"})
+    called: dict[str, object] = {}
+
+    def fake_bash(step_id: str, context: dict[str, str]) -> int:
+        called["step_id"] = step_id
+        called["context"] = context
+        return 0
+
+    monkeypatch.setattr(dispatch_mod, "_run_bash_step", fake_bash)
+
+    rc = dispatch_mod.main(
+        [
+            "some-new-step",
+            "issue_number=1",
+            "base_branch=main",
+            "handler_name=x",
+            "is_cross_repo=false",
+            "target_clone_path=",
+            "source=",
+            "workflow_name=issuesmith",
+            "m1_result_filename=",
+            "m1r_result_filename=",
+        ]
     )
+    assert rc == 0
+    assert called["step_id"] == "some-new-step"
+
+
+def test_unregistered_step_missing_template_raises_andon(tmp_path, monkeypatch):
+    _write_config(tmp_path, monkeypatch, {"repo": "example/app"})
+    with patch.object(dispatch_mod, "map_step_result", return_value=1) as mock_map:
+        rc = dispatch_mod.main(
+            [
+                "missing-template-step",
+                "issue_number=1",
+                "base_branch=main",
+                "handler_name=x",
+                "is_cross_repo=false",
+                "target_clone_path=",
+                "source=",
+                "workflow_name=issuesmith",
+                "m1_result_filename=",
+                "m1r_result_filename=",
+            ]
+        )
+    assert rc == 1
+    result = mock_map.call_args[0][0]
+    assert result.status == "andon"
+    assert result.andon is not None
+    assert "not in config.steps" in result.andon.summary
+    assert "missing-template-step" in result.andon.summary
+
+
+def test_registered_step_import_failure_raises_andon(tmp_path, monkeypatch):
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "repo": "example/app",
+            "steps": {
+                "broken-step": {"module": "nonexistent.module"},
+            },
+        },
+    )
+
+    def fake_import(name: str):
+        raise ImportError(f"No module named {name!r}")
+
+    monkeypatch.setattr(importlib, "import_module", fake_import)
+    monkeypatch.setattr(dispatch_mod.importlib, "import_module", fake_import)
+
+    with patch.object(dispatch_mod, "map_step_result", return_value=1) as mock_map:
+        rc = dispatch_mod.main(
+            [
+                "broken-step",
+                "issue_number=1",
+                "base_branch=main",
+                "handler_name=x",
+                "is_cross_repo=false",
+                "target_clone_path=",
+                "source=",
+                "workflow_name=issuesmith",
+                "m1_result_filename=",
+                "m1r_result_filename=",
+            ]
+        )
+    assert rc == 1
+    result = mock_map.call_args[0][0]
+    assert result.status == "andon"
+    assert result.andon is not None
+    assert "could not be imported" in result.andon.summary
+    assert "broken-step" in result.andon.summary
+    assert "nonexistent.module" in result.andon.summary
+
+
+def test_registered_step_missing_run_raises_andon(tmp_path, monkeypatch):
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "repo": "example/app",
+            "steps": {
+                "no-run-step": {"module": "mod.without.run"},
+            },
+        },
+    )
+
+    fake_mod = type("mod", (), {})
+
+    def fake_import(name: str):
+        if name == "mod.without.run":
+            return fake_mod
+        raise ImportError(name)
+
+    monkeypatch.setattr(importlib, "import_module", fake_import)
+    monkeypatch.setattr(dispatch_mod.importlib, "import_module", fake_import)
+
+    with patch.object(dispatch_mod, "map_step_result", return_value=1) as mock_map:
+        rc = dispatch_mod.main(
+            [
+                "no-run-step",
+                "issue_number=1",
+                "base_branch=main",
+                "handler_name=x",
+                "is_cross_repo=false",
+                "target_clone_path=",
+                "source=",
+                "workflow_name=issuesmith",
+                "m1_result_filename=",
+                "m1r_result_filename=",
+            ]
+        )
+    assert rc == 1
+    result = mock_map.call_args[0][0]
+    assert result.status == "andon"
+    assert result.andon is not None
+    assert "has no run()" in result.andon.summary
+    assert "no-run-step" in result.andon.summary
 
 
 def test_step_without_module_returns_andon_broken(tmp_path, monkeypatch):
@@ -154,9 +273,3 @@ def test_step_without_module_returns_andon_broken(tmp_path, monkeypatch):
     assert result.status == "andon"
     assert result.andon is not None
     assert "no module" in result.andon.summary
-
-
-def test_m2_finalize_has_no_m2_compact_literal():
-    src = Path(__file__).resolve().parents[1] / "src/issuesmith/steps/m2_finalize.py"
-    text = src.read_text(encoding="utf-8")
-    assert "m2-compact.md" not in text

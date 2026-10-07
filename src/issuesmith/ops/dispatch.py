@@ -28,7 +28,6 @@ import string
 import subprocess
 import sys
 import tempfile
-import warnings
 from dataclasses import replace
 from pathlib import Path
 
@@ -39,8 +38,8 @@ from ghdag.quota import QuotaGate
 from issuesmith.andon import Andon as _FullAndon
 from issuesmith.andon import raise_andon as _raise_andon
 from issuesmith.config import StepConfig, get_config
+from issuesmith.contract import Andon, StepContext, StepResult, Verdict
 from issuesmith.engine import RetrySignal
-from issuesmith.steps.base import Andon, StepContext, StepResult, Verdict
 from issuesmith.template_ids import template_identifiers
 
 _cfg = get_config()
@@ -57,25 +56,19 @@ _REPAIR_STEP_ID: str = "repair"
 
 
 def resolve_step_config(step_id: str) -> StepConfig:
-    """Resolve step_id → StepConfig (config.steps, then hyphen→underscore fallback)."""
+    """Resolve step_id → StepConfig from config.steps (unregistered → empty StepConfig)."""
     if _STEP_MODULES is not None:
         if step_id in _STEP_MODULES:
-            short = _STEP_MODULES[step_id]
+            module = _STEP_MODULES[step_id]
             cfg = get_config().steps.get(step_id)
             template = cfg.template if cfg is not None else None
-            return StepConfig(module=f"issuesmith.steps.{short}", template=template)
-        return StepConfig(module=f"issuesmith.steps.{step_id.replace('-', '_')}")
+            return StepConfig(module=module, template=template)
+        return StepConfig()
 
     steps = get_config().steps
     if step_id in steps:
         return steps[step_id]
-    fallback = f"issuesmith.steps.{step_id.replace('-', '_')}"
-    warnings.warn(
-        f"step {step_id!r} not in config.steps; falling back to {fallback}",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return StepConfig(module=fallback)
+    return StepConfig()
 
 
 def step_id_to_module(step_id: str) -> str:
@@ -150,12 +143,22 @@ def _call_step_run(mod: object, ctx: StepContext, step: StepConfig):
 
 def _try_python_step(step_id: str, context: dict[str, str]) -> int | None:
     step = resolve_step_config(step_id)
+    if not step.module:
+        return None
+
     try:
         mod = importlib.import_module(step.module)
-    except ImportError:
-        return None
+    except ImportError as exc:
+        summary = (
+            f"step {step_id}: module {step.module} could not be imported: {exc}"
+        )
+        broken = StepResult(status="andon", andon=Andon(kind="broken", summary=summary))
+        return map_step_result(broken, step_id=step_id, context=context)
+
     if not hasattr(mod, "run"):
-        return None
+        summary = f"step {step_id}: module {step.module} has no run()"
+        broken = StepResult(status="andon", andon=Andon(kind="broken", summary=summary))
+        return map_step_result(broken, step_id=step_id, context=context)
 
     print(
         f"[issuesmith-dispatch] python-step step={step_id} module={step.module}",
@@ -989,7 +992,15 @@ def main(argv: list[str]) -> int:
             return _run_bash_step(step_id, context)
         except (KeyError, FileNotFoundError) as exc:
             print(f"[issuesmith-dispatch] ERROR: {exc}", file=sys.stderr)
-            broken = StepResult(status="andon", andon=Andon(kind="broken", summary=str(exc)))
+            if step_id not in get_config().steps:
+                template_path = TEMPLATE_DIR / f"{step_id}.md"
+                summary = (
+                    f"step {step_id} is not in config.steps and "
+                    f"template {template_path} was not found"
+                )
+            else:
+                summary = str(exc)
+            broken = StepResult(status="andon", andon=Andon(kind="broken", summary=summary))
             return map_step_result(broken, step_id=step_id, context=context)
     except RetrySignal as sig:
         _handle_retry_signal(sig, step_id, issue_number)

@@ -175,8 +175,8 @@ class TestDispatchRequiresPass:
 
     def test_no_requires_emits_markers(self, capsys):
         from issuesmith.config import StepConfig
+        from issuesmith.contract import StepResult
         from issuesmith.ops.dispatch import map_step_result
-        from issuesmith.steps.base import StepResult
 
         cfg = StepConfig(module="issuesmith.steps.test")
         rc = map_step_result(
@@ -190,8 +190,8 @@ class TestDispatchRequiresPass:
 
     def test_requires_pass_emits_markers(self, capsys):
         from issuesmith.config import StepConfig
+        from issuesmith.contract import StepResult
         from issuesmith.ops.dispatch import map_step_result
-        from issuesmith.steps.base import StepResult
 
         cfg = StepConfig(module="issuesmith.steps.test", requires=("scope",))
         gate = _pass_gate()
@@ -209,8 +209,8 @@ class TestDispatchRequiresPass:
     def test_requires_pass_after_re_eval_emits_markers(self, capsys):
         """Gates checked before markers; if all pass, markers are emitted."""
         from issuesmith.config import StepConfig
+        from issuesmith.contract import StepResult
         from issuesmith.ops.dispatch import map_step_result
-        from issuesmith.steps.base import StepResult
 
         cfg = StepConfig(module="issuesmith.steps.test", requires=("lint",))
         gate = _pass_gate()
@@ -231,8 +231,8 @@ class TestDispatchAutoFix:
 
     def test_auto_fixable_violation_fixed_then_markers(self, capsys):
         from issuesmith.config import StepConfig
+        from issuesmith.contract import StepResult
         from issuesmith.ops.dispatch import map_step_result
-        from issuesmith.steps.base import StepResult
 
         cfg = StepConfig(module="issuesmith.steps.test", requires=("lint",))
 
@@ -258,8 +258,8 @@ class TestDispatchAutoFix:
 
     def test_auto_fix_does_not_launch_repair_step(self):
         from issuesmith.config import StepConfig
+        from issuesmith.contract import StepResult
         from issuesmith.ops.dispatch import map_step_result
-        from issuesmith.steps.base import StepResult
 
         cfg = StepConfig(module="issuesmith.steps.test", requires=("lint",))
         gate = MagicMock()
@@ -283,8 +283,8 @@ class TestDispatchRepairOnePass:
 
     def test_repair_once_then_pass_emits_markers(self, capsys):
         from issuesmith.config import StepConfig
+        from issuesmith.contract import StepResult
         from issuesmith.ops.dispatch import map_step_result
-        from issuesmith.steps.base import StepResult
 
         cfg = StepConfig(module="issuesmith.steps.test", requires=("tests",))
         gate = MagicMock()
@@ -307,8 +307,8 @@ class TestDispatchRepairOnePass:
 
     def test_repair_step_failure_returns_nonzero(self):
         from issuesmith.config import StepConfig
+        from issuesmith.contract import StepResult
         from issuesmith.ops.dispatch import map_step_result
-        from issuesmith.steps.base import StepResult
 
         cfg = StepConfig(module="issuesmith.steps.test", requires=("tests",))
         gate = _fail_gate(rule_id="tests.pytest_failure", auto_fixable=False)
@@ -331,8 +331,8 @@ class TestDispatchMaxRepairs:
 
     def test_max_repairs_exceeded_raises_andon_decision(self):
         from issuesmith.config import StepConfig
+        from issuesmith.contract import StepResult
         from issuesmith.ops.dispatch import _MAX_REPAIRS, map_step_result
-        from issuesmith.steps.base import StepResult
 
         cfg = StepConfig(module="issuesmith.steps.test", requires=("tests",))
         gate = _fail_gate(rule_id="tests.pytest_failure", auto_fixable=False)
@@ -356,8 +356,8 @@ class TestDispatchMaxRepairs:
 
     def test_andon_decision_options_contain_fix_hints(self):
         from issuesmith.config import StepConfig
+        from issuesmith.contract import StepResult
         from issuesmith.ops.dispatch import _MAX_REPAIRS, map_step_result
-        from issuesmith.steps.base import StepResult
 
         cfg = StepConfig(module="issuesmith.steps.test", requires=("tests",))
         gate = MagicMock()
@@ -392,8 +392,8 @@ class TestDispatchGateException:
 
     def test_gate_exception_raises_andon_broken(self):
         from issuesmith.config import StepConfig
+        from issuesmith.contract import StepResult
         from issuesmith.ops.dispatch import map_step_result
-        from issuesmith.steps.base import StepResult
 
         cfg = StepConfig(module="issuesmith.steps.test", requires=("scope",))
         gate = _error_gate()
@@ -417,8 +417,8 @@ class TestDispatchGateException:
 
     def test_gate_exception_does_not_emit_markers(self, capsys):
         from issuesmith.config import StepConfig
+        from issuesmith.contract import StepResult
         from issuesmith.ops.dispatch import map_step_result
-        from issuesmith.steps.base import StepResult
 
         cfg = StepConfig(module="issuesmith.steps.test", requires=("scope",))
 
@@ -440,8 +440,8 @@ class TestDispatchPreexisting:
 
     def test_preexisting_violation_does_not_block(self, capsys):
         from issuesmith.config import StepConfig
+        from issuesmith.contract import StepResult
         from issuesmith.ops.dispatch import map_step_result
-        from issuesmith.steps.base import StepResult
 
         cfg = StepConfig(module="issuesmith.steps.test", requires=("scope",))
         gate = _fail_gate(rule_id="scope.old_issue")
@@ -463,8 +463,8 @@ class TestDispatchPreexisting:
 
     def test_new_violation_blocks_even_if_preexisting_also_present(self):
         from issuesmith.config import StepConfig
+        from issuesmith.contract import StepResult
         from issuesmith.ops.dispatch import map_step_result
-        from issuesmith.steps.base import StepResult
 
         cfg = StepConfig(module="issuesmith.steps.test", requires=("scope",))
         gate = MagicMock()
@@ -496,9 +496,9 @@ class TestDispatchRetryNotCounted:
 
     def test_retry_signal_from_repair_step_not_counted(self):
         from issuesmith.config import StepConfig
+        from issuesmith.contract import StepResult
         from issuesmith.engine import RetryReason, RetrySignal
         from issuesmith.ops.dispatch import map_step_result
-        from issuesmith.steps.base import StepResult
 
         cfg = StepConfig(module="issuesmith.steps.test", requires=("tests",))
         gate = MagicMock()
@@ -534,9 +534,9 @@ class TestDispatchGateBuildError:
 
     def test_gate_build_error_produces_andon_broken(self, capsys):
         from issuesmith.config import StepConfig
+        from issuesmith.contract import StepResult
         from issuesmith.gates import GateBuildError
         from issuesmith.ops.dispatch import map_step_result
-        from issuesmith.steps.base import StepResult
 
         cfg = StepConfig(
             module="issuesmith.steps.test",
@@ -574,11 +574,11 @@ class TestDispatchRepairGuards:
 
     def test_repair_step_skips_requires_evaluation(self, capsys):
         from issuesmith.config import StepConfig
+        from issuesmith.contract import StepResult
         from issuesmith.ops.dispatch import map_step_result
-        from issuesmith.steps.base import StepResult
 
         cfg = StepConfig(
-            module="issuesmith.steps.repair",
+            module="issuesmith.ops.repair_step",
             requires=("deps",),
             input_kind="issue",
         )
@@ -798,8 +798,8 @@ class TestAutoFixRoundLimit:
 
     def test_auto_fixable_violation_recurring_is_waived_after_limit(self, capsys):
         from issuesmith.config import StepConfig
+        from issuesmith.contract import StepResult
         from issuesmith.ops.dispatch import _MAX_AUTO_FIX_ROUNDS, map_step_result
-        from issuesmith.steps.base import StepResult
 
         cfg = StepConfig(module="issuesmith.steps.test", requires=("base_freshness",))
         gate = MagicMock()
@@ -825,8 +825,8 @@ class TestAutoFixRoundLimit:
 
     def test_gate_fix_raising_keeps_violation_and_does_not_recurse(self):
         from issuesmith.config import StepConfig
+        from issuesmith.contract import StepResult
         from issuesmith.ops.dispatch import map_step_result
-        from issuesmith.steps.base import StepResult
 
         cfg = StepConfig(module="issuesmith.steps.test", requires=("base_freshness",))
         gate = MagicMock()

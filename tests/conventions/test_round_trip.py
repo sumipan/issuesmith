@@ -7,10 +7,10 @@ import pytest
 from ghdag.forge import get_forge
 
 from issuesmith.andon import Andon, answer, list_open, raise_andon
+from issuesmith.contract import StepResult
 from issuesmith.ops.dispatch import map_step_result
 from issuesmith.ops.labels import ExecRecord, apply, project
 from issuesmith.queue_store import QueueStore
-from issuesmith.steps.base import StepResult
 
 
 @pytest.fixture
