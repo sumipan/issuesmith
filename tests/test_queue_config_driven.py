@@ -75,16 +75,11 @@ def test_label_dicts_derived_from_config_namespace(tmp_path, monkeypatch):
             },
         ],
     })
-    from importlib import reload
-
     import issuesmith.queue_triage as qt
-    reload(qt)
-    try:
-        assert qt.READY_LABEL == {"alpha": "testns:alpha-ready", "beta": "testns:beta-ready"}
-        assert qt.RUNNING_LABEL == {"alpha": "testns:alpha-running", "beta": "testns:beta-running"}
-        assert qt.DONE_LABEL == {"alpha": "testns:alpha-done", "beta": "testns:beta-done"}
-    finally:
-        reload(qt)
+
+    assert qt.READY_LABEL == {"alpha": "testns:alpha-ready", "beta": "testns:beta-ready"}
+    assert qt.RUNNING_LABEL == {"alpha": "testns:alpha-running", "beta": "testns:beta-running"}
+    assert qt.DONE_LABEL == {"alpha": "testns:alpha-done", "beta": "testns:beta-done"}
 
 
 def test_terminal_without_merge_uses_config(tmp_path, monkeypatch):

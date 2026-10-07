@@ -41,13 +41,54 @@ LLMDecision = Literal["keep", "reject"]
 
 def _build_phase_labels(status: str) -> dict[str, str]:
     from issuesmith.config import get_config
+
     cfg = get_config()
     return {p.name: f"{cfg.label_namespace}:{p.name}-{status}" for p in cfg.phases}
 
 
-READY_LABEL: dict[str, str] = _build_phase_labels("ready")
-RUNNING_LABEL: dict[str, str] = _build_phase_labels("running")
-DONE_LABEL: dict[str, str] = _build_phase_labels("done")
+class _LazyPhaseLabels:
+    """Phase label map rebuilt from the current config on each access (#4790)."""
+
+    __slots__ = ("_status",)
+
+    def __init__(self, status: str) -> None:
+        self._status = status
+
+    def _dict(self) -> dict[str, str]:
+        return _build_phase_labels(self._status)
+
+    def _label_for(self, phase: str) -> str:
+        labels = self._dict()
+        if phase in labels:
+            return labels[phase]
+        from issuesmith.config import get_config
+
+        return f"{get_config().label_namespace}:{phase}-{self._status}"
+
+    def __getitem__(self, key: str) -> str:
+        return self._label_for(key)
+
+    def get(self, key: str, default: str | None = None) -> str | None:
+        return self._dict().get(key, default)
+
+    def items(self):
+        return self._dict().items()
+
+    def values(self):
+        return self._dict().values()
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, dict):
+            return self._dict() == other
+        return NotImplemented
+
+    def __repr__(self) -> str:
+        return repr(self._dict())
+
+
+READY_LABEL: _LazyPhaseLabels = _LazyPhaseLabels("ready")
+RUNNING_LABEL: _LazyPhaseLabels = _LazyPhaseLabels("running")
+DONE_LABEL: _LazyPhaseLabels = _LazyPhaseLabels("done")
 
 def _msg(key: str, /, **kwargs: Any) -> str:
     """Render a ``queue_triage.*`` language-pack message (posted as an Issue comment)."""
@@ -703,6 +744,8 @@ def triage(
                         )
                     )
                 elif d.decision == "reject":
+                    from issuesmith.config import get_config
+
                     req = req_map.get(d.request_id)
                     impl_phase = next(
                         (
@@ -824,6 +867,8 @@ def load_seed_entries(path: Path | None = None) -> list[dict[str, Any]]:
         label = str(item.get("label") or "")
         if not isinstance(issue, int) or issue <= 0:
             continue
+        from issuesmith.config import get_config
+
         design = get_config().design_phase()
         fallback = (
             design.name
