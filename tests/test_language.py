@@ -68,6 +68,7 @@ _CUSTOM = _pack_dict(
     parent_issue_label="Parent",
     dependencies_table_header="| No | Needs | Status |",
     out_of_scope_heading="Not Doing",
+    order_after_words=["following"],
     messages={key: f"[custom] {value}" for key, value in EN.messages.items()},
 )
 
@@ -163,6 +164,7 @@ def test_language_pack_key_replaces_every_field(tmp_path, monkeypatch):
         pytest.param(lambda d: d.update(sub_header_prefix=["Sub"]), id="str-wrong-type"),
         pytest.param(lambda d: d.update(delete_words="delete"), id="list-wrong-type"),
         pytest.param(lambda d: d.update(new_words=[]), id="list-empty"),
+        pytest.param(lambda d: d.update(order_after_words=[]), id="order-words-empty"),
         pytest.param(lambda d: d.update(sub_plan_columns=["#", "a"]), id="columns-length"),
         pytest.param(lambda d: d["sections"].update(extra="x"), id="section-unknown"),
         pytest.param(lambda d: d["messages"].update({"m.extra": "x"}), id="message-unknown"),
@@ -378,3 +380,10 @@ def test_partial_pack_falls_back_to_english_without_mutation():
     assert dict(pack.messages) == dict(EN.messages)
     assert data == {"sections": {"design": "Custom design"}, "messages": {}}
     assert language_pack_from_mapping({}) == EN
+
+
+def test_order_after_words_en_value_and_fallback():
+    assert EN.order_after_words == ("after", "once", "depends on")
+    data = _pack_dict()
+    del data["order_after_words"]
+    assert language_pack_from_mapping(data).order_after_words == EN.order_after_words

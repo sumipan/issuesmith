@@ -483,12 +483,14 @@ class B1MilestoneSubdesignRules:
         violations.extend(self._check_file_union(body, sub_blocks))
         violations.extend(self._check_impact_scope(body, sub_blocks))
         violations.extend(self._check_deletion_reference_orphan(body, sub_blocks))
-        violations.extend(self._check_behavior_test_in_sibling(
-            sub_blocks, _sub_plan_dependencies(body)
-        ))
+        dependencies = _sub_plan_dependencies(body)
+        violations.extend(self._check_behavior_test_in_sibling(sub_blocks, dependencies))
         violations.extend(self._check_inferred_dependencies(body, sub_blocks))
         for sub_num, block in sub_blocks:
             violations.extend(self._check_sub_ac_contradiction(sub_num, block))
+            violations.extend(
+                self._check_sub_order_without_dependency(sub_num, block, dependencies)
+            )
         return violations
 
     def _check_sub_count(self, body: str) -> list[Violation]:
@@ -940,6 +942,52 @@ class B1MilestoneSubdesignRules:
                 " or stage the change)"
             ),
         )]
+
+    def _check_sub_order_without_dependency(
+        self, sub_num: int, block: str, dependencies: dict[int, set[int]]
+    ) -> list[Violation]:
+        """Reject a sub ordered after a sibling the depends-on column omits (#4818)."""
+        if not dependencies:
+            return []
+        cfg = get_config()
+        language = cfg.language
+        ac = cfg.sections["acceptance_criteria"]
+        design_text = re.split(rf"\*\*{re.escape(ac)}\*\*", block, maxsplit=1)[0]
+        sub_ref_re = re.compile(re.escape(language.sub_header_prefix) + r"\s*(\d+)", re.IGNORECASE)
+        order_res = [
+            re.compile(rf"(?<![A-Za-z0-9]){re.escape(word)}(?![A-Za-z0-9])", re.IGNORECASE)
+            for word in language.order_after_words
+        ]
+        declared = dependencies.get(sub_num, set())
+        ordered: list[int] = []
+        for line in design_text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("|") or _SUB_HEADER_RE.match(stripped):
+                continue
+            if not any(pattern.search(line) for pattern in order_res):
+                continue
+            for match in sub_ref_re.finditer(line):
+                other = int(match.group(1))
+                if other != sub_num and other not in declared and other not in ordered:
+                    ordered.append(other)
+        return [
+            Violation(
+                rule_id="b1_milestone_subdesign.sub_order_without_dependency",
+                severity="fail",
+                message=(
+                    f"Sub {sub_num}: the design orders this sub after Sub {other},"
+                    f" but the sub-issue plan's depends-on column for row {sub_num}"
+                    f" does not list #{other}"
+                ),
+                location=_sub_location(sub_num),
+                auto_fixable=False,
+                fix_hint=(
+                    f"add #{other} to row {sub_num}'s depends-on column in the"
+                    " sub-issue plan, or remove the ordering sentence"
+                ),
+            )
+            for other in ordered
+        ]
 
 
 GATE_REGISTRY["b1_milestone_subdesign"] = B1MilestoneSubdesignRules

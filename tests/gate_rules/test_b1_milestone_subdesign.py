@@ -1411,3 +1411,94 @@ def test_dependency_vocabulary_comes_from_language_pack(tmp_path, monkeypatch):
         assert _dep_ids(_dep_body(blocks, ["-", "-"])) == []
     finally:
         reset_config_cache()
+
+
+# ---------------------------------------------------------------------------
+# #4818 — ordering sentence without a depends-on entry
+# ---------------------------------------------------------------------------
+
+_ORDER_RULE = "b1_milestone_subdesign.sub_order_without_dependency"
+
+
+def _order_body(sub2_policy: str, dep: str, *, sub2_ac: str = "Sub2 gamma") -> str:
+    """Two-sub body whose Sub2 design policy is ``sub2_policy`` and depends-on is ``dep``."""
+    body = _with_test_sub_dependency(
+        _milestone_body([
+            ("impl one", [("docs/a.md", "Modify")]),
+            (sub2_policy, [("docs/b.md", "Modify")]),
+        ]),
+        dep,
+    )
+    return body.replace("- [ ] Sub2 gamma", f"- [ ] {sub2_ac}")
+
+
+def _order_hits(body: str):
+    return [v for v in _check(body, MILESTONE_LABELS) if v.rule_id == _ORDER_RULE]
+
+
+def test_sub_order_without_dependency_detected():
+    hits = _order_hits(_order_body(f"Start after {SUB} 1 is merged.", "none"))
+    assert len(hits) == 1
+    assert hits[0].severity == "fail"
+    assert hits[0].auto_fixable is False
+    assert hits[0].location == f"#### {SUB}2"
+    assert "Sub 2" in hits[0].message and "Sub 1" in hits[0].message
+    assert "#1" in hits[0].fix_hint
+
+
+def test_sub_order_with_dependency_passes():
+    assert _order_hits(_order_body(f"Start after {SUB} 1 is merged.", "#1")) == []
+
+
+def test_sub_order_dependency_does_not_match_by_prefix():
+    hits = _order_hits(_order_body(f"Start after {SUB} 1 is merged.", "#12"))
+    assert len(hits) == 1
+
+
+def test_sub_order_same_sub_referenced_twice_is_one_violation():
+    policy = f"Start after {SUB} 1 is merged; once {SUB}1 lands, wire it up."
+    assert len(_order_hits(_order_body(policy, "none"))) == 1
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        pytest.param(f"{SUB} 2 runs after the config change.", id="self-reference"),
+        pytest.param(f"Afterwards {SUB} 1 stays as is.", id="afterwards"),
+        pytest.param(f"Reuse the helper from {SUB} 1.", id="no-order-word"),
+    ],
+)
+def test_sub_order_not_detected(policy):
+    assert _order_hits(_order_body(policy, "none")) == []
+
+
+def test_sub_order_ignores_acceptance_criteria_and_tables():
+    body = _order_body(
+        "Plain change.", "none", sub2_ac=f"Works after {SUB} 1 is merged"
+    )
+    body = body.replace(
+        "| `sumipan/nexus` | `docs/b.md` | Modify | Description |",
+        f"| `sumipan/nexus` | `docs/b.md` | Modify | after {SUB} 1 |",
+    )
+    assert _order_hits(body) == []
+
+
+def test_sub_order_skipped_without_depends_on_column():
+    body = _milestone_body([
+        ("impl one", [("docs/a.md", "Modify")]),
+        (f"Start after {SUB} 1 is merged.", [("docs/b.md", "Modify")]),
+    ])
+    assert _order_hits(body) == []
+
+
+def test_sub_order_words_come_from_language_pack(tmp_path, monkeypatch):
+    _use_pack(
+        tmp_path,
+        monkeypatch,
+        sub_header_prefix=SUB,
+        change_table_columns=[REPOSITORY, FILE_PATH, CHANGE_TYPE, DESCRIPTION],
+        order_after_words=["following"],
+    )
+    assert len(_order_hits(_order_body(f"Start following {SUB} 1.", "none"))) == 1
+    assert _order_hits(_order_body(f"Start following {SUB} 1.", "#1")) == []
+    assert _order_hits(_order_body(f"Start after {SUB} 1 is merged.", "none")) == []
