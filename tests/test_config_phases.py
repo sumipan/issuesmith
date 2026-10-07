@@ -54,20 +54,39 @@ def _subparser_option_choices(
 
 
 @pytest.mark.no_auto_phases
-def test_missing_phases_raises_config_error(tmp_path, monkeypatch):
+def test_missing_phases_uses_default_phases(tmp_path, monkeypatch):
     _write_config(tmp_path, monkeypatch, {"repo": "example/app"})
-    with pytest.raises(ConfigError, match="phases must be declared"):
-        load_config()
+    cfg = load_config()
+    assert tuple(p.name for p in cfg.phases) == _DEFAULT_PHASE_NAMES
+    assert cfg.phases[0].handler == "brushup"
+    assert cfg.phases[0].writes_files is False
+    assert cfg.phases[0].advance_when == ("deps_terminal",)
+    assert cfg.phases[1].preconditions == ()
+    assert cfg.phases[2].excludes == ()
 
 
 @pytest.mark.no_auto_phases
-def test_missing_handler_raises_config_error(tmp_path, monkeypatch):
+def test_default_phase_name_omits_handler_uses_default(tmp_path, monkeypatch):
     _write_config(
         tmp_path,
         monkeypatch,
         {
             "repo": "example/app",
             "phases": [{"name": "draft", "role": "design", "entry_step": "b1"}],
+        },
+    )
+    cfg = load_config()
+    assert cfg.phases[0].handler == "brushup"
+
+
+@pytest.mark.no_auto_phases
+def test_custom_phase_name_requires_handler(tmp_path, monkeypatch):
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "repo": "example/app",
+            "phases": [{"name": "alpha", "role": "design", "entry_step": "b1"}],
         },
     )
     with pytest.raises(ConfigError, match="handler"):

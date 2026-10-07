@@ -18,6 +18,10 @@ import yaml
 # language_pack must not leak into tests). Popped before any module calls get_config().
 os.environ.pop("ISSUESMITH_CONFIG", None)
 
+import issuesmith.config as config_module  # noqa: E402
+from issuesmith.language import EN  # noqa: E402
+from tests import legacy_text  # noqa: E402
+
 NEXUS_TEST_PHASES = [
     {
         "name": "draft",
@@ -58,41 +62,58 @@ NEXUS_TEST_PHASES = [
     },
 ]
 
-_TEST_CONFIG_DIR = Path(tempfile.mkdtemp(prefix="issuesmith-pytest-config-"))
-_TEST_CONFIG_PATH = _TEST_CONFIG_DIR / "issuesmith.yaml"
-_TEST_CONFIG_PATH.write_text(
-    yaml.safe_dump(
-        {
-            "repo": "sumipan/nexus",
-            "supported_repos": [
-                "sumipan/nexus",
-                "sumipan/mltgnt",
-                "sumipan/mltgnt-vscode-extension",
-                "sumipan/ghdag",
-                "sumipan/slack-project",
-                "sumipan/diary",
-                "sumipan/nexus-companion",
-                "sumipan/okr-core",
-                "sumipan/issuesmith",
-            ],
-            "phases": NEXUS_TEST_PHASES,
-            "terminal_labels": ["issuesmith:merge-done", "bump:done"],
-            "terminal_without_merge": [
-                "rejected",
-                "superseded",
-                "sub-ready",
-                "sub-done",
-            ],
-            "steps": {"p1": {"andon_when": ["external_leak.target_unknown"]}},
-        }
-    ),
-    encoding="utf-8",
-)
-os.environ["ISSUESMITH_CONFIG"] = str(_TEST_CONFIG_PATH)
+# Nexus declaration without explicit ``steps`` so entry_step stays the final step (#4790).
+NEXUS_DECLARATION_PHASES = [
+    {key: value for key, value in phase.items() if key != "steps"}
+    for phase in NEXUS_TEST_PHASES
+]
 
-import issuesmith.config as config_module  # noqa: E402
-from issuesmith.language import EN  # noqa: E402
-from tests import legacy_text  # noqa: E402
+_NEXUS_CONFIG_PAYLOAD = {
+    "repo": "sumipan/nexus",
+    "supported_repos": [
+        "sumipan/nexus",
+        "sumipan/mltgnt",
+        "sumipan/mltgnt-vscode-extension",
+        "sumipan/ghdag",
+        "sumipan/slack-project",
+        "sumipan/diary",
+        "sumipan/nexus-companion",
+        "sumipan/okr-core",
+        "sumipan/issuesmith",
+    ],
+    "phases": NEXUS_DECLARATION_PHASES,
+    "terminal_labels": ["issuesmith:merge-done", "bump:done"],
+    "terminal_without_merge": [
+        "rejected",
+        "superseded",
+        "sub-ready",
+        "sub-done",
+    ],
+    "steps": {"p1": {"andon_when": ["external_leak.target_unknown"]}},
+}
+
+_NEXUS_CONFIG_MODULES = frozenset({
+    "tests.test_preconditions",
+    "tests.test_queue",
+    "tests.test_queue_config_driven",
+    "tests.test_queue_language_pack",
+    "tests.test_queue_ordering",
+    "tests.test_queue_redispatch",
+    "tests.test_queue_triage",
+    "tests.test_queue_sub_phase",
+    "tests.test_recovery",
+    "tests.test_redispatch_sub",
+    "tests.test_resume_restores_state",
+    "tests.test_dispatch_requires",
+    "tests.test_second_consumer_declaration",
+})
+
+
+def _write_nexus_config(tmp_path: Path) -> Path:
+    cfg_path = tmp_path / "issuesmith-nexus.yaml"
+    cfg_path.write_text(yaml.safe_dump(_NEXUS_CONFIG_PAYLOAD), encoding="utf-8")
+    return cfg_path
+
 
 _ENGLISH_SECTIONS = dict(EN.sections)
 _ENGLISH_SUBSECTIONS = EN.sub_design_subsections
@@ -118,22 +139,17 @@ def _is_write_mode(mode: str) -> bool:
 
 
 @pytest.fixture(autouse=True)
-def _inject_phases_for_legacy_yaml(request, monkeypatch):
-    """Tests that write ``repo``-only yaml get nexus phases unless opted out."""
+def _issuesmith_config_for_tests(request, monkeypatch, tmp_path):
+    """Apply the nexus declaration only to modules that exercise config-driven queue logic."""
     if request.node.get_closest_marker("no_auto_phases"):
-        yield
-        return
-
-    original_build = config_module._build_config
-
-    def _build_with_phases(data, *, root):
-        payload = dict(data)
-        if payload.get("repo") and "phases" not in payload:
-            payload["phases"] = NEXUS_TEST_PHASES
-        return original_build(payload, root=root)
-
-    monkeypatch.setattr(config_module, "_build_config", _build_with_phases)
+        monkeypatch.delenv("ISSUESMITH_CONFIG", raising=False)
+    elif request.module.__name__ in _NEXUS_CONFIG_MODULES:
+        monkeypatch.setenv("ISSUESMITH_CONFIG", str(_write_nexus_config(tmp_path)))
+    else:
+        monkeypatch.delenv("ISSUESMITH_CONFIG", raising=False)
+    config_module.reset_config_cache()
     yield
+    config_module.reset_config_cache()
 
 
 @pytest.fixture(autouse=True)

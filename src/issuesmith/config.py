@@ -164,7 +164,49 @@ class StepConfig:
     andon_when: tuple[str, ...] = ()
 
 
-_DEFAULT_STEPS: dict[str, StepConfig] = {}
+_DEFAULT_STEPS: dict[str, StepConfig] = {
+    "p1": StepConfig(andon_when=("external_leak.target_unknown",)),
+}
+
+_DEFAULT_HANDLER_BY_PHASE: dict[str, str] = {
+    "draft": "brushup",
+    "sub": "subissue",
+    "develop": "impl",
+    "merge": "merge",
+}
+
+_DEFAULT_PHASES: tuple[PhaseConfig, ...] = (
+    PhaseConfig(
+        name="draft",
+        role="design",
+        entry_step="b1",
+        handler="brushup",
+        writes_files=False,
+        advance_when=("deps_terminal",),
+    ),
+    PhaseConfig(
+        name="sub",
+        role="implementation",
+        entry_step="sub-ready",
+        handler="subissue",
+        writes_files=False,
+        advance_when=("deps_terminal",),
+    ),
+    PhaseConfig(
+        name="develop",
+        role="implementation",
+        entry_step="cp2",
+        handler="impl",
+        advance_when=("deps_terminal",),
+    ),
+    PhaseConfig(
+        name="merge",
+        role="implementation",
+        entry_step="m2",
+        handler="merge",
+        advance_when=("deps_terminal", "closing_pr_exists"),
+    ),
+)
 
 # PR diff scope gate defaults (#3178). Mirrored in issuesmith.yaml.
 _DEFAULT_FORBIDDEN_PR_PATHS: tuple[str, ...] = (
@@ -265,7 +307,14 @@ class ExternalLeakConfig:
     cjk_free_external_targets: bool = False
 
 
-_DEFAULT_TERMINAL_LABELS: tuple[str, ...] = ()
+_DEFAULT_TERMINAL_LABELS: tuple[str, ...] = ("issuesmith:merge-done", "bump:done")
+
+_DEFAULT_TERMINAL_WITHOUT_MERGE: tuple[str, ...] = (
+    "rejected",
+    "superseded",
+    "sub-ready",
+    "sub-done",
+)
 
 
 
@@ -312,7 +361,7 @@ class IssuesmithConfig:
     concurrency: ConcurrencyConfig
     milestone_chain: MilestoneChainConfig = field(default_factory=MilestoneChainConfig)
     triage: TriageConfig = field(default_factory=TriageConfig)
-    phases: tuple[PhaseConfig, ...] = ()
+    phases: tuple[PhaseConfig, ...] = _DEFAULT_PHASES
     sections: Mapping[str, str] = field(default_factory=lambda: dict(EN.sections))
     sub_design_subsections: tuple[str, ...] = EN.sub_design_subsections
     steps: Mapping[str, StepConfig] = field(default_factory=lambda: dict(_DEFAULT_STEPS))
@@ -551,7 +600,7 @@ def _label_list(raw: Any, *, field: str, index: int) -> tuple[str, ...]:
 
 def _build_phases(raw: Any) -> tuple[PhaseConfig, ...]:
     if raw is None:
-        raise ConfigError("phases must be declared")
+        return _DEFAULT_PHASES
     if not isinstance(raw, list):
         raise ValueError("phases must be a list of mappings")
     from issuesmith.preconditions import PRECONDITION_REGISTRY
@@ -568,6 +617,8 @@ def _build_phases(raw: Any) -> tuple[PhaseConfig, ...]:
                 f"phases[{i}] requires non-empty name, role, and entry_step"
             )
         handler = str(item.get("handler") or "").strip()
+        if not handler:
+            handler = _DEFAULT_HANDLER_BY_PHASE.get(str(name), "")
         if not handler:
             raise ConfigError(f"phases[{i}].handler is required")
         preconditions = _label_list(item.get("preconditions"), field="preconditions", index=i)
@@ -812,17 +863,17 @@ def _build_scope_gate(raw: Mapping[str, Any] | None) -> ScopeGateConfig:
     )
 
 
-def _build_terminal_labels(raw: Any) -> tuple[str, ...]:
+def _build_terminal_labels(raw: Any, *, using_default_phases: bool = False) -> tuple[str, ...]:
     if raw is None:
-        return _DEFAULT_TERMINAL_LABELS
+        return _DEFAULT_TERMINAL_LABELS if using_default_phases else ()
     if not isinstance(raw, list):
         raise ValueError("terminal_labels must be a list of strings")
     return tuple(str(x) for x in raw)
 
 
-def _build_terminal_without_merge(raw: Any) -> tuple[str, ...]:
+def _build_terminal_without_merge(raw: Any, *, using_default_phases: bool = False) -> tuple[str, ...]:
     if raw is None:
-        return ()
+        return _DEFAULT_TERMINAL_WITHOUT_MERGE if using_default_phases else ()
     if not isinstance(raw, list):
         raise ValueError("terminal_without_merge must be a list of strings")
     return tuple(str(x) for x in raw)
@@ -1067,6 +1118,7 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         data.get("api_brake") if isinstance(data.get("api_brake"), dict) else None
     )
     language = _build_language(data, root=root.resolve())
+    using_default_phases = data.get("phases") is None
     return IssuesmithConfig(
         repo=repo,
         label_namespace=label_namespace,
@@ -1090,9 +1142,12 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         metrics=_build_metrics(metrics_raw),
         derived_allow=_build_derived_allow(derived_allow_raw),
         external_leak=_build_external_leak(external_leak_raw),
-        terminal_labels=_build_terminal_labels(data.get("terminal_labels")),
+        terminal_labels=_build_terminal_labels(
+            data.get("terminal_labels"), using_default_phases=using_default_phases
+        ),
         terminal_without_merge=_build_terminal_without_merge(
-            data.get("terminal_without_merge")
+            data.get("terminal_without_merge"),
+            using_default_phases=using_default_phases,
         ),
         observe=_build_observe(observe_raw, root.resolve()),
         api_brake=_build_api_brake(api_brake_raw),
