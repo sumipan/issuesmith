@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 
 import issuesmith.gate_rules.b1_milestone_subdesign  # noqa: F401
+from issuesmith.config import get_config
 from issuesmith.gate_rules import GATE_REGISTRY
 from tests.legacy_text import CHANGE_TYPE, DESCRIPTION, FILE_PATH, REPOSITORY, SUB
 
@@ -948,6 +949,72 @@ def test_behavior_test_in_sibling_ignores_partial_stem_match():
         ("tests", [("tests/test_data.py", "Modify")]),
     ])
     assert _SIBLING_TEST_RULE not in _rule_ids(_check(body, MILESTONE_LABELS))
+
+
+# #4745: scripts/persona-note-articles.py vs tests/scripts/test_persona_note_articles.py
+_HYPHEN_STEM_PAIRS = [
+    ("scripts/persona-note-articles.py", "tests/scripts/test_persona_note_articles.py"),
+    ("scripts/persona-sources-note.py", "tests/scripts/test_persona_sources_note.py"),
+]
+
+
+def _with_test_sub_dependency(body: str, dep: str) -> str:
+    """Use the configured plan columns and set Sub2's depends-on cell to ``dep``."""
+    num, title, _, content, depends_on = get_config().language.sub_plan_columns
+    old_header = "| # | Title | c5185_c5BB9 | Dependency |"
+    assert old_header in body
+    body = body.replace(old_header, f"| {num} | {title} | {content} | {depends_on} |")
+    return body.replace("| 2 | sub2 | scope2 | None |", f"| 2 | sub2 | scope2 | {dep} |")
+
+
+@pytest.mark.parametrize(("impl_path", "test_path"), _HYPHEN_STEM_PAIRS)
+def test_behavior_test_in_sibling_detects_hyphen_underscore_stem(impl_path, test_path):
+    body = _with_test_sub_dependency(
+        _milestone_body([
+            ("impl", [(impl_path, "Add")]),
+            ("tests", [(test_path, "Add")]),
+        ]),
+        get_config().language.no_deps_word,
+    )
+    hits = [v for v in _check(body, MILESTONE_LABELS) if v.rule_id == _SIBLING_TEST_RULE]
+    assert len(hits) == 1
+    assert impl_path in hits[0].message
+    assert test_path in hits[0].message
+    assert hits[0].location == f"#### {SUB}1"
+
+
+@pytest.mark.parametrize(("impl_path", "test_path"), _HYPHEN_STEM_PAIRS)
+def test_behavior_test_in_sibling_matches_stem_case_insensitively(impl_path, test_path):
+    body = _milestone_body([
+        ("impl", [(impl_path.replace("persona", "Persona"), "Add")]),
+        ("tests", [(test_path, "Add")]),
+    ])
+    assert _SIBLING_TEST_RULE in _rule_ids(_check(body, MILESTONE_LABELS))
+
+
+@pytest.mark.parametrize("dep", ["#1", "1"])
+@pytest.mark.parametrize(("impl_path", "test_path"), _HYPHEN_STEM_PAIRS)
+def test_behavior_test_in_sibling_passes_when_test_sub_depends_on_impl(
+    impl_path, test_path, dep
+):
+    body = _with_test_sub_dependency(
+        _milestone_body([
+            ("impl", [(impl_path, "Add")]),
+            ("tests", [(test_path, "Add")]),
+        ]),
+        dep,
+    )
+    assert _SIBLING_TEST_RULE not in _rule_ids(_check(body, MILESTONE_LABELS))
+
+
+def test_behavior_test_in_sibling_dependency_on_other_sub_still_detected():
+    body = _milestone_body([
+        ("impl", [("scripts/persona-note-articles.py", "Add")]),
+        ("tests", [("tests/scripts/test_persona_note_articles.py", "Add")]),
+        ("docs", [("docs/a.md", "Modify")]),
+    ])
+    body = _with_test_sub_dependency(body, "#3")
+    assert _SIBLING_TEST_RULE in _rule_ids(_check(body, MILESTONE_LABELS))
 
 
 def _contradiction_body(policy: str, ac_items: list[str]) -> str:
