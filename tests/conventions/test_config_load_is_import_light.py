@@ -26,6 +26,15 @@ def _write_config(tmp_path: Path, requires: list[str], input_kind: str) -> Path:
         yaml.safe_dump(
             {
                 "repo": "example/repo",
+                "phases": [
+                    {
+                        "name": "develop",
+                        "role": "implementation",
+                        "entry_step": "s1",
+                        "handler": "impl",
+                        "steps": ["s1"],
+                    }
+                ],
                 "steps": {
                     "s1": {"module": "issuesmith.worktree", "requires": requires, "input_kind": input_kind}
                 },
