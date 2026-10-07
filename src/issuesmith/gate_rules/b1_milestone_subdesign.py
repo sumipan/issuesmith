@@ -117,6 +117,38 @@ def _allow_paths_union(body: str) -> set[str]:
     return paths
 
 
+def _sub_plan_dependencies(body: str) -> dict[int, set[int]]:
+    """``{row: {depended rows}}`` from the sub-plan table's depends-on column (#4745)."""
+    milestone = get_section(body, get_config().sections["milestone"])
+    if not milestone:
+        return {}
+    plan_match = re.search(
+        rf"###\s+{re.escape(get_config().sections['sub_plan'])}\s*\n(.*?)(?=^###|\Z)",
+        milestone,
+        re.MULTILINE | re.DOTALL,
+    )
+    if not plan_match:
+        return {}
+    rows = parse_table_rows(plan_match.group(1))
+    if len(rows) <= 1:
+        return {}
+    dep_column = get_config().language.sub_plan_columns[4]
+    dep_i = next((i for i, cell in enumerate(rows[0]) if dep_column in cell), None)
+    if dep_i is None:
+        return {}
+    deps: dict[int, set[int]] = {}
+    for row in rows[1:]:
+        if len(row) <= dep_i or not row[0].strip().isdigit():
+            continue
+        deps[int(row[0].strip())] = {int(n) for n in re.findall(r"\d+", row[dep_i])}
+    return deps
+
+
+def _normalize_stem(stem: str) -> str:
+    """Fold case and treat ``-`` / ``_`` as one separator for stem matching (#4745)."""
+    return stem.lower().replace("-", "_")
+
+
 def _extract_ac_items(section: str) -> list[str]:
     ac = get_config().sections["acceptance_criteria"]
     ac_match = re.search(
@@ -156,7 +188,9 @@ class B1MilestoneSubdesignRules:
         violations.extend(self._check_file_union(body, sub_blocks))
         violations.extend(self._check_impact_scope(body, sub_blocks))
         violations.extend(self._check_deletion_reference_orphan(body, sub_blocks))
-        violations.extend(self._check_behavior_test_in_sibling(sub_blocks))
+        violations.extend(self._check_behavior_test_in_sibling(
+            sub_blocks, _sub_plan_dependencies(body)
+        ))
         for sub_num, block in sub_blocks:
             violations.extend(self._check_sub_ac_contradiction(sub_num, block))
         return violations
@@ -500,8 +534,12 @@ class B1MilestoneSubdesignRules:
     def _check_behavior_test_in_sibling(
         self,
         sub_blocks: list[tuple[int, str]],
+        dependencies: dict[int, set[int]],
     ) -> list[Violation]:
-        """Reject an impl file whose mirror test sits in a sibling sub (#4518)."""
+        """Reject an impl file whose mirror test sits in a sibling sub (#4518).
+
+        A test sub that declares the impl sub in its depends-on cell is allowed (#4745).
+        """
         owned = [
             (sub_num, repo, path)
             for sub_num, block in sub_blocks
@@ -512,12 +550,14 @@ class B1MilestoneSubdesignRules:
         for sub_num, repo, path in owned:
             if path.startswith("tests/"):
                 continue
-            stem = Path(path).stem
-            stem_re = re.compile(rf"(?<![A-Za-z0-9]){re.escape(stem)}(?![A-Za-z0-9])")
+            stem = _normalize_stem(Path(path).stem)
+            stem_re = re.compile(rf"(?<![a-z0-9]){re.escape(stem)}(?![a-z0-9])")
             for test_sub, test_repo, test_path in tests:
                 if test_sub == sub_num or test_repo != repo:
                     continue
-                if not stem_re.search(Path(test_path).stem):
+                if not stem_re.search(_normalize_stem(Path(test_path).stem)):
+                    continue
+                if sub_num in dependencies.get(test_sub, set()):
                     continue
                 violations.append(Violation(
                     rule_id="b1_milestone_subdesign.behavior_test_in_sibling",
@@ -530,7 +570,7 @@ class B1MilestoneSubdesignRules:
                     auto_fixable=False,
                     fix_hint=(
                         "move the test into the same sub's change table as the impl,"
-                        " or merge the two subs"
+                        f" merge the two subs, or make Sub {test_sub} depend on Sub {sub_num}"
                     ),
                 ))
         return violations
