@@ -682,6 +682,39 @@ def _earliest_paused_resume_at(
     return min(resume_ats) if resume_ats else None
 
 
+def _declare_begin(
+    quota_gate: QuotaGate, task_uuid: str, engine: str, role: str
+) -> None:
+    """Declare the LLM run on the ghdag task's running row; deny -> RetrySignal."""
+    if not task_uuid:
+        return
+    try:
+        decision = quota_gate.begin_run(task_uuid=task_uuid, engine=engine)
+    except (OSError, ValueError) as exc:
+        print(
+            f"[issuesmith-engine] WARNING: quota declare failed: {exc}",
+            file=sys.stderr,
+        )
+        return
+    if not decision.allowed:
+        raise RetrySignal(
+            reason=RetryReason.QUOTA_PAUSED, after=decision.resume_at, role=role
+        )
+
+
+def _declare_finish(quota_gate: QuotaGate, task_uuid: str) -> None:
+    """Remove the task's running row declared by _declare_begin."""
+    if not task_uuid:
+        return
+    try:
+        quota_gate.finish_run(task_uuid=task_uuid)
+    except (OSError, ValueError) as exc:
+        print(
+            f"[issuesmith-engine] WARNING: quota declare failed: {exc}",
+            file=sys.stderr,
+        )
+
+
 def _execute(
     role: str,
     content: str,
@@ -759,6 +792,9 @@ def _execute(
     if remaining_timeout < 1.0:
         raise RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=None, role=role)
     timeout_sec = remaining_timeout
+
+    task_uuid = os.environ.get("GHDAG_TASK_UUID", "").strip()
+    _declare_begin(quota_gate, task_uuid, selection.engine, role)
 
     print(
         f"[issuesmith-engine] start role={role} engine={selection.engine} "
@@ -843,6 +879,7 @@ def _execute(
                     f"[issuesmith-engine] rate limit detected, retried with {alt_engine}",
                     file=sys.stderr,
                 )
+                _declare_begin(quota_gate, task_uuid, alt_engine, role)
                 result = call_managed(
                     content,
                     engine=alt_engine,
@@ -864,6 +901,7 @@ def _execute(
                     f"[issuesmith-engine] environment error, retrying with {alt_engine}",
                     file=sys.stderr,
                 )
+                _declare_begin(quota_gate, task_uuid, alt_engine, role)
                 result = call_managed(
                     content,
                     engine=alt_engine,
@@ -881,6 +919,7 @@ def _execute(
                 )
     finally:
         _llm_managed.call = original_call
+        _declare_finish(quota_gate, task_uuid)
 
     finished_at = time.time()
     if result.failure_class == FailureClass.TIMEOUT.value:
