@@ -5,7 +5,7 @@ import re
 import yaml
 from ghdag.workflow.gates import GATE_REGISTRY, Violation
 
-from issuesmith.ac_contract import normalize_reference_entry
+from issuesmith.ac_contract import is_invalid_contract_path, normalize_reference_entry
 from issuesmith.config import get_config
 
 _ALLOWED_KEYS = frozenset({
@@ -139,6 +139,34 @@ class B1AcFormatRules:
             )]
 
         violations: list[Violation] = []
+        for key in ("paths_must_exist", "paths_must_not_exist"):
+            if key not in data:
+                continue
+            entries = data[key]
+            if not isinstance(entries, list):
+                violations.append(Violation(
+                    rule_id="b1_ac_format.path_entry_invalid",
+                    severity="fail",
+                    message=f"{key} must be a list",
+                    location=key,
+                    auto_fixable=False,
+                    fix_hint=None,
+                ))
+                continue
+            for i, entry in enumerate(entries):
+                if is_invalid_contract_path(entry):
+                    violations.append(Violation(
+                        rule_id="b1_ac_format.path_entry_invalid",
+                        severity="fail",
+                        message=(
+                            f"{key}[{i}] must be a non-empty relative path"
+                            f" without '..': {entry!r}"
+                        ),
+                        location=f"{key}[{i}]",
+                        auto_fixable=False,
+                        fix_hint=None,
+                    ))
+
         refs = data.get("references_must_resolve")
         if refs is not None:
             if not isinstance(refs, list):

@@ -508,3 +508,68 @@ def test_yaml_block_missing_fix_hint_reads_new_words_from_pack(tmp_path, monkeyp
     violations = _check(body, MILESTONE_LABELS)
     assert [v.rule_id for v in violations] == ["b1_ac_format.yaml_block_missing"]
     assert violations[0].fix_hint == "```yaml\npaths_must_exist:\n  - tools/created.py\n```"
+
+
+# --- paths_must_exist / paths_must_not_exist entry shape (#4803) ---
+
+
+def _paths_body(key: str, entries_yaml: str) -> str:
+    return (
+        "## Acceptance Criteria\n\n```yaml\n"
+        f"{key}:{entries_yaml}\n"
+        "```\n\n- [ ] some check\n"
+    )
+
+
+def _path_entries_body(key: str) -> str:
+    return _paths_body(
+        key,
+        '\n  - /abs/a.py\n  - ../a.py\n  - ""\n  - 1\n  - src/ok.py',
+    )
+
+
+def test_paths_must_exist_invalid_entries_detected():
+    violations = _check(_path_entries_body("paths_must_exist"), MILESTONE_LABELS)
+    assert [v.rule_id for v in violations] == ["b1_ac_format.path_entry_invalid"] * 4
+    assert [v.location for v in violations] == [
+        "paths_must_exist[0]",
+        "paths_must_exist[1]",
+        "paths_must_exist[2]",
+        "paths_must_exist[3]",
+    ]
+    assert all(v.severity == "fail" and not v.auto_fixable for v in violations)
+    assert "'/abs/a.py'" in violations[0].message
+
+
+def test_paths_must_not_exist_invalid_entries_detected():
+    violations = _check(_path_entries_body("paths_must_not_exist"), MILESTONE_LABELS)
+    assert [v.rule_id for v in violations] == ["b1_ac_format.path_entry_invalid"] * 4
+    assert [v.location for v in violations] == [
+        "paths_must_not_exist[0]",
+        "paths_must_not_exist[1]",
+        "paths_must_not_exist[2]",
+        "paths_must_not_exist[3]",
+    ]
+
+
+def test_paths_must_exist_glob_and_plain_entries_no_violation():
+    body = _paths_body("paths_must_exist", '\n  - "a/*.txt"\n  - src/b.py')
+    assert _check(body, MILESTONE_LABELS) == []
+
+
+def test_paths_must_exist_not_a_list():
+    violations = _check(_paths_body("paths_must_exist", " a.py"), MILESTONE_LABELS)
+    assert len(violations) == 1
+    v = violations[0]
+    assert v.rule_id == "b1_ac_format.path_entry_invalid"
+    assert v.location == "paths_must_exist"
+    assert v.message == "paths_must_exist must be a list"
+
+
+def test_paths_invalid_entry_without_milestone_label_when_yaml_present():
+    violations = _check(_path_entries_body("paths_must_exist"), NON_MILESTONE_LABELS)
+    assert len(violations) == 4
+
+
+def test_paths_no_check_without_yaml_block_when_unstructured():
+    assert _check(BODY_WITH_AC_NO_YAML, NON_MILESTONE_LABELS) == []

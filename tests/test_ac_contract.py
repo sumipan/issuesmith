@@ -10,6 +10,7 @@ from issuesmith.ac_contract import (
     contract_failures,
     dual_gate_roots,
     extract_contract_from_body,
+    is_invalid_contract_path,
     pending_manual_checks,
     run_checks,
 )
@@ -332,3 +333,143 @@ def test_extract_contract_follows_custom_pack_heading(tmp_path, monkeypatch):
     assert extract_contract_from_body(body) == {"paths_must_exist": ["a.py"]}
     en_body = "## Acceptance Criteria\n\n```yaml\npaths_must_exist:\n  - a.py\n```\n"
     assert extract_contract_from_body(en_body) is None
+
+
+# --- paths_must_exist glob expansion (#4803) ---
+
+
+def test_paths_must_exist_glob_matches(tmp_path):
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a" / "x.txt").write_text("", encoding="utf-8")
+
+    records = run_checks({"paths_must_exist": ["a/*.txt"]}, tmp_path)
+
+    assert len(records) == 1
+    assert records[0]["result"] == "PASS"
+    assert records[0]["path"] == "a/*.txt"
+    assert "glob matched 1" in records[0]["detail"]
+    assert "a/x.txt" in records[0]["detail"]
+
+
+def test_paths_must_exist_glob_matches_nothing(tmp_path):
+    records = run_checks({"paths_must_exist": ["a/*.txt"]}, tmp_path)
+
+    assert len(records) == 1
+    assert records[0]["result"] == "FAIL"
+    assert records[0]["path"] == "a/*.txt"
+    assert records[0]["detail"] == "glob matched nothing"
+
+
+def test_paths_must_exist_plain_path_keeps_detail(tmp_path):
+    (tmp_path / "b.py").write_text("", encoding="utf-8")
+
+    records = run_checks({"paths_must_exist": ["b.py", "missing.py"]}, tmp_path)
+
+    by_path = {r["path"]: r for r in records}
+    assert by_path["b.py"]["result"] == "PASS"
+    assert by_path["b.py"]["detail"] == ""
+    assert by_path["missing.py"]["result"] == "FAIL"
+    assert by_path["missing.py"]["detail"] == "file not found"
+
+
+def test_paths_must_exist_glob_generated_articles(tmp_path):
+    # ASCII fixture of the generated-artifact contract that stopped M2.
+    articles = tmp_path / "agents" / "person" / "sources" / "notion" / "articles"
+    articles.mkdir(parents=True)
+    (articles / "001.txt").write_text("", encoding="utf-8")
+    (articles / "002.txt").write_text("", encoding="utf-8")
+    pattern = "agents/person/sources/notion/articles/*.txt"
+
+    records = run_checks({"paths_must_exist": [pattern]}, tmp_path)
+
+    assert len(records) == 1
+    assert records[0]["result"] == "PASS"
+    assert records[0]["path"] == pattern
+    assert "glob matched 2" in records[0]["detail"]
+
+
+def test_paths_must_exist_glob_detail_lists_first_three(tmp_path):
+    (tmp_path / "a").mkdir()
+    for name in ("4.txt", "3.txt", "2.txt", "1.txt"):
+        (tmp_path / "a" / name).write_text("", encoding="utf-8")
+
+    records = run_checks({"paths_must_exist": ["a/*.txt"]}, tmp_path)
+
+    assert records[0]["detail"] == "glob matched 4: a/1.txt, a/2.txt, a/3.txt"
+
+
+@pytest.mark.parametrize("entry", ["/abs/*.txt", "../x.txt", "", "   ", 1, None])
+def test_paths_must_exist_invalid_entry_fails_without_raising(tmp_path, entry):
+    records = run_checks({"paths_must_exist": [entry]}, tmp_path)
+
+    assert len(records) == 1
+    assert records[0]["check"] == "paths_must_exist"
+    assert records[0]["result"] == "FAIL"
+    assert records[0]["path"] == str(entry)
+    assert "invalid path" in records[0]["detail"]
+
+
+@pytest.mark.parametrize("entry", ["/abs/*.txt", "../x.txt", ""])
+def test_paths_must_not_exist_invalid_entry_fails_without_raising(tmp_path, entry):
+    records = run_checks({"paths_must_not_exist": [entry]}, tmp_path)
+
+    assert len(records) == 1
+    assert records[0]["check"] == "paths_must_not_exist"
+    assert records[0]["result"] == "FAIL"
+    assert "invalid path" in records[0]["detail"]
+
+
+def test_paths_must_not_exist_no_match_passes(tmp_path):
+    records = run_checks({"paths_must_not_exist": ["legacy/*.jsonl"]}, tmp_path)
+
+    assert records == [
+        {
+            "check": "paths_must_not_exist",
+            "path": "legacy/*.jsonl",
+            "result": "PASS",
+            "detail": "",
+            "git_log": "",
+        }
+    ]
+
+
+def test_paths_must_not_exist_match_fails_per_file(tmp_path):
+    (tmp_path / "legacy").mkdir()
+    (tmp_path / "legacy" / "b.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "legacy" / "a.jsonl").write_text("", encoding="utf-8")
+
+    records = run_checks({"paths_must_not_exist": ["legacy/*.jsonl"]}, tmp_path)
+
+    detail = "glob matched: legacy/*.jsonl; matched: legacy/a.jsonl, legacy/b.jsonl"
+    assert [(r["path"], r["result"], r["detail"]) for r in records] == [
+        ("legacy/a.jsonl", "FAIL", detail),
+        ("legacy/b.jsonl", "FAIL", detail),
+    ]
+
+
+def test_paths_must_not_exist_plain_path(tmp_path):
+    (tmp_path / "old.py").write_text("", encoding="utf-8")
+
+    records = run_checks({"paths_must_not_exist": ["old.py", "gone.py"]}, tmp_path)
+
+    by_path = {r["path"]: r["result"] for r in records}
+    assert by_path == {"old.py": "FAIL", "gone.py": "PASS"}
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("a/b.py", False),
+        ("a/*.txt", False),
+        ("./a.py", False),
+        ("", True),
+        ("  ", True),
+        ("/abs/a.py", True),
+        ("../a.py", True),
+        ("a/../b.py", True),
+        (1, True),
+        (None, True),
+    ],
+)
+def test_is_invalid_contract_path(value, expected):
+    assert is_invalid_contract_path(value) is expected
