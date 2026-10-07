@@ -76,6 +76,23 @@ def _config(tmp_path, monkeypatch):
     reset_config_cache()
 
 
+# Promoted sub change-table rows keep the parent change-content cell (#4825),
+# so they are found by their repository cell rather than a placeholder text.
+_SUB_ROW_PREFIX = "| `sumipan/issuesmith` |"
+
+
+def _split_rows(promoted: str) -> list[str]:
+    """Change-table rows of the promoted sub blocks (parent table excluded)."""
+    from issuesmith.contract import iter_sub_blocks
+
+    return [
+        line
+        for _, block in iter_sub_blocks(promoted)
+        for line in block.splitlines()
+        if line.startswith(_SUB_ROW_PREFIX)
+    ]
+
+
 def _ids(violations) -> set[str]:
     return {v.rule_id for v in violations}
 
@@ -282,7 +299,7 @@ def test_promote_keeps_root_and_excluded_rows():
     rows = [(f"src/{d}/x.py", _MODIFY) for d in ("a", "b", "c")]
     rows += [("CHANGELOG.md", _MODIFY), ("tests/test_x.py", _NEW)]
     promoted = promote_oversized_issue_body(_body(rows))
-    split_rows = [line for line in promoted.splitlines() if "split from oversized issue" in line]
+    split_rows = _split_rows(promoted)
     for path, _ in rows:
         assert any(f"`{path}`" in line for line in split_rows), path
 
@@ -438,7 +455,7 @@ def test_promote_names_root_level_concern_root():
     assert "Concern `.`" not in promoted
     root_block = promoted.split(": root\n", 1)[1]
     split_rows = [
-        line for line in root_block.splitlines() if "split from oversized issue" in line
+        line for line in root_block.splitlines() if line.startswith(_SUB_ROW_PREFIX)
     ]
     assert [line.split("`")[3] for line in split_rows] == ["README.md", "CHANGELOG.md"]
 
@@ -511,7 +528,7 @@ def test_promote_merges_unreadable_root_concern_into_first_readable():
         assert "`issuesmith.yaml`" in first
         assert "`pyproject.toml`" in first
     # File-union complete: no parent row is lost.
-    split_rows = [line for line in promoted.splitlines() if "split from oversized issue" in line]
+    split_rows = _split_rows(promoted)
     for path, _ in rows:
         assert any(f"`{path}`" in line for line in split_rows), path
     # Idempotent after the merge reduced the concern count.
@@ -538,7 +555,7 @@ def test_promote_keeps_single_root_concern_when_nothing_is_readable(monkeypatch)
     rows += [("README.md", _MODIFY)]
     promoted = scope_size.promote_oversized_issue_body(_body(rows))
     assert _sub_header_concerns(promoted) == ["root"]
-    split_rows = [line for line in promoted.splitlines() if "split from oversized issue" in line]
+    split_rows = _split_rows(promoted)
     assert len(split_rows) == len(rows)
     for path, _ in rows:
         assert any(f"`{path}`" in line for line in split_rows), path
@@ -553,3 +570,118 @@ def test_promote_without_target_repo_skips_readability_gate(monkeypatch):
     body = _body(rows).replace("target_repo: sumipan/issuesmith\n", "")
     promoted = scope_size.promote_oversized_issue_body(body)
     assert _sub_header_concerns(promoted) == ["src/a", "src/b", "src/c", "root"]
+
+
+# nexus #4825: change content survives promotion and drives the depends-on column.
+
+
+def _content_body(rows: list[tuple[str, str, str]]) -> str:
+    table = "".join(f"| `sumipan/issuesmith` | `{p}` | {k} | {c} |\n" for p, k, c in rows)
+    return _decode(
+        "```yaml\ntarget_repo: sumipan/issuesmith\nbase_branch: main\n```\n\n"
+        "## Changed Files\n\n" + _HEADER + table
+    )
+
+
+def _plan_lines(text: str) -> list[str]:
+    return re.findall(r"^\| \d+ \| .+\|$", text, re.MULTILINE)
+
+
+_ONE_WAY_ROWS = [
+    ("src/a/projection.py", _NEW, "new projection module"),
+    ("src/a/helpers.py", _MODIFY, "keep helpers"),
+    ("src/b/user.py", _MODIFY, "call projection.render"),
+    ("src/c/z.py", _MODIFY, "standalone change"),
+]
+
+_CYCLE_ROWS = [
+    ("src/a/projection.py", _NEW, "new projection module"),
+    ("src/a/andon.py", _MODIFY, "call labels.project_issue"),
+    ("src/b/labels.py", _NEW, "new label ops"),
+    ("src/b/dispatch.py", _MODIFY, "use projection"),
+    ("src/c/z.py", _MODIFY, "standalone change"),
+]
+
+
+def test_promote_keeps_change_content_per_sub():
+    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
+
+    promoted = promote_oversized_issue_body(_content_body(_ONE_WAY_ROWS))
+    rows = _split_rows(promoted)
+    for path, _, content in _ONE_WAY_ROWS:
+        (row,) = [line for line in rows if f"`{path}`" in line]
+        assert row.endswith(f"| {content} |")
+    assert "split from oversized issue" not in promoted
+
+
+def test_promote_writes_creator_dependency_and_no_deps_word():
+    from issuesmith.config import get_config
+    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
+
+    no_deps = get_config().scope_size.no_deps_word
+    promoted = promote_oversized_issue_body(_content_body(_ONE_WAY_ROWS))
+    assert _plan_lines(promoted) == [
+        f"| 1 | src/a | sumipan/issuesmith | src/a/projection.py, src/a/helpers.py | {no_deps} |",
+        "| 2 | src/b | sumipan/issuesmith | src/b/user.py | #1 |",
+        f"| 3 | src/c | sumipan/issuesmith | src/c/z.py | {no_deps} |",
+    ]
+    assert promote_oversized_issue_body(promoted) == promoted
+
+
+def test_promote_merges_mutually_dependent_concerns():
+    from issuesmith.contract import extract_change_table_rows
+    from issuesmith.gate_rules.b1_milestone_subdesign import (
+        B1MilestoneSubdesignRules,
+        find_dependency_cycles,
+        infer_sub_dependencies,
+    )
+    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
+
+    promoted = promote_oversized_issue_body(_content_body(_CYCLE_ROWS))
+    assert _sub_header_concerns(promoted) == ["src/a + src/b", "src/c"]
+    blocks = _promoted_sub_blocks(promoted)
+    owned = [path for _, block in blocks for _, path, _ in extract_change_table_rows(block)]
+    assert sorted(owned) == sorted(path for path, _, _ in _CYCLE_ROWS)
+    assert len(owned) == len(set(owned))
+    deps = infer_sub_dependencies(blocks)
+    assert find_dependency_cycles(deps) == []
+    ids = {v.rule_id for v in B1MilestoneSubdesignRules().check(promoted, ["scope:milestone"])}
+    assert "b1_milestone_subdesign.dependency_cycle" not in ids
+    assert "b1_milestone_subdesign.sibling_new_file_unreferenced_dependency" not in ids
+
+
+@pytest.mark.parametrize("rows", [_ONE_WAY_ROWS, _CYCLE_ROWS], ids=["one_way", "cycle"])
+def test_fix_hint_plan_matches_promotion(rows):
+    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
+
+    body = _content_body(rows)
+    violations = ScopeSizeRules().check(body, [])
+    assert violations
+    promoted_plan = _plan_lines(promote_oversized_issue_body(body))
+    for v in violations:
+        assert _plan_lines(v.fix_hint) == promoted_plan
+
+
+def test_promote_dependency_vocabulary_from_pack(tmp_path, monkeypatch):
+    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
+
+    _use_pack(
+        tmp_path,
+        monkeypatch,
+        **_ASCII_PACK,
+        sub_plan_columns=["#", "Title", "Repo", "What", "Needs"],
+        no_deps_word="-",
+    )
+    rows = [
+        ("src/a/projection.py", "create", "new projection"),
+        ("src/b/user.py", "modify", "call projection.render"),
+        ("src/c/z.py", "modify", "standalone"),
+    ]
+    table = "".join(f"| `sumipan/issuesmith` | `{p}` | {k} | {c} |\n" for p, k, c in rows)
+    body = (
+        "```yaml\ntarget_repo: sumipan/issuesmith\nbase_branch: main\n```\n\n"
+        "## Changed Files\n\n| Repo | Path | Kind | Note |\n|---|---|---|---|\n" + table
+    )
+    promoted = promote_oversized_issue_body(body)
+    assert "| # | Title | Repo | What | Needs |" in promoted
+    assert [line.rsplit("|", 2)[1].strip() for line in _plan_lines(promoted)] == ["-", "#1", "-"]

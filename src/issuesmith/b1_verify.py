@@ -161,11 +161,15 @@ def apply_deterministic_recovery(
     1. If ``scope_size.too_many_files`` / ``too_many_concerns`` fire, rewrite the
        body via :func:`promote_oversized_issue_body` and ensure label + milestone
        object via :func:`fix_label_missing`.
-    2. Apply every ``auto_fixable=True`` milestone_consistency helper.
+    2. Apply every ``auto_fixable=True`` milestone_consistency helper and add
+       inferred sibling dependencies to the sub plan (cycles excluded, #4825).
     3. Persist the body when it changed (unless ``dry_run`` / ``persist=False``).
     4. Re-run Verify. ``can_done`` is True only when no fail violations remain.
        Remaining non-auto-fixable violations are returned as ``llm_violations``.
     """
+    from issuesmith.gate_rules.b1_milestone_subdesign import (
+        apply_inferred_dependency_fixes,
+    )
     from issuesmith.gate_rules.milestone_consistency import (
         apply_auto_fixable_helpers,
         apply_body_autofixes,
@@ -193,7 +197,10 @@ def apply_deterministic_recovery(
 
     # Body autofixes (english headers / misplaced plan) — safe and idempotent.
     body, body_applied = apply_body_autofixes(body)
-    for fix_id in body_applied:
+    # Sibling new-file references missing from the depends-on column (#4825);
+    # edges closing a cycle are left for dependency_cycle to report.
+    body, dep_applied = apply_inferred_dependency_fixes(body)
+    for fix_id in (*body_applied, *dep_applied):
         if fix_id not in applied:
             applied.append(fix_id)
 

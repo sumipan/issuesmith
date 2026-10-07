@@ -606,3 +606,76 @@ def test_check_paths_must_not_exist_validity_wrapper(tmp_path, monkeypatch):
     assert any(
         v.rule_id == "scope_coupling.paths_must_not_exist_unjustified" for v in violations
     )
+
+
+# nexus #4825: inferred sibling dependencies are written by deterministic recovery.
+
+_DEP_MISSING = "b1_milestone_subdesign.sibling_new_file_unreferenced_dependency"
+_DEP_CYCLE = "b1_milestone_subdesign.dependency_cycle"
+
+
+def _recover(tmp_path, monkeypatch, body: str, runs: int = 1):
+    import yaml
+
+    from issuesmith.b1_verify import apply_deterministic_recovery
+    from issuesmith.config import reset_config_cache
+
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "sumipan/issuesmith", "scope_gate": {"enabled": False}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    client = _FakeForge(body=body, labels=["scope:milestone"])
+    results = []
+    try:
+        for _ in range(runs):
+            results.append(apply_deterministic_recovery(
+                client, 4825, client.body, ["scope:milestone"], persist=True
+            ))
+    finally:
+        reset_config_cache()
+    return client, results
+
+
+def test_deterministic_recovery_persists_inferred_dependency(tmp_path, monkeypatch):
+    from tests.gate_rules.test_b1_milestone_subdesign import (
+        _dep_body,
+        _plan_row,
+        _projection_subs,
+    )
+
+    body = _dep_body(_projection_subs(), ["none", "none"])
+    assert _DEP_MISSING in {v.rule_id for v in collect_violations(body, ["scope:milestone"])}
+    client, (result,) = _recover(tmp_path, monkeypatch, body)
+
+    assert _DEP_MISSING in result.applied
+    assert _plan_row(client.body, 2).endswith("| #1 |")
+    assert any(u.get("body") == client.body for u in client.updates)
+    assert result.body == client.body
+    assert not any(v.rule_id == _DEP_MISSING for v in result.remaining)
+
+
+def test_deterministic_recovery_dependency_fix_is_idempotent(tmp_path, monkeypatch):
+    from tests.gate_rules.test_b1_milestone_subdesign import _dep_body, _projection_subs
+
+    body = _dep_body(_projection_subs(), ["none", "none"])
+    client, (first, second) = _recover(tmp_path, monkeypatch, body, runs=2)
+
+    assert second.body == first.body
+    assert _DEP_MISSING not in second.applied
+    assert sum(1 for u in client.updates if u.get("body") is not None) == 1
+
+
+def test_deterministic_recovery_does_not_write_cycle_edges(tmp_path, monkeypatch):
+    from tests.gate_rules.test_b1_milestone_subdesign import _cycle_subs, _dep_body
+
+    body = _dep_body(_cycle_subs(), ["none", "none"])
+    client, (result,) = _recover(tmp_path, monkeypatch, body)
+
+    assert _DEP_MISSING not in result.applied
+    assert result.body == body
+    assert not any(u.get("body") is not None for u in client.updates)
+    assert any(v.rule_id == _DEP_CYCLE for v in result.llm_violations)
+    assert result.can_done is False

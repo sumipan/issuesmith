@@ -1139,3 +1139,275 @@ _UNION_RULES = {
 def test_file_union_and_readable_agree_on_repo_root_file():
     ids = set(_rule_ids(_check(_root_file_body(), MILESTONE_LABELS)))
     assert (_READABLE_RULE in ids) == bool(ids & _UNION_RULES)
+
+
+# --- #4825: sibling new-file dependencies -------------------------------------------
+
+_DEP_MISSING = "b1_milestone_subdesign.sibling_new_file_unreferenced_dependency"
+_DEP_CYCLE = "b1_milestone_subdesign.dependency_cycle"
+_REPO = "sumipan/issuesmith"
+
+
+def _dep_sub(
+    num: int,
+    rows: list[tuple[str, str, str]],
+    *,
+    policy: str = "",
+    ac_items: list[str] | None = None,
+    repo: str = _REPO,
+) -> str:
+    """Sub block with ``rows`` of ``(path, change type, change content)``."""
+    cfg = get_config()
+    scope, design_policy, changed, ac = cfg.sub_design_subsections
+    items = ac_items or [f"item alpha {num}", f"item beta {num}", f"item gamma {num}"]
+    table = "\n".join(f"| `{repo}` | `{p}` | {k} | {c} |" for p, k, c in rows)
+    ac_lines = "\n".join(f"- [ ] {item}" for item in items)
+    return (
+        f"#### {SUB}{num}: part {num}\n\n"
+        f"**{scope}**: part {num}\n"
+        f"**{design_policy}**: {policy or 'plain'}\n"
+        f"**{changed}**:\n| {_TABLE_HEADER} |\n|---|---|---|---|\n{table}\n\n"
+        f"**{ac}**:\n{ac_lines}\n"
+    )
+
+
+def _dep_body(blocks: list[str], deps: list[str]) -> str:
+    cfg = get_config()
+    plan_rows = "\n".join(
+        f"| {i} | part {i} | {_REPO} | c | {dep} |" for i, dep in enumerate(deps, start=1)
+    )
+    return (
+        f"```yaml\ntarget_repo: {_REPO}\nbase_branch: main\n```\n\n"
+        f"## {cfg.sections['design']}\n\n" + "\n".join(blocks) + "\n"
+        f"## {cfg.sections['milestone']}\n\n### {cfg.sections['sub_plan']}\n"
+        f"{cfg.language.sub_plan_header}\n|---|---|---|---|---|\n{plan_rows}\n\n"
+        "## Tail\nkept\n"
+    )
+
+
+def _projection_subs(sub2_policy: str = "build on `projection.py` from the creator") -> list[str]:
+    """#4788 / #4807 / #4808 minimised: Sub 2 uses Sub 1's new projection.py."""
+    return [
+        _dep_sub(1, [
+            ("src/issuesmith/projection.py", "add", "new projection module"),
+            ("src/issuesmith/forge_guard.py", "add", "new guard"),
+        ]),
+        _dep_sub(2, [("src/issuesmith/ops/dispatch.py", "modify", "route issues")],
+                 policy=sub2_policy),
+    ]
+
+
+def _cycle_subs() -> list[str]:
+    """Sub 1 uses Sub 2's ops/labels.py while Sub 2 uses Sub 1's projection.py."""
+    return [
+        _dep_sub(1, [
+            ("src/issuesmith/projection.py", "add", "new projection module"),
+            ("src/issuesmith/andon.py", "modify", "call `ops/labels.py` project_issue"),
+        ]),
+        _dep_sub(2, [
+            ("src/issuesmith/ops/labels.py", "add", "new label ops"),
+            ("src/issuesmith/ops/dispatch.py", "modify", "call projection.render"),
+        ]),
+    ]
+
+
+def _dep_ids(body: str) -> list[str]:
+    return [v.rule_id for v in _check(body, MILESTONE_LABELS) if v.rule_id.startswith(
+        (_DEP_MISSING, _DEP_CYCLE)
+    )]
+
+
+def test_infer_sub_dependencies_projection_fixture():
+    from issuesmith.gate_rules.b1_milestone_subdesign import (
+        extract_sub_blocks,
+        infer_sub_dependencies,
+    )
+
+    body = _dep_body(_projection_subs(), ["none", "none"])
+    assert infer_sub_dependencies(extract_sub_blocks(body)) == {1: set(), 2: {1}}
+    violations = [v for v in _check(body, MILESTONE_LABELS) if v.rule_id == _DEP_MISSING]
+    assert len(violations) == 1
+    (v,) = violations
+    assert v.severity == "fail" and v.auto_fixable is True
+    assert "Sub 2" in v.message and "Sub 1" in v.message
+    assert "src/issuesmith/projection.py" in v.message
+
+
+@pytest.mark.parametrize(
+    "where",
+    ["policy", "content", "ac"],
+)
+def test_infer_reads_policy_content_and_ac(where):
+    from issuesmith.gate_rules.b1_milestone_subdesign import (
+        extract_sub_blocks,
+        infer_sub_dependencies,
+    )
+
+    ref = "use projection here"
+    sub2 = _dep_sub(
+        2,
+        [("src/issuesmith/ops/dispatch.py", "modify", ref if where == "content" else "route")],
+        policy=ref if where == "policy" else "",
+        ac_items=[ref, "b item", "c item"] if where == "ac" else None,
+    )
+    body = _dep_body([_projection_subs()[0], sub2], ["none", "none"])
+    assert infer_sub_dependencies(extract_sub_blocks(body)) == {1: set(), 2: {1}}
+
+
+def test_infer_is_deterministic():
+    from issuesmith.gate_rules.b1_milestone_subdesign import (
+        extract_sub_blocks,
+        infer_sub_dependencies,
+    )
+
+    blocks = extract_sub_blocks(_dep_body(_cycle_subs(), ["none", "none"]))
+    assert infer_sub_dependencies(blocks) == infer_sub_dependencies(blocks) == {1: {2}, 2: {1}}
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["self", "other_repo", "stem_partial", "url", "fence_lang", "path_cell", "duplicate_path",
+     "declared"],
+)
+def test_no_false_missing_dependency(case):
+    sub1 = _projection_subs()[0]
+    deps = ["none", "none"]
+    if case == "self":
+        sub1 = _dep_sub(1, [("src/issuesmith/projection.py", "add", "see projection.py")],
+                        policy="own `projection.py`")
+        sub2 = _dep_sub(2, [("src/issuesmith/ops/dispatch.py", "modify", "route")])
+    elif case == "other_repo":
+        sub2 = _dep_sub(2, [("src/x/dispatch.py", "modify", "use projection.py")],
+                        policy="read `projection.py`", repo="sumipan/nexus")
+    elif case == "stem_partial":
+        sub2 = _dep_sub(2, [("src/issuesmith/ops/dispatch.py", "modify", "project projections")],
+                        policy="projection_store and myprojection")
+    elif case == "url":
+        sub2 = _dep_sub(2, [("src/issuesmith/ops/dispatch.py", "modify", "route")],
+                        policy="see https://example.com/src/issuesmith/projection.py")
+    elif case == "fence_lang":
+        sub2 = _dep_sub(2, [("src/issuesmith/ops/dispatch.py", "modify", "route")],
+                        policy="snippet:\n```projection\nx = 1\n```")
+    elif case == "path_cell":
+        sub2 = _dep_sub(2, [("src/issuesmith/other/projection.py", "modify", "route")])
+    elif case == "duplicate_path":
+        sub2 = _dep_sub(2, [("src/issuesmith/projection.py", "modify", "tweak projection")])
+    else:
+        sub2 = _dep_sub(2, [("src/issuesmith/ops/dispatch.py", "modify", "use projection")])
+        deps = ["none", "#1"]
+    body = _dep_body([sub1, sub2], deps)
+    assert _DEP_MISSING not in _dep_ids(body)
+
+
+def test_declared_dependency_order_and_format_are_normalized():
+    blocks = [*_projection_subs(), _dep_sub(3, [("src/issuesmith/z.py", "modify", "z")])]
+    assert _DEP_MISSING not in _dep_ids(_dep_body(blocks, ["none", "3, #1", "none"]))
+
+
+def test_dependency_cycle_is_reported():
+    body = _dep_body(_cycle_subs(), ["none", "none"])
+    violations = [
+        v for v in _check(body, MILESTONE_LABELS) if v.rule_id in (_DEP_MISSING, _DEP_CYCLE)
+    ]
+    assert [v.rule_id for v in violations] == [_DEP_CYCLE]
+    (cycle,) = violations
+    assert cycle.severity == "fail" and cycle.auto_fixable is False
+    assert "1 -> 2 -> 1" in cycle.message
+    assert "merge" in cycle.fix_hint and "stub" in cycle.fix_hint
+
+
+def test_declared_self_dependency_is_a_cycle():
+    body = _dep_body(_projection_subs(), ["#1", "#1"])
+    assert _dep_ids(body) == [_DEP_CYCLE]
+
+
+def test_declared_edge_closing_cycle_is_reported():
+    body = _dep_body(_projection_subs(), ["#2", "none"])
+    assert _dep_ids(body) == [_DEP_CYCLE]
+
+
+def _plan_row(body: str, num: int) -> str:
+    return next(line for line in body.splitlines() if line.startswith(f"| {num} | part {num} |"))
+
+
+def test_apply_inferred_dependency_fixes_replaces_none():
+    from issuesmith.gate_rules.b1_milestone_subdesign import apply_inferred_dependency_fixes
+
+    body = _dep_body(_projection_subs(), ["none", "none"])
+    fixed, applied = apply_inferred_dependency_fixes(body)
+    assert applied == [_DEP_MISSING]
+    assert _plan_row(fixed, 2) == f"| 2 | part 2 | {_REPO} | c | #1 |"
+    assert _plan_row(fixed, 1) == _plan_row(body, 1)
+    # Only the depends-on cell changed.
+    assert fixed.replace("| c | #1 |", "| c | none |") == body
+    assert _DEP_MISSING not in _dep_ids(fixed)
+    assert apply_inferred_dependency_fixes(fixed) == (fixed, [])
+
+
+def test_apply_inferred_dependency_fixes_merges_existing_and_empty():
+    from issuesmith.gate_rules.b1_milestone_subdesign import apply_inferred_dependency_fixes
+
+    blocks = [*_projection_subs(), _dep_sub(3, [("src/issuesmith/z.py", "modify", "z")])]
+    fixed, _ = apply_inferred_dependency_fixes(_dep_body(blocks, ["none", "#3", "none"]))
+    assert _plan_row(fixed, 2).endswith("| #1, #3 |")
+    assert apply_inferred_dependency_fixes(fixed) == (fixed, [])
+
+    fixed_empty, _ = apply_inferred_dependency_fixes(_dep_body(_projection_subs(), ["none", ""]))
+    assert _plan_row(fixed_empty, 2).endswith("| #1 |")
+
+
+def test_apply_inferred_dependency_fixes_skips_cycle_edges():
+    from issuesmith.gate_rules.b1_milestone_subdesign import apply_inferred_dependency_fixes
+
+    body = _dep_body(_cycle_subs(), ["none", "none"])
+    assert apply_inferred_dependency_fixes(body) == (body, [])
+
+
+def test_dependency_vocabulary_comes_from_language_pack(tmp_path, monkeypatch):
+    """A non-Japanese pack: new kind, depends-on header and no-deps word are config values."""
+    import dataclasses
+
+    import yaml
+
+    from issuesmith.config import reset_config_cache
+    from issuesmith.gate_rules.b1_milestone_subdesign import (
+        apply_inferred_dependency_fixes,
+        extract_sub_blocks,
+        infer_sub_dependencies,
+    )
+    from issuesmith.language import EN
+
+    data = {f.name: getattr(EN, f.name) for f in dataclasses.fields(EN)}
+    data.update(
+        sub_header_prefix=SUB,
+        change_table_columns=[REPOSITORY, FILE_PATH, CHANGE_TYPE, DESCRIPTION],
+        sub_plan_columns=["#", "Title", "Repo", "What", "Needs"],
+        new_words=["create"],
+        no_deps_word="-",
+    )
+    plain = {k: list(v) if isinstance(v, tuple) else v for k, v in data.items()}
+    plain["sections"] = dict(EN.sections)
+    plain["messages"] = dict(EN.messages)
+    pack = tmp_path / "pack.yaml"
+    pack.write_text(yaml.safe_dump(plain), encoding="utf-8")
+    cfg = tmp_path / "issuesmith.yaml"
+    cfg.write_text(yaml.safe_dump({"repo": _REPO, "language_pack": str(pack)}), encoding="utf-8")
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg))
+    reset_config_cache()
+    try:
+        blocks = [
+            _dep_sub(1, [("src/issuesmith/projection.py", "create", "c")]),
+            _dep_sub(2, [("src/issuesmith/ops/dispatch.py", "modify", "use projection")]),
+        ]
+        body = _dep_body(blocks, ["-", "-"])
+        assert "| Needs |" in body
+        assert infer_sub_dependencies(extract_sub_blocks(body)) == {1: set(), 2: {1}}
+        assert _dep_ids(body) == [_DEP_MISSING]
+        fixed, _ = apply_inferred_dependency_fixes(body)
+        assert _plan_row(fixed, 2).endswith("| #1 |")
+        assert _plan_row(fixed, 1).endswith("| - |")
+        # "add" is not a new word in this pack.
+        blocks[0] = _dep_sub(1, [("src/issuesmith/projection.py", "add", "c")])
+        assert _dep_ids(_dep_body(blocks, ["-", "-"])) == []
+    finally:
+        reset_config_cache()
