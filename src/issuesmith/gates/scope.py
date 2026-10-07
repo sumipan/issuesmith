@@ -1,4 +1,4 @@
-"""Scope gate — wraps steps.scope_gate to return unified Verdict."""
+"""Scope gate — wraps issuesmith.scope_gate to return unified Verdict."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from ghdag.workflow.gates import Violation
 
 from issuesmith.config import ScopeGateConfig, get_config
 from issuesmith.gates import Verdict
-from issuesmith.steps.scope_gate import evaluate, measure_scope
+from issuesmith.scope_gate import evaluate, measure_scope
 
 
 def check_scope(

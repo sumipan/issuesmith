@@ -373,7 +373,7 @@ def test_scope_breadth_exceeded_causes_check_gate_fail():
     """check_gate returns FAIL when ScopeBreadthRules detects an oversized allow_paths."""
     import unittest.mock as mock
 
-    from issuesmith.steps.scope_gate import ScopeMeasure
+    from issuesmith.scope_gate import ScopeMeasure
 
     exceeded = ScopeMeasure(
         files=100, lines=100, by_dir={"src/": 100}, skipped_binary=0, skipped_jsonl=0

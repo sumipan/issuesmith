@@ -297,7 +297,7 @@ class B1MilestoneSubdesignRules:
     ) -> list[Violation]:
         """R3 parity for SUB1: the child allow_paths are derived from this table.
 
-        SUB1 (steps/sub1_create.py) calls change_paths_for_repo(block, row_repo)
+        SUB1 (issuesmith.milestone) calls change_paths_for_repo(block, row_repo)
         and fails the row when it returns []. This gate runs the same call at B1
         so an unreadable table is caught before any child Issue exists.
         """

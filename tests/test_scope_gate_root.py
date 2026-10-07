@@ -18,7 +18,7 @@ import pytest
 
 from issuesmith import scope_gate
 from issuesmith.gate_rules import scope_breadth
-from issuesmith.steps.scope_gate import resolve_scope_root
+from issuesmith.scope_gate import resolve_scope_root
 
 
 def _cfg(tmp_path, external_dir=None):
