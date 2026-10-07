@@ -41,12 +41,17 @@ def _clear_config():
 
 @pytest.fixture
 def issuesmith_config(tmp_path, monkeypatch):
+    from tests.conftest import NEXUS_TEST_PHASES
+
     cfg_path = tmp_path / "issuesmith.yaml"
     payload = {
         "repo": "sumipan/nexus",
         "label_namespace": "issuesmith",
         "timezone": "Asia/Tokyo",
         "supported_repos": ["sumipan/nexus", "sumipan/issuesmith"],
+        "phases": NEXUS_TEST_PHASES,
+        "terminal_labels": ["issuesmith:merge-done", "bump:done"],
+        "terminal_without_merge": ["rejected", "superseded", "sub-ready", "sub-done"],
         "paths": {
             "queue": "jobs/issuesmith-queue.jsonl",
             "queue_state": "logs/issuesmith-queue-state.json",

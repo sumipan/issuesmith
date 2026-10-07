@@ -245,13 +245,7 @@ def _write_step_mark_done(step: StepStatus) -> None:
 
 
 def _phase_for_handler(handler: str) -> str | None:
-    cfg = get_config()
-    for ph in cfg.phases:
-        if getattr(ph, "handler", "") == handler:
-            return ph.name
-    # queue owns the phase <-> handler table; keep one copy so they cannot drift (#4802)
-    phase = queue_module._HANDLER_TO_PHASE.get(handler)
-    return phase if phase and any(ph.name == phase for ph in cfg.phases) else None
+    return get_config().phase_for_handler(handler)
 
 
 def _downstream_steps(steps: "list[StepStatus]", from_step: str) -> "list[StepStatus]":

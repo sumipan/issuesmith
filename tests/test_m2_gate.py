@@ -12,6 +12,8 @@ from unittest.mock import MagicMock
 
 from issuesmith.m2_gate import check_gate, get_unchecked_count, has_acceptance_criteria_section
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
 BODY_NO_SECTION = """\
 ## Background
 
@@ -186,12 +188,12 @@ paths_must_exist:
 
 class TestCheckGateContract:
     def test_checked_ac_with_passing_contract_returns_proceed(self):
-        result = check_gate(BODY_CONTRACT_PASS, [])
+        result = check_gate(BODY_CONTRACT_PASS, [], repo_root=REPO_ROOT)
         assert result["action"] == "proceed"
         assert result["contract_failures"] == []
 
     def test_checked_ac_with_failing_contract_returns_retry(self):
-        result = check_gate(BODY_CONTRACT_FAIL, [])
+        result = check_gate(BODY_CONTRACT_FAIL, [], repo_root=REPO_ROOT)
         assert result["action"] == "retry"
         assert result["unchecked_count"] == 0
         assert any(

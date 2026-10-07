@@ -154,8 +154,8 @@ def test_steps_resolution():
 
 def test_default_config_projects_merge_done_for_m2():
     cfg = get_config()
-    assert is_final_step("m2", cfg)
-    phase = phase_for_step("m2", cfg)
+    assert is_final_step("m2-role-dispatch", cfg)
+    phase = phase_for_step("m2-role-dispatch", cfg)
     assert phase is not None
     state = IssueState(phases={phase: "done"})
     assert project(state, cfg) == {f"{cfg.label_namespace}:merge-done"}

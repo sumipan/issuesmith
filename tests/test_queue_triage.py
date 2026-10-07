@@ -110,7 +110,7 @@ def test_deterministic_decision_draft_missing_yaml_keeps():
     assert decision.kind == "keep"
 
 
-def test_deterministic_decision_develop_without_draft_done_keeps():
+def test_deterministic_decision_develop_without_draft_done_rejects():
     req = QueueRequest(
         "11111111-1111-1111-1111-111111111111",
         1,
@@ -125,7 +125,8 @@ def test_deterministic_decision_develop_without_draft_done_keeps():
         req,
         {"state": "OPEN", "title": "x", "body": "no yaml", "labels": []},
     )
-    assert decision.kind == "keep"
+    assert decision.kind == "rejected"
+    assert "draft-done" in decision.reason
 
 
 def test_deterministic_decision_develop_rejects_scope_milestone():

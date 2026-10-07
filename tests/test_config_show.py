@@ -12,6 +12,7 @@ import pytest
 import yaml
 
 from issuesmith.config import get_config, load_config, reset_config_cache
+from tests.conftest import NEXUS_TEST_PHASES
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_PATH = REPO_ROOT / "src"
@@ -100,7 +101,11 @@ def test_config_show_via_module_subprocess(tmp_path, monkeypatch):
     """python -m issuesmith config show returns JSON and exits 0."""
     cfg_path = tmp_path / "issuesmith.yaml"
     cfg_path.write_text(
-        yaml.safe_dump({"repo": "example/cli-show", "supported_repos": ["example/cli-show"]}),
+        yaml.safe_dump({
+            "repo": "example/cli-show",
+            "supported_repos": ["example/cli-show"],
+            "phases": NEXUS_TEST_PHASES,
+        }),
         encoding="utf-8",
     )
     env = {**os.environ, "PYTHONPATH": _pythonpath(), "ISSUESMITH_CONFIG": str(cfg_path)}

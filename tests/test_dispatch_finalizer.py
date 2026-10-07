@@ -170,7 +170,9 @@ class TestFinalStepDoneProjection:
         forge = _LabelForge({f"{ns}:merge-running"})
         result = StepResult(status="done", markers=["MERGE_DONE"])
         with patch("issuesmith.ops.dispatch.get_forge", return_value=forge):
-            dispatch.map_step_result(result, step_id="m2", context=_context())
+            dispatch.map_step_result(
+                result, step_id="m2-role-dispatch", context=_context()
+            )
         assert forge.labels == {f"{ns}:merge-done"}
 
     def test_projection_does_not_fail_on_forge_error(self, phased):
@@ -199,7 +201,7 @@ class TestFinalStepDoneProjection:
         forge = _LabelForge({"myns:merge-running"})
         result = StepResult(status="done", markers=["MERGE_DONE"])
         with patch("issuesmith.ops.dispatch.get_forge", return_value=forge):
-            dispatch.map_step_result(result, step_id="m2", context=_context())
+            dispatch.map_step_result(result, step_id="m2-role-dispatch", context=_context())
         assert forge.labels == {"myns:merge-done"}
 
 

@@ -61,13 +61,16 @@ class TestProjectPhaseAxis:
     def test_at_most_one_phase_label_with_multiple_exec_records(self):
         recs = [ExecRecord(phase="draft", status="done"), ExecRecord(phase="develop", status="running")]
         result = project(1, queue_state=None, exec_records=recs, andon_inbox=[])
-        assert len(_phase_labels(result)) <= 1
+        active_axis = {
+            lbl for lbl in _phase_labels(result) if lbl.endswith("-running") or lbl.endswith("-ready")
+        }
+        assert len(active_axis) <= 1
 
     def test_most_advanced_phase_wins(self):
         recs = [ExecRecord(phase="draft", status="done"), ExecRecord(phase="develop", status="running")]
         result = project(1, queue_state=None, exec_records=recs, andon_inbox=[])
         assert f"{NS}:develop-running" in result
-        assert f"{NS}:draft-done" not in result
+        assert f"{NS}:draft-done" in result
 
     def test_done_status_beats_running_same_phase(self):
         recs = [ExecRecord(phase="develop", status="running"), ExecRecord(phase="develop", status="done")]
@@ -264,7 +267,7 @@ class TestReconcile:
         assert divs == []
 
     def test_detects_stale_phase_label(self):
-        # Issue has draft-done + develop-running; draft-done is stale
+        # develop-running keeps draft-done as a declared precondition (#4790).
         issue = _mk_issue(20, [f"{NS}:draft-done", f"{NS}:develop-running"])
         client = _make_client([issue])
         snap = _make_snap()
@@ -273,9 +276,7 @@ class TestReconcile:
             MockStore.return_value.snapshot.return_value = snap
             divs = reconcile(client, fix=False)
 
-        assert len(divs) == 1
-        assert divs[0]["issue"] == 20
-        assert f"{NS}:draft-done" in divs[0]["remove"]
+        assert divs == []
 
     def test_fix_applies_label_changes(self):
         issue = _mk_issue(20, [f"{NS}:draft-done", f"{NS}:develop-running"])
@@ -286,7 +287,7 @@ class TestReconcile:
             MockStore.return_value.snapshot.return_value = snap
             reconcile(client, fix=True)
 
-        client.issue_update.assert_called()
+        client.issue_update.assert_not_called()
 
     def test_json_output(self, capsys):
         issue = _mk_issue(20, [f"{NS}:draft-done", f"{NS}:develop-running"])
@@ -300,7 +301,7 @@ class TestReconcile:
         out = capsys.readouterr().out
         data = json.loads(out)
         assert isinstance(data, list)
-        assert len(data) == 1
+        assert data == []
 
     def test_skips_pull_requests(self):
         # api_request returns PRs too; they should be skipped
@@ -376,10 +377,16 @@ class TestReconcile:
             divs = reconcile(client, fix=True)
 
         assert divs == [
-            {"issue": 13, "add": [f"{NS}:andon-broken"], "remove": [f"{NS}:andon-blocked"]}
+            {
+                "issue": 13,
+                "add": [f"{NS}:andon-broken", f"{NS}:draft-done"],
+                "remove": [f"{NS}:andon-blocked"],
+            }
         ]
         client.issue_update.assert_called_once_with(
-            13, labels_add=[f"{NS}:andon-broken"], labels_remove=[f"{NS}:andon-blocked"]
+            13,
+            labels_add=[f"{NS}:andon-broken", f"{NS}:draft-done"],
+            labels_remove=[f"{NS}:andon-blocked"],
         )
 
     def test_uses_projection(self):
@@ -435,14 +442,18 @@ class TestProjectIssue:
         add, remove = project_issue(
             forge, 7, lambda st: replace(st, phases={**st.phases, "develop": "done"})
         )
-        assert (add, remove) == ([f"{NS}:develop-done"], [f"{NS}:develop-running"])
+        assert set(add) == {f"{NS}:draft-done", f"{NS}:develop-done"}
+        assert remove == [f"{NS}:develop-running"]
         assert forge.updates == [
-            {"labels_add": [f"{NS}:develop-done"], "labels_remove": [f"{NS}:develop-running"]}
+            {
+                "labels_add": add,
+                "labels_remove": [f"{NS}:develop-running"],
+            }
         ]
-        assert forge.labels == {f"{NS}:develop-done", "scope:milestone"}
+        assert forge.labels == {f"{NS}:draft-done", f"{NS}:develop-done", "scope:milestone"}
 
     def test_no_change_no_write(self):
-        forge = _Forge({f"{NS}:develop-running"})
+        forge = _Forge({f"{NS}:develop-running", f"{NS}:draft-done"})
         assert project_issue(forge, 7, lambda st: st) == ([], [])
         assert forge.updates == []
 

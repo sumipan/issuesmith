@@ -173,11 +173,8 @@ _EN_MESSAGES: dict[str, str] = {
     # queue_triage (decision reasons posted as comments)
     "queue_triage.closed": "issue #{issue} is CLOSED",
     "queue_triage.already_present": "{label} already present",
-    "queue_triage.sub_requires_milestone": "sub phase requires scope:milestone label",
-    "queue_triage.milestone_no_develop": (
-        "scope:milestone issues cannot enter develop phase"
-        " (P0 raises MILESTONE_BLOCKED; reject at queue intake)"
-    ),
+    "queue_triage.phase_requires_label": "{phase} phase requires {label} label",
+    "queue_triage.phase_excludes_label": "{phase} phase rejects issues with {label} label",
     "queue_triage.superseded": "superseded by #{issue} (v{version})",
     "queue_triage.missing_yaml": "missing YAML fields: {fields}",
     # gate_rules/scope_breadth (CP1 autofix note)

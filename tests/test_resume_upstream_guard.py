@@ -13,6 +13,7 @@ import pytest
 
 import issuesmith.config as config_module
 from issuesmith.config import _build_config
+from tests.conftest import NEXUS_TEST_PHASES
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -81,7 +82,11 @@ def pipeline_fs(tmp_path: Path):
     _write_exec_jsonl(jobs, _STEPS)
 
     cfg = _build_config(
-        {"repo": "sumipan/issuesmith", "workflow": "issuesmith.yaml"},
+        {
+            "repo": "sumipan/issuesmith",
+            "workflow": "issuesmith.yaml",
+            "phases": NEXUS_TEST_PHASES,
+        },
         root=tmp_path,
     )
     yield tmp_path, cfg
@@ -394,7 +399,14 @@ class TestAC3:
         (tmp_path / "jobs" / "done").mkdir()
         (tmp_path / "jobs" / "running").mkdir()
         (tmp_path / ".pipeline-state").mkdir()
-        cfg = _build_config({"repo": "sumipan/issuesmith", "workflow": "issuesmith.yaml"}, root=tmp_path)
+        cfg = _build_config(
+            {
+                "repo": "sumipan/issuesmith",
+                "workflow": "issuesmith.yaml",
+                "phases": NEXUS_TEST_PHASES,
+            },
+            root=tmp_path,
+        )
 
         rc, captured, mock_recover = _run_resume(cfg, capsys, from_step="p2")
 

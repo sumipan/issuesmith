@@ -406,7 +406,7 @@ def test_phase_preconditions_block_unparsed_dependency_section(monkeypatch):
     # ASCII fixture data: prose mention only, no table row / list item.
     body = _BODY_QUEUE + "\n## Dependencies\n\nwaits for #2999 to land\n"
     issue = {"state": "OPEN", "labels": [], "body": body, "title": "t"}
-    ok, why = qmod._phase_preconditions("draft", issue, _Client(), 10)
+    ok, why = qmod.phase_preconditions("draft", issue, _Client(), 10)
     assert ok is False
     assert "#2999" in why
 
@@ -441,12 +441,15 @@ def test_phase_preconditions_block_unsatisfied_deps(phase, monkeypatch):
     )
     labels: list[dict] = []
     if phase == "sub":
-        labels = [{"name": "issuesmith:draft-done"}]
+        labels = [
+            {"name": "issuesmith:draft-done"},
+            {"name": "scope:milestone"},
+        ]
     issue = {"state": "OPEN", "labels": labels, "body": body, "title": "t"}
     client = _DepClient()
     if phase == "merge":
         monkeypatch.setattr(qmod, "_find_open_prs_closing_issue", lambda *a, **k: [1])
-    ok, why = qmod._phase_preconditions(phase, issue, client, 10)
+    ok, why = qmod.phase_preconditions(phase, issue, client, 10)
     assert ok is False
     assert why == "dependencies not satisfied"
 

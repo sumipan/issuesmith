@@ -49,45 +49,26 @@ READY_LABEL: dict[str, str] = _build_phase_labels("ready")
 RUNNING_LABEL: dict[str, str] = _build_phase_labels("running")
 DONE_LABEL: dict[str, str] = _build_phase_labels("done")
 
-_MILESTONE_LABEL = "scope:milestone"
-_SUB_LABEL_PREFIX = "issuesmith:sub-"
-
-
 def _msg(key: str, /, **kwargs: Any) -> str:
     """Render a ``queue_triage.*`` language-pack message (posted as an Issue comment)."""
     from issuesmith.config import get_config
 
     return get_config().language.message(f"queue_triage.{key}", **kwargs)
 
-def _build_terminal_without_merge() -> frozenset[str]:
-    from issuesmith.config import get_config
-    ns = get_config().label_namespace
-    result: set[str] = {f"{ns}:rejected", f"{ns}:superseded"}
-    sub_ready = READY_LABEL.get("sub")
-    sub_done = DONE_LABEL.get("sub")
-    if sub_ready:
-        result.add(sub_ready)
-    if sub_done:
-        result.add(sub_done)
-    return frozenset(result)
-
-
-# Closed without the final-phase done label but still a valid pipeline terminal (#2825).
-TERMINAL_WITHOUT_MERGE: frozenset[str] = _build_terminal_without_merge()
-
-
 def get_terminal_without_merge() -> frozenset[str]:
-    """Terminal labels for closed-without-merge-done, plus config-driven ones (#3504).
+    """Terminal labels for closed-without-merge, plus config ``terminal_labels`` (#4790)."""
+    from issuesmith.config import get_config
 
-    Extends the phase-derived base with config terminal_labels so that Issues closed
-    by other workflows (bump:done) count as satisfied dependencies.
-    """
-    try:
-        from issuesmith.config import get_config
-        extra = frozenset(get_config().terminal_labels) - frozenset({"issuesmith:merge-done"})
-    except Exception:
-        extra = frozenset()
-    return _build_terminal_without_merge() | extra
+    cfg = get_config()
+    ns = cfg.label_namespace
+    result: set[str] = set()
+    for label in cfg.terminal_without_merge:
+        result.add(label if ":" in label else f"{ns}:{label}")
+    merge_done = {lab for lab in cfg.terminal_labels if lab.endswith(":merge-done")}
+    for label in cfg.terminal_labels:
+        if label not in merge_done:
+            result.add(label)
+    return frozenset(result)
 
 
 _BUMP_RE = re.compile(
@@ -218,6 +199,7 @@ def deterministic_decision(
     *,
     open_issues: list[dict[str, Any]] | None = None,
     force: bool = False,
+    soft_preconditions: bool = False,
 ) -> Decision:
     state = str(issue.get("state", "")).upper()
     labels = label_names(issue)
@@ -252,21 +234,30 @@ def deterministic_decision(
             comment=True,
         )
 
-    if phase == "sub" and _MILESTONE_LABEL not in labels:
-        return Decision(
-            kind="rejected",
-            reason=_msg("sub_requires_milestone"),
-            comment=True,
-            add_rejected_label=True,
-        )
+    from issuesmith.config import get_config
 
-    if phase == "develop" and _MILESTONE_LABEL in labels:
-        return Decision(
-            kind="rejected",
-            reason=_msg("milestone_no_develop"),
-            comment=True,
-            add_rejected_label=True,
-        )
+    cfg = get_config()
+    try:
+        ph = cfg.phase(phase)
+    except KeyError:
+        ph = None
+    if ph is not None and not soft_preconditions:
+        for excl in cfg.excluded_labels(ph.name):
+            if excl in labels:
+                return Decision(
+                    kind="rejected",
+                    reason=_msg("phase_excludes_label", phase=ph.name, label=excl),
+                    comment=True,
+                    add_rejected_label=True,
+                )
+        for req in cfg.required_labels(ph.name):
+            if req not in labels:
+                return Decision(
+                    kind="rejected",
+                    reason=_msg("phase_requires_label", phase=ph.name, label=req),
+                    comment=True,
+                    add_rejected_label=True,
+                )
 
     # force=True: allow redispatch even when the done label is present.
     # This is the path for re-enqueueing, via the suggested `enqueue --force`, an Issue
@@ -303,16 +294,18 @@ def deterministic_decision(
                 comment=True,
             )
 
-    draft_done = DONE_LABEL.get("draft", "")
-    if phase != "draft" and draft_done and draft_done in labels:
-        missing = validate_frontmatter(str(issue.get("body") or ""))
-        if missing:
-            return Decision(
-                kind="repair",
-                reason=_msg("missing_yaml", fields=", ".join(missing)),
-                comment=True,
-                add_rejected_label=False,
-            )
+    design = get_config().design_phase()
+    if design is not None and phase != design.name:
+        _, _, design_done = get_config().phase_labels(design.name)
+        if design_done in labels:
+            missing = validate_frontmatter(str(issue.get("body") or ""))
+            if missing:
+                return Decision(
+                    kind="repair",
+                    reason=_msg("missing_yaml", fields=", ".join(missing)),
+                    comment=True,
+                    add_rejected_label=False,
+                )
 
     return Decision(kind="keep", reason="ok", comment=False)
 
@@ -711,11 +704,28 @@ def triage(
                     )
                 elif d.decision == "reject":
                     req = req_map.get(d.request_id)
+                    impl_phase = next(
+                        (
+                            ph.name
+                            for ph in get_config().phases
+                            if ph.role == "implementation"
+                            and ph.writes_files
+                            and "closing_pr_exists" not in ph.advance_when
+                        ),
+                        None,
+                    )
+                    issue_labels = label_names(issues.get(req.issue) or {}) if req else set()
+                    excluded = (
+                        get_config().excluded_labels(impl_phase)
+                        if impl_phase
+                        else frozenset()
+                    )
                     if (
                         req is not None
-                        and req.phase == "develop"
+                        and impl_phase
+                        and req.phase == impl_phase
                         and req.source == "milestone-chain"
-                        and _MILESTONE_LABEL not in label_names(issues.get(req.issue) or {})
+                        and not (issue_labels & excluded)
                     ):
                         fixed.append(
                             TriageDecision(
@@ -814,9 +824,15 @@ def load_seed_entries(path: Path | None = None) -> list[dict[str, Any]]:
         label = str(item.get("label") or "")
         if not isinstance(issue, int) or issue <= 0:
             continue
+        design = get_config().design_phase()
+        fallback = (
+            design.name
+            if design is not None
+            else (get_config().phases[0].name if get_config().phases else "")
+        )
         phase = next(
             (pname for pname, plabel in READY_LABEL.items() if label == plabel),
-            "draft",
+            fallback,
         )
         entries.append(
             {

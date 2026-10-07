@@ -857,8 +857,12 @@ class TestTargetUnknownNotRepairable:
         from issuesmith.ops.dispatch import _is_violation_repairable
 
         gates = {"external_leak": object()}
-        assert _is_violation_repairable("external_leak.target_unknown", gates) is False
-        assert _is_violation_repairable("external_leak.cjk_added_line", gates) is True
+        assert _is_violation_repairable(
+            "external_leak.target_unknown", gates, "p1"
+        ) is False
+        assert _is_violation_repairable(
+            "external_leak.cjk_added_line", gates, "p1"
+        ) is True
 
     def test_target_unknown_raises_decision_andon_without_repair(self):
         from issuesmith.config import StepConfig
