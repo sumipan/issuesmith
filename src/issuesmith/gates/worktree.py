@@ -17,7 +17,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Sequence
 
 from ghdag.workflow.gates import Violation
 
@@ -389,6 +389,46 @@ def derive_test_allow_paths(
     return derived
 
 
+def derive_ledger_allow_paths(
+    root: Path,
+    base_branch: str,
+    failed_ids: list[str],
+    allow_paths: list[str],
+    ledger_globs: Sequence[str],
+) -> list[str]:
+    """Return ratchet ledgers repair may shrink beyond allow_paths (#4791).
+
+    A file qualifies when it sits directly in the directory of a newly failing test in
+    ``failed_ids``, exists on ``origin/<base_branch>`` and matches one of
+    ``ledger_globs``. Condition (C) of ``derive_test_allow_paths`` does not apply.
+    Files already matching allow_paths are excluded. Result is sorted and de-duplicated.
+    """
+    if not ledger_globs:
+        return []
+    dirs = {
+        str(Path(test_id.split("::")[0]).parent).replace(os.sep, "/")
+        for test_id in failed_ids
+    }
+    derived: set[str] = set()
+    for d in sorted(dirs):
+        prefix = "" if d in ("", ".") else f"{d}/"
+        proc = subprocess.run(
+            ["git", "ls-tree", "--name-only", f"origin/{base_branch}", "--", prefix or "."],
+            capture_output=True, text=True, check=False, cwd=str(root),
+        )
+        if proc.returncode != 0:
+            continue
+        for path in proc.stdout.splitlines():
+            if not path.startswith(prefix) or "/" in path[len(prefix):]:
+                continue
+            if not any(fnmatch.fnmatch(path, pat) for pat in ledger_globs):
+                continue
+            if any(fnmatch.fnmatch(path, pat) for pat in allow_paths):
+                continue
+            derived.add(path)
+    return sorted(derived)
+
+
 def _mapped_test_paths(root: Path, changed: list[str]) -> list[str]:
     """Return existing test files that map to changed sources (tests/**/test_<stem>*.py).
 
@@ -481,12 +521,59 @@ def _weakened(path: str, message: str) -> Violation:
     )
 
 
+def _ledger_lines(text: str) -> set[str]:
+    return {line.strip() for line in text.splitlines() if line.strip()}
+
+
+def _ledger_grew(path: str, message: str) -> Violation:
+    return Violation(
+        rule_id="derived_allow.ledger_grew",
+        severity="fail",
+        message=f"{path}: {message}",
+        location=path,
+        auto_fixable=False,
+        fix_hint="Ledgers may only shrink: delete stale lines, never add",
+    )
+
+
+def _check_ledger_shrinks(root: Path, base_branch: str, path: str) -> Violation | None:
+    """Fail when a derived ledger gains lines over ``origin/<base_branch>`` (#4791)."""
+    proc = subprocess.run(
+        ["git", "show", f"origin/{base_branch}:{path}"],
+        capture_output=True, text=True, check=False, cwd=str(root),
+    )
+    if proc.returncode != 0:
+        return None
+    try:
+        head_text = (root / path).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None  # Whole ledger removed; the tests gate catches any fallout.
+    except (OSError, ValueError) as exc:
+        return _ledger_grew(path, f"cannot read working tree file ({exc})")
+    grown = sorted(_ledger_lines(head_text) - _ledger_lines(proc.stdout))
+    if not grown:
+        return None
+    return _ledger_grew(path, f"ledger lines added: {', '.join(grown)}")
+
+
 def check_derived_test_guard(
-    root: Path, base_branch: str, paths: list[str]
+    root: Path,
+    base_branch: str,
+    paths: list[str],
+    *,
+    ledger_globs: Sequence[str] = (),
 ) -> list[Violation]:
-    """Fail when a derived-allowed test file loses tests/asserts or gains skip/xfail."""
+    """Fail when a derived-allowed test file loses tests/asserts or gains skip/xfail.
+
+    Paths matching ``ledger_globs`` are ratchet ledgers and may only lose lines (#4791).
+    """
     violations: list[Violation] = []
     for path in paths:
+        if any(fnmatch.fnmatch(path, pat) for pat in ledger_globs):
+            ledger_violation = _check_ledger_shrinks(root, base_branch, path)
+            if ledger_violation is not None:
+                violations.append(ledger_violation)
+            continue
         proc = subprocess.run(
             ["git", "show", f"origin/{base_branch}:{path}"],
             capture_output=True, text=True, check=False, cwd=str(root),
@@ -556,12 +643,17 @@ class TestsGate:
         """Compute derived allow_paths for newly failing tests (empty when disabled)."""
         from issuesmith.config import get_config
 
-        if not new_ids or not get_config().derived_allow.enabled:
+        derived_allow = get_config().derived_allow
+        if not new_ids or not derived_allow.enabled:
             return []
         changed = changed_files(self._root, self._base)
-        return derive_test_allow_paths(
+        tests = derive_test_allow_paths(
             self._root, self._base, new_ids, changed, self._allow_paths
         )
+        ledgers = derive_ledger_allow_paths(
+            self._root, self._base, new_ids, self._allow_paths, derived_allow.ledger_globs
+        )
+        return sorted(set(tests) | set(ledgers))
 
     def _new_ids(self, ids: list[str]) -> list[str] | None:
         """Return IDs that do not fail on base, or None when the baseline is unavailable."""
@@ -1044,6 +1136,7 @@ WORKTREE_GATES: dict[str, object] = {
 __all__ = [
     "changed_files",
     "derive_test_allow_paths",
+    "derive_ledger_allow_paths",
     "check_derived_test_guard",
     "LintGate",
     "TestsGate",

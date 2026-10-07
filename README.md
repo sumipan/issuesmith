@@ -472,7 +472,7 @@ Relative paths in the file resolve against the directory that holds it.
 | `scope_size` | `enabled: true` | B1 Issue size: `max_files` (`8`), `max_concerns` (`2`), `delete_with_new` (`false`), `exclude_prefixes` |
 | `tests` | `flaky_reruns: 2` | Reruns of newly failing tests on the branch (`0` turns flaky detection off) |
 | `metrics` | `done_step: m2` | Rework metrics: `done_step`, `repair_templates`, `cause_targets` |
-| `derived_allow` | `enabled: true` | Allow repair to edit newly failing tests outside allow_paths |
+| `derived_allow` | `enabled: true`, `ledger_globs: [tests/conventions/known_*.txt]` | Allow repair to edit newly failing tests outside allow_paths; ledgers matching `ledger_globs` next to a failing test may only shrink (`[]` turns ledger derivation off) |
 | `external_leak` | `cjk_free_external_targets: false` | Fail added CJK lines on branches for external targets |
 | `terminal_labels` | `issuesmith:merge-done`, `bump:done` | Labels that mark a finished Issue |
 | `observe` | see below | Observe layer thresholds and `main_health` |

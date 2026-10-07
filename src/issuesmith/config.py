@@ -245,9 +245,12 @@ class DerivedAllowConfig:
     """Derived allow_paths for newly failing tests in the requires loop (#3756).
 
     ``enabled: false`` restores the strict allow_paths-only behaviour.
+    ``ledger_globs``: ratchet ledgers next to a newly failing test that repair may
+    shrink (#4791). An empty tuple disables ledger derivation.
     """
 
     enabled: bool = True
+    ledger_globs: tuple[str, ...] = ("tests/conventions/known_*.txt",)
 
 
 @dataclass(frozen=True)
@@ -859,13 +862,19 @@ def _build_tests(raw: Mapping[str, Any] | None) -> TestsConfig:
 def _build_derived_allow(raw: Mapping[str, Any] | None) -> DerivedAllowConfig:
     if not raw:
         return DerivedAllowConfig()
-    unknown = sorted(str(k) for k in raw if k != "enabled")
+    unknown = sorted(str(k) for k in raw if k not in ("enabled", "ledger_globs"))
     if unknown:
         raise ConfigError(
-            f"derived_allow supports only 'enabled'; unknown keys: {unknown}"
+            f"derived_allow supports only 'enabled' and 'ledger_globs'; unknown keys: {unknown}"
         )
     enabled_raw = raw.get("enabled")
-    return DerivedAllowConfig(enabled=True if enabled_raw is None else bool(enabled_raw))
+    enabled = True if enabled_raw is None else bool(enabled_raw)
+    if "ledger_globs" not in raw:
+        return DerivedAllowConfig(enabled=enabled)
+    globs_raw = raw["ledger_globs"]
+    if not isinstance(globs_raw, list) or not all(isinstance(g, str) for g in globs_raw):
+        raise ConfigError("derived_allow.ledger_globs must be a list of strings")
+    return DerivedAllowConfig(enabled=enabled, ledger_globs=tuple(globs_raw))
 
 
 def _build_external_leak(raw: Mapping[str, Any] | None) -> ExternalLeakConfig:
