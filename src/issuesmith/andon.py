@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import logging
 import re
-import sys
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Iterator, Protocol, runtime_checkable
@@ -152,42 +151,13 @@ def _andon_label_kinds() -> list[str]:
     return list(ANDON_KINDS)
 
 
-def _project_issue_fallback(
-    client: Any, issue_number: int, change: Callable[[IssueState], IssueState]
-) -> tuple[list[str], list[str]]:
-    """Read labels, apply ``change`` to the projected state, write the diff once."""
-    from issuesmith.config import get_config
-    from issuesmith.projection import diff, project, state_from_labels
-
-    cfg = get_config()
-    try:
-        data = client.issue_get(issue_number, fields=["labels"])
-        raw = data.get("labels") if isinstance(data, dict) else None
-        current = [
-            lb["name"] if isinstance(lb, dict) else str(lb)
-            for lb in (raw if isinstance(raw, list) else [])
-        ]
-        add, remove = diff(current, project(change(state_from_labels(current, cfg)), cfg), cfg)
-        if add or remove:
-            client.issue_update(issue_number, labels_add=add, labels_remove=remove)
-    except Exception as exc:  # noqa: BLE001 - label projection must not fail the caller
-        print(f"WARNING: label projection failed for #{issue_number}: {exc}", file=sys.stderr)
-        return [], []
-    return add, remove
-
-
 def project_issue(
     client: Any, issue_number: int, change: Callable[[IssueState], IssueState]
 ) -> tuple[list[str], list[str]]:
-    """Apply a state change to an Issue's labels through ``ops/labels.project_issue``.
-
-    Falls back to the same read -> project -> diff -> single update sequence when the
-    installed ``ops/labels`` does not provide ``project_issue`` yet.
-    """
+    """Apply a state change to an Issue's labels through ``ops/labels.project_issue``."""
     from issuesmith.ops import labels as labels_mod
 
-    apply = getattr(labels_mod, "project_issue", None) or _project_issue_fallback
-    return apply(client, issue_number, change)
+    return labels_mod.project_issue(client, issue_number, change)
 
 
 def _with_andon(kind: str) -> Callable[[IssueState], IssueState]:

@@ -195,12 +195,13 @@ class TestIrreversibleGateMapping:
         assert "PIPELINE_STATUS: MERGE_DONE" in out
 
     def test_irreversible_with_no_verdicts_proceeds(self, capsys):
-        rc = map_step_result(
-            StepResult(status="done", markers=["MERGE_DONE"], irreversible=True),
-            step_id="m2",
-            context=_make_context(),
-            verdicts=None,
-        )
+        with patch("issuesmith.ops.dispatch.get_forge"):
+            rc = map_step_result(
+                StepResult(status="done", markers=["MERGE_DONE"], irreversible=True),
+                step_id="m2",
+                context=_make_context(),
+                verdicts=None,
+            )
         assert rc == 0
 
     def test_reversible_with_failed_verdict_ignored(self, capsys):
@@ -362,3 +363,43 @@ class TestRunGuardedSkippedValidation:
             )
         # ValueError about SKIPPED must NOT be raised
         assert "SKIPPED" not in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# andon → projected through raise_andon (#4807)
+# ---------------------------------------------------------------------------
+
+
+class _LabelForge:
+    """In-memory forge holding one Issue's labels."""
+
+    def __init__(self, labels: set[str]) -> None:
+        self.labels = set(labels)
+        self.comments: list[str] = []
+
+    def issue_get(self, number, fields=None):
+        return {"number": number, "labels": [{"name": lb} for lb in sorted(self.labels)]}
+
+    def issue_update(self, number, **kwargs):
+        self.labels |= set(kwargs.get("labels_add") or [])
+        self.labels -= set(kwargs.get("labels_remove") or [])
+
+    def issue_comment(self, number, body):
+        self.comments.append(body)
+
+
+class TestAndonProjection:
+    def test_blocked_andon_replaces_running_of_the_step_phase(self):
+        from issuesmith.config import get_config
+
+        ns = get_config().label_namespace
+        forge = _LabelForge({f"{ns}:develop-running", "scope:milestone"})
+        with patch("issuesmith.ops.dispatch.get_forge", return_value=forge):
+            rc = map_step_result(
+                StepResult(status="andon", andon=Andon(kind="blocked", summary="wait")),
+                step_id="cp2",
+                context=_make_context(),
+            )
+        assert rc == 1
+        assert forge.labels == {f"{ns}:andon-blocked", "scope:milestone"}
+        assert len(forge.comments) == 1

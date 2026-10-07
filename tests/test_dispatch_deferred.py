@@ -103,3 +103,47 @@ def test_default_gate_respects_the_brake_state(tmp_path, monkeypatch, capsys):
     brake.write_text(json.dumps({"engines": {}}))  # brake lifted
     assert gate.release_ready(now=datetime.now(timezone.utc) + timedelta(hours=1)) == ["task-cp2"]
     reset_config_cache()
+
+
+class _LabelForge:
+    """In-memory forge holding one Issue's labels."""
+
+    def __init__(self, labels: set[str]) -> None:
+        self.labels = set(labels)
+
+    def issue_get(self, number, fields=None):
+        return {"number": number, "labels": [{"name": lb} for lb in sorted(self.labels)]}
+
+    def issue_update(self, number, **kwargs):
+        self.labels |= set(kwargs.get("labels_add") or [])
+        self.labels -= set(kwargs.get("labels_remove") or [])
+
+
+def test_retry_projects_waiting_and_next_start_clears_it(gate, monkeypatch, capsys):
+    """retry adds <ns>:waiting through the projection; the next step start removes it (#4807)."""
+    from unittest.mock import patch
+
+    from issuesmith.config import get_config
+
+    ns = get_config().label_namespace
+    forge = _LabelForge({f"{ns}:develop-running"})
+    sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=None, role="implementation")
+    with patch("issuesmith.ops.dispatch.get_forge", return_value=forge):
+        dispatch_mod._handle_retry_signal(sig, "cp2", 42, quota_gate=gate, task_uuid="t-1")
+        assert forge.labels == {f"{ns}:develop-running", f"{ns}:waiting"}
+
+        with patch("issuesmith.ops.dispatch._try_python_step", return_value=0):
+            assert dispatch_mod.main(["cp2", "issue_number=42"]) == 0
+    assert forge.labels == {f"{ns}:develop-running"}
+    assert "PIPELINE_STATUS: DEFERRED" in capsys.readouterr().out
+
+
+def test_retry_without_issue_number_writes_no_label(gate, monkeypatch, capsys):
+    from unittest.mock import MagicMock, patch
+
+    forge = MagicMock()
+    sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=None, role="design")
+    with patch("issuesmith.ops.dispatch.get_forge", return_value=forge):
+        dispatch_mod._handle_retry_signal(sig, "p1", None, quota_gate=gate, task_uuid="t-2")
+    forge.issue_get.assert_not_called()
+    forge.issue_update.assert_not_called()

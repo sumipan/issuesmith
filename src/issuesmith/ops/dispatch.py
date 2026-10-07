@@ -38,8 +38,11 @@ from ghdag.quota import QuotaGate
 from issuesmith.andon import Andon as _FullAndon
 from issuesmith.andon import raise_andon as _raise_andon
 from issuesmith.config import StepConfig, get_config
-from issuesmith.contract import Andon, StepContext, StepResult, Verdict
+from issuesmith.contract import Andon, LabelWriteForbidden, StepContext, StepResult, Verdict
 from issuesmith.engine import RetrySignal
+from issuesmith.forge_guard import guard_step_forge
+from issuesmith.ops.labels import project_issue
+from issuesmith.projection import IssueState, is_final_step, phase_for_step
 from issuesmith.template_ids import template_identifiers
 
 _cfg = get_config()
@@ -164,7 +167,13 @@ def _try_python_step(step_id: str, context: dict[str, str]) -> int | None:
         f"[issuesmith-dispatch] python-step step={step_id} module={step.module}",
         file=sys.stderr,
     )
-    result = _call_step_run(mod, _context_to_step(context), step)
+    try:
+        # Only the step body runs guarded: the runner's own label projection, andon and
+        # comments below happen outside (#4807).
+        with guard_step_forge(step_id, get_config().label_write_guard):
+            result = _call_step_run(mod, _context_to_step(context), step)
+    except LabelWriteForbidden as exc:
+        result = StepResult(status="andon", andon=Andon(kind="broken", summary=str(exc)))
     return map_step_result(result, step_id=step_id, context=context)
 
 
@@ -184,40 +193,43 @@ def _run_bash_step(step_id: str, context: dict[str, str]) -> int:
             pass
 
 
-# Markers that map to a phase-done/phase-running label transition.
-_MARKER_PHASE: dict[str, str] = {
-    "MERGE_DONE": "merge",
-    "IMPL_DONE": "develop",
-    "REPORT_DONE": "draft",
-}
+# ---------------------------------------------------------------------------
+# Label projection (#4807): dispatch states the change, ops/labels.project_issue writes it
+# ---------------------------------------------------------------------------
 
 
-def _project_marker_labels(marker: str, context: dict[str, str]) -> None:
-    """Apply phase-done label and remove phase-running label for terminal markers."""
-    phase = _MARKER_PHASE.get(marker)
-    if phase is None:
-        return
-    raw_issue = context.get("issue_number", "")
-    if not raw_issue:
-        return
+def _issue_number(context: dict[str, str]) -> int | None:
     try:
-        issue_num = int(raw_issue)
+        return int(context.get("issue_number") or "0") or None
     except ValueError:
+        return None
+
+
+def _project_step_start(issue_number: int, step_id: str) -> None:
+    """Clear andon / waiting and mark the step's phase running before the step runs.
+
+    A re-run after ``dag recover`` (andon set, running gone) converges here as well.
+    """
+    phase = phase_for_step(step_id, get_config())
+
+    def change(st: IssueState) -> IssueState:
+        phases = {**st.phases, phase: "running"} if phase is not None else st.phases
+        return replace(st, phases=phases, andon_kinds=frozenset(), waiting=False)
+
+    project_issue(get_forge(), issue_number, change)
+
+
+def _project_step_done(step_id: str, context: dict[str, str]) -> None:
+    """Mark the phase done when ``step_id`` is its final step; other steps write nothing."""
+    issue_number = _issue_number(context)
+    if issue_number is None or not is_final_step(step_id, get_config()):
         return
-    if not issue_num:
-        return
-    ns = get_config().label_namespace
-    try:
-        get_forge().issue_update(
-            issue_num,
-            labels_add=[f"{ns}:{phase}-done"],
-            labels_remove=[f"{ns}:{phase}-running"],
-        )
-    except Exception as exc:
-        print(
-            f"[issuesmith-dispatch] WARNING: label projection failed for {marker}: {exc}",
-            file=sys.stderr,
-        )
+    phase = phase_for_step(step_id, get_config())
+    project_issue(
+        get_forge(),
+        issue_number,
+        lambda st: replace(st, phases={**st.phases, phase: "done"}),
+    )
 
 
 def map_step_result(
@@ -231,7 +243,8 @@ def map_step_result(
 ) -> int:
     """Map a StepResult to an exit code, printing PIPELINE_STATUS markers as side effects.
 
-    done  → evaluate requires, then exit 0 + print PIPELINE_STATUS + project phase labels
+    done  → evaluate requires, then exit 0 + print PIPELINE_STATUS; the final step of a
+            phase projects ``<phase>-done``
     retry → raise RetrySignal (caught by main(), exits 0 after deferring)
     andon → call raise_andon + exit 1
 
@@ -282,7 +295,8 @@ def map_step_result(
             get_forge().issue_comment(issue_num, recovery)
         if pipeline_status:
             print(f"PIPELINE_STATUS: {pipeline_status}")
-            _project_marker_labels(pipeline_status, context)
+        if exit_code == 0:
+            _project_step_done(step_id, context)
         return exit_code
 
     # Evaluate StepConfig.requires before emitting markers (#3626).
@@ -297,7 +311,7 @@ def map_step_result(
 
     for marker in markers:
         print(f"PIPELINE_STATUS: {marker}")
-        _project_marker_labels(marker, context)
+    _project_step_done(step_id, context)
     return 0
 
 
@@ -843,28 +857,6 @@ def _record_preexisting_violations(
         pass
 
 
-def _waiting_label() -> str:
-    return f"{get_config().label_namespace}:waiting"
-
-
-def _forge_remove_waiting(issue_number: int) -> None:
-    """Remove <ns>:waiting label (no-op if absent; called at start of each step run)."""
-    try:
-        get_forge().remove_label(issue_number, _waiting_label())
-    except Exception:
-        pass
-
-
-def _forge_add_waiting(issue_number: int) -> None:
-    try:
-        get_forge().issue_update(issue_number, labels_add=[_waiting_label()])
-    except Exception as exc:
-        print(
-            f"[issuesmith-dispatch] WARNING: failed to add waiting label: {exc}",
-            file=sys.stderr,
-        )
-
-
 def _handle_retry_signal(
     sig: RetrySignal,
     step_id: str,
@@ -878,7 +870,7 @@ def _handle_retry_signal(
     1. Register the task with ``QuotaGate.defer`` so ``release_ready`` re-queues it once one
        of the role's engines is available again. The task uuid comes from ``GHDAG_TASK_UUID``
        (ghdag >= 0.68.0 exports it to launched tasks).
-    2. Apply the ``<ns>:waiting`` label.
+    2. Project the waiting marker onto the Issue.
     3. Emit ``PIPELINE_STATUS: DEFERRED`` so ghdag marks the task DONE_DEFERRED: not a success
        (downstream depends do not start) and not a failure (no failure hook / circuit breaker).
     """
@@ -908,8 +900,8 @@ def _handle_retry_signal(
             "it); the task is marked DEFERRED but nothing will release it automatically",
             file=sys.stderr,
         )
-    if issue_number is not None:
-        _forge_add_waiting(issue_number)
+    if issue_number:
+        project_issue(get_forge(), issue_number, lambda st: replace(st, waiting=True))
     print(
         f"[issuesmith-dispatch] deferred step={step_id} uuid={uuid or '-'} "
         f"reason={sig.reason.value} after={sig.after} role={role or '-'} engines={role_engines}",
@@ -954,17 +946,11 @@ def main(argv: list[str]) -> int:
         print(f"[issuesmith-dispatch] ERROR: {exc}", file=sys.stderr)
         return 2
 
-    issue_number: int | None = None
-    raw_issue = context.get("issue_number", "")
-    if raw_issue:
-        try:
-            issue_number = int(raw_issue)
-        except ValueError:
-            pass
+    issue_number = _issue_number(context)
 
-    # Remove waiting label at the start of every run (clears it after a resume).
-    if issue_number is not None:
-        _forge_remove_waiting(issue_number)
+    # Step start: andon / waiting cleared, the step's phase running (#4807).
+    if issue_number is not None and step_id != _REPAIR_STEP_ID:
+        _project_step_start(issue_number, step_id)
 
     # Module-less step (LLM-only step) guard: must be run via engine run-guarded --requires-step.
     steps = get_config().steps

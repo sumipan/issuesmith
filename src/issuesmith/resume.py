@@ -308,7 +308,7 @@ def _restore_running_state(issue: int, handler: str) -> None:
     """
     from dataclasses import replace
 
-    from issuesmith.andon import project_issue
+    from issuesmith.ops.labels import project_issue
     from issuesmith.queue import issue_target_meta, resolve_engine
 
     phase = _phase_for_handler(handler)

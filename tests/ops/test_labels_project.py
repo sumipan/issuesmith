@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
-from issuesmith.ops.labels import ExecRecord, apply, project, reconcile
+from issuesmith.ops.labels import ExecRecord, apply, project, project_issue, reconcile
 
 NS = "issuesmith"
 
@@ -337,3 +337,120 @@ class TestReconcile:
             divs = reconcile(client, fix=False)
 
         assert divs == []
+
+
+    def test_queued_issue_keeps_phase_label(self):
+        # The queue's queued marker is laid over the label state (#4807): draft-done stays.
+        issue = _mk_issue(11, [f"{NS}:draft-done"])
+        client = _make_client([issue])
+        snap = _make_snap(queued_issues=[11])
+
+        with patch("issuesmith.queue_store.QueueStore") as MockStore:
+            MockStore.return_value.snapshot.return_value = snap
+            divs = reconcile(client, fix=False)
+
+        assert divs == [{"issue": 11, "add": [f"{NS}:queued"], "remove": []}]
+
+    def test_queued_label_removed_when_not_in_queue(self):
+        issue = _mk_issue(12, [f"{NS}:queued", f"{NS}:develop-ready"])
+        client = _make_client([issue])
+        snap = _make_snap()
+
+        with patch("issuesmith.queue_store.QueueStore") as MockStore:
+            MockStore.return_value.snapshot.return_value = snap
+            divs = reconcile(client, fix=False)
+
+        assert divs == [{"issue": 12, "add": [], "remove": [f"{NS}:queued"]}]
+
+    def test_andon_kinds_come_from_open_andon_comments(self):
+        from issuesmith.andon import Andon, to_comment
+
+        issue = _mk_issue(13, [f"{NS}:andon-blocked", f"{NS}:develop-running"])
+        client = _make_client([issue], andon_issues=[{"number": 13}])
+        broken = Andon(id="wf:13:cp2:0", kind="broken", issue=13, step="cp2", summary="x")
+        client.get_issue_comments.return_value = [{"body": to_comment(broken)}]
+        snap = _make_snap()
+
+        with patch("issuesmith.queue_store.QueueStore") as MockStore:
+            MockStore.return_value.snapshot.return_value = snap
+            divs = reconcile(client, fix=True)
+
+        assert divs == [
+            {"issue": 13, "add": [f"{NS}:andon-broken"], "remove": [f"{NS}:andon-blocked"]}
+        ]
+        client.issue_update.assert_called_once_with(
+            13, labels_add=[f"{NS}:andon-broken"], labels_remove=[f"{NS}:andon-blocked"]
+        )
+
+    def test_uses_projection(self):
+        import issuesmith.projection as projection_mod
+
+        with (
+            patch("issuesmith.queue_store.QueueStore") as MockStore,
+            patch.object(projection_mod, "project", wraps=projection_mod.project) as spy,
+        ):
+            MockStore.return_value.snapshot.return_value = _make_snap()
+            reconcile(_make_client([_mk_issue(14, [])]), fix=False)
+        spy.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Per-axis rules live in issuesmith.projection only (#4807)
+# ---------------------------------------------------------------------------
+
+def test_individual_rules_are_gone():
+    import issuesmith.ops.labels as labels_mod
+
+    for name in (
+        "_phase_label", "_attention_label", "_precondition_labels",
+        "_PHASE_PRI", "_STATUS_PRI", "_ANDON_PRI",
+        "_MANAGED_STATUSES", "_MANAGED_ANDON_KINDS",
+    ):
+        assert not hasattr(labels_mod, name), name
+
+
+# ---------------------------------------------------------------------------
+# project_issue() — the single label writer
+# ---------------------------------------------------------------------------
+
+class _Forge:
+    def __init__(self, labels):
+        self.labels = set(labels)
+        self.updates = []
+
+    def issue_get(self, number, fields=None):
+        return {"number": number, "labels": [{"name": lb} for lb in sorted(self.labels)]}
+
+    def issue_update(self, number, **kwargs):
+        self.updates.append(kwargs)
+        self.labels |= set(kwargs.get("labels_add") or [])
+        self.labels -= set(kwargs.get("labels_remove") or [])
+
+
+class TestProjectIssue:
+    def test_change_is_written_in_one_update(self):
+        from dataclasses import replace
+
+        forge = _Forge({f"{NS}:develop-running", "scope:milestone"})
+        add, remove = project_issue(
+            forge, 7, lambda st: replace(st, phases={**st.phases, "develop": "done"})
+        )
+        assert (add, remove) == ([f"{NS}:develop-done"], [f"{NS}:develop-running"])
+        assert forge.updates == [
+            {"labels_add": [f"{NS}:develop-done"], "labels_remove": [f"{NS}:develop-running"]}
+        ]
+        assert forge.labels == {f"{NS}:develop-done", "scope:milestone"}
+
+    def test_no_change_no_write(self):
+        forge = _Forge({f"{NS}:develop-running"})
+        assert project_issue(forge, 7, lambda st: st) == ([], [])
+        assert forge.updates == []
+
+    def test_forge_error_is_swallowed(self, capsys):
+        from dataclasses import replace
+
+        client = MagicMock()
+        client.issue_get.return_value = {"labels": []}
+        client.issue_update.side_effect = RuntimeError("boom")
+        assert project_issue(client, 7, lambda st: replace(st, waiting=True)) == ([], [])
+        assert "WARNING" in capsys.readouterr().err
