@@ -16,7 +16,7 @@ import subprocess
 import tempfile
 import time
 from contextlib import contextmanager
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterator
 
 import yaml
@@ -140,6 +140,43 @@ def _git_log(repo_root: Path, path: str) -> str:
         return (r.stdout or "").strip()
     except OSError:
         return ""
+
+
+_GLOB_CHARS = ("*", "?", "[")
+_INVALID_PATH_DETAIL = "invalid path (must be a non-empty relative path without ..)"
+
+
+def is_invalid_contract_path(value: object) -> bool:
+    """Return True unless value is a non-empty str, relative, and without ``..`` segments."""
+    if not isinstance(value, str) or not value.strip():
+        return True
+    pure = PurePosixPath(value)
+    return pure.is_absolute() or ".." in pure.parts
+
+
+def _is_glob(pattern: str) -> bool:
+    return any(c in pattern for c in _GLOB_CHARS)
+
+
+def _matching_paths(repo_root: Path, pattern: str) -> list[str]:
+    """Return the repo_root-relative paths matching pattern, sorted.
+
+    Patterns with glob characters (``* ? [``) are expanded with ``repo_root.glob``;
+    plain paths yield ``[pattern]`` when they exist and ``[]`` otherwise.
+    """
+    if _is_glob(pattern):
+        return sorted(str(m.relative_to(repo_root)) for m in repo_root.glob(pattern))
+    return [pattern] if (repo_root / pattern).exists() else []
+
+
+def _invalid_path_record(check: str, entry: object) -> dict:
+    return {
+        "check": check,
+        "path": str(entry),
+        "result": "FAIL",
+        "detail": _INVALID_PATH_DETAIL,
+        "git_log": "",
+    }
 
 
 def _looks_like_file_path(value: str) -> bool:
@@ -294,14 +331,22 @@ def run_checks(contract: dict, repo_root: Path, *, base_ref: str = "HEAD") -> li
                 )
 
     for path in contract.get("paths_must_exist", []):
-        target = repo_root / path
-        if target.exists():
+        if is_invalid_contract_path(path):
+            records.append(_invalid_path_record("paths_must_exist", path))
+            continue
+        matches = _matching_paths(repo_root, path)
+        is_glob = _is_glob(path)
+        if matches:
             records.append(
                 {
                     "check": "paths_must_exist",
                     "path": path,
                     "result": "PASS",
-                    "detail": "",
+                    "detail": (
+                        f"glob matched {len(matches)}: {', '.join(matches[:3])}"
+                        if is_glob
+                        else ""
+                    ),
                     "git_log": "",
                 }
             )
@@ -311,14 +356,17 @@ def run_checks(contract: dict, repo_root: Path, *, base_ref: str = "HEAD") -> li
                     "check": "paths_must_exist",
                     "path": path,
                     "result": "FAIL",
-                    "detail": "file not found",
+                    "detail": "glob matched nothing" if is_glob else "file not found",
                     "git_log": _git_log(repo_root, path),
                 }
             )
 
     for pattern in contract.get("paths_must_not_exist", []):
-        matches = sorted(repo_root.glob(pattern))
-        if not matches:
+        if is_invalid_contract_path(pattern):
+            records.append(_invalid_path_record("paths_must_not_exist", pattern))
+            continue
+        rel_paths = _matching_paths(repo_root, pattern)
+        if not rel_paths:
             records.append(
                 {
                     "check": "paths_must_not_exist",
@@ -329,7 +377,6 @@ def run_checks(contract: dict, repo_root: Path, *, base_ref: str = "HEAD") -> li
                 }
             )
         else:
-            rel_paths = [str(m.relative_to(repo_root)) for m in matches]
             for rel in rel_paths:
                 records.append(
                     {
