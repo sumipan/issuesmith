@@ -164,12 +164,7 @@ _DEFAULT_PHASES: tuple[PhaseConfig, ...] = (
     PhaseConfig(name="merge", role="implementation", entry_step="m2"),
 )
 
-_DEFAULT_STEPS: dict[str, StepConfig] = {
-    "m2-role-dispatch": StepConfig(
-        module="issuesmith.steps.m2_finalize",
-        template="m2-compact.md",
-    ),
-}
+_DEFAULT_STEPS: dict[str, StepConfig] = {}
 
 # PR diff scope gate defaults (#3178). Mirrored in issuesmith.yaml.
 _DEFAULT_FORBIDDEN_PR_PATHS: tuple[str, ...] = (

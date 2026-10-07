@@ -6,8 +6,8 @@ preflight-parity check was removed in #3628), and irreversible flag.
 """
 from __future__ import annotations
 
+from issuesmith.contract import Andon, StepResult, Verdict
 from issuesmith.engine import RetryReason, RetrySignal
-from issuesmith.steps.base import Andon, StepResult, Verdict
 
 # ---------------------------------------------------------------------------
 # New API construction

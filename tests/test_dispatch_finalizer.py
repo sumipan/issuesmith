@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from issuesmith.steps.base import StepResult
+from issuesmith.contract import StepResult
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -367,7 +367,7 @@ def test_validate_requires_chain_repair_step_is_exempt() -> None:
     from issuesmith.ops.doctor import validate_requires_chain
 
     steps = {
-        "repair": StepConfig(module="issuesmith.steps.repair"),
+        "repair": StepConfig(module="issuesmith.ops.repair_step"),
     }
     violations = validate_requires_chain(steps)
     assert violations == []

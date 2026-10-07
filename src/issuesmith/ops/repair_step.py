@@ -1,8 +1,7 @@
 """Explicit repair step module for requires violations (#4276).
 
 Runs a single LLM repair cycle when dispatch requires evaluation finds
-non-auto-fixable violations. Import this module directly; do not route
-through ``issuesmith.steps.repair``.
+non-auto-fixable violations.
 """
 
 from __future__ import annotations

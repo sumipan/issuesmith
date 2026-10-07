@@ -66,7 +66,7 @@ def check_paths_must_not_exist_validity(body: str, labels: list[str] | None = No
     from issuesmith.config import get_config
     from issuesmith.context_hook import parse_issue_metadata
     from issuesmith.gate_rules.scope_coupling import check_paths_must_not_exist_contract
-    from issuesmith.steps.scope_gate import resolve_scope_root
+    from issuesmith.scope_gate import resolve_scope_root
 
     try:
         metadata = parse_issue_metadata(body)
