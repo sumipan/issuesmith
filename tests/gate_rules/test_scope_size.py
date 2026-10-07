@@ -401,6 +401,29 @@ def _plan_concerns(promoted: str) -> list[str]:
     return re.findall(r"^\| \d+ \| ([^|]+?) \|", promoted, re.MULTILINE)
 
 
+@pytest.fixture
+def _root_readable_extractor(monkeypatch):
+    """Simulate nexus #4797 sub 1: change_paths_for_repo keeps root-level files.
+
+    Root concern naming is only observable once root sub blocks are readable;
+    until then the #4852 producer gate merges them into the first concern.
+    """
+    from issuesmith.contract import extract_change_table_rows
+    from issuesmith.gate_rules import scope_size
+
+    def _extract(text: str, repo: str | None = None) -> list[str]:
+        paths: list[str] = []
+        for row_repo, path, _ in extract_change_table_rows(text):
+            if repo is not None and row_repo and row_repo != repo:
+                continue
+            if path not in paths:
+                paths.append(path)
+        return paths
+
+    monkeypatch.setattr(scope_size, "change_paths_for_repo", _extract)
+
+
+@pytest.mark.usefixtures("_root_readable_extractor")
 def test_promote_names_root_level_concern_root():
     from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
 
@@ -420,6 +443,7 @@ def test_promote_names_root_level_concern_root():
     assert [line.split("`")[3] for line in split_rows] == ["README.md", "CHANGELOG.md"]
 
 
+@pytest.mark.usefixtures("_root_readable_extractor")
 def test_promote_keeps_subdirectory_concern_names():
     from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
 
@@ -455,3 +479,77 @@ def test_grandparent_merge_at_root_is_named_root():
     )
     assert "(src/a, src/b, root)" in concern_violation.message
     assert "| 3 | root |" in concern_violation.fix_hint
+
+
+# nexus #4852: producer-side gate — every promoted sub block must be readable by
+# the SUB1 / B1 extraction (change_paths_for_repo).
+
+
+def _promoted_sub_blocks(promoted: str) -> list[tuple[int, str]]:
+    from issuesmith.contract import iter_sub_blocks
+
+    return iter_sub_blocks(promoted)
+
+
+def test_promote_merges_unreadable_root_concern_into_first_readable():
+    from issuesmith.contract import change_paths_for_repo
+    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
+
+    rows = [(f"src/{d}/x.py", _MODIFY) for d in ("a", "b", "c")]
+    rows += [("issuesmith.yaml", _MODIFY), ("pyproject.toml", _MODIFY)]
+    promoted = promote_oversized_issue_body(_body(rows))
+    blocks = _promoted_sub_blocks(promoted)
+    assert blocks
+    for _, block in blocks:
+        assert change_paths_for_repo(block, "sumipan/issuesmith"), block
+    # Before nexus #4797 sub 1 the extractor drops root-level files, so the
+    # root rows must have been merged into the first readable concern.
+    if "root" not in _sub_header_concerns(promoted):
+        assert _sub_header_concerns(promoted) == ["src/a", "src/b", "src/c"]
+        assert _plan_concerns(promoted) == ["src/a", "src/b", "src/c"]
+        first = blocks[0][1]
+        assert "`issuesmith.yaml`" in first
+        assert "`pyproject.toml`" in first
+    # File-union complete: no parent row is lost.
+    split_rows = [line for line in promoted.splitlines() if "split from oversized issue" in line]
+    for path, _ in rows:
+        assert any(f"`{path}`" in line for line in split_rows), path
+    # Idempotent after the merge reduced the concern count.
+    assert promote_oversized_issue_body(promoted) == promoted
+
+
+def test_promote_sub_blocks_pass_change_paths_readable_check():
+    from issuesmith.gate_rules.b1_milestone_subdesign import B1MilestoneSubdesignRules
+    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
+
+    rows = [(f"src/{d}/x.py", _MODIFY) for d in ("a", "b", "c")]
+    rows += [("Procfile", _MODIFY), ("pyproject.toml", _MODIFY)]
+    promoted = promote_oversized_issue_body(_body(rows))
+    rules = B1MilestoneSubdesignRules()
+    for sub_num, block in _promoted_sub_blocks(promoted):
+        assert rules._check_change_paths_readable(promoted, sub_num, block) == []
+
+
+def test_promote_keeps_single_root_concern_when_nothing_is_readable(monkeypatch):
+    from issuesmith.gate_rules import scope_size
+
+    monkeypatch.setattr(scope_size, "change_paths_for_repo", lambda text, repo=None: [])
+    rows = [(f"src/{d}/x.py", _MODIFY) for d in ("a", "b", "c")]
+    rows += [("README.md", _MODIFY)]
+    promoted = scope_size.promote_oversized_issue_body(_body(rows))
+    assert _sub_header_concerns(promoted) == ["root"]
+    split_rows = [line for line in promoted.splitlines() if "split from oversized issue" in line]
+    assert len(split_rows) == len(rows)
+    for path, _ in rows:
+        assert any(f"`{path}`" in line for line in split_rows), path
+
+
+def test_promote_without_target_repo_skips_readability_gate(monkeypatch):
+    from issuesmith.gate_rules import scope_size
+
+    monkeypatch.setattr(scope_size, "change_paths_for_repo", lambda text, repo=None: [])
+    rows = [(f"src/{d}/x.py", _MODIFY) for d in ("a", "b", "c")]
+    rows += [("README.md", _MODIFY)]
+    body = _body(rows).replace("target_repo: sumipan/issuesmith\n", "")
+    promoted = scope_size.promote_oversized_issue_body(body)
+    assert _sub_header_concerns(promoted) == ["src/a", "src/b", "src/c", "root"]

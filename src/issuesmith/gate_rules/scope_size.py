@@ -18,7 +18,7 @@ from ghdag.workflow.gates import GATE_REGISTRY, Violation
 
 from issuesmith.config import ScopeSizeConfig, get_config
 from issuesmith.context_hook import parse_issue_metadata
-from issuesmith.contract import extract_change_table_rows
+from issuesmith.contract import change_paths_for_repo, extract_change_table_rows
 
 _MILESTONE_LABEL = "scope:milestone"
 
@@ -261,6 +261,46 @@ def _build_sub_block(
     return "\n".join(sub_parts).rstrip() + "\n"
 
 
+def _merge_unreadable_concerns(
+    concerns: dict[str, list[tuple[str, str, str]]],
+    *,
+    target_repo: str,
+    subsections: tuple[str, ...],
+    changed_label: str,
+    ac_label: str,
+) -> dict[str, list[tuple[str, str, str]]]:
+    """Fold concerns whose sub block SUB1 cannot read into a readable one (nexus #4852).
+
+    Each concern's sub block is read back with :func:`change_paths_for_repo`
+    (the SUB1 / B1 extraction). Rows of an unreadable concern move to the first
+    readable concern; when none is readable, a single ``.`` concern keeps every
+    row so the parent change table stays file-union complete.
+    """
+    readable: dict[str, list[tuple[str, str, str]]] = {}
+    orphans: list[tuple[str, str, str]] = []
+    for concern, rows in concerns.items():
+        block = _build_sub_block(
+            1,
+            concern,
+            rows,
+            target_repo=target_repo,
+            subsections=subsections,
+            changed_label=changed_label,
+            ac_label=ac_label,
+        )
+        if change_paths_for_repo(block, target_repo):
+            readable[concern] = list(rows)
+        else:
+            orphans.extend(rows)
+    if not orphans:
+        return concerns
+    if not readable:
+        return {".": orphans}
+    first = next(iter(readable))
+    readable[first].extend(orphans)
+    return readable
+
+
 def _upsert_preserving_preamble(body: str, heading: str, content: str) -> str:
     """Like upsert_section but keep text before the first H2 (yaml metadata)."""
     from issuesmith.body_editor import upsert_section
@@ -300,15 +340,24 @@ def promote_oversized_issue_body(body: str, cfg: ScopeSizeConfig | None = None) 
     if not concerns:
         return relocate_sub_plan(normalize_sub_headers(body))
 
-    design = get_section(body, design_name) or ""
-    existing_subs = SUB_HEADER_RE.findall(design)
-    if len(existing_subs) >= len(concerns):
-        return relocate_sub_plan(normalize_sub_headers(body))
-
     try:
         target_repo = str(parse_issue_metadata(body).get("target_repo") or "").strip()
     except Exception:
         target_repo = ""
+
+    if target_repo:
+        concerns = _merge_unreadable_concerns(
+            concerns,
+            target_repo=target_repo,
+            subsections=subsections,
+            changed_label=changed_label,
+            ac_label=ac_label,
+        )
+
+    design = get_section(body, design_name) or ""
+    existing_subs = SUB_HEADER_RE.findall(design)
+    if len(existing_subs) >= len(concerns):
+        return relocate_sub_plan(normalize_sub_headers(body))
 
     plan_lines = [
         f"### {plan_name}",
