@@ -89,8 +89,8 @@ def _extract_parent_change_paths(body: str) -> set[str]:
     section = get_section(body, get_config().sections["changed_files"])
     if not section:
         return set()
-    paths = {path for _, path, _ in _extract_paths_from_table_section(section)}
-    return paths
+    # Same extraction as _check_change_paths_readable / SUB1 (#4853).
+    return set(change_paths_for_repo(section))
 
 
 def _allowed_repos(body: str) -> set[str]:

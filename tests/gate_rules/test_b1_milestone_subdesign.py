@@ -1056,3 +1056,86 @@ def test_new_checks_skip_non_milestone(deletion_repo):
     ]
     for body in bodies:
         assert _check(body, NON_MILESTONE_LABELS) == []
+
+
+# --- #4853: parent change paths share change_paths_for_repo with readable check ---
+
+_ROOT_FILE = "issuesmith.yaml"
+def _skip_unless_root_file_paths() -> None:
+    from issuesmith.contract import change_paths_for_repo
+
+    probe = (
+        f"| {_TABLE_HEADER} |\n|---|---|---|---|\n"
+        f"| `sumipan/issuesmith` | `{_ROOT_FILE}` | Modify | x |\n"
+    )
+    if not change_paths_for_repo(probe):
+        pytest.skip(
+            "change_paths_for_repo() still drops repo-root files (#4797 sub1 not applied)"
+        )
+
+
+def _root_file_body() -> str:
+    return f"""\
+```yaml
+target_repo: sumipan/issuesmith
+base_branch: main
+allow_paths:
+  - {_ROOT_FILE}
+  - src/issuesmith/a.py
+```
+
+## Design
+
+{_sub_block(1, "root", _ROOT_FILE, repo="sumipan/issuesmith", change_type="Modify")}
+{_sub_block(2, "src", "src/issuesmith/a.py", repo="sumipan/issuesmith")}
+
+## Milestone
+
+### Sub-issue Plan
+| # | Title | c5185_c5BB9 | Dependency |
+|---|--------|------|------|
+| 1 | root | scope1 | None |
+| 2 | src | scope2 | 1 |
+
+## Changed Files
+| {_TABLE_HEADER} |
+|---|---|---|---|
+| `sumipan/issuesmith` | `{_ROOT_FILE}` | Modify | x |
+| `sumipan/issuesmith` | `src/issuesmith/a.py` | Add | add a |
+"""
+
+
+def test_parent_change_paths_use_change_paths_for_repo():
+    from issuesmith.contract import change_paths_for_repo, get_section
+    from issuesmith.gate_rules.b1_milestone_subdesign import _extract_parent_change_paths
+
+    body = _root_file_body()
+    section = get_section(body, get_config().sections["changed_files"])
+    assert _extract_parent_change_paths(body) == set(change_paths_for_repo(section))
+
+
+def test_parent_change_paths_include_repo_root_file():
+    _skip_unless_root_file_paths()
+    from issuesmith.gate_rules.b1_milestone_subdesign import _extract_parent_change_paths
+
+    assert _extract_parent_change_paths(_root_file_body()) == {
+        _ROOT_FILE,
+        "src/issuesmith/a.py",
+    }
+
+
+def test_root_file_only_sub_block_is_readable():
+    _skip_unless_root_file_paths()
+    assert _READABLE_RULE not in _rule_ids(_check(_root_file_body(), MILESTONE_LABELS))
+
+
+_READABLE_RULE = "b1_milestone_subdesign.change_paths_unreadable"
+_UNION_RULES = {
+    "b1_milestone_subdesign.file_union_missing_in_subs",
+    "b1_milestone_subdesign.file_union_missing_in_parent",
+}
+
+
+def test_file_union_and_readable_agree_on_repo_root_file():
+    ids = set(_rule_ids(_check(_root_file_body(), MILESTONE_LABELS)))
+    assert (_READABLE_RULE in ids) == bool(ids & _UNION_RULES)
