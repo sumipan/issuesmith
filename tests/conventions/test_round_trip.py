@@ -1,11 +1,14 @@
 """Write → read-back round trips on a real local forge (GHDAG_FORGE=local)."""
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 
 import pytest
+import yaml
 from ghdag.forge import get_forge
 
+from issuesmith import config as config_module
 from issuesmith.andon import Andon, answer, list_open, raise_andon
 from issuesmith.contract import StepResult
 from issuesmith.ops.dispatch import map_step_result
@@ -58,38 +61,97 @@ def _managed(client, number: int) -> set[str]:
     return {lb for lb in labels if lb.startswith("issuesmith:")}
 
 
-def test_merge_done_marker_projects_labels_consistent_with_project(client, capsys):
-    """(b) MERGE_DONE -> merge-done added, merge-running removed, and project() agrees (zero drift)."""
+# Merge declared as a multi-step phase: m1 -> m2. Only the final step (m2) projects merge-done.
+_MERGE_STEPS_PHASES = [
+    {"name": "draft", "role": "design", "entry_step": "b1"},
+    {"name": "sub", "role": "implementation", "entry_step": "sub-ready"},
+    {"name": "develop", "role": "implementation", "entry_step": "cp2"},
+    {"name": "merge", "role": "implementation", "entry_step": "m2", "steps": ["m1", "m2"]},
+]
+
+_HAS_PHASE_STEPS = "steps" in {f.name for f in dataclasses.fields(config_module.PhaseConfig)}
+_requires_final_step_projection = pytest.mark.skipif(
+    not _HAS_PHASE_STEPS,
+    reason="final-step label projection (PhaseConfig.steps, parent #4788 sub1/sub2) not installed",
+)
+
+
+@pytest.fixture
+def merge_steps_config(tmp_path: Path, monkeypatch):
+    """Real issuesmith.yaml declaring merge as phases[].steps = [m1, m2]."""
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "owner/round-trip", "phases": _MERGE_STEPS_PHASES}), encoding="utf-8"
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    config_module.reset_config_cache()
+    yield
+    config_module.reset_config_cache()
+
+
+def _merge_running_issue(client) -> int:
     number = client.issue_create("merge", "body")
-    client.issue_update(number, labels_add=["issuesmith:merge-running"])
+    client.issue_update(number, labels_add=["issuesmith:merge-running", "bug"])
+    return number
+
+
+def _merge_done_desired(number: int) -> set[str]:
+    return project(number, queue_state=None, exec_records=[ExecRecord("merge", "done")], andon_inbox=[])
+
+
+def test_merge_non_final_step_done_keeps_merge_running(client, merge_steps_config, capsys):
+    """A done non-final merge step (m1) neither adds merge-done nor removes merge-running."""
+    number = _merge_running_issue(client)
 
     rc = map_step_result(
-        StepResult(status="done", markers=["MERGE_DONE"]),
+        StepResult(status="done"),
+        step_id="m1",
+        context={"issue_number": str(number), "workflow_name": "issuesmith"},
+    )
+
+    capsys.readouterr()
+    assert rc == 0
+    labels = {lb["name"] for lb in client.issue_get(number, fields=["labels"])["labels"]}
+    assert "issuesmith:merge-done" not in labels
+    assert "issuesmith:merge-running" in labels
+    assert "bug" in labels
+
+
+@_requires_final_step_projection
+def test_merge_final_step_done_projects_labels_consistent_with_project(client, merge_steps_config, capsys):
+    """The final merge step (m2) done -> merge-done added, merge-running removed, unmanaged kept,
+    and project() agrees (zero drift). No marker is set: projection is decided by the step, not
+    by a marker name."""
+    number = _merge_running_issue(client)
+
+    rc = map_step_result(
+        StepResult(status="done"),
         step_id="m2",
         context={"issue_number": str(number), "workflow_name": "issuesmith"},
     )
 
+    capsys.readouterr()
     assert rc == 0
-    assert "PIPELINE_STATUS: MERGE_DONE" in capsys.readouterr().out
+    labels = {lb["name"] for lb in client.issue_get(number, fields=["labels"])["labels"]}
+    assert "bug" in labels  # unmanaged labels are never touched
     actual = _managed(client, number)
     assert "issuesmith:merge-done" in actual
     assert "issuesmith:merge-running" not in actual
-    desired = project(number, queue_state=None, exec_records=[ExecRecord("merge", "done")], andon_inbox=[])
+    desired = _merge_done_desired(number)
     assert actual == desired, f"dispatch projection drifts from labels.project(): {actual ^ desired}"
 
 
-def test_merge_done_without_issue_context_leaves_labels_untouched(client, capsys):
-    """Reproduction fixture for AC-3: with projection unreachable the labels stay stale, so the
-    consistency check above is the one that catches a disabled projection."""
-    number = client.issue_create("merge", "body")
-    client.issue_update(number, labels_add=["issuesmith:merge-running"])
+def test_merge_final_step_without_issue_context_leaves_labels_untouched(client, merge_steps_config, capsys):
+    """Without an issue context the runner cannot project, so labels stay exactly as they were."""
+    number = _merge_running_issue(client)
+    before = _managed(client, number)
 
-    map_step_result(StepResult(status="done", markers=["MERGE_DONE"]), step_id="m2", context={})
+    map_step_result(StepResult(status="done"), step_id="m2", context={})
 
     capsys.readouterr()
     actual = _managed(client, number)
-    desired = project(number, queue_state=None, exec_records=[ExecRecord("merge", "done")], andon_inbox=[])
-    assert actual != desired
+    assert actual == before == {"issuesmith:merge-running"}
+    assert actual != _merge_done_desired(number)
 
 
 def test_queue_enqueue_dispatch_complete_round_trip(tmp_path: Path):
