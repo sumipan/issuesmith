@@ -1,14 +1,24 @@
-"""labels.py — phase/attention label projection and reconciliation (#3484).
+"""labels.py — phase/attention label projection and reconciliation (#3484 / #4807).
 
-project(issue_number, *, queue_state, exec_records, andon_inbox) computes the
-desired label set (pure function).  apply() diffs current vs desired.
+The state -> label rules live in :mod:`issuesmith.projection` (pure functions).
+:func:`project_issue` is the only writer that applies a state change to an Issue.
+``ExecRecord`` / :func:`project` / :func:`apply` / :func:`run_hygiene` keep their
+signatures for existing callers and delegate to the projection.
 reconcile() scans all open Issues for divergences.
 """
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
-from typing import Any
+import sys
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any, Callable, Iterable
+
+from issuesmith import projection
+from issuesmith.contract import ANDON_KINDS, ANDON_PREFIX, PHASE_STATUSES
+from issuesmith.projection import IssueState
+
+if TYPE_CHECKING:
+    from issuesmith.config import IssuesmithConfig
 
 # ---------------------------------------------------------------------------
 # Data types
@@ -17,106 +27,74 @@ from typing import Any
 @dataclass
 class ExecRecord:
     """Minimal record of a phase execution state for use with project()."""
-    phase: str   # "draft" | "develop" | "merge" | "sub"
-    status: str  # "ready" | "running" | "done"
+    phase: str   # a config.phases name
+    status: str  # a PHASE_STATUSES item
 
-
-# Phase priority for most-advanced-wins selection
-_PHASE_PRI: dict[str, int] = {"sub": 4, "merge": 3, "develop": 2, "draft": 1}
-_STATUS_PRI: dict[str, int] = {"done": 3, "running": 2, "ready": 1}
 
 def _get_managed_phases() -> frozenset[str]:
     from issuesmith.config import get_config
     return frozenset(p.name for p in get_config().phases)
 
 
+# Phase names of the loaded config, kept for callers that read it (config-driven, #3484).
 _MANAGED_PHASES: frozenset[str] = _get_managed_phases()
-_MANAGED_STATUSES = frozenset({"ready", "running", "done"})
-_MANAGED_ANDON_KINDS = frozenset({"decision", "blocked", "broken"})
-
-# Attention priority: most urgent first
-_ANDON_PRI: dict[str, int] = {"broken": 3, "decision": 2, "blocked": 1}
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _ns() -> str:
+def _config(ns: str | None = None) -> IssuesmithConfig:
     from issuesmith.config import get_config
-    return get_config().label_namespace
+    cfg = get_config()
+    if ns is not None and ns != cfg.label_namespace:
+        cfg = replace(cfg, label_namespace=ns)
+    return cfg
+
+
+def _ns() -> str:
+    return _config().label_namespace
+
+
+def _label_names(raw: Any) -> list[str]:
+    return [
+        lbl["name"] if isinstance(lbl, dict) else str(lbl)
+        for lbl in (raw if isinstance(raw, list) else [])
+    ]
 
 
 def _is_managed_label(label: str, ns: str) -> bool:
     """True if this label is owned by the phase/attention axes."""
-    if not label.startswith(f"{ns}:"):
-        return False
-    suffix = label[len(ns) + 1:]
-    if suffix in ("queued", "waiting"):
-        return True
-    for phase in _MANAGED_PHASES:
-        for status in _MANAGED_STATUSES:
-            if suffix == f"{phase}-{status}":
-                return True
-    for kind in _MANAGED_ANDON_KINDS:
-        if suffix == f"andon-{kind}":
-            return True
-    return False
-
-
-def _phase_label(ns: str, queue_state: str | None, exec_records: list[ExecRecord]) -> str | None:
-    """Phase-axis label derived from exec records (``queued`` is a separate additive marker)."""
-    if not exec_records:
-        return None
-    best = max(exec_records, key=lambda r: (_PHASE_PRI.get(r.phase, 0), _STATUS_PRI.get(r.status, 0)))
-    return f"{ns}:{best.phase}-{best.status}"
-
-
-def _attention_label(ns: str, andon_inbox: list) -> str | None:
-    if not andon_inbox:
-        return None
-    best = max(andon_inbox, key=lambda a: _ANDON_PRI.get(a.kind, 0))
-    return f"{ns}:andon-{best.kind}"
+    return projection.is_managed(label, _config(ns))
 
 
 def _exec_records_from_labels(labels: set[str], ns: str) -> list[ExecRecord]:
     """Derive ExecRecord list from the current phase labels on an issue."""
-    records = []
-    for phase in _MANAGED_PHASES:
-        for status in _MANAGED_STATUSES:
-            if f"{ns}:{phase}-{status}" in labels:
-                records.append(ExecRecord(phase=phase, status=status))
-    return records
+    return [
+        ExecRecord(phase=phase.name, status=status)
+        for phase in _config(ns).phases
+        for status in PHASE_STATUSES
+        if f"{ns}:{phase.name}-{status}" in labels
+    ]
+
+
+def _state(
+    exec_records: Iterable[ExecRecord], andon_kinds: Iterable[str], *, queued: bool
+) -> IssueState:
+    """IssueState holding the most advanced status of each phase in ``exec_records``."""
+    phases: dict[str, str] = {}
+    for rec in exec_records:
+        if rec.status not in PHASE_STATUSES:
+            continue
+        prev = phases.get(rec.phase)
+        if prev is None or PHASE_STATUSES.index(rec.status) > PHASE_STATUSES.index(prev):
+            phases[rec.phase] = rec.status
+    return IssueState(phases=phases, andon_kinds=frozenset(andon_kinds), queued=queued)
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
-
-def _precondition_labels(ns: str, exec_records: list[ExecRecord]) -> set[str]:
-    """Return precondition labels that must be kept while dependent phases are active.
-
-    When a phase declares preconditions and is currently running or done, those
-    precondition labels are preserved so that reconcile does not strip them.
-    """
-    from issuesmith.config import get_config as _get_config
-
-    phases_map = {p.name: p for p in _get_config().phases}
-    keep: set[str] = set()
-    for rec in exec_records:
-        if rec.status not in ("running", "done"):
-            continue
-        phase_cfg = phases_map.get(rec.phase)
-        if phase_cfg is None:
-            continue
-        for precond in phase_cfg.preconditions:
-            # Preconditions are stored without namespace prefix; add it here.
-            if ":" in precond:
-                keep.add(precond)
-            else:
-                keep.add(f"{ns}:{precond}")
-    return keep
-
 
 def project(
     issue_number: int,
@@ -127,32 +105,17 @@ def project(
 ) -> set[str]:
     """Compute the desired label set for an issue (pure function, no side effects).
 
-    Returns at most one phase-axis label, at most one attention-axis label, and the
-    additive ``queued`` marker while the issue has a pending queue request.
-
-    Precondition labels required by active phases are preserved so that reconcile
-    does not strip labels that downstream phases depend on (#3626).
+    Compatibility wrapper over :func:`issuesmith.projection.project`: at most one
+    phase-axis label, at most one attention-axis label, the additive ``queued`` marker
+    while the issue has a pending queue request (sumipan/nexus#3601), and the
+    precondition labels of active phases (#3626).
     """
-    ns = _ns()
-    labels: set[str] = set()
-
-    phase = _phase_label(ns, queue_state, exec_records)
-    if phase:
-        labels.add(phase)
-    if queue_state == "queued":
-        # Additive marker (sumipan/nexus#3601): a queued issue keeps the phase label the queue's
-        # own preconditions read (for example ``draft-done`` before ``develop``), so reconcile
-        # never strips a label that dispatch requires.
-        labels.add(f"{ns}:queued")
-
-    attn = _attention_label(ns, andon_inbox)
-    if attn:
-        labels.add(attn)
-
-    # Preserve precondition labels for active phases.
-    labels.update(_precondition_labels(ns, exec_records))
-
-    return labels
+    state = _state(
+        exec_records,
+        (getattr(a, "kind", "") for a in andon_inbox),
+        queued=queue_state == "queued",
+    )
+    return set(projection.project(state, _config()))
 
 
 def apply(client: Any, issue: dict[str, Any], desired: set[str]) -> None:
@@ -160,19 +123,38 @@ def apply(client: Any, issue: dict[str, Any], desired: set[str]) -> None:
 
     Only touches managed labels (phase and attention axes).
     """
-    ns = _ns()
-    current = {
-        lbl["name"] if isinstance(lbl, dict) else str(lbl)
-        for lbl in issue.get("labels", [])
-    }
-    managed_current = {lbl for lbl in current if _is_managed_label(lbl, ns)}
-    managed_desired = {lbl for lbl in desired if _is_managed_label(lbl, ns)}
-
-    to_add = sorted(managed_desired - managed_current)
-    to_remove = sorted(managed_current - managed_desired)
-
+    current = _label_names(issue.get("labels", []))
+    to_add, to_remove = projection.diff(current, frozenset(desired), _config())
     if to_add or to_remove:
         client.issue_update(issue["number"], labels_add=to_add, labels_remove=to_remove)
+
+
+def project_issue(
+    client: Any, issue_number: int, change: Callable[[IssueState], IssueState]
+) -> tuple[list[str], list[str]]:
+    """Apply a state change to an Issue's labels; the only label writer of the runner (#4807).
+
+    Reads the current labels, computes ``state_from_labels`` -> ``change`` -> ``project``
+    -> ``diff`` and sends the difference in a single ``issue_update`` (nothing when it is
+    empty). Forge errors are reported on stderr and swallowed. Returns ``(add, remove)``.
+    """
+    cfg = _config()
+    try:
+        data = client.issue_get(issue_number, fields=["labels"])
+        current = _label_names(data.get("labels") if isinstance(data, dict) else None)
+        state = change(projection.state_from_labels(current, cfg))
+        add, remove = projection.diff(current, projection.project(state, cfg), cfg)
+        if add or remove:
+            delta: dict[str, list[str]] = {}
+            if add:
+                delta["labels_add"] = add
+            if remove:
+                delta["labels_remove"] = remove
+            client.issue_update(issue_number, **delta)
+    except Exception as exc:  # noqa: BLE001 - label projection must not fail the caller
+        print(f"WARNING: label projection failed for #{issue_number}: {exc}", file=sys.stderr)
+        return [], []
+    return add, remove
 
 
 def reconcile(
@@ -185,7 +167,8 @@ def reconcile(
     from issuesmith.andon import from_comment
     from issuesmith.queue_store import QueueStore
 
-    ns = _ns()
+    cfg = _config()
+    ns = cfg.label_namespace
     store = QueueStore()
     snap = store.snapshot()
 
@@ -202,8 +185,8 @@ def reconcile(
 
     # Collect open andons per issue
     andon_by_issue: dict[int, list] = {}
-    for kind in ("decision", "blocked", "broken"):
-        label = f"{ns}:andon-{kind}"
+    for kind in ANDON_KINDS:
+        label = f"{ns}:{ANDON_PREFIX}{kind}"
         try:
             andon_issues = client.list_issues(label=label, state="open")
         except Exception:
@@ -243,30 +226,23 @@ def reconcile(
         if not isinstance(num, int):
             continue
 
-        current_labels = {
-            lbl["name"] if isinstance(lbl, dict) else str(lbl)
-            for lbl in issue.get("labels", [])
-        }
-
-        if num in queued_issues:
-            qs: str | None = "queued"
-            exec_recs: list[ExecRecord] = []
-        else:
-            qs = None
-            exec_recs = _exec_records_from_labels(current_labels, ns)
-
-        andons = andon_by_issue.get(num, [])
-        desired = project(num, queue_state=qs, exec_records=exec_recs, andon_inbox=andons)
-
-        managed_current = {lbl for lbl in current_labels if _is_managed_label(lbl, ns)}
-        to_add = sorted(desired - managed_current)
-        to_remove = sorted(managed_current - desired)
+        current_labels = _label_names(issue.get("labels", []))
+        # State expressed by the labels, with the queue's queued marker and the andon
+        # kinds of the open andon comments laid over it (#4807).
+        state = replace(
+            projection.state_from_labels(current_labels, cfg),
+            queued=num in queued_issues,
+            andon_kinds=frozenset(a.kind for a in andon_by_issue.get(num, [])),
+        )
+        to_add, to_remove = projection.diff(
+            current_labels, projection.project(state, cfg), cfg
+        )
 
         if to_add or to_remove:
             div: dict[str, Any] = {"issue": num, "add": to_add, "remove": to_remove}
             divergences.append(div)
             if fix:
-                apply(client, issue, desired)
+                client.issue_update(num, labels_add=to_add, labels_remove=to_remove)
 
     if as_json:
         print(json.dumps(divergences, ensure_ascii=False))

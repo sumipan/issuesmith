@@ -292,6 +292,7 @@ def test_answer_removes_label():
         comments=[{"body": comment_body, "id": 10}],
     )
     ns = _ns()
+    client.issue_get.return_value = {"labels": [{"name": f"{ns}:andon-decision"}]}
     with (
         patch("issuesmith.andon._iter_open_andon_issues") as mock_iter,
         patch("issuesmith.andon._write_metrics"),
@@ -527,3 +528,84 @@ def test_note_comment_is_not_parsed_as_andon(local_client, tmp_path):
     assert last.startswith("<!-- andon-note -->")
     assert "```andon-note" in last
     assert from_comment(last) is None
+
+
+# ---------------------------------------------------------------------------
+# Label changes go through project_issue (#4807)
+# ---------------------------------------------------------------------------
+
+def _spy_project_issue(monkeypatch, current: list[str]) -> list:
+    """Install ops/labels.project_issue as a spy; record (issue, labels before, state after)."""
+    import issuesmith.ops.labels as labels_mod
+    from issuesmith.config import get_config
+    from issuesmith.projection import state_from_labels
+
+    calls: list = []
+
+    def fake(client, issue_number, change):
+        calls.append((issue_number, change(state_from_labels(current, get_config()))))
+        return [], []
+
+    monkeypatch.setattr(labels_mod, "project_issue", fake, raising=False)
+    return calls
+
+
+def test_raise_andon_projects_through_project_issue(monkeypatch):
+    calls = _spy_project_issue(monkeypatch, [f"{_ns()}:develop-running"])
+    client = _fake_client()
+    with patch("issuesmith.andon._write_metrics"):
+        raise_andon(client, _make_andon(issue=10, kind="blocked", step="cp2"))
+    client.issue_update.assert_not_called()
+    [(issue, state)] = calls
+    assert issue == 10
+    assert state.andon_kinds == {"blocked"}
+    assert "develop" not in state.phases  # cp2 is develop's step: running is dropped
+
+
+def test_raise_andon_keeps_phase_of_other_step(monkeypatch):
+    calls = _spy_project_issue(monkeypatch, [f"{_ns()}:develop-running"])
+    with patch("issuesmith.andon._write_metrics"):
+        raise_andon(_fake_client(), _make_andon(issue=10, kind="broken", step="unknown-step"))
+    [(_, state)] = calls
+    assert state.phases == {"develop": "running"}
+    assert state.andon_kinds == {"broken"}
+
+
+def test_answer_projects_through_project_issue(monkeypatch):
+    ns = _ns()
+    calls = _spy_project_issue(monkeypatch, [f"{ns}:andon-decision", f"{ns}:andon-blocked"])
+    a = _make_andon(issue=15, andon_id="wf:15:s:0", kind="decision")
+    client = _fake_client(comments=[{"body": to_comment(a), "id": 10}])
+    with (
+        patch("issuesmith.andon._iter_open_andon_issues", return_value=iter([{"number": 15}])),
+        patch("issuesmith.andon._write_metrics"),
+        patch("issuesmith.andon._call_resume_hook"),
+    ):
+        answer(client, "wf:15:s:0", "yes")
+    client.issue_update.assert_not_called()
+    [(issue, state)] = calls
+    assert issue == 15
+    assert state.andon_kinds == {"blocked"}
+
+
+def test_answer_if_open_projects_through_project_issue(monkeypatch):
+    from issuesmith.andon import answer_if_open
+
+    calls = _spy_project_issue(monkeypatch, [f"{_ns()}:andon-broken"])
+    a = _make_andon(issue=16, andon_id="wf:16:s:0", kind="broken")
+    client = _fake_client(comments=[{"body": to_comment(a), "id": 10}])
+    with (
+        patch("issuesmith.andon._iter_open_andon_issues", return_value=iter([{"number": 16}])),
+        patch("issuesmith.andon._write_metrics"),
+    ):
+        answer_if_open(client, "wf:16:s:0", "auto")
+    [(issue, state)] = calls
+    assert issue == 16
+    assert state.andon_kinds == frozenset()
+
+
+def test_andon_label_kinds_come_from_contract():
+    from issuesmith.andon import _andon_label_kinds
+    from issuesmith.contract import ANDON_KINDS
+
+    assert _andon_label_kinds() == list(ANDON_KINDS)

@@ -7,12 +7,14 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import Any, Iterator, Protocol, runtime_checkable
+from typing import Any, Callable, Iterator, Protocol, runtime_checkable
 
 import yaml
 
+from issuesmith.contract import ANDON_KINDS
+from issuesmith.projection import IssueState
 from issuesmith.resume import resume
 
 logger = logging.getLogger(__name__)
@@ -146,7 +148,24 @@ def _ns() -> str:
 
 
 def _andon_label_kinds() -> list[str]:
-    return ["decision", "blocked", "broken"]
+    return list(ANDON_KINDS)
+
+
+def project_issue(
+    client: Any, issue_number: int, change: Callable[[IssueState], IssueState]
+) -> tuple[list[str], list[str]]:
+    """Apply a state change to an Issue's labels through ``ops/labels.project_issue``."""
+    from issuesmith.ops import labels as labels_mod
+
+    return labels_mod.project_issue(client, issue_number, change)
+
+
+def _with_andon(kind: str) -> Callable[[IssueState], IssueState]:
+    return lambda st: replace(st, andon_kinds=st.andon_kinds | {kind})
+
+
+def _without_andon(kind: str) -> Callable[[IssueState], IssueState]:
+    return lambda st: replace(st, andon_kinds=st.andon_kinds - {kind})
 
 
 def _iter_open_andon_issues(client: Any) -> Iterator[dict]:
@@ -325,12 +344,24 @@ def raise_andon(
     sinks: list[AndonSink] | None = None,
     metrics_path: Path | None = None,
 ) -> None:
-    """Post andon as Issue comment, add attention label, emit to sinks, record metrics."""
-    ns = _ns()
-    label = f"{ns}:andon-{andon.kind}"
+    """Post andon as Issue comment, project the attention label, emit to sinks, record metrics.
+
+    A running phase owning ``andon.step`` stops running: its label is dropped.
+    """
+    from issuesmith.config import get_config
+    from issuesmith.projection import phase_for_step
 
     client.issue_comment(andon.issue, to_comment(andon))
-    client.issue_update(andon.issue, labels_add=[label])
+    phase = phase_for_step(andon.step, get_config())
+    running = "running"
+
+    def change(st: IssueState) -> IssueState:
+        st = _with_andon(andon.kind)(st)
+        if phase is not None and st.phases.get(phase) == running:
+            st = replace(st, phases={k: v for k, v in st.phases.items() if k != phase})
+        return st
+
+    project_issue(client, andon.issue, change)
 
     for sink in sinks or []:
         sink.emit(andon)
@@ -373,8 +404,7 @@ def answer(
     *,
     metrics_path: Path | None = None,
 ) -> None:
-    """Post answer comment, remove attention label, call resume hook."""
-    ns = _ns()
+    """Post answer comment, drop the andon kind from the projected labels, call resume hook."""
 
     # Find the andon in open issues
     target: Andon | None = None
@@ -390,10 +420,9 @@ def answer(
     if target is None:
         raise KeyError(f"Andon not found: {andon_id}")
 
-    label = f"{ns}:andon-{target.kind}"
     reply = _answer_comment(andon_id, action)
     client.issue_comment(target.issue, reply)
-    client.issue_update(target.issue, labels_remove=[label])
+    project_issue(client, target.issue, _without_andon(target.kind))
 
     path = metrics_path if metrics_path is not None else _default_metrics_path()
     _write_metrics(path, "andon_answered", target)
@@ -415,8 +444,6 @@ def answer_if_open(
     if client is None:
         return
 
-    ns = _ns()
-
     target: Andon | None = None
     for issue in _iter_open_andon_issues(client):
         for comment in client.get_issue_comments(issue["number"]):
@@ -431,10 +458,9 @@ def answer_if_open(
         logger.debug("answer_if_open: andon not found (already closed?): %s", andon_id)
         return
 
-    label = f"{ns}:andon-{target.kind}"
     reply = _answer_comment(andon_id, action)
     client.issue_comment(target.issue, reply)
-    client.issue_update(target.issue, labels_remove=[label])
+    project_issue(client, target.issue, _without_andon(target.kind))
 
     path = metrics_path if metrics_path is not None else _default_metrics_path()
     _write_metrics(path, "andon_answered", target)

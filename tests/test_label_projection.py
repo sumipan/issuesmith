@@ -1,9 +1,9 @@
 """Tests for label projection in dispatch and labels.project() (#3626).
 
 Covers:
-  - MERGE_DONE  → merge-done added, merge-running removed
-  - IMPL_DONE   → develop-done added, develop-running removed
-  - REPORT_DONE → draft-done added, draft-running removed
+  - the final step of a phase (entry_step unless phases[].steps is declared)
+    projects <phase>-done and drops <phase>-running (#4807)
+  - StepResult(done) of m2 → merge-done added, merge-running removed
   - CLOSED issue without terminal label gets terminal label on next reconcile
   - labels.project() preserves phase precondition labels (e.g. draft-done kept
     when develop-running is active and develop's preconditions include draft-done)
@@ -26,109 +26,96 @@ def _ns() -> str:
 
 
 # ---------------------------------------------------------------------------
-# _project_marker_labels: marker → label delta applied to forge
+# Final-step projection: the done of a phase's last step projects <phase>-done
 # ---------------------------------------------------------------------------
 
-class TestMarkerLabelProjection:
-    """Verify _project_marker_labels applies the right add/remove for each marker."""
+class TestFinalStepProjection:
+    """Without ``phases[].steps`` the entry step is the final step of its phase (#4807)."""
 
-    def _run(self, marker: str, issue_number: int = 42) -> MagicMock:
-        """Run _project_marker_labels and return the forge mock."""
-        from issuesmith.ops.dispatch import _project_marker_labels
+    @pytest.mark.parametrize(
+        ("step", "phase"),
+        [("b1", "draft"), ("sub-ready", "sub"), ("cp2", "develop"), ("m2", "merge")],
+    )
+    def test_entry_step_is_final_and_done_projects_phase_done(self, step, phase):
+        from dataclasses import replace
 
-        context = {"issue_number": str(issue_number), "workflow_name": "issuesmith"}
-        forge = MagicMock()
-        with patch("issuesmith.ops.dispatch.get_forge", return_value=forge):
-            _project_marker_labels(marker, context)
-        return forge
+        from issuesmith.config import get_config
+        from issuesmith.projection import diff, is_final_step, phase_for_step, state_from_labels
+        from issuesmith.projection import project as project_state
 
-    def test_merge_done_adds_merge_done_label(self):
+        cfg = get_config()
         ns = _ns()
-        forge = self._run("MERGE_DONE")
-        forge.issue_update.assert_called_once()
-        _, kwargs = forge.issue_update.call_args
-        assert f"{ns}:merge-done" in kwargs["labels_add"]
+        assert phase_for_step(step, cfg) == phase
+        assert is_final_step(step, cfg)
+        current = [f"{ns}:{phase}-running", "scope:milestone"]
+        state = state_from_labels(current, cfg)
+        desired = project_state(replace(state, phases={**state.phases, phase: "done"}), cfg)
+        assert diff(current, desired, cfg) == ([f"{ns}:{phase}-done"], [f"{ns}:{phase}-running"])
 
-    def test_merge_done_removes_merge_running_label(self):
-        ns = _ns()
-        forge = self._run("MERGE_DONE")
-        _, kwargs = forge.issue_update.call_args
-        assert f"{ns}:merge-running" in kwargs["labels_remove"]
+    def test_declared_steps_make_only_the_last_one_final(self, tmp_path, monkeypatch):
+        import yaml
 
-    def test_impl_done_adds_develop_done_label(self):
-        ns = _ns()
-        forge = self._run("IMPL_DONE")
-        forge.issue_update.assert_called_once()
-        _, kwargs = forge.issue_update.call_args
-        assert f"{ns}:develop-done" in kwargs["labels_add"]
+        from issuesmith.config import load_config, reset_config_cache
+        from issuesmith.projection import is_final_step, phase_for_step
 
-    def test_impl_done_removes_develop_running_label(self):
-        ns = _ns()
-        forge = self._run("IMPL_DONE")
-        _, kwargs = forge.issue_update.call_args
-        assert f"{ns}:develop-running" in kwargs["labels_remove"]
-
-    def test_report_done_adds_draft_done_label(self):
-        ns = _ns()
-        forge = self._run("REPORT_DONE")
-        forge.issue_update.assert_called_once()
-        _, kwargs = forge.issue_update.call_args
-        assert f"{ns}:draft-done" in kwargs["labels_add"]
-
-    def test_report_done_removes_draft_running_label(self):
-        ns = _ns()
-        forge = self._run("REPORT_DONE")
-        _, kwargs = forge.issue_update.call_args
-        assert f"{ns}:draft-running" in kwargs["labels_remove"]
-
-    def test_unknown_marker_no_label_update(self):
-        forge = self._run("WORKTREE_READY")
-        forge.issue_update.assert_not_called()
-
-    def test_no_issue_number_no_label_update(self):
-        from issuesmith.ops.dispatch import _project_marker_labels
-
-        forge = MagicMock()
-        with patch("issuesmith.ops.dispatch.get_forge", return_value=forge):
-            _project_marker_labels("MERGE_DONE", {"issue_number": ""})
-        forge.issue_update.assert_not_called()
+        cfg_path = tmp_path / "issuesmith.yaml"
+        cfg_path.write_text(
+            yaml.safe_dump({
+                "repo": "sumipan/issuesmith",
+                "phases": [
+                    {"name": "draft", "role": "design", "entry_step": "b1"},
+                    {
+                        "name": "merge",
+                        "role": "implementation",
+                        "entry_step": "m2",
+                        "steps": ["m1", "m2-role-dispatch"],
+                    },
+                ],
+            }),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+        reset_config_cache()
+        cfg = load_config()
+        assert phase_for_step("m1", cfg) == "merge"
+        assert not is_final_step("m1", cfg)
+        assert is_final_step("m2-role-dispatch", cfg)
+        assert phase_for_step("m2", cfg) is None
+        reset_config_cache()
 
 
 # ---------------------------------------------------------------------------
-# map_step_result: markers + label projection combined
+# map_step_result: the done of the merge phase's final step projects merge-done
 # ---------------------------------------------------------------------------
 
 class TestMapStepResultLabelProjection:
-    """MERGE_DONE / IMPL_DONE / REPORT_DONE markers trigger label projection."""
+    """StepResult(done) of ``m2`` (merge's final step by default) projects merge-done."""
 
-    def _run_marker(self, marker: str) -> tuple[int, MagicMock]:
+    def _run(self) -> tuple[int, MagicMock]:
         from issuesmith.contract import StepResult
         from issuesmith.ops.dispatch import map_step_result
 
         forge = MagicMock()
+        forge.issue_get.return_value = {"labels": [{"name": f"{_ns()}:merge-running"}]}
         with patch("issuesmith.ops.dispatch.get_forge", return_value=forge):
             rc = map_step_result(
-                StepResult(status="done", markers=[marker]),
+                StepResult(status="done", markers=["MERGE_DONE"]),
                 step_id="m2",
                 context={"issue_number": "42", "workflow_name": "issuesmith"},
             )
         return rc, forge
 
     def test_merge_done_exits_zero(self):
-        rc, _ = self._run_marker("MERGE_DONE")
+        rc, _ = self._run()
         assert rc == 0
 
-    def test_merge_done_calls_issue_update(self):
-        _, forge = self._run_marker("MERGE_DONE")
+    def test_merge_done_projects_merge_done(self):
+        ns = _ns()
+        _, forge = self._run()
         forge.issue_update.assert_called_once()
-
-    def test_impl_done_calls_issue_update(self):
-        _, forge = self._run_marker("IMPL_DONE")
-        forge.issue_update.assert_called_once()
-
-    def test_report_done_calls_issue_update(self):
-        _, forge = self._run_marker("REPORT_DONE")
-        forge.issue_update.assert_called_once()
+        _, kwargs = forge.issue_update.call_args
+        assert f"{ns}:merge-done" in kwargs["labels_add"]
+        assert f"{ns}:merge-running" in kwargs["labels_remove"]
 
 
 # ---------------------------------------------------------------------------

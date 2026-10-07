@@ -306,20 +306,23 @@ def _restore_running_state(issue: int, handler: str) -> None:
     must come back; before this they were restored by hand on every recovery
     (sumipan/nexus#3627 / #3696, 2026-09-24).
     """
-    from issuesmith.queue import READY_LABEL, RUNNING_LABEL, issue_target_meta, resolve_engine
+    from dataclasses import replace
+
+    from issuesmith.ops.labels import project_issue
+    from issuesmith.queue import issue_target_meta, resolve_engine
 
     phase = _phase_for_handler(handler)
     if phase is None:
         return
-    running = RUNNING_LABEL.get(phase, "")
-    ready = READY_LABEL.get(phase, "")
     cfg = get_config()
     try:
         client = get_forge(repo=cfg.repo)
         issue_data = client.issue_get(issue, fields=["state", "labels", "body", "number"])
-        if running:
-            client.issue_update(issue, labels_add=[running], labels_remove=[ready] if ready else [])
-            print(f"restored label: {running}", file=sys.stderr)
+        add, _remove = project_issue(
+            client, issue, lambda st: replace(st, phases={**st.phases, phase: "running"})
+        )
+        if add:
+            print(f"restored label: {', '.join(add)}", file=sys.stderr)
         target_repo, allow_paths = issue_target_meta(issue_data)
         role = next((ph.role for ph in cfg.phases if ph.name == phase), "implementation")
         QueueStore().add_in_flight(

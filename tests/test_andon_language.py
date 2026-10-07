@@ -137,3 +137,40 @@ def test_widen_failed_comment_uses_custom_pack(make_client):
     assert body.startswith("<!-- andon-widen-failed -->\n")
     assert "no metadata block; wanted ['src/new.py']" in body
     assert "Cannot widen" not in body
+
+
+def _labels(client, issue: int) -> set[str]:
+    return {lb["name"] for lb in client.issue_get(issue, fields=["labels"])["labels"]}
+
+
+def test_raise_and_answer_project_labels_on_local_forge(make_client, tmp_path):
+    """raise drops the running label of the andon step's phase; answer drops only the andon."""
+    from issuesmith.andon import _ns
+
+    client = make_client(custom_pack=False)
+    ns = _ns()
+    number = client.issue_create("andon target", "body")
+    client.issue_update(number, labels_add=[f"{ns}:develop-running", "scope:milestone"])
+    a = Andon(id=f"wf:{number}:cp2:0", kind="broken", issue=number, step="cp2", summary="x")
+
+    raise_andon(client, a, metrics_path=tmp_path / "metrics.jsonl")
+    assert _labels(client, number) == {f"{ns}:andon-broken", "scope:milestone"}
+
+    with patch("issuesmith.andon._call_resume_hook"):
+        answer(client, a.id, "resume", metrics_path=tmp_path / "metrics.jsonl")
+    assert _labels(client, number) == {"scope:milestone"}
+
+
+def test_attention_axis_shows_the_most_urgent_andon(make_client, tmp_path):
+    from issuesmith.andon import _ns
+
+    client = make_client(custom_pack=False)
+    ns = _ns()
+    number = client.issue_create("andon target", "body")
+    client.issue_update(number, labels_add=[f"{ns}:draft-done"])
+    blocked = Andon(id=f"wf:{number}:p1:0", kind="blocked", issue=number, step="p1", summary="x")
+    broken = Andon(id=f"wf:{number}:p2:0", kind="broken", issue=number, step="p2", summary="y")
+    raise_andon(client, blocked, metrics_path=tmp_path / "metrics.jsonl")
+    assert _labels(client, number) == {f"{ns}:draft-done", f"{ns}:andon-blocked"}
+    raise_andon(client, broken, metrics_path=tmp_path / "metrics.jsonl")
+    assert _labels(client, number) == {f"{ns}:draft-done", f"{ns}:andon-broken"}

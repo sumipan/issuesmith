@@ -383,3 +383,27 @@ class StepResult:
         # Compat: old exit_code=0 / pipeline_status → new markers
         if self.exit_code == 0 and self.pipeline_status and not self.markers:
             self.markers = [self.pipeline_status]
+
+
+# ---------------------------------------------------------------------------
+# Label vocabulary (#4807) — suffixes after ``<label_namespace>:``
+# ---------------------------------------------------------------------------
+
+# Phase-axis statuses, least to most advanced (``<phase>-<status>``).
+PHASE_STATUSES: tuple[str, ...] = ("ready", "running", "done")
+QUEUED = "queued"
+WAITING = "waiting"
+ANDON_PREFIX = "andon-"
+# Andon kinds, most urgent first: the attention axis shows only the first one present.
+ANDON_KINDS: tuple[str, ...] = ("broken", "decision", "blocked")
+
+
+class LabelWriteForbidden(RuntimeError):
+    """A step wrote labels through the forge while ``label_write_guard`` is ``enforce``."""
+
+    def __init__(self, step_id: str, labels: list[str]) -> None:
+        self.step_id = step_id
+        self.labels = list(labels)
+        super().__init__(
+            f"step {step_id} wrote labels {self.labels}; labels are projected by the runner"
+        )
