@@ -729,3 +729,175 @@ def test_dispatch_comments_use_language_pack(tmp_path, monkeypatch, issuesmith_c
         )
         for body in bodies
     ), bodies
+
+
+# ---------------------------------------------------------------------------
+# held in_flight entries (#4816)
+# ---------------------------------------------------------------------------
+
+
+def test_in_flight_by_engine_skips_held_entries():
+    entries = [
+        {"issue": 1, "engine": "claude"},
+        {"issue": 2, "engine": "codex"},
+        {"issue": 3, "engine": "claude", "held": {"by": "wf:3:p1:0", "at": _NOW}},
+    ]
+    assert in_flight_by_engine(entries) == {"claude": 1, "codex": 1}
+
+
+def test_in_flight_by_engine_held_role_and_legacy_entries_count_zero():
+    role_map = {"design": "claude", "implementation": "cursor"}
+    held = {"by": "wf:9:p1:0", "at": _NOW}
+    entries = [
+        {"issue": 1, "engine": "codex", "role": "design"},
+        {"issue": 2, "engine": "claude"},
+        {"issue": 3, "engine": "codex", "role": "implementation", "held": held},
+        {"issue": 4, "engine": "claude", "held": held},
+    ]
+    assert in_flight_by_engine(entries, role_engine_map=role_map) == {"claude": 2}
+    assert in_flight_by_engine(entries) == {"codex": 1, "claude": 1}
+
+
+def test_hold_in_flight_keeps_fields_and_records_held(tmp_path):
+    store = _store(tmp_path)
+    store.add_in_flight(
+        10,
+        "claude",
+        role="implementation",
+        phase="develop",
+        allow_paths=("src/a/**",),
+        target_repo="sumipan/issuesmith",
+    )
+    assert store.hold_in_flight(10, by="wf:10:p1:0") is True
+    entry = store.snapshot().in_flight[0]
+    assert entry["engine"] == "claude"
+    assert entry["role"] == "implementation"
+    assert entry["phase"] == "develop"
+    assert entry["target_repo"] == "sumipan/issuesmith"
+    assert entry["allow_paths"] == ["src/a/**"]
+    assert entry["held"]["by"] == "wf:10:p1:0"
+    assert datetime.fromisoformat(entry["held"]["at"]).tzinfo is not None
+
+
+def test_hold_in_flight_missing_issue_returns_false_without_change(tmp_path):
+    store = _store(tmp_path)
+    store.add_in_flight(10, "claude")
+    before = store.state_path.read_text(encoding="utf-8")
+    assert store.hold_in_flight(99, by="wf:99:p1:0") is False
+    assert store.state_path.read_text(encoding="utf-8") == before
+
+
+def test_hold_in_flight_again_overwrites_held_only(tmp_path):
+    store = _store(tmp_path)
+    store.add_in_flight(10, "claude", role="implementation", phase="develop")
+    store.add_in_flight(11, "claude")
+    assert store.hold_in_flight(10, by="wf:10:p1:0") is True
+    first = store.snapshot().in_flight
+    assert store.hold_in_flight(10, by="wf:10:p1:1") is True
+    second = store.snapshot().in_flight
+    assert second[0]["held"]["by"] == "wf:10:p1:1"
+    assert {k: v for k, v in second[0].items() if k != "held"} == {
+        k: v for k, v in first[0].items() if k != "held"
+    }
+    assert second[1] == first[1]
+
+
+def _held_dispatch_setup(tmp_path, monkeypatch, issuesmith_config, candidate_paths: str):
+    payload = yaml.safe_load(issuesmith_config.read_text(encoding="utf-8"))
+    payload["concurrency"] = {"default": 1, "per_engine": {"claude": 1}}
+    issuesmith_config.write_text(yaml.safe_dump(payload), encoding="utf-8")
+    reset_config_cache()
+    _patch_paths(tmp_path, monkeypatch, issuesmith_config)
+
+    from issuesmith import queue as qmod
+
+    candidate_body = (
+        "```yaml\n"
+        "target_repo: sumipan/nexus\n"
+        "base_branch: main\n"
+        "allow_paths:\n"
+        f'  - "{candidate_paths}"\n'
+        "```\n"
+    )
+    store = _store(tmp_path)
+    store.add_in_flight(
+        300,
+        "claude",
+        role="implementation",
+        phase="develop",
+        allow_paths=("tools/held/**",),
+        target_repo="sumipan/nexus",
+    )
+    assert store.hold_in_flight(300, by="wf:300:p1:0") is True
+    store.enqueue(
+        issue=301,
+        phase="develop",
+        source="skill",
+        actor_kind="human",
+        priority="normal",
+        requested_by=["alice"],
+        requested_at=_NOW,
+    )
+    client = _DispatchClient(
+        {
+            300: {"state": "OPEN", "labels": [{"name": "issuesmith:andon-blocked"}]},
+            301: {
+                "state": "OPEN",
+                "labels": [{"name": "issuesmith:draft-done"}],
+                "body": candidate_body,
+            },
+        }
+    )
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
+    return qmod, store, client
+
+
+def test_dispatch_ignores_held_entry_for_engine_limit(tmp_path, monkeypatch, issuesmith_config):
+    qmod, store, client = _held_dispatch_setup(
+        tmp_path, monkeypatch, issuesmith_config, "tools/other/**"
+    )
+    now = datetime(2026, 9, 5, 12, 0, tzinfo=_JST)
+    result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
+    assert result.dispatched is True
+    issues = {entry["issue"]: entry for entry in store.snapshot().in_flight}
+    assert set(issues) == {300, 301}
+    assert "held" in issues[300]
+    assert "held" not in issues[301]
+
+
+def test_dispatch_held_entry_still_blocks_overlapping_paths(
+    tmp_path, monkeypatch, issuesmith_config,
+):
+    qmod, store, client = _held_dispatch_setup(
+        tmp_path, monkeypatch, issuesmith_config, "tools/held/x.py"
+    )
+    now = datetime(2026, 9, 5, 12, 0, tzinfo=_JST)
+    result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
+    assert result.dispatched is False
+    assert [entry["issue"] for entry in store.snapshot().in_flight] == [300]
+
+
+def test_status_shows_held_count_and_andon_id(tmp_path, monkeypatch, issuesmith_config, capsys):
+    payload = yaml.safe_load(issuesmith_config.read_text(encoding="utf-8"))
+    payload["concurrency"] = {"default": 1, "per_engine": {"claude": 6, "codex": 1}}
+    issuesmith_config.write_text(yaml.safe_dump(payload), encoding="utf-8")
+    reset_config_cache()
+    _patch_paths(tmp_path, monkeypatch, issuesmith_config)
+
+    from issuesmith import queue as qmod
+
+    store = _store(tmp_path)
+    for issue in (50, 51, 52, 53):
+        store.add_in_flight(issue, "claude")
+    store.hold_in_flight(53, by="wf:53:p1:0")
+    args = argparse.Namespace(
+        queue_path=str(store.queue_path),
+        state_path=str(store.state_path),
+        lock_path=str(store.lock_path),
+    )
+    qmod._cmd_status(args)
+    out = capsys.readouterr().out
+    assert "in_flight: {claude: 3/6 (+1 held), codex: 0/1" in out
+    assert "codex: 0/1 (+" not in out
+    assert "- in_flight issue=#53 engine=claude held=andon:wf:53:p1:0" in out
+    assert "- in_flight issue=#50 engine=claude\n" in out

@@ -258,3 +258,53 @@ def test_cmd_resume_no_flags_exits_2():
     with pytest.raises(SystemExit) as exc_info:
         _cmd_resume(["123"])
     assert exc_info.value.code == 2
+
+
+# ---------------------------------------------------------------------------
+# held in_flight entries are dropped by resume and not carried over (#4816)
+# ---------------------------------------------------------------------------
+
+def _held_store(tmp_path):
+    from issuesmith.queue_store import QueueStore
+
+    store = QueueStore(
+        queue_path=tmp_path / "queue.jsonl",
+        state_path=tmp_path / "state.json",
+        lock_path=tmp_path / "lock",
+    )
+    store.add_in_flight(123, "claude", role="implementation", phase="develop")
+    assert store.hold_in_flight(123, by="wf:123:p1:0") is True
+    return store
+
+
+def _assert_redispatch_has_no_held(store):
+    assert store.snapshot().in_flight == []
+    store.add_in_flight(123, "claude", role="implementation", phase="develop")
+    [entry] = store.snapshot().in_flight
+    assert "held" not in entry
+
+
+def test_resume_from_step_drops_held_entry(tmp_path):
+    store = _held_store(tmp_path)
+    with (
+        patch("issuesmith.resume.QueueStore", return_value=store),
+        patch("issuesmith.resume._resume_from_step", return_value=0),
+    ):
+        from issuesmith.resume import resume
+        resume(123, from_step="p1")
+    _assert_redispatch_has_no_held(store)
+
+
+def test_resume_phase_drops_held_entry(tmp_path):
+    store = _held_store(tmp_path)
+    client = _make_client_mock()
+    with (
+        patch("issuesmith.resume.QueueStore", return_value=store),
+        patch("issuesmith.resume.get_forge", return_value=client),
+        patch("issuesmith.resume.get_config") as mock_cfg,
+        patch("issuesmith.resume.apply_redispatch_labels"),
+    ):
+        mock_cfg.return_value.repo = "sumipan/issuesmith"
+        from issuesmith.resume import resume
+        resume(123, phase="develop")
+    _assert_redispatch_has_no_held(store)

@@ -15,6 +15,7 @@ import yaml
 
 from issuesmith.contract import ANDON_KINDS
 from issuesmith.projection import IssueState
+from issuesmith.queue_store import QueueStore
 from issuesmith.resume import resume
 
 logger = logging.getLogger(__name__)
@@ -362,12 +363,21 @@ def raise_andon(
         return st
 
     project_issue(client, andon.issue, change)
+    _hold_in_flight(andon)
 
     for sink in sinks or []:
         sink.emit(andon)
 
     path = metrics_path if metrics_path is not None else _default_metrics_path()
     _write_metrics(path, "andon_raised", andon)
+
+
+def _hold_in_flight(andon: Andon) -> None:
+    """Best-effort: free the engine slot of the stopped Issue but keep its conflict claim."""
+    try:
+        QueueStore().hold_in_flight(andon.issue, by=andon.id)
+    except Exception:
+        logger.warning("failed to hold in_flight for #%s (%s)", andon.issue, andon.id, exc_info=True)
 
 
 def list_open(client: Any) -> list[Andon]:
