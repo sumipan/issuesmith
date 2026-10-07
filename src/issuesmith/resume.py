@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from ghdag.forge import get_forge
 
+from issuesmith import queue as queue_module
 from issuesmith.config import get_config
 from issuesmith.queue import apply_redispatch_labels, handler_for_failed_step
 from issuesmith.queue_store import QueueStore
@@ -248,8 +249,8 @@ def _phase_for_handler(handler: str) -> str | None:
     for ph in cfg.phases:
         if getattr(ph, "handler", "") == handler:
             return ph.name
-    fallback = {"impl": "develop", "merge": "merge", "draft": "draft", "sub": "sub"}
-    phase = fallback.get(handler)
+    # queue owns the phase <-> handler table; keep one copy so they cannot drift (#4802)
+    phase = queue_module._HANDLER_TO_PHASE.get(handler)
     return phase if phase and any(ph.name == phase for ph in cfg.phases) else None
 
 
@@ -313,6 +314,7 @@ def _restore_running_state(issue: int, handler: str) -> None:
 
     phase = _phase_for_handler(handler)
     if phase is None:
+        print(f"resume: no phase for handler {handler}; labels not restored", file=sys.stderr)
         return
     cfg = get_config()
     try:

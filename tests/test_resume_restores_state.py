@@ -152,3 +152,73 @@ def test_running_state_is_restored_through_project_issue(env, monkeypatch):
 
     assert resume_mod.resume(number, from_step="p2", handler="impl") == 0
     assert seen == [(number, (["issuesmith:develop-running"], ["issuesmith:develop-ready"]))]
+
+
+def _write_phases(tmp_path: Path, phases: list[dict] | None) -> None:
+    data: dict = {"repo": "example/repo"}
+    if phases is not None:
+        data["phases"] = phases
+    (tmp_path / "issuesmith.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
+    reset_config_cache()
+
+
+def test_phase_for_handler_maps_workflow_handlers_without_declared_handler(env):
+    """phases without ``handler``: ghdag handler names map through queue._HANDLER_TO_PHASE (#4802)."""
+    tmp_path, _client, _number = env
+    _write_phases(tmp_path, None)  # _DEFAULT_PHASES: draft / sub / develop / merge
+
+    assert resume_mod._phase_for_handler("brushup") == "draft"
+    assert resume_mod._phase_for_handler("subissue") == "sub"
+    assert resume_mod._phase_for_handler("impl") == "develop"
+    assert resume_mod._phase_for_handler("merge") == "merge"
+
+
+def test_phase_for_handler_returns_none_for_unknown_or_undeclared_phase(env):
+    assert resume_mod._phase_for_handler("migrate") is None  # no migrate phase
+    assert resume_mod._phase_for_handler("unknown") is None
+    assert resume_mod._phase_for_handler("subissue") is None  # env has no sub phase
+
+
+def test_phase_for_handler_prefers_declared_handler(env):
+    tmp_path, _client, _number = env
+    _write_phases(
+        tmp_path,
+        [
+            {"name": "draft", "role": "design", "entry_step": "b1", "handler": "custom"},
+            {"name": "develop", "role": "implementation", "entry_step": "cp2"},
+        ],
+    )
+
+    assert resume_mod._phase_for_handler("custom") == "draft"
+
+
+def test_from_b1_with_brushup_restores_draft_running(env, monkeypatch):
+    """resume --from b1 --handler brushup brings back draft-running and in_flight (#4802)."""
+    tmp_path, client, _number = env
+    number = client.issue_create("draft", "```yaml\ntarget_repo: example/repo\nallow_paths: [\"src/**\"]\n```\n")
+    client.issue_update(number, labels_add=["issuesmith:draft-ready"])
+    monkeypatch.setattr(resume_mod, "_generation_keys_available", lambda: True)
+    b1 = StepStatus("u-b1", "b1", [], "failed", None, None, str(tmp_path / "result-b1.md"))
+    monkeypatch.setattr(resume_mod, "_load_step_statuses", lambda *a, **k: [b1])
+    monkeypatch.setattr(resume_mod, "_run_ghdag_recover", lambda *a, **k: 0)
+
+    assert resume_mod.resume(number, from_step="b1", handler="brushup") == 0
+
+    labels = {lb["name"] for lb in client.issue_get(number, fields=["labels"])["labels"]}
+    assert "issuesmith:draft-running" in labels
+    assert "issuesmith:draft-ready" not in labels
+    in_flight = QueueStore().snapshot().in_flight
+    assert [e["issue"] for e in in_flight] == [number]
+    assert in_flight[0]["role"] == "design"
+
+
+def test_restore_running_state_warns_when_phase_is_unknown(env, capsys):
+    _tmp_path, client, number = env
+    before = {lb["name"] for lb in client.issue_get(number, fields=["labels"])["labels"]}
+
+    resume_mod._restore_running_state(number, "unknown")
+
+    assert "resume: no phase for handler unknown; labels not restored" in capsys.readouterr().err
+    after = {lb["name"] for lb in client.issue_get(number, fields=["labels"])["labels"]}
+    assert after == before
+    assert QueueStore().snapshot().in_flight == []
