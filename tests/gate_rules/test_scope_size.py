@@ -391,3 +391,67 @@ def test_promote_writes_pack_sub_header_and_columns(tmp_path, monkeypatch):
     promoted = promote_oversized_issue_body(body)
     assert "#### Part1:" in promoted
     assert "| Repo | Path | Kind | Note |" in promoted
+
+
+def _sub_header_concerns(promoted: str) -> list[str]:
+    return re.findall(r"^#### \S+?\d+: (.+)$", promoted, re.MULTILINE)
+
+
+def _plan_concerns(promoted: str) -> list[str]:
+    return re.findall(r"^\| \d+ \| ([^|]+?) \|", promoted, re.MULTILINE)
+
+
+def test_promote_names_root_level_concern_root():
+    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
+
+    rows = [(f"src/{d}/x.py", _MODIFY) for d in ("a", "b", "c")]
+    rows += [("README.md", _MODIFY), ("CHANGELOG.md", _MODIFY)]
+    promoted = promote_oversized_issue_body(_body(rows))
+    headers = _sub_header_concerns(promoted)
+    assert headers == ["src/a", "src/b", "src/c", "root"]
+    assert "." not in headers
+    assert _plan_concerns(promoted) == headers
+    assert "Concern `root` change table lists every assigned path" in promoted
+    assert "Concern `.`" not in promoted
+    root_block = promoted.split(": root\n", 1)[1]
+    split_rows = [
+        line for line in root_block.splitlines() if "split from oversized issue" in line
+    ]
+    assert [line.split("`")[3] for line in split_rows] == ["README.md", "CHANGELOG.md"]
+
+
+def test_promote_keeps_subdirectory_concern_names():
+    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
+
+    rows = [(f"src/issuesmith/gate_rules/f{i}.py", _MODIFY) for i in range(5)]
+    rows += [(f"tests/gate_rules/t{i}.py", _MODIFY) for i in range(3)]
+    rows += [("docs/x.md", _MODIFY), ("README.md", _MODIFY)]
+    promoted = promote_oversized_issue_body(_body(rows))
+    assert _sub_header_concerns(promoted) == [
+        "src/issuesmith/gate_rules",
+        "tests/gate_rules",
+        "docs",
+        "root",
+    ]
+    block = promoted.split(": src/issuesmith/gate_rules\n", 1)[1].split("#### ", 1)[0]
+    assert (
+        "Concern `src/issuesmith/gate_rules` change table lists every assigned path"
+        in block
+    )
+    for i in range(5):
+        assert f"`src/issuesmith/gate_rules/f{i}.py`" in block
+
+
+def test_grandparent_merge_at_root_is_named_root():
+    rows = [(f"skill-{name}/SKILL.md", _MODIFY) for name in ("a", "b", "c")]
+    rows += [(f"src/a/f{i}.py", _MODIFY) for i in range(2)]
+    rows += [(f"src/b/f{i}.py", _MODIFY) for i in range(2)]
+    measure = measure_size(_body(rows))
+    # Concern keys (and their file sets) are unchanged; only the display differs.
+    assert measure.concerns["."] == tuple(p for p, _ in rows[:3])
+    violations = ScopeSizeRules().check(_body(rows), [])
+    concern_violation = next(
+        v for v in violations if v.rule_id == "scope_size.too_many_concerns"
+    )
+    assert "(src/a, src/b, root)" in concern_violation.message
+    assert "| 3 | root |" in concern_violation.fix_hint
