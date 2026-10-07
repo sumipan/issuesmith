@@ -609,3 +609,67 @@ def test_andon_label_kinds_come_from_contract():
     from issuesmith.contract import ANDON_KINDS
 
     assert _andon_label_kinds() == list(ANDON_KINDS)
+
+
+# ---------------------------------------------------------------------------
+# raise_andon holds the in_flight entry (#4816)
+# ---------------------------------------------------------------------------
+
+def _tmp_store(tmp_path):
+    from issuesmith.queue_store import QueueStore
+
+    return QueueStore(
+        queue_path=tmp_path / "queue.jsonl",
+        state_path=tmp_path / "state.json",
+        lock_path=tmp_path / "lock",
+    )
+
+
+def test_raise_andon_holds_in_flight_entry(tmp_path):
+    store = _tmp_store(tmp_path)
+    store.add_in_flight(10, "claude", phase="develop")
+    a = _make_andon(issue=10, andon_id="wf:10:p1:0", kind="blocked", step="p1")
+    with patch("issuesmith.andon.QueueStore", return_value=store):
+        raise_andon(_fake_client(), a, metrics_path=tmp_path / "metrics.jsonl")
+    [entry] = store.snapshot().in_flight
+    assert entry["held"]["by"] == "wf:10:p1:0"
+    assert entry["phase"] == "develop"
+
+
+def test_raise_andon_without_in_flight_entry_is_noop(tmp_path, caplog):
+    store = _tmp_store(tmp_path)
+    client = _fake_client()
+    a = _make_andon(issue=10)
+    with (
+        patch("issuesmith.andon.QueueStore", return_value=store),
+        caplog.at_level("WARNING", logger="issuesmith.andon"),
+    ):
+        raise_andon(client, a, metrics_path=tmp_path / "metrics.jsonl")
+    assert store.snapshot().in_flight == []
+    assert not [r for r in caplog.records if r.name == "issuesmith.andon"]
+    client.issue_comment.assert_called_once()
+
+
+@pytest.mark.parametrize("fail_on", ["init", "hold"])
+def test_raise_andon_continues_when_queue_store_fails(tmp_path, caplog, fail_on):
+    client = _fake_client()
+    sink = MagicMock()
+    a = _make_andon(issue=10, kind="blocked")
+    mfile = tmp_path / "metrics.jsonl"
+    if fail_on == "init":
+        store_patch = patch("issuesmith.andon.QueueStore", side_effect=OSError("boom"))
+    else:
+        broken = MagicMock()
+        broken.hold_in_flight.side_effect = OSError("boom")
+        store_patch = patch("issuesmith.andon.QueueStore", return_value=broken)
+    with store_patch, caplog.at_level("WARNING", logger="issuesmith.andon"):
+        raise_andon(client, a, sinks=[sink], metrics_path=mfile)
+    warnings = [r for r in caplog.records if r.name == "issuesmith.andon"]
+    assert len(warnings) == 1
+    assert warnings[0].levelname == "WARNING"
+    assert warnings[0].exc_info is not None
+    client.issue_comment.assert_called_once()
+    client.issue_update.assert_called_once()
+    assert f"{_ns()}:andon-blocked" in client.issue_update.call_args[1].get("labels_add", [])
+    sink.emit.assert_called_once_with(a)
+    assert json.loads(mfile.read_text().strip())["event"] == "andon_raised"

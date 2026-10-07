@@ -740,10 +740,15 @@ def _format_in_flight_status(snap: QueueSnapshot) -> str:
     engines = sorted(set(counts) | set(concurrency.per_engine))
     if not engines:
         engines = sorted(role_map.values())
+    held = in_flight_by_engine(
+        [{k: v for k, v in e.items() if k != "held"} for e in snap.in_flight if e.get("held")],
+        role_engine_map=role_map,
+    )
     parts: list[str] = []
     for engine in engines:
         limit = concurrency.limit(engine)
-        parts.append(f"{engine}: {counts.get(engine, 0)}/{limit}")
+        held_part = f" (+{held[engine]} held)" if held.get(engine) else ""
+        parts.append(f"{engine}: {counts.get(engine, 0)}/{limit}{held_part}")
     return "{" + ", ".join(parts) + "}"
 
 
@@ -1729,7 +1734,9 @@ def _cmd_status(args: argparse.Namespace) -> int:
         engine = entry.get("engine", "")
         role = entry.get("role")
         role_part = f" role={role}" if role else ""
-        print(f"  - in_flight issue=#{issue_num} engine={engine}{role_part}")
+        held = entry.get("held")
+        held_part = f" held=andon:{held.get('by', '')}" if isinstance(held, dict) and held else ""
+        print(f"  - in_flight issue=#{issue_num} engine={engine}{role_part}{held_part}")
     if snap.halt and snap.halt_reason:
         print(f"  halt_reason: {snap.halt_reason}")
     client: ForgePort | None = None

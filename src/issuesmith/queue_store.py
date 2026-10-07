@@ -208,9 +208,12 @@ def in_flight_by_engine(
     When ``role_engine_map`` is provided and an entry has ``role``, count against
     the current engine for that role (so engine switches after dispatch are
     reflected). Otherwise use the stored ``engine`` field (legacy / no map).
+    Held entries (stopped by an andon) do not occupy an engine slot.
     """
     counts: dict[str, int] = {}
     for entry in in_flight:
+        if entry.get("held"):
+            continue
         role = entry.get("role")
         if role_engine_map is not None and isinstance(role, str) and role in role_engine_map:
             eng = str(role_engine_map[role])
@@ -612,6 +615,23 @@ class QueueStore:
                 if entry.get("issue") != issue
             ]
             self._save_state_unlocked(state)
+
+    def hold_in_flight(self, issue: int, by: str) -> bool:
+        """Mark the in_flight entry of ``issue`` as held by andon ``by``.
+
+        Held entries keep their conflict claim but are not counted against
+        engine limits. Returns False (state untouched) when no entry exists.
+        """
+        with self.lock():
+            state = self._load_state_unlocked()
+            in_flight = state.get("in_flight") or []
+            entry = next((e for e in in_flight if e.get("issue") == issue), None)
+            if entry is None:
+                return False
+            entry["held"] = {"by": by, "at": datetime.now().astimezone().isoformat()}
+            state["in_flight"] = in_flight
+            self._save_state_unlocked(state)
+            return True
 
     def sync_observe_andons(self, active_ids: set[str]) -> tuple[set[str], set[str]]:
         """Remember which observe andons are currently raised; return (new_ids, resolved_ids).
