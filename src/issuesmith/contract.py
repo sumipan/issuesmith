@@ -237,8 +237,6 @@ def change_paths_for_repo(text: str, repo: str | None = None) -> list[str]:
     for row_repo, path, _ in extract_change_table_rows(text):
         if repo is not None and row_repo and row_repo != repo:
             continue
-        if "/" not in path:
-            continue
         if path not in paths:
             paths.append(path)
     return paths

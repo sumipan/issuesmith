@@ -177,3 +177,16 @@ def test_split_plan_with_cell_pipe_reads_dep_repo_scope() -> None:
         (1, "sumipan/issuesmith", "add `andon list|show|answer`", none_word),
         (2, "sumipan/nexus", "use `a|b`", "#1"),
     ]
+
+
+def test_repo_root_file_is_returned_from_four_column_table() -> None:
+    # #4851: root-level files (no "/") must not be dropped by change_paths_for_repo
+    text = _HEADER + f"| sumipan/issuesmith | issuesmith.yaml | {MODIFY} | x |\n"
+    assert change_paths_for_repo(text, "sumipan/issuesmith") == ["issuesmith.yaml"]
+
+
+def test_root_only_sub_block_is_readable_by_gate() -> None:
+    body = _parent(_table("sumipan/issuesmith", ["issuesmith.yaml", "pyproject.toml"]))
+    gate_ids = [v.rule_id for v in B1MilestoneSubdesignRules().check(body, ["scope:milestone"])]
+    assert "b1_milestone_subdesign.change_paths_unreadable" not in gate_ids
+    assert allow_paths_for_row(body, _row()) == ["issuesmith.yaml", "pyproject.toml"]
