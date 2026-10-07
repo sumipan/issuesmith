@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -104,54 +103,5 @@ def _closing_pr_exists(ctx: PreconditionContext, config: IssuesmithConfig) -> tu
     return False, "no open or merged PR with Closes #N"
 
 
-def _pins_landed(ctx: PreconditionContext, config: IssuesmithConfig) -> tuple[bool, str]:
-    import re
-
-    from issuesmith import pins
-    from issuesmith.context_hook import parse_issue_metadata
-    from issuesmith.scope_gate import resolve_scope_root
-
-    body = str(ctx.issue.get("body") or "")
-    try:
-        metadata = parse_issue_metadata(body)
-    except ValueError:
-        return True, "ok"
-
-    try:
-        required = pins.requires_pins(metadata)
-    except ValueError as exc:
-        return False, f"invalid requires_pins: {exc}"
-
-    if not required:
-        return True, "ok"
-
-    root = resolve_scope_root(metadata, config)
-    base_branch = str(metadata.get("base_branch") or "main")
-    base_text: str | None = None
-    if root is not None:
-        proc = subprocess.run(
-            ["git", "-C", str(root), "show", f"origin/{base_branch}:pyproject.toml"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if proc.returncode == 0:
-            base_text = proc.stdout
-
-    unlanded = pins.unlanded_pins(required, base_text, config.installs)
-    if not unlanded:
-        return True, "ok"
-
-    def _queue_reason(item: str) -> str:
-        match = re.match(r"^(.+?) (\(.+\))$", item)
-        if match:
-            return f"pin {match.group(1)} not landed {match.group(2)}"
-        return f"pin {item} not landed"
-
-    joined = "; ".join(_queue_reason(item) for item in unlanded)
-    return False, f"dependencies not satisfied: {joined}"
-
-
 register("deps_terminal", _deps_terminal)
 register("closing_pr_exists", _closing_pr_exists)
-register("pins_landed", _pins_landed)

@@ -88,7 +88,6 @@ def test_develop_blocks_unlanded_pins(tmp_path, monkeypatch):
             return MagicMock(returncode=0, stdout="v0.133.0\n")
         return MagicMock(returncode=1, stdout="")
 
-    monkeypatch.setattr("issuesmith.preconditions.subprocess.run", fake_run)
     monkeypatch.setattr("issuesmith.pins.subprocess.run", fake_run)
     monkeypatch.setattr(
         "issuesmith.scope_gate.resolve_scope_root",
@@ -130,7 +129,6 @@ def test_develop_passes_when_pins_landed(tmp_path, monkeypatch):
             return MagicMock(returncode=0, stdout="v0.133.1\n")
         return MagicMock(returncode=1, stdout="")
 
-    monkeypatch.setattr("issuesmith.preconditions.subprocess.run", fake_run)
     monkeypatch.setattr("issuesmith.pins.subprocess.run", fake_run)
     monkeypatch.setattr(
         "issuesmith.scope_gate.resolve_scope_root",

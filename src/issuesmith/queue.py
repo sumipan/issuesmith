@@ -2292,3 +2292,17 @@ def issue_target_meta(issue: dict[str, Any]) -> tuple[str, tuple[str, ...]]:
 def resolve_engine(phase: str) -> str:
     """Public wrapper of ``_resolve_engine``: engine currently assigned to ``phase``'s role."""
     return _resolve_engine(phase)
+
+
+def _register_precondition_predicates() -> None:
+    from issuesmith.pins import develop_pins_landed
+    from issuesmith.preconditions import PreconditionContext, register
+
+    def _pins_landed(ctx: PreconditionContext, config) -> tuple[bool, str]:
+        body = str(ctx.issue.get("body") or "")
+        return develop_pins_landed(body, config)
+
+    register("pins_landed", _pins_landed)
+
+
+_register_precondition_predicates()
