@@ -36,6 +36,7 @@ _GATES = (
     "scope_coupling",
     "scope_size",
     "b1_milestone_subdesign",
+    "pin_bump",
 )
 _EXCLUDED_RULE_IDS = frozenset({"cp1.intentional_hold"})
 _MILESTONE_LABEL = "scope:milestone"

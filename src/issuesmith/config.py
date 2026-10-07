@@ -197,7 +197,7 @@ _DEFAULT_PHASES: tuple[PhaseConfig, ...] = (
         role="implementation",
         entry_step="cp2",
         handler="impl",
-        advance_when=("deps_terminal",),
+        advance_when=("deps_terminal", "pins_landed"),
     ),
     PhaseConfig(
         name="merge",
@@ -379,6 +379,7 @@ class IssuesmithConfig:
     api_brake: ApiBreakConfig = field(default_factory=ApiBreakConfig)
     language: LanguagePack = EN
     label_write_guard: Literal["warn", "enforce"] = "warn"
+    installs: Mapping[str, Path] = field(default_factory=dict)
 
     def phase(self, name: str) -> PhaseConfig:
         for ph in self.phases:
@@ -1067,6 +1068,19 @@ def _build_observe(
     )
 
 
+def _build_installs(raw: Any, root: Path) -> dict[str, Path]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ConfigError("installs must be a mapping")
+    out: dict[str, Path] = {}
+    for key, value in raw.items():
+        if not isinstance(value, str):
+            raise ConfigError(f"installs[{key!r}] must be a string path")
+        out[str(key)] = _abs(root, value)
+    return out
+
+
 def _build_api_brake(raw: Mapping[str, Any] | None) -> ApiBreakConfig:
     defaults = ApiBreakConfig()
     if not raw:
@@ -1152,4 +1166,5 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         api_brake=_build_api_brake(api_brake_raw),
         language=language,
         label_write_guard=_build_label_write_guard(data.get("label_write_guard")),
+        installs=_build_installs(data.get("installs"), root.resolve()),
     )
