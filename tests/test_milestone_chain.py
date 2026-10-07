@@ -173,6 +173,15 @@ class FakeClient:
     def add_labels(self, number, labels):
         self.label_ops.append(("add", number, labels))
 
+    def issue_update(self, number, *, labels_add=None, labels_remove=None, **kwargs):
+        self.label_ops.append(("update", number, (labels_add, labels_remove)))
+        issue = dict(self.issues[number])
+        names = [lab["name"] for lab in issue.get("labels") or []]
+        names = [n for n in names if n not in (labels_remove or [])]
+        names += [n for n in (labels_add or []) if n not in names]
+        issue["labels"] = [{"name": n} for n in names]
+        self.issues[number] = issue
+
     def remove_labels(self, number, labels):
         self.label_ops.append(("remove", number, labels))
 
@@ -1272,3 +1281,195 @@ class TestClosedParentPrune:
         assert "candidates=1" in lines[0]
         assert "skipped_closed=0" in lines[0]
         assert "pruned=2" in lines[0]
+
+
+_MERGE_DONE = DONE_LABEL["merge"]
+_DRAFT_DONE = DONE_LABEL["draft"]
+_REJECTED = "issuesmith:rejected"
+
+
+def _marker_comment(sibling: int) -> dict:
+    return {"body": f"Consolidated into #{sibling}.\n\n<!-- issuesmith:consolidated-into: #{sibling} -->"}
+
+
+class TestPreDispatchAndResume:
+    def test_resume_closed_merged_children_skips_validation_and_closes_parent(self, tmp_path):
+        store = _store(tmp_path)
+        store.update_milestone_chain(100, {"stage": "halted", "halted_reason": "validation failed"})
+        c101 = _child_issue(101, state="CLOSED", labels=[_MERGE_DONE], title="renamed one")
+        c102 = _child_issue(102, state="CLOSED", labels=[_MERGE_DONE], title="renamed two")
+        client = FakeClient(
+            issues={100: _parent_issue(), 101: c101, 102: c102},
+            children={1: [c101, c102]},
+        )
+        assert store.resume_milestone_chain(100) is True
+        advance_milestone_chains(store, client, _chain_config())
+        bodies = [body for _, body in client.posted_comments]
+        assert not any("validation-failed" in body for body in bodies)
+        assert client.closed == [100]
+        assert store.get_milestone_chain(100).get("closed_parent") is True
+
+    def test_c2_validates_and_enqueues_only_pre_dispatch_children(self, tmp_path, monkeypatch):
+        import issuesmith.milestone as mmod
+
+        store = _store(tmp_path)
+        running = _child_issue(101, state="OPEN", labels=["issuesmith:develop-running"])
+        fresh = _child_issue(102, state="OPEN", labels=[_DRAFT_DONE])
+        client = FakeClient(
+            issues={100: _parent_issue(), 101: running, 102: fresh},
+            children={1: [running, fresh]},
+        )
+        seen: list[list[int]] = []
+        real = mmod.validate_children
+
+        def _spy(parent, children, *, client):
+            seen.append([c["number"] for c in children])
+            return real(parent, children, client=client)
+
+        monkeypatch.setattr(mmod, "validate_children", _spy)
+        advance_milestone_chains(store, client, _chain_config())
+        assert seen == [[102]]
+        assert store.get_milestone_chain(100).get("stage") == "children_validated"
+        snap = store.snapshot()
+        develop = [
+            snap.requests[rid].issue
+            for rid in snap.active_order
+            if snap.requests[rid].phase == "develop"
+        ]
+        assert develop == [102]
+
+    def test_c2_pre_dispatch_child_missing_draft_done_still_halts(self, tmp_path):
+        store = _store(tmp_path)
+        merged = _child_issue(101, state="CLOSED", labels=[_MERGE_DONE])
+        fresh = _child_issue(102, state="OPEN", labels=[])
+        client = FakeClient(
+            issues={100: _parent_issue(), 101: merged, 102: fresh},
+            children={1: [merged, fresh]},
+        )
+        advance_milestone_chains(store, client, _chain_config())
+        chain = store.get_milestone_chain(100)
+        assert chain.get("stage") == "halted"
+        assert chain.get("halted_reason") == "validation failed"
+        assert "#102" in client.posted_comments[0][1]
+        assert "#101" not in client.posted_comments[0][1]
+
+    def test_c4_halt_saves_stage_and_resume_restores_it(self, tmp_path):
+        store = _store(tmp_path)
+        store.update_milestone_chain(100, {"stage": "children_validated"})
+        c101 = _child_issue(101, state="CLOSED", labels=[_REJECTED])
+        c102 = _child_issue(102, state="CLOSED", labels=[_MERGE_DONE])
+        client = FakeClient(
+            issues={100: _parent_issue(), 101: c101, 102: c102},
+            children={1: [c101, c102]},
+        )
+        advance_milestone_chains(store, client, _chain_config())
+        chain = store.get_milestone_chain(100)
+        assert chain.get("stage") == "halted"
+        assert chain.get("stage_before_halt") == "children_validated"
+        assert store.resume_milestone_chain(100) is True
+        chain = store.get_milestone_chain(100)
+        assert chain.get("stage") == "children_validated"
+        assert "halted_reason" not in chain
+        assert "stage_before_halt" not in chain
+
+
+class TestConsolidation:
+    def test_c4_consolidated_child_counts_as_merged(self, tmp_path):
+        store = _store(tmp_path)
+        store.update_milestone_chain(100, {"stage": "children_validated"})
+        c101 = _child_issue(101, state="CLOSED", labels=[_REJECTED])
+        c102 = _child_issue(102, state="CLOSED", labels=[_MERGE_DONE])
+        client = FakeClient(
+            issues={100: _parent_issue(), 101: c101, 102: c102},
+            children={1: [c101, c102]},
+            comments={101: [_marker_comment(102)]},
+        )
+        advance_milestone_chains(store, client, _chain_config())
+        assert client.closed == [100]
+        assert store.get_milestone_chain(100).get("closed_parent") is True
+
+    def test_c4_consolidated_into_open_sibling_stays_without_merge(self, tmp_path):
+        store = _store(tmp_path)
+        store.update_milestone_chain(100, {"stage": "children_validated"})
+        c101 = _child_issue(101, state="CLOSED", labels=[_REJECTED])
+        c102 = _child_issue(102, state="CLOSED", labels=[_REJECTED])
+        c103 = _child_issue(103, state="CLOSED", labels=[_MERGE_DONE])
+        # 101 -> 102 (closed without merge), 102 -> 999 (outside the chain).
+        client = FakeClient(
+            issues={100: _parent_issue(), 101: c101, 102: c102, 103: c103},
+            children={1: [c101, c102, c103]},
+            comments={101: [_marker_comment(102)], 102: [_marker_comment(999)]},
+        )
+        advance_milestone_chains(store, client, _chain_config())
+        assert client.closed == []
+        chain = store.get_milestone_chain(100)
+        assert chain.get("stage") == "halted"
+        assert chain.get("halted_reason") == "child closed without merge-done: #101"
+        body = client.posted_comments[0][1]
+        assert "#101, #102" in body
+        assert "milestone consolidate" in body
+        assert "milestone resume 100" in body
+
+    def test_c4_consolidated_into_open_sibling_is_not_terminal(self, tmp_path):
+        store = _store(tmp_path)
+        store.update_milestone_chain(100, {"stage": "children_validated"})
+        c101 = _child_issue(101, state="CLOSED", labels=[_REJECTED])
+        c102 = _child_issue(102, state="OPEN", labels=["issuesmith:develop-running"])
+        client = FakeClient(
+            issues={100: _parent_issue(), 101: c101, 102: c102},
+            children={1: [c101, c102]},
+            comments={101: [_marker_comment(102)]},
+        )
+        advance_milestone_chains(store, client, _chain_config())
+        assert client.closed == []
+        assert client.posted_comments == []
+        # Sibling merges later without merge-done on 101 → still resolves via marker.
+        client.issues[102] = _child_issue(102, state="CLOSED", labels=[_MERGE_DONE])
+        advance_milestone_chains(store, client, _chain_config())
+        assert client.closed == [100]
+
+    def test_issue_4788_shape(self, tmp_path, monkeypatch):
+        from issuesmith.milestone import milestone_consolidate
+
+        parent_body = (
+            _PARENT_BODY
+            + "\n## Milestone\n\n### Sub-issue Plan\n"
+            f"| # | {TITLE} | {TARGET_REPOSITORY} | {CONTENT} | {DEPENDENCY} |\n"
+            "|---|---|---|---|---|\n"
+            f"| 1 | sub one | `sumipan/nexus` | x | {NONE} |\n"
+            f"| 2 | sub two | `sumipan/nexus` | x | {NONE} |\n"
+            f"| 3 | sub three | `sumipan/nexus` | x | {NONE} |\n"
+            f"| 4 | sub four | `sumipan/nexus` | x | {NONE} |\n"
+            f"| 5 | sub five | `sumipan/nexus` | x | {NONE} |\n"
+        )
+        kids = [
+            _child_issue(201, state="CLOSED", labels=[_MERGE_DONE], title="sub one merged with two"),
+            _child_issue(202, state="CLOSED", labels=[_REJECTED], title="sub two"),
+            _child_issue(203, state="CLOSED", labels=[_MERGE_DONE], title="sub three"),
+            _child_issue(204, state="CLOSED", labels=[_MERGE_DONE], title="sub four"),
+            _child_issue(205, state="CLOSED", labels=[_MERGE_DONE], title="sub five"),
+        ]
+        store = _store(tmp_path)
+        store.update_milestone_chain(100, {"stage": "halted", "halted_reason": "validation failed"})
+        client = FakeClient(
+            issues={100: _parent_issue(body=parent_body), **{k["number"]: k for k in kids}},
+            children={1: kids},
+        )
+        # (a) resume → C4 needs-review halt, no validation-failed comment.
+        assert store.resume_milestone_chain(100) is True
+        advance_milestone_chains(store, client, _chain_config())
+        bodies = [body for _, body in client.posted_comments]
+        assert not any("validation-failed" in body for body in bodies)
+        assert any("closed-without-merge" in body for body in bodies)
+        assert client.closed == []
+        chain = store.get_milestone_chain(100)
+        assert chain.get("stage") == "halted"
+        assert chain.get("stage_before_halt") == "children_validated"
+
+        # (b) consolidate → resume → tick closes the parent.
+        monkeypatch.setattr("issuesmith.milestone.get_forge", lambda: client)
+        assert milestone_consolidate(202, 201, client=client) == 0
+        assert store.resume_milestone_chain(100) is True
+        advance_milestone_chains(store, client, _chain_config())
+        assert client.closed == [100]
+        assert store.get_milestone_chain(100).get("closed_parent") is True

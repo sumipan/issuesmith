@@ -216,3 +216,87 @@ def test_milestone_prune_unknown_option(tmp_path, capsys, monkeypatch):
     code = main(["prune", "--unknown"])
     assert code == 2
     assert store.state_path.read_bytes() == before
+
+
+class ConsolidateClient:
+    def __init__(self, *, child_state="OPEN", child_labels=None, fail_get=False):
+        self.issues = {
+            101: {"number": 101, "state": child_state, "labels": child_labels or []},
+            102: {"number": 102, "state": "CLOSED", "labels": [{"name": "issuesmith:merge-done"}]},
+        }
+        self.comments: dict[int, list[dict]] = {}
+        self.posted: list[tuple[int, str]] = []
+        self.updates: list[tuple[int, list, list]] = []
+        self.closed: list[int] = []
+        self.fail_get = fail_get
+
+    def issue_get(self, number, fields=None):
+        if self.fail_get:
+            raise RuntimeError("boom")
+        return dict(self.issues[number])
+
+    def get_issue_comments(self, number):
+        return list(self.comments.get(number, []))
+
+    def issue_comment(self, number, body):
+        self.posted.append((number, body))
+        self.comments.setdefault(number, []).append({"body": body})
+
+    def issue_update(self, number, *, labels_add=None, labels_remove=None, **kwargs):
+        self.updates.append((number, labels_add, labels_remove))
+        issue = self.issues[number]
+        issue["labels"] = list(issue["labels"]) + [{"name": n} for n in labels_add or []]
+
+    def issue_close(self, number):
+        self.closed.append(number)
+        self.issues[number]["state"] = "CLOSED"
+
+
+def test_milestone_consolidate_marks_rejects_and_closes(capsys, monkeypatch):
+    client = ConsolidateClient()
+    monkeypatch.setattr("issuesmith.milestone.get_forge", lambda: client)
+    assert main(["consolidate", "101", "--into", "102"]) == 0
+    assert "milestone consolidate: #101 -> #102" in capsys.readouterr().out
+    assert len(client.posted) == 1
+    number, body = client.posted[0]
+    assert number == 101
+    assert "<!-- issuesmith:consolidated-into: #102 -->" in body
+    assert "Consolidated into #102." in body
+    assert client.updates == [(101, ["issuesmith:rejected"], [])]
+    assert client.closed == [101]
+
+    # Second run is idempotent.
+    assert main(["consolidate", "101", "--into", "102"]) == 0
+    assert len(client.posted) == 1
+    assert len(client.updates) == 1
+    assert client.closed == [101]
+
+
+def test_milestone_consolidate_already_rejected_and_closed(monkeypatch):
+    client = ConsolidateClient(
+        child_state="CLOSED", child_labels=[{"name": "issuesmith:rejected"}]
+    )
+    monkeypatch.setattr("issuesmith.milestone.get_forge", lambda: client)
+    assert main(["consolidate", "101", "--into", "102"]) == 0
+    assert len(client.posted) == 1
+    assert client.updates == []
+    assert client.closed == []
+
+
+def test_milestone_consolidate_bad_args(capsys, monkeypatch):
+    client = ConsolidateClient()
+    monkeypatch.setattr("issuesmith.milestone.get_forge", lambda: client)
+    assert main(["consolidate", "101", "--into", "101"]) == 2
+    assert main(["consolidate", "101"]) == 2
+    assert main(["consolidate", "101", "--into"]) == 2
+    assert main(["consolidate", "abc", "--into", "102"]) == 2
+    assert main(["consolidate", "101", "--into", "x"]) == 2
+    assert client.posted == []
+    assert client.closed == []
+
+
+def test_milestone_consolidate_fetch_failure(monkeypatch):
+    client = ConsolidateClient(fail_get=True)
+    monkeypatch.setattr("issuesmith.milestone.get_forge", lambda: client)
+    assert main(["consolidate", "101", "--into", "102"]) == 1
+    assert client.posted == []

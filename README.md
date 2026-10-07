@@ -166,6 +166,7 @@ Global options: `--queue-path`, `--state-path`, `--lock-path`.
 | `milestone status <parent>` | Show the milestone chain status |
 | `milestone resume <parent>` | Resume milestone chain progress |
 | `milestone prune [--dry-run]` | Prune finished milestone chain state |
+| `milestone consolidate <child> --into <sibling>` | Mark a child as consolidated into a sibling (marker comment, `rejected`, close) so C4 treats it as merged when the sibling merged |
 
 ### `metrics` subcommands
 

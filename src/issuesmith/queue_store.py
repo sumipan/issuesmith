@@ -719,7 +719,7 @@ class QueueStore:
                 return False
             entry = dict(entry)
             entry.pop("halted_reason", None)
-            entry["stage"] = "active"
+            entry["stage"] = entry.pop("stage_before_halt", None) or "active"
             chains[key] = entry
             state["milestone_chains"] = chains
             self._save_state_unlocked(state)

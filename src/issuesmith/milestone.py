@@ -153,6 +153,51 @@ def _classify_child_terminal(client: ForgePort, issue_number: int) -> str:
     return "open"
 
 
+def _is_pre_dispatch(child: dict[str, Any]) -> bool:
+    """True when a child is OPEN and carries no develop-or-later phase label."""
+    if str(child.get("state", "")).upper() != "OPEN":
+        return False
+    names = [p.name for p in get_config().phases]
+    if "develop" not in names:
+        return True
+    later = names[names.index("develop"):]
+    dispatched = {
+        lab
+        for phase in later
+        for lab in (
+            READY_LABEL.get(phase),
+            RUNNING_LABEL.get(phase),
+            DONE_LABEL.get(phase),
+        )
+        if lab
+    }
+    return not (label_names(child) & dispatched)
+
+
+_CONSOLIDATED_RE = re.compile(r"<!-- issuesmith:consolidated-into: #(\d+) -->")
+
+
+def _consolidated_marker(sibling: int) -> str:
+    return f"<!-- issuesmith:consolidated-into: #{sibling} -->"
+
+
+def _consolidated_into(client: ForgePort, issue: int) -> int | None:
+    """Sibling number from the last consolidation marker comment on ``issue``."""
+    try:
+        comments = client.get_issue_comments(issue)
+    except Exception:
+        return None
+    if not isinstance(comments, list):
+        return None
+    found: int | None = None
+    for comment in comments:
+        if not isinstance(comment, dict):
+            continue
+        for match in _CONSOLIDATED_RE.finditer(str(comment.get("body") or "")):
+            found = int(match.group(1))
+    return found
+
+
 def _has_cp1_intentional_hold(comments: list[dict[str, Any]]) -> bool:
     brushup_idx = -1
     for idx, comment in enumerate(comments):
@@ -665,13 +710,11 @@ def _list_open_milestones(client: ForgePort) -> list[dict[str, Any]]:
 
 
 def _halt_chain(store: QueueStore, parent: int, reason: str) -> None:
-    store.update_milestone_chain(
-        parent,
-        {
-            "stage": "halted",
-            "halted_reason": reason,
-        },
-    )
+    before = store.get_milestone_chain(parent).get("stage")
+    patch: dict[str, Any] = {"stage": "halted", "halted_reason": reason}
+    if before and before != "halted":
+        patch["stage_before_halt"] = before
+    store.update_milestone_chain(parent, patch)
 
 
 def _ensure_parent_comment(client: ForgePort, parent: int, body: str, marker: str) -> None:
@@ -768,7 +811,11 @@ def advance_milestone_chains(
                 _halt_chain(store, parent_num, "no children")
                 continue
 
-            validation = validate_children(parent, children, client=client)
+            pre_dispatch = [c for c in children if _is_pre_dispatch(c)]
+            if pre_dispatch:
+                validation = validate_children(parent, pre_dispatch, client=client)
+            else:
+                validation = ValidateChildrenResult(passed=True, results=[])
             if not validation.passed:
                 items = [
                     _msg("chain_validation_item", issue=item.issue, failures="; ".join(item.failures))
@@ -790,7 +837,7 @@ def advance_milestone_chains(
 
             snap = store.snapshot()
             sorted_children = sorted(
-                children,
+                pre_dispatch,
                 key=lambda item: int(item.get("number") or 0),
             )
             for child in sorted_children:
@@ -819,6 +866,19 @@ def advance_milestone_chains(
         if not statuses or any(status == "open" for _, status in statuses):
             continue
 
+        # A child consolidated into a merged sibling of this chain counts as merged.
+        status_by_num = dict(statuses)
+        statuses = [
+            (
+                num,
+                "merged"
+                if status == "closed_without_merge"
+                and status_by_num.get(_consolidated_into(client, num) or -1) == "merged"
+                else status,
+            )
+            for num, status in statuses
+        ]
+
         chain = store.get_milestone_chain(parent_num)
         without_merge = [num for num, status in statuses if status == "closed_without_merge"]
         if without_merge:
@@ -828,7 +888,13 @@ def advance_milestone_chains(
             _ensure_parent_comment(
                 client,
                 parent_num,
-                _msg("chain_closed_without_merge", issue=first, label=_end_lbl),
+                _msg(
+                    "chain_closed_without_merge",
+                    issue=first,
+                    issues=", ".join(f"#{num}" for num in without_merge),
+                    label=_end_lbl,
+                    parent=parent_num,
+                ),
                 "<!-- issuesmith:milestone-chain:closed-without-merge -->",
             )
             _halt_chain(store, parent_num, f"child closed without {_end_lbl}: #{first}")
@@ -1044,6 +1110,49 @@ def milestone_resume(parent: int, *, store: QueueStore | None = None) -> int:
         return 0
     print(f"error: chain for #{parent} is not halted", file=sys.stderr)
     return 1
+
+
+def milestone_consolidate(child: int, into: int, *, client: ForgePort | None = None) -> int:
+    """Mark ``child`` as consolidated into ``into``: marker comment, rejected, closed."""
+    if child == into:
+        print("error: child and --into must differ", file=sys.stderr)
+        return 2
+    client = client or get_forge()
+    try:
+        child_issue = client.issue_get(child, fields=["state", "labels", "number"])
+        client.issue_get(into, fields=["state", "number"])
+    except Exception as exc:
+        print(f"error: failed to fetch issue: {exc}", file=sys.stderr)
+        return 1
+    _ensure_parent_comment(
+        client, child, _msg("consolidated_into", sibling=into), _consolidated_marker(into)
+    )
+    rejected = f"{get_config().label_namespace}:rejected"
+    if rejected not in label_names(child_issue):
+        client.issue_update(child, labels_add=[rejected], labels_remove=[])
+    if str(child_issue.get("state", "")).upper() == "OPEN":
+        client.issue_close(child)
+    print(f"milestone consolidate: #{child} -> #{into}")
+    return 0
+
+
+def _parse_consolidate_args(rest: list[str]) -> tuple[int, int] | None:
+    child: str | None = None
+    into: str | None = None
+    it = iter(rest)
+    for arg in it:
+        if arg == "--into":
+            into = next(it, None)
+        elif child is None:
+            child = arg
+        else:
+            return None
+    if child is None or into is None:
+        return None
+    try:
+        return int(child), int(into)
+    except ValueError:
+        return None
 
 
 def milestone_prune(*, dry_run: bool = False, store: QueueStore | None = None) -> int:
@@ -1854,7 +1963,8 @@ def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if not args or args[0] in {"-h", "--help"}:
         print(
-            "usage: issuesmith milestone status <parent> | resume <parent> | prune [--dry-run]"
+            "usage: issuesmith milestone status <parent> | resume <parent>"
+            " | prune [--dry-run] | consolidate <child> --into <sibling>"
         )
         return 0 if args else 1
     cmd, *rest = args
@@ -1868,6 +1978,15 @@ def main(argv: list[str] | None = None) -> int:
             print("error: parent issue number required", file=sys.stderr)
             return 2
         return milestone_resume(int(rest[0]))
+    if cmd == "consolidate":
+        parsed = _parse_consolidate_args(rest)
+        if parsed is None:
+            print(
+                "error: usage: issuesmith milestone consolidate <child> --into <sibling>",
+                file=sys.stderr,
+            )
+            return 2
+        return milestone_consolidate(*parsed)
     if cmd == "prune":
         dry_run = False
         for arg in rest:
