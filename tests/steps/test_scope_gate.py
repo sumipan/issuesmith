@@ -15,20 +15,6 @@ from issuesmith.scope_gate import (
 )
 
 
-def test_scope_gate_module_import_emits_deprecation_warning() -> None:
-    import importlib
-    import warnings
-
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        importlib.reload(__import__("issuesmith.steps.scope_gate", fromlist=["*"]))
-    assert any(
-        issubclass(w.category, DeprecationWarning)
-        and "issuesmith.scope_gate" in str(w.message)
-        for w in caught
-    )
-
-
 def _git_init(repo: Path) -> None:
     subprocess.run(["git", "init", "-b", "main", str(repo)], check=True, capture_output=True)
     subprocess.run(

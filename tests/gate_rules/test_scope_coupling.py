@@ -801,14 +801,14 @@ def test_deletion_search_dirs_includes_src():
 
 def test_deleted_parent_module_strips_src_prefix():
     assert scope_coupling._deleted_parent_module(
-        "src/issuesmith/steps/p0_worktree.py"
-    ) == "issuesmith.steps"
+        "src/issuesmith/ops/repair_step.py"
+    ) == "issuesmith.ops"
 
 
 def test_deletion_search_keys_strips_src_prefix():
-    keys = deletion_search_keys("src/issuesmith/steps/p0_worktree.py")
-    assert "issuesmith.steps.p0_worktree" in keys
-    assert "src.issuesmith.steps.p0_worktree" not in keys
+    keys = deletion_search_keys("src/issuesmith/ops/repair_step.py")
+    assert "issuesmith.ops.repair_step" in keys
+    assert "src.issuesmith.ops.repair_step" not in keys
 
 
 @pytest.fixture()
