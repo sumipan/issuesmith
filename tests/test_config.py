@@ -516,3 +516,36 @@ def test_scope_coupling_data_file_tests_via_get_config(tmp_path, monkeypatch):
     monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
     reset_config_cache()
     assert get_config().scope_coupling.data_file_tests is False
+
+
+def _load_derived_allow(tmp_path, monkeypatch, derived_allow):
+    data = {"repo": "example/repo"}
+    if derived_allow is not None:
+        data["derived_allow"] = derived_allow
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    return load_config().derived_allow
+
+
+def test_derived_allow_ledger_globs_default(tmp_path, monkeypatch):
+    """ledger_globs defaults to the conventions ratchet ledgers (#4791)."""
+    cfg = _load_derived_allow(tmp_path, monkeypatch, None)
+    assert cfg.ledger_globs == ("tests/conventions/known_*.txt",)
+    cfg = _load_derived_allow(tmp_path, monkeypatch, {"enabled": True})
+    assert cfg.ledger_globs == ("tests/conventions/known_*.txt",)
+
+
+def test_derived_allow_ledger_globs_loaded(tmp_path, monkeypatch):
+    cfg = _load_derived_allow(tmp_path, monkeypatch, {"ledger_globs": ["a/known_*.txt"]})
+    assert cfg.ledger_globs == ("a/known_*.txt",)
+    assert cfg.enabled is True
+    cfg = _load_derived_allow(tmp_path, monkeypatch, {"ledger_globs": []})
+    assert cfg.ledger_globs == ()
+
+
+@pytest.mark.parametrize("value", ["a/*.txt", [1], {"a": "b"}, None])
+def test_derived_allow_ledger_globs_invalid_raises(tmp_path, monkeypatch, value):
+    with pytest.raises(ConfigError, match="ledger_globs must be a list of strings"):
+        _load_derived_allow(tmp_path, monkeypatch, {"ledger_globs": value})

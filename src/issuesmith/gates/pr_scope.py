@@ -74,7 +74,8 @@ class PrScopeGate:
             ))
         if guarded:
             violations.extend(_worktree.check_derived_test_guard(
-                self._worktree_path, self._base_branch, guarded
+                self._worktree_path, self._base_branch, guarded,
+                ledger_globs=get_config().derived_allow.ledger_globs,
             ))
         return violations
 

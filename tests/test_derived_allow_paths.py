@@ -19,6 +19,7 @@ from issuesmith.gates.pr_scope import PrScopeGate
 from issuesmith.gates.worktree import (
     TestsGate,
     check_derived_test_guard,
+    derive_ledger_allow_paths,
     derive_test_allow_paths,
 )
 
@@ -455,3 +456,145 @@ def test_engine_emit_status_extractable_after_repair_no_trailing_newline(capsys)
     out = capsys.readouterr().out
     assert rc == 0
     assert "IMPL_DONE" in _extract_status_values(out)
+
+
+# ---------------------------------------------------------------------------
+# #4791: ratchet ledgers next to failing tests are derived and may only shrink
+# ---------------------------------------------------------------------------
+
+_LEDGER_GLOBS = ["tests/conventions/known_*.txt"]
+_LEDGER = "tests/conventions/known_x.txt"
+_LEDGER_BASE = "alpha\nbeta\ngamma\n"
+_LEDGER_TEST = (
+    "from pathlib import Path\n\n"
+    "ROOT = Path(__file__).resolve().parents[2]\n\n\n"
+    "def test_a():\n"
+    "    found = sorted(p.stem for p in (ROOT / 'src' / 'pkg').glob('*.py')\n"
+    "                   if p.stem != '__init__')\n"
+    "    known = sorted((Path(__file__).parent / 'known_x.txt').read_text().split())\n"
+    "    assert found == known\n"
+)
+
+
+@pytest.fixture()
+def ledger_repo(tmp_path: Path) -> Path:
+    """Ledger lists src/pkg modules; deleting gamma.py makes test_a newly fail."""
+    clone = _make_repo(tmp_path, {
+        "src/pkg/__init__.py": "",
+        "src/pkg/alpha.py": "",
+        "src/pkg/beta.py": "",
+        "src/pkg/gamma.py": "",
+        _LEDGER: _LEDGER_BASE,
+        "tests/conventions/test_x.py": _LEDGER_TEST,
+        "tests/test_other.py": _TEST_UNRELATED,
+    })
+    _git(clone, "rm", "-q", "src/pkg/gamma.py")
+    _commit_all(clone, "remove gamma")
+    return clone
+
+
+def test_ledger_derived_from_failing_test_dir(ledger_repo: Path) -> None:
+    derived = derive_ledger_allow_paths(
+        ledger_repo, "main", ["tests/conventions/test_x.py::test_a"],
+        ["src/pkg/gamma.py"], _LEDGER_GLOBS,
+    )
+    assert derived == [_LEDGER]
+
+
+def test_ledger_not_derived_for_other_dir(ledger_repo: Path) -> None:
+    derived = derive_ledger_allow_paths(
+        ledger_repo, "main", ["tests/test_other.py::test_unrelated"],
+        ["src/pkg/gamma.py"], _LEDGER_GLOBS,
+    )
+    assert derived == []
+
+
+def test_ledger_not_on_base_not_derived(ledger_repo: Path) -> None:
+    _write(ledger_repo, {"tests/conventions/known_new.txt": "x\n"})
+    _commit_all(ledger_repo, "add ledger")
+    derived = derive_ledger_allow_paths(
+        ledger_repo, "main", ["tests/conventions/test_x.py::test_a"],
+        ["src/pkg/gamma.py"], ["tests/conventions/known_*.txt"],
+    )
+    assert derived == [_LEDGER]
+
+
+def test_ledger_already_allowed_not_derived(ledger_repo: Path) -> None:
+    derived = derive_ledger_allow_paths(
+        ledger_repo, "main", ["tests/conventions/test_x.py::test_a"],
+        ["src/pkg/gamma.py", "tests/conventions/*.txt"], _LEDGER_GLOBS,
+    )
+    assert derived == []
+
+
+def test_ledger_tests_gate_derives_ledger(ledger_repo: Path, _derived_config) -> None:
+    _derived_config(None)
+    gate = TestsGate(ledger_repo, allow_paths=["src/pkg/gamma.py"])
+    violations = gate.check("", [])
+    assert [v.rule_id for v in violations] == ["tests.pytest_failure"]
+    assert gate.derived_allow_paths == [_LEDGER]
+
+
+def test_ledger_tests_gate_disabled(ledger_repo: Path, _derived_config) -> None:
+    _derived_config(False)
+    gate = TestsGate(ledger_repo, allow_paths=["src/pkg/gamma.py"])
+    assert gate.check("", [])
+    assert gate.derived_allow_paths == []
+
+
+def _ledger_guard(root: Path, content: str) -> list:
+    _write(root, {_LEDGER: content})
+    return check_derived_test_guard(root, "main", [_LEDGER], ledger_globs=_LEDGER_GLOBS)
+
+
+def test_ledger_guard_delete_line_ok(ledger_repo: Path) -> None:
+    assert _ledger_guard(ledger_repo, "alpha\nbeta\n") == []
+
+
+def test_ledger_guard_reorder_ok(ledger_repo: Path) -> None:
+    assert _ledger_guard(ledger_repo, "gamma\n  alpha\nbeta\n\n") == []
+
+
+def test_ledger_guard_missing_file_ok(ledger_repo: Path) -> None:
+    (ledger_repo / _LEDGER).unlink()
+    assert check_derived_test_guard(
+        ledger_repo, "main", [_LEDGER], ledger_globs=_LEDGER_GLOBS
+    ) == []
+
+
+def test_ledger_guard_added_line_grew(ledger_repo: Path) -> None:
+    violations = _ledger_guard(ledger_repo, "alpha\nbeta\ndelta\n")
+    assert [v.rule_id for v in violations] == ["derived_allow.ledger_grew"]
+    assert violations[0].severity == "fail"
+    assert violations[0].auto_fixable is False
+    assert violations[0].location == _LEDGER
+    assert "delta" in violations[0].message
+
+
+def test_ledger_guard_without_globs_is_not_parsed_as_ledger(ledger_repo: Path) -> None:
+    # The indented line is not valid Python: without ledger_globs the AST path reports
+    # test_weakened; with them it is a reordered ledger and passes.
+    content = "beta\n  alpha\n"
+    _write(ledger_repo, {_LEDGER: content})
+    violations = check_derived_test_guard(ledger_repo, "main", [_LEDGER])
+    assert [v.rule_id for v in violations] == ["derived_allow.test_weakened"]
+    assert "cannot parse working tree file" in violations[0].message
+    assert _ledger_guard(ledger_repo, content) == []
+
+
+def test_ledger_pr_scope_delete_only_passes(ledger_repo: Path, _derived_config) -> None:
+    _derived_config(None)
+    _write(ledger_repo, {_LEDGER: "alpha\nbeta\n"})
+    gate = PrScopeGate(
+        ledger_repo, ["src/pkg/gamma.py"], "main", derived_allow_paths=[_LEDGER],
+    )
+    assert gate.check("", []) == []
+
+
+def test_ledger_pr_scope_added_line_grew(ledger_repo: Path, _derived_config) -> None:
+    _derived_config(None)
+    _write(ledger_repo, {_LEDGER: "alpha\nbeta\ngamma\ndelta\n"})
+    gate = PrScopeGate(
+        ledger_repo, ["src/pkg/gamma.py"], "main", derived_allow_paths=[_LEDGER],
+    )
+    assert [v.rule_id for v in gate.check("", [])] == ["derived_allow.ledger_grew"]
