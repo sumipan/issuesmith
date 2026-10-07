@@ -9,7 +9,7 @@ from issuesmith.ac_contract import extract_contract_from_body
 from issuesmith.config import get_config
 from issuesmith.context_hook import parse_issue_metadata
 from issuesmith.contract import change_paths_for_repo
-from issuesmith.steps.scope_gate import (
+from issuesmith.scope_gate import (
     ScopeMeasure,
     evaluate,
     measure_scope,

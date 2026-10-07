@@ -55,7 +55,7 @@ def test_all_gates_are_importable() -> None:
 
 def test_check_scope_returns_verdict_passed_when_within_limits(tmp_path: Path) -> None:
     from issuesmith.config import ScopeGateConfig
-    from issuesmith.steps.scope_gate import ScopeMeasure, ScopeVerdict
+    from issuesmith.scope_gate import ScopeMeasure, ScopeVerdict
 
     cfg = ScopeGateConfig(enabled=True, max_files=100, max_lines=5000, hard_max_files=200)
     measure = ScopeMeasure(files=2, lines=50, by_dir={}, skipped_binary=0, skipped_jsonl=0)
@@ -72,7 +72,7 @@ def test_check_scope_returns_verdict_passed_when_within_limits(tmp_path: Path) -
 
 def test_check_scope_returns_verdict_failed_when_exceeded(tmp_path: Path) -> None:
     from issuesmith.config import ScopeGateConfig
-    from issuesmith.steps.scope_gate import ScopeMeasure, ScopeVerdict
+    from issuesmith.scope_gate import ScopeMeasure, ScopeVerdict
 
     cfg = ScopeGateConfig(enabled=True, max_files=5, max_lines=100, hard_max_files=10)
     measure = ScopeMeasure(files=20, lines=500, by_dir={}, skipped_binary=0, skipped_jsonl=0)
@@ -215,7 +215,7 @@ def test_check_deps_returns_verdict_failed_when_blocked() -> None:
 def test_all_gate_functions_return_verdict_type() -> None:
     """Smoke test: each gate returns a Verdict, not a legacy type."""
     from issuesmith.config import ScopeGateConfig
-    from issuesmith.steps.scope_gate import ScopeMeasure, ScopeVerdict
+    from issuesmith.scope_gate import ScopeMeasure, ScopeVerdict
 
     cfg = ScopeGateConfig(enabled=True, max_files=100, max_lines=5000, hard_max_files=200)
     measure = ScopeMeasure(files=1, lines=10, by_dir={}, skipped_binary=0, skipped_jsonl=0)

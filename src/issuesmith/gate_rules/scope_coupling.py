@@ -19,7 +19,7 @@ from issuesmith.ac_contract import extract_contract_from_body
 from issuesmith.config import get_config
 from issuesmith.context_hook import parse_issue_metadata
 from issuesmith.contract import change_paths_for_repo, extract_change_table_rows
-from issuesmith.steps.scope_gate import parse_allow_paths_from_ctx, resolve_scope_root
+from issuesmith.scope_gate import parse_allow_paths_from_ctx, resolve_scope_root
 
 # Python builtins and common verbs that generate too many false-positive grep hits.
 _DEFAULT_IGNORE_SYMBOLS: frozenset[str] = frozenset({

@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest.mock as mock
 
 from issuesmith.gate_rules.scope_breadth import ScopeBreadthRules
-from issuesmith.steps.scope_gate import ScopeMeasure
+from issuesmith.scope_gate import ScopeMeasure
 
 _NEXUS_BODY = (
     "```yaml\n"
@@ -151,13 +151,13 @@ def test_milestone_label_with_other_labels_also_skips():
 def test_cross_repo_root_uses_external_dir_repo_layout(tmp_path):
     """Root is paths.external_dir/<repo> — the layout context_hook clones into.
 
-    scope_breadth delegates root resolution to steps.scope_gate.resolve_scope_root
+    scope_breadth delegates root resolution to issuesmith.scope_gate.resolve_scope_root
     (#3487 AC-1), the same function p0_worktree and gate-preflight use — see
     tests/test_scope_gate_root.py for the function's own coverage.
     """
     import unittest.mock as mock
 
-    from issuesmith.steps.scope_gate import resolve_scope_root
+    from issuesmith.scope_gate import resolve_scope_root
 
     external = tmp_path / ".claude" / "external"
     (external / "issuesmith" / ".git").mkdir(parents=True)
