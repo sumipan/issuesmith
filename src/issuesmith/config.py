@@ -146,6 +146,9 @@ class PhaseConfig:
     entry_step: str
     handler: str = ""
     preconditions: tuple[str, ...] = ()
+    excludes: tuple[str, ...] = ()
+    writes_files: bool = True
+    advance_when: tuple[str, ...] = ()
     # Steps of the phase in run order; empty means ``(entry_step,)`` (#4807).
     steps: tuple[str, ...] = ()
 
@@ -157,16 +160,53 @@ class StepConfig:
     requires: tuple[str, ...] = ()
     input_kind: Literal["issue", "worktree", "artifact"] = "issue"
     requires_declared: bool = False
+    accepts: tuple[str, ...] = ()
+    andon_when: tuple[str, ...] = ()
 
+
+_DEFAULT_STEPS: dict[str, StepConfig] = {
+    "p1": StepConfig(andon_when=("external_leak.target_unknown",)),
+}
+
+_DEFAULT_HANDLER_BY_PHASE: dict[str, str] = {
+    "draft": "brushup",
+    "sub": "subissue",
+    "develop": "impl",
+    "merge": "merge",
+}
 
 _DEFAULT_PHASES: tuple[PhaseConfig, ...] = (
-    PhaseConfig(name="draft", role="design", entry_step="b1"),
-    PhaseConfig(name="sub", role="implementation", entry_step="sub-ready"),
-    PhaseConfig(name="develop", role="implementation", entry_step="cp2"),
-    PhaseConfig(name="merge", role="implementation", entry_step="m2"),
+    PhaseConfig(
+        name="draft",
+        role="design",
+        entry_step="b1",
+        handler="brushup",
+        writes_files=False,
+        advance_when=("deps_terminal",),
+    ),
+    PhaseConfig(
+        name="sub",
+        role="implementation",
+        entry_step="sub-ready",
+        handler="subissue",
+        writes_files=False,
+        advance_when=("deps_terminal",),
+    ),
+    PhaseConfig(
+        name="develop",
+        role="implementation",
+        entry_step="cp2",
+        handler="impl",
+        advance_when=("deps_terminal",),
+    ),
+    PhaseConfig(
+        name="merge",
+        role="implementation",
+        entry_step="m2",
+        handler="merge",
+        advance_when=("deps_terminal", "closing_pr_exists"),
+    ),
 )
-
-_DEFAULT_STEPS: dict[str, StepConfig] = {}
 
 # PR diff scope gate defaults (#3178). Mirrored in issuesmith.yaml.
 _DEFAULT_FORBIDDEN_PR_PATHS: tuple[str, ...] = (
@@ -269,6 +309,13 @@ class ExternalLeakConfig:
 
 _DEFAULT_TERMINAL_LABELS: tuple[str, ...] = ("issuesmith:merge-done", "bump:done")
 
+_DEFAULT_TERMINAL_WITHOUT_MERGE: tuple[str, ...] = (
+    "rejected",
+    "superseded",
+    "sub-ready",
+    "sub-done",
+)
+
 
 
 @dataclass(frozen=True)
@@ -327,10 +374,51 @@ class IssuesmithConfig:
     derived_allow: DerivedAllowConfig = field(default_factory=DerivedAllowConfig)
     external_leak: ExternalLeakConfig = field(default_factory=ExternalLeakConfig)
     terminal_labels: tuple[str, ...] = _DEFAULT_TERMINAL_LABELS
+    terminal_without_merge: tuple[str, ...] = ()
     observe: ObserveConfig = field(default_factory=ObserveConfig)
     api_brake: ApiBreakConfig = field(default_factory=ApiBreakConfig)
     language: LanguagePack = EN
     label_write_guard: Literal["warn", "enforce"] = "warn"
+
+    def phase(self, name: str) -> PhaseConfig:
+        for ph in self.phases:
+            if ph.name == name:
+                return ph
+        raise KeyError(name)
+
+    def phase_for_handler(self, handler: str) -> str | None:
+        for ph in self.phases:
+            if ph.handler == handler:
+                return ph.name
+        return None
+
+    def design_phase(self) -> PhaseConfig | None:
+        design_phases = [ph for ph in self.phases if ph.role == "design"]
+        if len(design_phases) > 1:
+            raise ConfigError("multiple design phases declared")
+        return design_phases[0] if design_phases else None
+
+    def _expand_label(self, label: str) -> str:
+        if ":" in label:
+            return label
+        return f"{self.label_namespace}:{label}"
+
+    def phase_labels(self, name: str) -> tuple[str, str, str]:
+        ph = self.phase(name)
+        ns = self.label_namespace
+        return (
+            f"{ns}:{ph.name}-ready",
+            f"{ns}:{ph.name}-running",
+            f"{ns}:{ph.name}-done",
+        )
+
+    def required_labels(self, name: str) -> frozenset[str]:
+        ph = self.phase(name)
+        return frozenset(self._expand_label(x) for x in ph.preconditions)
+
+    def excluded_labels(self, name: str) -> frozenset[str]:
+        ph = self.phase(name)
+        return frozenset(self._expand_label(x) for x in ph.excludes)
 
 
 _cached: IssuesmithConfig | None = None
@@ -502,11 +590,21 @@ def _build_triage(raw: Mapping[str, Any] | None) -> TriageConfig:
     )
 
 
+def _label_list(raw: Any, *, field: str, index: int) -> tuple[str, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ValueError(f"phases[{index}].{field} must be a list of strings")
+    return tuple(str(x) for x in raw if x)
+
+
 def _build_phases(raw: Any) -> tuple[PhaseConfig, ...]:
     if raw is None:
         return _DEFAULT_PHASES
     if not isinstance(raw, list):
         raise ValueError("phases must be a list of mappings")
+    from issuesmith.preconditions import PRECONDITION_REGISTRY
+
     phases: list[PhaseConfig] = []
     for i, item in enumerate(raw):
         if not isinstance(item, Mapping):
@@ -518,12 +616,20 @@ def _build_phases(raw: Any) -> tuple[PhaseConfig, ...]:
             raise ValueError(
                 f"phases[{i}] requires non-empty name, role, and entry_step"
             )
-        handler = str(item.get("handler") or "")
-        raw_preconds = item.get("preconditions")
-        if isinstance(raw_preconds, list):
-            preconditions: tuple[str, ...] = tuple(str(x) for x in raw_preconds if x)
-        else:
-            preconditions = ()
+        handler = str(item.get("handler") or "").strip()
+        if not handler:
+            handler = _DEFAULT_HANDLER_BY_PHASE.get(str(name), "")
+        if not handler:
+            raise ConfigError(f"phases[{i}].handler is required")
+        preconditions = _label_list(item.get("preconditions"), field="preconditions", index=i)
+        excludes = _label_list(item.get("excludes"), field="excludes", index=i)
+        writes_files = bool(item.get("writes_files", True))
+        advance_when = _label_list(item.get("advance_when"), field="advance_when", index=i)
+        for pred in advance_when:
+            if pred not in PRECONDITION_REGISTRY:
+                raise ConfigError(
+                    f"phases[{i}].advance_when references unknown predicate {pred!r}"
+                )
         raw_steps = item.get("steps")
         if raw_steps is None:
             steps: tuple[str, ...] = ()
@@ -538,6 +644,9 @@ def _build_phases(raw: Any) -> tuple[PhaseConfig, ...]:
                 entry_step=str(entry_step),
                 handler=handler,
                 preconditions=preconditions,
+                excludes=excludes,
+                writes_files=writes_files,
+                advance_when=advance_when,
                 steps=steps,
             )
         )
@@ -709,6 +818,18 @@ def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
                     f"steps.{step_id}.input_kind must be one of"
                     f" {sorted(_valid_input_kinds)}, got {input_kind!r}"
                 )
+        accepts: tuple[str, ...] = ()
+        if "accepts" in conf:
+            accepts_raw = conf["accepts"]
+            if not isinstance(accepts_raw, list):
+                raise ConfigError(f"steps.{step_id}.accepts must be a list")
+            accepts = tuple(str(x) for x in accepts_raw)
+        andon_when: tuple[str, ...] = ()
+        if "andon_when" in conf:
+            andon_raw = conf["andon_when"]
+            if not isinstance(andon_raw, list):
+                raise ConfigError(f"steps.{step_id}.andon_when must be a list")
+            andon_when = tuple(str(x) for x in andon_raw)
 
         steps[str(step_id)] = StepConfig(
             module=module,
@@ -716,6 +837,8 @@ def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
             requires=requires,
             input_kind=input_kind,  # type: ignore[arg-type]
             requires_declared=requires_declared,
+            accepts=accepts,
+            andon_when=andon_when,
         )
     return steps
 
@@ -742,9 +865,18 @@ def _build_scope_gate(raw: Mapping[str, Any] | None) -> ScopeGateConfig:
 
 def _build_terminal_labels(raw: Any) -> tuple[str, ...]:
     if raw is None:
+        # Kept even when phases are declared; emptying the default is #4881.
         return _DEFAULT_TERMINAL_LABELS
     if not isinstance(raw, list):
         raise ValueError("terminal_labels must be a list of strings")
+    return tuple(str(x) for x in raw)
+
+
+def _build_terminal_without_merge(raw: Any, *, using_default_phases: bool = False) -> tuple[str, ...]:
+    if raw is None:
+        return _DEFAULT_TERMINAL_WITHOUT_MERGE if using_default_phases else ()
+    if not isinstance(raw, list):
+        raise ValueError("terminal_without_merge must be a list of strings")
     return tuple(str(x) for x in raw)
 
 
@@ -987,6 +1119,7 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         data.get("api_brake") if isinstance(data.get("api_brake"), dict) else None
     )
     language = _build_language(data, root=root.resolve())
+    using_default_phases = data.get("phases") is None
     return IssuesmithConfig(
         repo=repo,
         label_namespace=label_namespace,
@@ -1011,6 +1144,10 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         derived_allow=_build_derived_allow(derived_allow_raw),
         external_leak=_build_external_leak(external_leak_raw),
         terminal_labels=_build_terminal_labels(data.get("terminal_labels")),
+        terminal_without_merge=_build_terminal_without_merge(
+            data.get("terminal_without_merge"),
+            using_default_phases=using_default_phases,
+        ),
         observe=_build_observe(observe_raw, root.resolve()),
         api_brake=_build_api_brake(api_brake_raw),
         language=language,

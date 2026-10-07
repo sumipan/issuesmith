@@ -20,9 +20,28 @@ from issuesmith.queue_store import QueueStore
 def env(tmp_path: Path, monkeypatch):
     cfg = tmp_path / "issuesmith.yaml"
     phases = [
-        {"name": "draft", "role": "design", "entry_step": "b1"},
-        {"name": "develop", "role": "implementation", "entry_step": "cp2", "preconditions": ["draft-done"]},
-        {"name": "merge", "role": "implementation", "entry_step": "m2"},
+        {
+            "name": "draft",
+            "role": "design",
+            "entry_step": "b1",
+            "handler": "brushup",
+            "advance_when": ["deps_terminal"],
+        },
+        {
+            "name": "develop",
+            "role": "implementation",
+            "entry_step": "cp2",
+            "handler": "impl",
+            "preconditions": ["draft-done"],
+            "advance_when": ["deps_terminal"],
+        },
+        {
+            "name": "merge",
+            "role": "implementation",
+            "entry_step": "m2",
+            "handler": "merge",
+            "advance_when": ["deps_terminal", "closing_pr_exists"],
+        },
     ]
     cfg.write_text(yaml.safe_dump({"repo": "example/repo", "phases": phases}), encoding="utf-8")
     monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg))
@@ -162,10 +181,12 @@ def _write_phases(tmp_path: Path, phases: list[dict] | None) -> None:
     reset_config_cache()
 
 
-def test_phase_for_handler_maps_workflow_handlers_without_declared_handler(env):
-    """phases without ``handler``: ghdag handler names map through queue._HANDLER_TO_PHASE (#4802)."""
+def test_phase_for_handler_maps_workflow_handlers_from_declaration(env):
+    """ghdag handler names map through config.phase_for_handler (#4790)."""
+    from tests.conftest import NEXUS_TEST_PHASES
+
     tmp_path, _client, _number = env
-    _write_phases(tmp_path, None)  # _DEFAULT_PHASES: draft / sub / develop / merge
+    _write_phases(tmp_path, NEXUS_TEST_PHASES)
 
     assert resume_mod._phase_for_handler("brushup") == "draft"
     assert resume_mod._phase_for_handler("subissue") == "sub"
@@ -184,8 +205,20 @@ def test_phase_for_handler_prefers_declared_handler(env):
     _write_phases(
         tmp_path,
         [
-            {"name": "draft", "role": "design", "entry_step": "b1", "handler": "custom"},
-            {"name": "develop", "role": "implementation", "entry_step": "cp2"},
+            {
+                "name": "draft",
+                "role": "design",
+                "entry_step": "b1",
+                "handler": "custom",
+                "advance_when": ["deps_terminal"],
+            },
+            {
+                "name": "develop",
+                "role": "implementation",
+                "entry_step": "cp2",
+                "handler": "impl",
+                "advance_when": ["deps_terminal"],
+            },
         ],
     )
 

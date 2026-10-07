@@ -52,8 +52,8 @@ def test_trigger_ghdag_redispatch_builds_generation_bump_command(tmp_path, monke
     assert cmd[cmd.index("--exec-md") + 1] == str(tmp_path / "exec.jsonl")
 
 
-def test_phase_handler_map_matches_workflow_triggers():
-    assert qmod._PHASE_HANDLER == {
+def test_phase_handler_map_matches_config_declaration():
+    assert qmod._phase_handler_map() == {
         "draft": "brushup",
         "develop": "impl",
         "merge": "merge",

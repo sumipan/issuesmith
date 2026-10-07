@@ -231,12 +231,30 @@ def test_triage_reasons_use_pack(custom_pack):
     )
 
     milestone = deterministic_decision(
-        _request(7), {"state": "OPEN", "labels": [{"name": "scope:milestone"}]}
+        _request(7, phase="develop"),
+        {
+            "state": "OPEN",
+            "labels": [
+                {"name": "issuesmith:draft-done"},
+                {"name": "scope:milestone"},
+            ],
+        },
     )
-    assert milestone.reason == custom_pack.message("queue_triage.milestone_no_develop")
+    assert milestone.reason == custom_pack.message(
+        "queue_triage.phase_excludes_label",
+        phase="develop",
+        label="scope:milestone",
+    )
 
-    sub = deterministic_decision(_request(7, phase="sub"), {"state": "OPEN", "labels": []})
-    assert sub.reason == custom_pack.message("queue_triage.sub_requires_milestone")
+    sub = deterministic_decision(
+        _request(7, phase="sub"),
+        {"state": "OPEN", "labels": [{"name": "issuesmith:draft-done"}]},
+    )
+    assert sub.reason == custom_pack.message(
+        "queue_triage.phase_requires_label",
+        phase="sub",
+        label="scope:milestone",
+    )
 
 
 def test_triage_superseded_reason_uses_pack(custom_pack):

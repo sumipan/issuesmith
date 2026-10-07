@@ -397,7 +397,10 @@ class TestDeterministicDecision:
                 "state": "OPEN",
                 "title": "x",
                 "body": _VALID_BODY,
-                "labels": [{"name": "issuesmith:develop-done"}],
+                "labels": [
+                    {"name": "issuesmith:draft-done"},
+                    {"name": "issuesmith:develop-done"},
+                ],
             },
             force=True,
         )
@@ -1445,6 +1448,7 @@ class TestDispatch:
         class Client:
             def __init__(self):
                 self.updates = []
+                self.comments = []
 
             def issue_get(self, number, fields=None):
                 return {
@@ -1457,6 +1461,9 @@ class TestDispatch:
 
             def issue_update(self, number, labels_add=None, labels_remove=None):
                 self.updates.append((number, labels_add))
+
+            def issue_comment(self, number, body):
+                self.comments.append((number, body))
 
             def list_issues(self, label, state="open"):
                 return []
@@ -1643,7 +1650,7 @@ class TestCp2MergePrDetection:
             "body": _VALID_BODY,
             "labels": [],
         }
-        ok, why = qmod._phase_preconditions("merge", issue, client, 2773)
+        ok, why = qmod.phase_preconditions("merge", issue, client, 2773)
         assert ok is True, why
         assert client.pr_get_calls == [2789]
 
@@ -1669,7 +1676,7 @@ class TestCp2MergePrDetection:
             "body": _VALID_BODY,
             "labels": [],
         }
-        ok, why = qmod._phase_preconditions("merge", issue, client, 2773)
+        ok, why = qmod.phase_preconditions("merge", issue, client, 2773)
         assert ok is True, why
 
     def test_phase_preconditions_merge_search_alone_insufficient(self):
@@ -1691,7 +1698,7 @@ class TestCp2MergePrDetection:
         # search-only path would miss this; our helper must still find it
         listed = client.pr_list(state="open", search="Closes #10")
         assert listed == []  # production search does not match body
-        ok, why = qmod._phase_preconditions("merge", {"state": "OPEN", "labels": []}, client, 10)
+        ok, why = qmod.phase_preconditions("merge", {"state": "OPEN", "labels": []}, client, 10)
         assert ok is True, why
 
     def test_phase_preconditions_merge_already_merged(self):
@@ -1710,7 +1717,7 @@ class TestCp2MergePrDetection:
                 }
             ]
         )
-        ok, why = qmod._phase_preconditions(
+        ok, why = qmod.phase_preconditions(
             "merge",
             {"state": "OPEN", "labels": [{"name": "issuesmith:develop-done"}]},
             client,
@@ -1724,7 +1731,7 @@ class TestCp2MergePrDetection:
         from issuesmith import queue as qmod
 
         client = _ProdShapeClient(open_prs=[], closed_prs=[])
-        ok, why = qmod._phase_preconditions("merge", {"state": "OPEN", "labels": []}, client, 10)
+        ok, why = qmod.phase_preconditions("merge", {"state": "OPEN", "labels": []}, client, 10)
         assert ok is False
         assert "no open or merged PR" in why
 
@@ -2080,24 +2087,23 @@ class TestCp2DevelopDispatch:
         monkeypatch.setattr(qmod, "_dispatch_pipeline_ready", lambda *a, **k: True)
         monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
         monkeypatch.setattr(qmod, "advance_milestone_chains", lambda *a, **k: None)
-        from issuesmith.config import MilestoneChainConfig
+        from dataclasses import replace
+
+        from issuesmith.config import MilestoneChainConfig, get_config
         from issuesmith.language import EN
 
+        base = get_config()
         monkeypatch.setattr(
             qmod,
             "get_config",
-            lambda: type(
-                "C",
-                (),
-                {
-                    "concurrency": ConcurrencyConfig(
-                        default=1, per_engine={"claude": 2, "cursor": 2}
-                    ),
-                    "milestone_chain": MilestoneChainConfig(enabled=False),
-                    # queue comments are rendered from Config.language (#4472).
-                    "language": EN,
-                },
-            )(),
+            lambda: replace(
+                base,
+                concurrency=ConcurrencyConfig(
+                    default=1, per_engine={"claude": 2, "cursor": 2}
+                ),
+                milestone_chain=MilestoneChainConfig(enabled=False),
+                language=EN,
+            ),
         )
         store.mark_triaged(store.snapshot().revision)
         now = datetime(2026, 9, 3, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))

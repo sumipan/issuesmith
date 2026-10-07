@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import yaml
 
 # Keep the suite independent of the host config the runner inherits (a host
 # language_pack must not leak into tests). Popped before any module calls get_config().
@@ -19,7 +20,100 @@ os.environ.pop("ISSUESMITH_CONFIG", None)
 
 import issuesmith.config as config_module  # noqa: E402
 from issuesmith.language import EN  # noqa: E402
-from tests import legacy_text
+from tests import legacy_text  # noqa: E402
+
+NEXUS_TEST_PHASES = [
+    {
+        "name": "draft",
+        "role": "design",
+        "entry_step": "b1",
+        "handler": "brushup",
+        "steps": ["b1"],
+        "writes_files": False,
+        "advance_when": ["deps_terminal"],
+    },
+    {
+        "name": "sub",
+        "role": "implementation",
+        "entry_step": "sub-ready",
+        "handler": "subissue",
+        "steps": ["sub1"],
+        "writes_files": False,
+        "preconditions": ["draft-done", "scope:milestone"],
+        "advance_when": ["deps_terminal"],
+    },
+    {
+        "name": "develop",
+        "role": "implementation",
+        "entry_step": "cp2",
+        "handler": "impl",
+        "steps": ["p0", "p1", "p3", "cp2"],
+        "preconditions": ["draft-done"],
+        "excludes": ["scope:milestone"],
+        "advance_when": ["deps_terminal"],
+    },
+    {
+        "name": "merge",
+        "role": "implementation",
+        "entry_step": "m2",
+        "handler": "merge",
+        "steps": ["m1", "m2-role-dispatch"],
+        "advance_when": ["deps_terminal", "closing_pr_exists"],
+    },
+]
+
+# Nexus declaration without explicit ``steps`` so entry_step stays the final step (#4790).
+NEXUS_DECLARATION_PHASES = [
+    {key: value for key, value in phase.items() if key != "steps"}
+    for phase in NEXUS_TEST_PHASES
+]
+
+_NEXUS_CONFIG_PAYLOAD = {
+    "repo": "sumipan/nexus",
+    "supported_repos": [
+        "sumipan/nexus",
+        "sumipan/mltgnt",
+        "sumipan/mltgnt-vscode-extension",
+        "sumipan/ghdag",
+        "sumipan/slack-project",
+        "sumipan/diary",
+        "sumipan/nexus-companion",
+        "sumipan/okr-core",
+        "sumipan/issuesmith",
+    ],
+    "phases": NEXUS_DECLARATION_PHASES,
+    "terminal_labels": ["issuesmith:merge-done", "bump:done"],
+    "terminal_without_merge": [
+        "rejected",
+        "superseded",
+        "sub-ready",
+        "sub-done",
+    ],
+    "steps": {"p1": {"andon_when": ["external_leak.target_unknown"]}},
+}
+
+_NEXUS_CONFIG_MODULES = frozenset({
+    "tests.test_preconditions",
+    "tests.test_queue",
+    "tests.test_queue_config_driven",
+    "tests.test_queue_language_pack",
+    "tests.test_queue_ordering",
+    "tests.test_queue_redispatch",
+    "tests.test_queue_triage",
+    "tests.test_queue_sub_phase",
+    "tests.test_recovery",
+    "tests.test_redispatch_sub",
+    "tests.test_resume_restores_state",
+    "tests.test_dispatch_requires",
+    "tests.test_second_consumer_declaration",
+})
+
+
+def _write_nexus_config(tmp_path: Path) -> Path:
+    cfg_path = tmp_path / "issuesmith-nexus.yaml"
+    cfg_path.write_text(yaml.safe_dump(_NEXUS_CONFIG_PAYLOAD), encoding="utf-8")
+    return cfg_path
+
 
 _ENGLISH_SECTIONS = dict(EN.sections)
 _ENGLISH_SUBSECTIONS = EN.sub_design_subsections
@@ -42,6 +136,20 @@ TEST_LANGUAGE_PACK = dataclasses.replace(
 
 def _is_write_mode(mode: str) -> bool:
     return bool(set(mode) & set("wax+"))
+
+
+@pytest.fixture(autouse=True)
+def _issuesmith_config_for_tests(request, monkeypatch, tmp_path):
+    """Apply the nexus declaration only to modules that exercise config-driven queue logic."""
+    if request.node.get_closest_marker("no_auto_phases"):
+        monkeypatch.delenv("ISSUESMITH_CONFIG", raising=False)
+    elif request.module.__name__ in _NEXUS_CONFIG_MODULES:
+        monkeypatch.setenv("ISSUESMITH_CONFIG", str(_write_nexus_config(tmp_path)))
+    else:
+        monkeypatch.delenv("ISSUESMITH_CONFIG", raising=False)
+    config_module.reset_config_cache()
+    yield
+    config_module.reset_config_cache()
 
 
 @pytest.fixture(autouse=True)

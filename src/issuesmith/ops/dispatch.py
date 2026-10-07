@@ -582,16 +582,17 @@ def _violation_gate_id(rule_id: str, gates: dict[str, object]) -> str | None:
     return None
 
 
-# Violations an LLM repair cannot resolve even though their gate is repairable (nexus #4116).
-_NON_REPAIRABLE_RULE_IDS = frozenset({"external_leak.target_unknown"})
-
-
-def _is_violation_repairable(rule_id: str, gates: dict[str, object]) -> bool:
+def _is_violation_repairable(
+    rule_id: str, gates: dict[str, object], step_id: str | None = None
+) -> bool:
     """Return True if the gate that produced this violation allows LLM repair."""
+    from issuesmith.config import get_config
     from issuesmith.gates import GATE_REGISTRY
 
-    if rule_id in _NON_REPAIRABLE_RULE_IDS:
-        return False
+    if step_id:
+        step_cfg = get_config().steps.get(step_id)
+        if step_cfg and rule_id in step_cfg.andon_when:
+            return False
     gate_id = _violation_gate_id(rule_id, gates)
     if gate_id is None:
         return True
@@ -783,7 +784,7 @@ def run_requires_loop(
     # Non-repairable violations → andon(decision) without repair
     non_repairable = [
         v for v in result.blocking
-        if not _is_violation_repairable(v.rule_id, gates)
+        if not _is_violation_repairable(v.rule_id, gates, step_id)
     ]
     if non_repairable:
         options = _build_andon_options(result.blocking)

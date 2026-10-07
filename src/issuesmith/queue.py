@@ -22,7 +22,7 @@ from ghdag.forge import ForgePort, get_forge
 from ghdag.quota import QuotaGate
 
 from issuesmith.config import get_config
-from issuesmith.dep_extractor import check_dependencies, extract_dependencies, unparsed_dependency_refs
+from issuesmith.dep_extractor import check_dependencies
 from issuesmith.forge_api import api_request
 from issuesmith.gate_rules.scope_coupling import (
     deletion_references_for_body,
@@ -41,9 +41,7 @@ from issuesmith.queue_store import (
     in_flight_by_engine,
 )
 from issuesmith.queue_triage import (
-    DONE_LABEL,
     READY_LABEL,
-    RUNNING_LABEL,
     append_cas_conflict_log,
     append_circuit_open_log,
     apply_deterministic_order_constraints,
@@ -77,10 +75,58 @@ BRAKE_STATE_PATH = _cfg.paths.brake_state or _cfg.paths.quota_state
 
 
 def _configured_phases():
-    """Return config phases, falling back to defaults for partial test doubles."""
-    from issuesmith.config import _DEFAULT_PHASES
+    """Return config phases."""
+    return get_config().phases
 
-    return getattr(get_config(), "phases", _DEFAULT_PHASES)
+
+def _phase_label_maps() -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    cfg = get_config()
+    ready: dict[str, str] = {}
+    running: dict[str, str] = {}
+    done: dict[str, str] = {}
+    for ph in cfg.phases:
+        r, run, d = cfg.phase_labels(ph.name)
+        ready[ph.name] = r
+        running[ph.name] = run
+        done[ph.name] = d
+    return ready, running, done
+
+
+def _all_ready_running_labels() -> set[str]:
+    ready, running, _ = _phase_label_maps()
+    return {lab for lab in (*ready.values(), *running.values()) if lab}
+
+
+def _non_writing_done_labels() -> list[tuple[str, str, str]]:
+    cfg = get_config()
+    out: list[tuple[str, str, str]] = []
+    for ph in cfg.phases:
+        if not ph.writes_files:
+            out.append(cfg.phase_labels(ph.name))
+    return out
+
+
+def _primary_impl_phase_name() -> str | None:
+    for ph in get_config().phases:
+        if (
+            ph.role == "implementation"
+            and ph.writes_files
+            and "closing_pr_exists" not in ph.advance_when
+        ):
+            return ph.name
+    return None
+
+
+def _closing_phase_name() -> str | None:
+    for ph in get_config().phases:
+        if "closing_pr_exists" in ph.advance_when:
+            return ph.name
+    return None
+
+
+def _design_phase_name() -> str | None:
+    design = get_config().design_phase()
+    return design.name if design is not None else None
 
 
 def _phase_role_map() -> dict[str, str]:
@@ -418,10 +464,9 @@ class _TickCachedForge:
 def _issue_state_is_terminal(issue: dict[str, Any]) -> bool:
     labels = label_names(issue)
     state = str(issue.get("state", "")).upper()
-    merge_done = DONE_LABEL.get("merge", "")
+    terminal = set(get_config().terminal_labels)
     return state == "CLOSED" and (
-        (bool(merge_done) and merge_done in labels)
-        or bool(labels & get_terminal_without_merge())
+        bool(labels & terminal) or bool(labels & get_terminal_without_merge())
     )
 
 
@@ -441,17 +486,25 @@ def _issue_target_meta(issue: dict[str, Any]) -> tuple[str, tuple[str, ...]]:
     return repo, paths
 
 
-# Phases that only write Issue bodies / child Issues, never files of the target repo.
-_NO_FILE_WRITE_PHASES = frozenset({"draft", "sub"})
+def _phase_writes_files(phase_name: str | None) -> bool:
+    if not isinstance(phase_name, str) or not phase_name:
+        return True
+    try:
+        return get_config().phase(phase_name).writes_files
+    except KeyError:
+        return True
 
 
 def _writes_files(entry: dict[str, Any]) -> bool:
-    """True unless the in_flight entry is known to be a draft / sub (design) run."""
+    """True unless the in_flight entry is known to be a non-file-writing phase run."""
     phase = entry.get("phase")
-    if isinstance(phase, str) and phase in _NO_FILE_WRITE_PHASES:
-        return False
+    if isinstance(phase, str):
+        return _phase_writes_files(phase)
     if entry.get("role") == "design" and phase is None:
-        return False  # legacy entries recorded role only; design == draft (B1)
+        design = get_config().design_phase()
+        if design is not None:
+            return design.writes_files
+        return False
     return True
 
 
@@ -470,7 +523,7 @@ def _allow_paths_conflict(
     block anyone. Legacy entries without ``target_repo`` / ``allow_paths`` are
     treated as conflicts (fail closed) until they leave in_flight naturally.
     """
-    if candidate_phase in _NO_FILE_WRITE_PHASES:
+    if _phase_writes_files(candidate_phase) is False:
         return None
     for entry in in_flight:
         if not _writes_files(entry):
@@ -527,38 +580,27 @@ def _in_flight_should_release(client: ForgePort, entry: dict[str, Any]) -> bool:
     if _issue_state_is_terminal(issue):
         return True
     labels = label_names(issue)
-    if DONE_LABEL.get("sub", "") in labels and DONE_LABEL.get("sub", "") and not (
-        labels & {READY_LABEL.get("sub", ""), RUNNING_LABEL.get("sub", "")} - {""}
-    ):
-        # A milestone parent ends its own DAG at sub-done; child Issues do the
-        # implementation. The parent is not CLOSED until every child merges, so unless
-        # it is released here, a child whose allow_paths overlap the parent waits on
-        # the conflict gate forever (observed 2026-09-10, #2934 -> #2999 / #3000).
-        return True
-    # B1-failed design slot: release when the design exec completed but draft-done was
-    # never written (BRUSHUP_FAILED), provided no active phase labels are present (#4178).
     role = entry.get("role")
-    if role == "design" and DONE_LABEL.get("draft", "") not in labels:
-        _active = {
-            lab
-            for lab in (
-                READY_LABEL.get("draft", ""),
-                RUNNING_LABEL.get("draft", ""),
-                READY_LABEL.get("develop", ""),
-                RUNNING_LABEL.get("develop", ""),
-                READY_LABEL.get("sub", ""),
-                RUNNING_LABEL.get("sub", ""),
-            )
-            if lab
-        }
-        if not (labels & _active) and _issue_exec_all_done(issue_num):
+    design_name = _design_phase_name()
+    for ready, running, done in _non_writing_done_labels():
+        if design_name and done == get_config().phase_labels(design_name)[2]:
+            continue
+        if done in labels and not (labels & {ready, running} - {""}):
             return True
-    if DONE_LABEL["draft"] not in labels:
+    _, _, design_done = (
+        get_config().phase_labels(design_name) if design_name else ("", "", "")
+    )
+    if role == "design" and design_done and design_done not in labels:
+        active = _all_ready_running_labels()
+        if not (labels & active) and _issue_exec_all_done(issue_num):
+            return True
+    if not design_done or design_done not in labels:
         return False
-    busy = {
-        READY_LABEL["develop"],
-        RUNNING_LABEL["develop"],
-    }
+    busy: set[str] = set()
+    impl = _primary_impl_phase_name()
+    if impl:
+        ready, running, _ = get_config().phase_labels(impl)
+        busy.update({ready, running})
     if labels & busy:
         return False
     if _issue_has_incomplete_exec(issue_num):
@@ -573,7 +615,10 @@ def _recheck_dependents_after_merge(
 ) -> None:
     """When a released in_flight Issue is merge-done, re-run the scope_coupling deletion
     check on the open Issues that depend on it (nexus #3953)."""
-    merge_done = DONE_LABEL.get("merge", "")
+    closing = _closing_phase_name()
+    if closing is None:
+        return
+    _, _, merge_done = get_config().phase_labels(closing)
     if not merge_done:
         return
     try:
@@ -612,8 +657,15 @@ def _find_untracked_running(client: ForgePort, snap: QueueSnapshot) -> list[int]
     # Stale running labels without a live DAG never reach the API (#3759).
     if not candidates:
         return []
+    impl_phase = _primary_impl_phase_name()
+    if impl_phase is None:
+        return []
+    _, running_map, _ = _phase_label_maps()
+    running_label = running_map.get(impl_phase, "")
+    if not running_label:
+        return []
     try:
-        issues = client.list_issues(RUNNING_LABEL["develop"], state="open")
+        issues = client.list_issues(running_label, state="open")
     except Exception:
         return []
     if not isinstance(issues, list):
@@ -652,7 +704,8 @@ def _recover_untracked_in_flight(
             )
             continue
         target_repo, allow_paths = _issue_target_meta(issue)
-        engine = _resolve_engine("develop")
+        impl_phase = _primary_impl_phase_name() or get_config().phases[0].name
+        engine = _resolve_engine(impl_phase)
         store.add_in_flight(
             issue_num,
             engine,
@@ -900,13 +953,6 @@ def _list_open_issues(client: ForgePort) -> list[dict[str, Any]]:
 
 WORKFLOW_NAME = "issuesmith"
 MAX_REPAIR_PER_REQUEST = 1
-_PHASE_HANDLER: dict[str, str] = {
-    "draft": "brushup",
-    "develop": "impl",
-    "merge": "merge",
-    "sub": "subissue",
-}
-_HANDLER_TO_PHASE: dict[str, str] = {v: k for k, v in _PHASE_HANDLER.items()}
 
 
 def _step_to_handler_map() -> dict[str, str]:
@@ -934,10 +980,8 @@ def _step_to_handler_map() -> dict[str, str]:
 
 
 def _phase_handler_map() -> dict[str, str]:
-    """Return phase -> handler mapping from config (falls back to _PHASE_HANDLER)."""
-    from issuesmith.config import get_config
-    cfg_map = {p.name: p.handler for p in get_config().phases if p.handler}
-    return cfg_map if cfg_map else dict(_PHASE_HANDLER)
+    """Return phase -> handler mapping from config."""
+    return {p.name: p.handler for p in get_config().phases if p.handler}
 
 
 _MAX_GENERATION_SCAN = 16
@@ -988,64 +1032,62 @@ def _trigger_ghdag_redispatch(issue: int, handler: str, reason: str) -> int:
 
 
 def handler_for_failed_step(failed_step: str, labels: set[str]) -> str:
+    cfg = get_config()
     step_map = _step_to_handler_map()
     h = step_map.get(failed_step)
     if h:
         return h
-    merge_running = RUNNING_LABEL.get("merge", "")
-    merge_ready = READY_LABEL.get("merge", "")
-    if (merge_running and merge_running in labels) or (merge_ready and merge_ready in labels):
-        return "merge"
-    return "impl"
+    for ph in cfg.phases:
+        ready, running, _ = cfg.phase_labels(ph.name)
+        if (running in labels) or (ready in labels):
+            if ph.handler:
+                return ph.handler
+    for ph in cfg.phases:
+        if ph.role == "implementation" and ph.writes_files and ph.handler:
+            return ph.handler
+    return cfg.phases[0].handler if cfg.phases else ""
 
 
 def infer_redispatch_phase(failed_step: str, labels: set[str]) -> str:
+    cfg = get_config()
     step_map = _step_to_handler_map()
     handler = step_map.get(failed_step)
-    step_phase = _HANDLER_TO_PHASE.get(handler, "") if handler else ""
-    draft_done = DONE_LABEL.get("draft", "")
-    draft_ready = READY_LABEL.get("draft", "")
-    draft_running = RUNNING_LABEL.get("draft", "")
-    if step_phase == "draft" or (
-        draft_done
-        and draft_done not in labels
-        and ((draft_ready and draft_ready in labels) or (draft_running and draft_running in labels))
-    ):
-        return "draft"
-    merge_running = RUNNING_LABEL.get("merge", "")
-    merge_ready = READY_LABEL.get("merge", "")
-    if (merge_running and merge_running in labels) or (merge_ready and merge_ready in labels):
-        return "merge"
-    return "develop"
+    if handler:
+        phase_name = cfg.phase_for_handler(handler)
+        if phase_name:
+            return phase_name
+
+    design = cfg.design_phase()
+    if design is not None:
+        design_done = cfg.phase_labels(design.name)[2]
+        design_ready, design_running, _ = cfg.phase_labels(design.name)
+        step_phase = cfg.phase_for_handler(handler) if handler else None
+        if step_phase == design.name or (
+            design_done
+            and design_done not in labels
+            and ((design_ready in labels) or (design_running in labels))
+        ):
+            return design.name
+
+    for ph in cfg.phases:
+        if "closing_pr_exists" in ph.advance_when:
+            ready, running, _ = cfg.phase_labels(ph.name)
+            if (ready in labels) or (running in labels):
+                return ph.name
+
+    for ph in cfg.phases:
+        if ph.role == "implementation" and ph.writes_files:
+            if "closing_pr_exists" not in ph.advance_when:
+                return ph.name
+    return cfg.phases[-1].name if cfg.phases else ""
 
 
 def redispatch_label_plan(phase: str) -> tuple[frozenset[str], frozenset[str]]:
     """Return (labels that must be present, labels to remove) for redispatch."""
-    if phase == "draft":
-        return frozenset(), frozenset(
-            {READY_LABEL["draft"], RUNNING_LABEL["draft"], DONE_LABEL["draft"]}
-        )
-    if phase == "develop":
-        return frozenset({DONE_LABEL["draft"]}), frozenset(
-            {
-                READY_LABEL["develop"],
-                RUNNING_LABEL["develop"],
-                DONE_LABEL["develop"],
-            }
-        )
-    if phase == "sub":
-        return frozenset({DONE_LABEL["draft"], "scope:milestone"}), frozenset(
-            {
-                READY_LABEL["sub"],
-                RUNNING_LABEL["sub"],
-                DONE_LABEL["sub"],
-            }
-        )
-    if phase == "merge":
-        return frozenset(), frozenset(
-            {READY_LABEL["merge"], RUNNING_LABEL["merge"], DONE_LABEL["merge"]}
-        )
-    raise ValueError(f"unknown phase {phase}")
+    cfg = get_config()
+    ph = cfg.phase(phase)
+    ready, running, done = cfg.phase_labels(ph.name)
+    return cfg.required_labels(ph.name), frozenset({ready, running, done})
 
 
 def apply_redispatch_labels(
@@ -1066,65 +1108,18 @@ def apply_redispatch_labels(
 def phase_preconditions(
     phase: str, issue: dict[str, Any], client: ForgePort, issue_number: int
 ) -> tuple[bool, str]:
-    return _phase_preconditions(phase, issue, client, issue_number)
+    from issuesmith.preconditions import PreconditionContext, evaluate
 
-
-def _phase_preconditions(phase: str, issue: dict[str, Any], client: ForgePort, issue_number: int) -> tuple[bool, str]:
-    state = str(issue.get("state", "")).upper()
-    if state != "OPEN":
-        return False, "issue not OPEN"
+    cfg = get_config()
+    try:
+        ph = cfg.phase(phase)
+    except KeyError:
+        return False, f"unknown phase {phase}"
     labels = label_names(issue)
-
-    def _deps_ok() -> tuple[bool, str]:
-        body = str(issue.get("body") or "")
-        unparsed = unparsed_dependency_refs(body)
-        if unparsed:
-            refs = ", ".join(f"#{n}" for n in unparsed)
-            return False, f"dependencies section mentions {refs} without declaring them"
-        deps = extract_dependencies(body)
-        if deps:
-            result = check_dependencies(deps, client=client)
-            if result.decision == "BLOCK":
-                return False, "dependencies not satisfied"
-        return True, "ok"
-
-    if phase == "draft":
-        for lab in (READY_LABEL["draft"], RUNNING_LABEL["draft"], DONE_LABEL["draft"]):
-            if lab in labels:
-                return False, f"{lab} present"
-        return _deps_ok()
-    if phase == "develop":
-        _prereq = DONE_LABEL.get("draft", "")
-        if _prereq and _prereq not in labels:
-            return False, f"{_prereq} required"
-        for lab in (READY_LABEL.get("develop", ""), RUNNING_LABEL.get("develop", ""), DONE_LABEL.get("develop", "")):
-            if lab and lab in labels:
-                return False, f"{lab} present"
-        return _deps_ok()
-    if phase == "sub":
-        _prereq = DONE_LABEL.get("draft", "")
-        if _prereq and _prereq not in labels:
-            return False, f"{_prereq} required"
-        for lab in (READY_LABEL.get("sub", ""), RUNNING_LABEL.get("sub", ""), DONE_LABEL.get("sub", "")):
-            if lab and lab in labels:
-                return False, f"{lab} present"
-        return _deps_ok()
-    if phase == "merge":
-        for lab in (READY_LABEL["merge"], RUNNING_LABEL["merge"], DONE_LABEL["merge"]):
-            if lab in labels:
-                return False, f"{lab} present"
-        ok, why = _deps_ok()
-        if not ok:
-            return ok, why
-        # Allow label-less recovery after reset.
-        matched = _find_open_prs_closing_issue(client, issue_number)
-        if matched:
-            return True, "ok"
-        merged = _find_merged_prs_closing_issue(client, issue_number)
-        if merged and DONE_LABEL["merge"] not in labels:
-            return True, "already_merged"
-        return False, "no open or merged PR with Closes #N"
-    return False, f"unknown phase {phase}"
+    ctx = PreconditionContext(
+        issue=issue, labels=labels, client=client, issue_number=issue_number
+    )
+    return evaluate(ph, ctx, cfg)
 
 
 def _ensure_comment(
@@ -1171,10 +1166,13 @@ def _apply_repair(
 
     body = get_config().language.message("queue.intake_repair", reason=reason)
     _ensure_comment(client, req.issue, request_id, "repair", body)
-    apply_redispatch_labels(client, req.issue, "draft", label_names(issue))
+    design_phase = _design_phase_name()
+    if design_phase is None:
+        return
+    apply_redispatch_labels(client, req.issue, design_phase, label_names(issue))
     store.enqueue(
         issue=req.issue,
-        phase="draft",
+        phase=design_phase,
         source="queue-repair",
         actor_kind="automation",
         priority=req.priority,
@@ -1335,7 +1333,10 @@ def dispatch_one(
         if issue is None:
             continue
         decision = deterministic_decision(
-            req, issue, open_issues=open_issues, force=store.is_force(snap, rid)
+            req,
+            issue,
+            open_issues=open_issues,
+            force=store.is_force(snap, rid),
         )
         if decision.kind == "keep":
             continue
@@ -1565,7 +1566,10 @@ def dispatch_one(
             except Exception:
                 continue
             decision = deterministic_decision(
-                req, issue, open_issues=open_issues, force=store.is_force(snap, rid)
+                req,
+                issue,
+                open_issues=open_issues,
+                force=store.is_force(snap, rid),
             )
             if decision.kind == "repair":
                 _apply_repair(store, client, rid, req, issue, decision.reason)
@@ -1583,7 +1587,7 @@ def dispatch_one(
                     comment=decision.comment,
                 )
                 continue
-            ok, _why = _phase_preconditions(req.phase, issue, client, req.issue)
+            ok, _why = phase_preconditions(req.phase, issue, client, req.issue)
             if not ok:
                 continue
 
@@ -1593,7 +1597,8 @@ def dispatch_one(
                 if after_result.decision == "BLOCK":
                     continue
 
-            if req.phase == "develop":
+            impl_phase = _primary_impl_phase_name()
+            if impl_phase and req.phase == impl_phase:
                 # P0 requires: re-check deletion referrers on the dispatch-time base (#3953).
                 refs = deletion_references_for_body(str(issue.get("body") or ""))
                 if refs:
@@ -1749,9 +1754,9 @@ def _cmd_status(args: argparse.Namespace) -> int:
             last = client.issue_get(snap.last_issue, fields=["state", "labels"])
             last_labels = label_names(last)
             last_state = str(last.get("state", "")).upper()
-            _merge_done_lbl2 = DONE_LABEL.get("merge", "")
+            terminal = set(get_config().terminal_labels)
             terminal_ok = last_state == "CLOSED" and (
-                (bool(_merge_done_lbl2) and _merge_done_lbl2 in last_labels)
+                bool(last_labels & terminal)
                 or bool(last_labels & get_terminal_without_merge())
             )
             if not terminal_ok and milestone_last_issue_terminal_ok(last_labels):
@@ -2043,14 +2048,16 @@ def _cmd_audit(args: argparse.Namespace) -> int:
     if not offline:
         client = get_forge(repo=REPO)
         in_flight: set[int] = set()
-        for label in (
-            READY_LABEL["draft"],
-            RUNNING_LABEL["draft"],
-            READY_LABEL["develop"],
-            RUNNING_LABEL["develop"],
-            READY_LABEL["merge"],
-            RUNNING_LABEL["merge"],
-        ):
+        labels_to_check: list[str] = []
+        for ph in get_config().phases:
+            if (
+                ph.role == "design"
+                or ph.writes_files
+                or "closing_pr_exists" in ph.advance_when
+            ):
+                ready, running, _ = get_config().phase_labels(ph.name)
+                labels_to_check.extend([ready, running])
+        for label in labels_to_check:
             try:
                 issues = client.list_issues(label, state="open")
             except Exception as exc:

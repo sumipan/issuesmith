@@ -92,6 +92,31 @@ def test_deterministic_decision_repair_for_sub_with_empty_allow_paths():
     assert decision.add_rejected_label is False
 
 
+def test_deterministic_decision_sub_without_scope_milestone_rejects():
+    req = QueueRequest(
+        "11111111-1111-1111-1111-111111111111",
+        1,
+        "sub",
+        "s",
+        "automation",
+        "low",
+        _NOW,
+        ("bot",),
+    )
+    decision = deterministic_decision(
+        req,
+        {
+            "state": "OPEN",
+            "title": "x",
+            "body": _VALID_BODY,
+            "labels": [{"name": "issuesmith:draft-done"}],
+        },
+    )
+    assert decision.kind == "rejected"
+    assert decision.add_rejected_label is True
+    assert "scope:milestone" in decision.reason
+
+
 def test_deterministic_decision_draft_missing_yaml_keeps():
     req = QueueRequest(
         "11111111-1111-1111-1111-111111111111",

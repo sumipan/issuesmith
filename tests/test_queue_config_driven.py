@@ -6,6 +6,7 @@ import pytest
 import yaml
 
 from issuesmith.config import PhaseConfig, get_config, reset_config_cache
+from tests.conftest import NEXUS_TEST_PHASES
 
 
 @pytest.fixture(autouse=True)
@@ -16,6 +17,8 @@ def _clear_cache(tmp_path, monkeypatch):
 
 
 def _write_cfg(tmp_path, monkeypatch, payload: dict) -> None:
+    if "phases" not in payload:
+        payload = {**payload, "phases": NEXUS_TEST_PHASES}
     cfg_path = tmp_path / "issuesmith.yaml"
     cfg_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
     monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
@@ -27,18 +30,23 @@ def _write_cfg(tmp_path, monkeypatch, payload: dict) -> None:
 # ---------------------------------------------------------------------------
 
 def test_phase_config_has_handler_and_preconditions():
-    pc = PhaseConfig(name="draft", role="design", entry_step="x")
-    assert pc.handler == ""
+    pc = PhaseConfig(
+        name="draft",
+        role="design",
+        entry_step="x",
+        handler="brushup",
+    )
+    assert pc.handler == "brushup"
     assert pc.preconditions == ()
 
 
 def test_phase_config_with_handler_and_preconditions():
     pc = PhaseConfig(
         name="develop", role="implementation", entry_step="x",
-        handler="impl", preconditions=("draft",),
+        handler="impl", preconditions=("draft-done",),
     )
     assert pc.handler == "impl"
-    assert pc.preconditions == ("draft",)
+    assert pc.preconditions == ("draft-done",)
 
 
 # ---------------------------------------------------------------------------
@@ -51,34 +59,47 @@ def test_label_dicts_derived_from_config_namespace(tmp_path, monkeypatch):
         "repo": "test/repo",
         "label_namespace": "testns",
         "phases": [
-            {"name": "alpha", "role": "design", "entry_step": "s1"},
-            {"name": "beta", "role": "implementation", "entry_step": "s2"},
+            {
+                "name": "alpha",
+                "role": "design",
+                "entry_step": "s1",
+                "handler": "brushup",
+                "advance_when": ["deps_terminal"],
+            },
+            {
+                "name": "beta",
+                "role": "implementation",
+                "entry_step": "s2",
+                "handler": "impl",
+                "advance_when": ["deps_terminal"],
+            },
         ],
+    })
+    import issuesmith.queue_triage as qt
+
+    assert qt.READY_LABEL == {"alpha": "testns:alpha-ready", "beta": "testns:beta-ready"}
+    assert qt.RUNNING_LABEL == {"alpha": "testns:alpha-running", "beta": "testns:beta-running"}
+    assert qt.DONE_LABEL == {"alpha": "testns:alpha-done", "beta": "testns:beta-done"}
+
+
+def test_terminal_without_merge_uses_config(tmp_path, monkeypatch):
+    """get_terminal_without_merge includes declared terminal_without_merge labels."""
+    _write_cfg(tmp_path, monkeypatch, {
+        "repo": "test/repo",
+        "label_namespace": "testns",
+        "terminal_without_merge": ["rejected", "superseded"],
+        "terminal_labels": ["testns:merge-done", "bump:done"],
     })
     from importlib import reload
 
     import issuesmith.queue_triage as qt
     reload(qt)
     try:
-        assert qt.READY_LABEL == {"alpha": "testns:alpha-ready", "beta": "testns:beta-ready"}
-        assert qt.RUNNING_LABEL == {"alpha": "testns:alpha-running", "beta": "testns:beta-running"}
-        assert qt.DONE_LABEL == {"alpha": "testns:alpha-done", "beta": "testns:beta-done"}
-    finally:
-        reload(qt)  # restore defaults for other tests
-
-
-def test_terminal_without_merge_uses_config(tmp_path, monkeypatch):
-    """TERMINAL_WITHOUT_MERGE includes sub-phase labels from config."""
-    _write_cfg(tmp_path, monkeypatch, {"repo": "test/repo"})
-    from importlib import reload
-
-    import issuesmith.queue_triage as qt
-    reload(qt)
-    try:
-        twm = qt.TERMINAL_WITHOUT_MERGE
-        ns = get_config().label_namespace
-        assert f"{ns}:rejected" in twm
-        assert f"{ns}:superseded" in twm
+        twm = qt.get_terminal_without_merge()
+        assert "testns:rejected" in twm
+        assert "testns:superseded" in twm
+        assert "bump:done" in twm
+        assert "testns:merge-done" not in twm
     finally:
         reload(qt)
 
@@ -91,8 +112,22 @@ def test_build_phases_parses_handler_and_preconditions(tmp_path, monkeypatch):
     _write_cfg(tmp_path, monkeypatch, {
         "repo": "test/repo",
         "phases": [
-            {"name": "draft", "role": "design", "entry_step": "s0", "handler": "brushup", "preconditions": []},
-            {"name": "develop", "role": "implementation", "entry_step": "s1", "handler": "impl", "preconditions": ["draft"]},
+            {
+                "name": "draft",
+                "role": "design",
+                "entry_step": "s0",
+                "handler": "brushup",
+                "preconditions": [],
+                "advance_when": ["deps_terminal"],
+            },
+            {
+                "name": "develop",
+                "role": "implementation",
+                "entry_step": "s1",
+                "handler": "impl",
+                "preconditions": ["draft-done"],
+                "advance_when": ["deps_terminal"],
+            },
         ],
     })
     cfg = get_config()
@@ -101,7 +136,7 @@ def test_build_phases_parses_handler_and_preconditions(tmp_path, monkeypatch):
     assert draft.handler == "brushup"
     assert draft.preconditions == ()
     assert develop.handler == "impl"
-    assert develop.preconditions == ("draft",)
+    assert develop.preconditions == ("draft-done",)
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +173,7 @@ def test_handler_for_failed_step_uses_workflow_yaml(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# _phase_preconditions -- no banned literal label strings in source
+# phase_preconditions -- declaration-driven
 # ---------------------------------------------------------------------------
 
 def test_phase_preconditions_draft_ok_when_no_labels(tmp_path, monkeypatch):
@@ -173,7 +208,13 @@ def test_managed_phases_from_config(tmp_path, monkeypatch):
     _write_cfg(tmp_path, monkeypatch, {
         "repo": "test/repo",
         "phases": [
-            {"name": "alpha", "role": "design", "entry_step": "s1"},
+            {
+                "name": "alpha",
+                "role": "design",
+                "entry_step": "s1",
+                "handler": "brushup",
+                "advance_when": ["deps_terminal"],
+            },
         ],
     })
     from importlib import reload
