@@ -171,6 +171,301 @@ def _extract_file_refs_from_text(text: str) -> set[str]:
     return refs
 
 
+_DEPENDENCY_MISSING_ID = "b1_milestone_subdesign.sibling_new_file_unreferenced_dependency"
+_DEPENDENCY_CYCLE_ID = "b1_milestone_subdesign.dependency_cycle"
+_URL_RE = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]*://\S+")
+_FENCE_LANG_RE = re.compile(r"^(\s*(?:```|~~~))[^\s`]*", re.MULTILINE)
+
+
+def change_rows_with_content(text: str) -> list[tuple[str, str, str, str]]:
+    """``(repo, path, change_type, content)`` for every change-table row in ``text``.
+
+    Rows and order match :func:`extract_change_table_rows`; ``content`` is the
+    4th (description) column, ``""`` when the table has none (#4825).
+    """
+    columns = [c.lower() for c in get_config().language.change_table_columns]
+    content: dict[tuple[str, str], str] = {}
+    for table in re.findall(r"(?:^[ \t]*\|.*(?:\n|\Z))+", text, re.MULTILINE):
+        rows = parse_table_rows(table)
+        if len(rows) <= 1:
+            continue
+        header = [c.lower() for c in rows[0]]
+        idx = [next((i for i, c in enumerate(header) if col in c), None) for col in columns]
+        if any(i is None for i in idx):
+            continue
+        repo_i, path_i, _, content_i = idx
+        for row in rows[1:]:
+            if len(row) <= max(idx):
+                continue
+            key = (row[repo_i].strip().strip("`"), _normalize_path(row[path_i]))
+            content.setdefault(key, row[content_i].strip())
+    return [
+        (repo, path, kind, content.get((repo, path), ""))
+        for repo, path, kind in extract_change_table_rows(text)
+    ]
+
+
+def _subsection_text(block: str, name: str) -> str:
+    """Text of the ``**name**`` subsection up to the next sub-design subsection label."""
+    names = "|".join(re.escape(n) for n in get_config().sub_design_subsections)
+    match = re.search(
+        rf"\*\*{re.escape(name)}\*\*(.*?)(?=\*\*(?:{names})\*\*|\Z)",
+        block,
+        re.DOTALL,
+    )
+    return match.group(1) if match else ""
+
+
+def _clean_reference_text(text: str, own_paths: list[str]) -> str:
+    """Drop URLs, code-fence language names and the consumer's own paths."""
+    text = _URL_RE.sub(" ", text)
+    text = _FENCE_LANG_RE.sub(r"\1", text)
+    for path in sorted(own_paths, key=len, reverse=True):
+        text = text.replace(path, " ")
+    return text
+
+
+def _reference_patterns(path: str) -> list[re.Pattern[str]]:
+    """Full path / basename (string boundary) and stem (identifier boundary) matchers."""
+    name = Path(path).name
+    stem = Path(path).stem
+    tail = r"(?![\w/-]|\.\w)"
+    patterns = [
+        re.compile(rf"(?<![\w./-]){re.escape(path)}{tail}"),
+        re.compile(rf"(?<![\w.-]){re.escape(name)}{tail}"),
+    ]
+    if stem:
+        patterns.append(re.compile(rf"(?<![A-Za-z0-9_]){re.escape(stem)}(?![A-Za-z0-9_])"))
+    return patterns
+
+
+def _is_new_kind(change_type: str) -> bool:
+    lowered = change_type.lower()
+    return any(word in lowered for word in get_config().scope_size.new_words)
+
+
+def _infer_dependency_evidence(
+    sub_blocks: list[tuple[int, str]],
+) -> dict[int, dict[int, list[str]]]:
+    """``{consumer: {creator: [referenced new files]}}`` (#4825)."""
+    cfg = get_config()
+    _, policy_name, _, ac_name = cfg.sub_design_subsections
+    rows = {num: change_rows_with_content(block) for num, block in sub_blocks}
+    created = {
+        num: [(repo, path) for repo, path, kind, _ in sub_rows if _is_new_kind(kind)]
+        for num, sub_rows in rows.items()
+    }
+    result: dict[int, dict[int, list[str]]] = {num: {} for num, _ in sub_blocks}
+    for consumer, block in sub_blocks:
+        own = rows[consumer]
+        own_keys = {(repo, path) for repo, path, _, _ in own}
+        own_paths = [path for _, path, _, _ in own]
+        consumer_repos = {repo for repo, _, _, _ in own} or {""}
+        prose = _clean_reference_text(
+            _subsection_text(block, policy_name) + "\n" + _subsection_text(block, ac_name),
+            own_paths,
+        )
+        segments = [(repo, prose) for repo in sorted(consumer_repos)]
+        segments += [
+            (repo, _clean_reference_text(content, own_paths))
+            for repo, _, _, content in own
+            if content
+        ]
+        for creator, files in created.items():
+            if creator == consumer:
+                continue
+            for repo, path in files:
+                if (repo, path) in own_keys:
+                    continue
+                patterns = _reference_patterns(path)
+                if any(
+                    (seg_repo == repo or not seg_repo or not repo)
+                    and any(p.search(text) for p in patterns)
+                    for seg_repo, text in segments
+                ):
+                    found = result[consumer].setdefault(creator, [])
+                    if path not in found:
+                        found.append(path)
+    return result
+
+
+def infer_sub_dependencies(
+    sub_blocks: list[tuple[int, str]],
+) -> dict[int, set[int]]:
+    """consumer sub number -> creator sub numbers.
+
+    A consumer depends on a creator when its design policy, change-content cells
+    or acceptance criteria reference a file the creator's change table adds (#4825).
+    """
+    return {
+        consumer: set(creators)
+        for consumer, creators in _infer_dependency_evidence(sub_blocks).items()
+    }
+
+
+def find_dependency_cycles(graph: dict[int, set[int]]) -> list[list[int]]:
+    """Strongly connected components with a cycle (size >= 2 or a self loop), sorted."""
+    nodes = sorted(set(graph) | {n for targets in graph.values() for n in targets})
+    index: dict[int, int] = {}
+    low: dict[int, int] = {}
+    stack: list[int] = []
+    on_stack: set[int] = set()
+    components: list[list[int]] = []
+
+    def visit(node: int) -> None:
+        index[node] = low[node] = len(index)
+        stack.append(node)
+        on_stack.add(node)
+        for nxt in sorted(graph.get(node, ())):
+            if nxt not in index:
+                visit(nxt)
+                low[node] = min(low[node], low[nxt])
+            elif nxt in on_stack:
+                low[node] = min(low[node], index[nxt])
+        if low[node] == index[node]:
+            component: list[int] = []
+            while True:
+                member = stack.pop()
+                on_stack.discard(member)
+                component.append(member)
+                if member == node:
+                    break
+            if len(component) > 1 or node in graph.get(node, ()):
+                components.append(sorted(component))
+
+    for node in nodes:
+        if node not in index:
+            visit(node)
+    return sorted(components)
+
+
+def _cycle_path(graph: dict[int, set[int]], component: list[int]) -> list[int]:
+    """Deterministic closed walk ``[start, ..., start]`` inside ``component``."""
+    start = component[0]
+    members = set(component)
+    path = [start]
+    seen = {start}
+
+    def walk(node: int) -> bool:
+        for nxt in sorted(graph.get(node, set()) & members):
+            if nxt == start:
+                path.append(start)
+                return True
+            if nxt not in seen:
+                seen.add(nxt)
+                path.append(nxt)
+                if walk(nxt):
+                    return True
+                path.pop()
+        return False
+
+    walk(start)
+    return path
+
+
+def _dependency_graph(
+    declared: dict[int, set[int]], inferred: dict[int, set[int]]
+) -> dict[int, set[int]]:
+    graph: dict[int, set[int]] = {}
+    for deps in (declared, inferred):
+        for consumer, creators in deps.items():
+            graph.setdefault(consumer, set()).update(creators)
+    return graph
+
+
+def _missing_dependencies(body: str) -> dict[int, dict[int, list[str]]]:
+    """Inferred edges absent from the sub plan, excluding edges inside a cycle."""
+    evidence = _infer_dependency_evidence(extract_sub_blocks(body))
+    declared = _sub_plan_dependencies(body)
+    inferred = {c: set(creators) for c, creators in evidence.items()}
+    cycles = find_dependency_cycles(_dependency_graph(declared, inferred))
+    component_of = {n: i for i, comp in enumerate(cycles) for n in comp}
+    missing: dict[int, dict[int, list[str]]] = {}
+    for consumer in sorted(evidence):
+        for creator in sorted(evidence[consumer]):
+            if creator in declared.get(consumer, set()):
+                continue
+            if consumer in component_of and component_of.get(creator) == component_of[consumer]:
+                continue
+            missing.setdefault(consumer, {})[creator] = evidence[consumer][creator]
+    return missing
+
+
+def _table_cell_spans(line: str) -> list[tuple[int, int]]:
+    """``(start, end)`` of each cell of a ``| a | b |`` row (same split as parse_table_rows)."""
+    bounds: list[int] = []
+    in_tick = False
+    for i, ch in enumerate(line):
+        if ch == "`" and (in_tick or "`" in line[i + 1 :]):
+            in_tick = not in_tick
+        if ch == "|" and not in_tick:
+            bounds.append(i)
+    edges = [-1, *bounds, len(line)]
+    spans = [(a + 1, b) for a, b in zip(edges, edges[1:])]
+    if spans and not line[slice(*spans[0])].strip():
+        spans = spans[1:]
+    if spans and not line[slice(*spans[-1])].strip():
+        spans = spans[:-1]
+    return spans
+
+
+def apply_inferred_dependency_fixes(body: str) -> tuple[str, list[str]]:
+    """Add missing inferred dependencies to the sub plan; return ``(body, applied rule_ids)``.
+
+    Only the depends-on cell of affected data rows changes; edges that would close a
+    cycle are never written. Idempotent (#4825).
+    """
+    missing = _missing_dependencies(body)
+    if not missing:
+        return body, []
+    cfg = get_config()
+    milestone = re.search(
+        rf"^##\s+{re.escape(cfg.sections['milestone'])}\s*\n", body, re.MULTILINE
+    )
+    if not milestone:
+        return body, []
+    plan = re.compile(
+        rf"^###\s+{re.escape(cfg.sections['sub_plan'])}\s*\n(.*?)(?=^#{{1,3}}\s|\Z)",
+        re.MULTILINE | re.DOTALL,
+    ).search(body, milestone.end())
+    if not plan:
+        return body, []
+    dep_column = cfg.language.sub_plan_columns[4]
+    lines = plan.group(1).splitlines(keepends=True)
+    dep_i: int | None = None
+    num_i = 0
+    changed = False
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped.startswith("|") or re.match(r"^\|[\s:|-]+\|$", stripped):
+            continue
+        cells = parse_table_rows(stripped)[0]
+        if dep_i is None:
+            dep_i = next((i for i, cell in enumerate(cells) if dep_column in cell), None)
+            if dep_i is None:
+                return body, []
+            continue
+        if len(cells) <= dep_i or not cells[num_i].strip().isdigit():
+            continue
+        consumer = int(cells[num_i].strip())
+        if consumer not in missing:
+            continue
+        content = line.rstrip("\r\n")
+        spans = _table_cell_spans(content)
+        if len(spans) <= dep_i:
+            continue
+        start, end = spans[dep_i]
+        numbers = {int(n) for n in re.findall(r"\d+", content[start:end])}
+        numbers |= set(missing[consumer])
+        cell = ", ".join(f"#{n}" for n in sorted(numbers))
+        lines[idx] = content[:start] + f" {cell} " + content[end:] + line[len(content):]
+        changed = True
+    if not changed:
+        return body, []
+    new_body = body[: plan.start(1)] + "".join(lines) + body[plan.end(1) :]
+    return new_body, [_DEPENDENCY_MISSING_ID]
+
+
 class B1MilestoneSubdesignRules:
     def check(self, body: str, labels: list[str]) -> list[Violation]:
         if "scope:milestone" not in labels:
@@ -191,6 +486,7 @@ class B1MilestoneSubdesignRules:
         violations.extend(self._check_behavior_test_in_sibling(
             sub_blocks, _sub_plan_dependencies(body)
         ))
+        violations.extend(self._check_inferred_dependencies(body, sub_blocks))
         for sub_num, block in sub_blocks:
             violations.extend(self._check_sub_ac_contradiction(sub_num, block))
         return violations
@@ -573,6 +869,51 @@ class B1MilestoneSubdesignRules:
                         f" merge the two subs, or make Sub {test_sub} depend on Sub {sub_num}"
                     ),
                 ))
+        return violations
+
+    def _check_inferred_dependencies(
+        self,
+        body: str,
+        sub_blocks: list[tuple[int, str]],
+    ) -> list[Violation]:
+        """Sibling new-file references must be declared; the dependency graph is acyclic (#4825)."""
+        evidence = _infer_dependency_evidence(sub_blocks)
+        declared = _sub_plan_dependencies(body)
+        inferred = {c: set(creators) for c, creators in evidence.items()}
+        graph = _dependency_graph(declared, inferred)
+        plan = get_config().sections["sub_plan"]
+        dep_column = get_config().language.sub_plan_columns[4]
+        violations: list[Violation] = []
+        for consumer, creators in sorted(_missing_dependencies(body).items()):
+            for creator, files in sorted(creators.items()):
+                violations.append(Violation(
+                    rule_id=_DEPENDENCY_MISSING_ID,
+                    severity="fail",
+                    message=(
+                        f"Sub {consumer} references "
+                        + ", ".join(f"`{f}`" for f in files)
+                        + f" created by Sub {creator}, but its {plan} {dep_column}"
+                        f" cell does not list #{creator}"
+                    ),
+                    location=_sub_location(consumer),
+                    auto_fixable=True,
+                    fix_hint=(
+                        f"add #{creator} to the {dep_column} cell of {plan} row {consumer}"
+                    ),
+                ))
+        for component in find_dependency_cycles(graph):
+            walk = " -> ".join(str(n) for n in _cycle_path(graph, component))
+            violations.append(Violation(
+                rule_id=_DEPENDENCY_CYCLE_ID,
+                severity="fail",
+                message=f"sub dependency cycle: {walk}",
+                location=f"## {get_config().sections['milestone']}",
+                auto_fixable=False,
+                fix_hint=(
+                    "merge the subs in the cycle into one sub, or put a compatible stub on"
+                    " the creator side and stage them producer -> consumer"
+                ),
+            ))
         return violations
 
     def _check_sub_ac_contradiction(self, sub_num: int, block: str) -> list[Violation]:

@@ -19,8 +19,17 @@ from ghdag.workflow.gates import GATE_REGISTRY, Violation
 from issuesmith.config import ScopeSizeConfig, get_config
 from issuesmith.context_hook import parse_issue_metadata
 from issuesmith.contract import change_paths_for_repo, extract_change_table_rows
+from issuesmith.gate_rules.b1_milestone_subdesign import (
+    change_rows_with_content,
+    find_dependency_cycles,
+    infer_sub_dependencies,
+)
 
 _MILESTONE_LABEL = "scope:milestone"
+_SPLIT_CONTENT = "split from oversized issue"
+
+# (repo, path, change type, change content) of one parent change-table row.
+_Row = tuple[str, str, str, str]
 
 
 def _sub_header_prefix() -> str:
@@ -142,12 +151,8 @@ def measure_size(body: str, cfg: ScopeSizeConfig | None = None) -> SizeMeasure:
     )
 
 
-def _fix_hint(body: str, measure: SizeMeasure, cfg: ScopeSizeConfig) -> str:
+def _fix_hint(body: str, cfg: ScopeSizeConfig) -> str:
     sections = get_config().sections
-    try:
-        target_repo = str(parse_issue_metadata(body).get("target_repo") or "").strip()
-    except Exception:
-        target_repo = ""
     lines = [
         "Run issuesmith.b1_verify.apply_deterministic_recovery() (or "
         "issuesmith.gate_rules.scope_size.promote_oversized_issue_body() then "
@@ -163,36 +168,31 @@ def _fix_hint(body: str, measure: SizeMeasure, cfg: ScopeSizeConfig) -> str:
         cfg.sub_plan_header,
         "|---|---|---|---|---|",
     ]
-    for i, (concern, paths) in enumerate(measure.concerns.items(), start=1):
-        lines.append(
-            f"| {i} | {_concern_display_name(concern)} | {target_repo} "
-            f"| {', '.join(paths)} | {cfg.no_deps_word} |"
-        )
+    lines.extend(_plan_rows(*_split_plan(body, cfg), cfg))
     return "\n".join(lines)
 
 
-def _rows_by_concern(
-    body: str, cfg: ScopeSizeConfig
-) -> dict[str, list[tuple[str, str, str]]]:
+def _rows_by_concern(body: str, cfg: ScopeSizeConfig) -> dict[str, list[_Row]]:
     """Group every change-table row by parent directory (file-union complete).
 
     Unlike :func:`measure_size`, excluded prefixes are kept so promoted sub
-    designs cover the full parent change table.
+    designs cover the full parent change table. Rows keep the change-content
+    column so sub designs (and dependency inference) see it (#4825).
     """
     seen: set[tuple[str, str]] = set()
-    by_parent: dict[str, list[tuple[str, str, str]]] = {}
-    for repo, path, change_type in extract_change_table_rows(body):
+    by_parent: dict[str, list[_Row]] = {}
+    for repo, path, change_type, content in change_rows_with_content(body):
         key = (repo, path)
         if key in seen:
             continue
         seen.add(key)
         parent = posixpath.dirname(path) or "."
-        by_parent.setdefault(parent, []).append((repo, path, change_type))
+        by_parent.setdefault(parent, []).append((repo, path, change_type, content))
     measured = measure_size(body, cfg)
-    ordered: dict[str, list[tuple[str, str, str]]] = {}
+    ordered: dict[str, list[_Row]] = {}
     consumed: set[str] = set()
     for concern, paths in measured.concerns.items():
-        rows_for_concern: list[tuple[str, str, str]] = []
+        rows_for_concern: list[_Row] = []
         for path in paths:
             parent = posixpath.dirname(path) or "."
             if parent in consumed:
@@ -212,7 +212,7 @@ def _rows_by_concern(
 def _build_sub_block(
     num: int,
     concern: str,
-    rows: list[tuple[str, str, str]],
+    rows: list[_Row],
     *,
     target_repo: str,
     subsections: tuple[str, ...],
@@ -225,12 +225,12 @@ def _build_sub_block(
         _change_table_header(),
         "|---|---|---|---|",
     ]
-    paths = [path for _, path, _ in rows]
-    for repo, path, change_type in rows:
+    paths = [path for _, path, _, _ in rows]
+    for repo, path, change_type, content in rows:
         repo_cell = repo or target_repo
         table_lines.append(
             f"| `{repo_cell}` | `{path}` | {change_type or 'modify'} "
-            "| split from oversized issue |"
+            f"| {content or _SPLIT_CONTENT} |"
         )
     yaml_paths = "\n".join(f"  - {p}" for p in paths) or "  - []"
     concern = _concern_display_name(concern)
@@ -262,13 +262,13 @@ def _build_sub_block(
 
 
 def _merge_unreadable_concerns(
-    concerns: dict[str, list[tuple[str, str, str]]],
+    concerns: dict[str, list[_Row]],
     *,
     target_repo: str,
     subsections: tuple[str, ...],
     changed_label: str,
     ac_label: str,
-) -> dict[str, list[tuple[str, str, str]]]:
+) -> dict[str, list[_Row]]:
     """Fold concerns whose sub block SUB1 cannot read into a readable one (nexus #4852).
 
     Each concern's sub block is read back with :func:`change_paths_for_repo`
@@ -276,8 +276,8 @@ def _merge_unreadable_concerns(
     readable concern; when none is readable, a single ``.`` concern keeps every
     row so the parent change table stays file-union complete.
     """
-    readable: dict[str, list[tuple[str, str, str]]] = {}
-    orphans: list[tuple[str, str, str]] = []
+    readable: dict[str, list[_Row]] = {}
+    orphans: list[_Row] = []
     for concern, rows in concerns.items():
         block = _build_sub_block(
             1,
@@ -299,6 +299,91 @@ def _merge_unreadable_concerns(
     first = next(iter(readable))
     readable[first].extend(orphans)
     return readable
+
+
+def _merge_dependency_cycles(
+    concerns: list[tuple[str, list[_Row]]],
+    *,
+    target_repo: str,
+) -> tuple[list[tuple[str, list[_Row]]], dict[int, set[int]]]:
+    """Fold each strongly connected component of the inferred graph into one sub (#4825).
+
+    Returns the acyclic concern list and its ``consumer -> creators`` dependencies.
+    """
+    sections = get_config().sections
+    while True:
+        blocks = [
+            (
+                num,
+                _build_sub_block(
+                    num,
+                    concern,
+                    rows,
+                    target_repo=target_repo,
+                    subsections=get_config().sub_design_subsections,
+                    changed_label=sections["changed_files"],
+                    ac_label=sections["acceptance_criteria"],
+                ),
+            )
+            for num, (concern, rows) in enumerate(concerns, start=1)
+        ]
+        deps = infer_sub_dependencies(blocks)
+        cycles = find_dependency_cycles(deps)
+        if not cycles:
+            return concerns, deps
+        component_of = {num: comp for comp in cycles for num in comp}
+        merged: list[tuple[str, list[_Row]]] = []
+        for num, (concern, rows) in enumerate(concerns, start=1):
+            comp = component_of.get(num)
+            if comp is None:
+                merged.append((concern, rows))
+            elif num == comp[0]:
+                merged.append((
+                    " + ".join(_concern_display_name(concerns[n - 1][0]) for n in comp),
+                    [row for n in comp for row in concerns[n - 1][1]],
+                ))
+        concerns = merged
+
+
+def _split_plan(
+    body: str, cfg: ScopeSizeConfig
+) -> tuple[str, list[tuple[str, list[_Row]]], dict[int, set[int]]]:
+    """``(target_repo, numbered concerns, dependencies)`` of the promotion split plan."""
+    sections = get_config().sections
+    try:
+        target_repo = str(parse_issue_metadata(body).get("target_repo") or "").strip()
+    except Exception:
+        target_repo = ""
+    concerns = _rows_by_concern(body, cfg)
+    if target_repo and concerns:
+        concerns = _merge_unreadable_concerns(
+            concerns,
+            target_repo=target_repo,
+            subsections=get_config().sub_design_subsections,
+            changed_label=sections["changed_files"],
+            ac_label=sections["acceptance_criteria"],
+        )
+    merged, deps = _merge_dependency_cycles(list(concerns.items()), target_repo=target_repo)
+    return target_repo, merged, deps
+
+
+def _plan_rows(
+    target_repo: str,
+    concerns: list[tuple[str, list[_Row]]],
+    deps: dict[int, set[int]],
+    cfg: ScopeSizeConfig,
+) -> list[str]:
+    """Sub-plan data rows; depends-on lists creators as ``#N`` (ascending)."""
+    lines: list[str] = []
+    for num, (concern, rows) in enumerate(concerns, start=1):
+        paths = ", ".join(path for _, path, _, _ in rows)
+        creators = sorted(deps.get(num, set()))
+        dep_cell = ", ".join(f"#{n}" for n in creators) or cfg.no_deps_word
+        lines.append(
+            f"| {num} | {_concern_display_name(concern)} | {target_repo} "
+            f"| {paths} | {dep_cell} |"
+        )
+    return lines
 
 
 def _upsert_preserving_preamble(body: str, heading: str, content: str) -> str:
@@ -336,23 +421,9 @@ def promote_oversized_issue_body(body: str, cfg: ScopeSizeConfig | None = None) 
     ac_label = sections["acceptance_criteria"]
     subsections = get_config().sub_design_subsections
 
-    concerns = _rows_by_concern(body, cfg)
+    target_repo, concerns, deps = _split_plan(body, cfg)
     if not concerns:
         return relocate_sub_plan(normalize_sub_headers(body))
-
-    try:
-        target_repo = str(parse_issue_metadata(body).get("target_repo") or "").strip()
-    except Exception:
-        target_repo = ""
-
-    if target_repo:
-        concerns = _merge_unreadable_concerns(
-            concerns,
-            target_repo=target_repo,
-            subsections=subsections,
-            changed_label=changed_label,
-            ac_label=ac_label,
-        )
 
     design = get_section(body, design_name) or ""
     existing_subs = SUB_HEADER_RE.findall(design)
@@ -363,14 +434,10 @@ def promote_oversized_issue_body(body: str, cfg: ScopeSizeConfig | None = None) 
         f"### {plan_name}",
         cfg.sub_plan_header,
         "|---|---|---|---|---|",
+        *_plan_rows(target_repo, concerns, deps, cfg),
     ]
     sub_blocks: list[str] = []
-    for i, (concern, rows) in enumerate(concerns.items(), start=1):
-        paths = ", ".join(path for _, path, _ in rows)
-        plan_lines.append(
-            f"| {i} | {_concern_display_name(concern)} | {target_repo} "
-            f"| {paths} | {cfg.no_deps_word} |"
-        )
+    for i, (concern, rows) in enumerate(concerns, start=1):
         sub_blocks.append(
             _build_sub_block(
                 i,
@@ -432,7 +499,7 @@ class ScopeSizeRules:
 
         rows = _counted_rows(body, cfg)
         measure = measure_size(body, cfg)
-        fix_hint = _fix_hint(body, measure, cfg)
+        fix_hint = _fix_hint(body, cfg)
 
         def _violation(rule_id: str, message: str) -> Violation:
             return Violation(
