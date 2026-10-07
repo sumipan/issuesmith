@@ -9,7 +9,6 @@ from issuesmith.projection import project
 from issuesmith.queue import phase_preconditions, redispatch_label_plan
 from issuesmith.queue_triage import get_terminal_without_merge
 
-
 CORKLAB_PHASES = [
     {
         "name": "develop",
