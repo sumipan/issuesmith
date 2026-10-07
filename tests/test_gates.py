@@ -119,6 +119,31 @@ def test_check_pr_scope_returns_verdict_failed_when_out_of_scope() -> None:
     assert any("out of scope" in r for r in result.reasons)
 
 
+def test_check_pr_scope_dot_slash_allow_path_passes() -> None:
+    """#4813: ``./`` prefixed allow_paths match diff filenames without the prefix."""
+    result = check_pr_scope(["README.md"], ["./README.md"], [])
+    assert result.passed is True
+
+
+def test_pr_scope_gate_allows_dot_slash_allow_path(tmp_path: Path) -> None:
+    """#4813: PrScopeGate treats ``./README.md`` as allowing ``README.md``."""
+    from issuesmith.gates.pr_scope import PrScopeGate
+
+    gate = PrScopeGate(tmp_path, ["./README.md"], "main")
+    with patch("issuesmith.gates.worktree.changed_files", return_value=["README.md"]):
+        assert gate.check("", []) == []
+
+
+def test_pr_scope_gate_still_rejects_other_file_with_dot_slash_allow(tmp_path: Path) -> None:
+    from issuesmith.gates.pr_scope import PrScopeGate
+
+    gate = PrScopeGate(tmp_path, ["./README.md"], "main")
+    with patch("issuesmith.gates.worktree.changed_files", return_value=["src/a.py"]):
+        violations = gate.check("", [])
+    assert [v.location for v in violations] == ["src/a.py"]
+    assert violations[0].rule_id == "pr_scope.out_of_allow"
+
+
 # ---------------------------------------------------------------------------
 # check_m2
 # ---------------------------------------------------------------------------

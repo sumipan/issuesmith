@@ -24,6 +24,7 @@ from issuesmith.pr_scope import (
     check_pr_scope_with_derived,
     derived_allow_paths_from_result,
     find_pr_for_branch,
+    normalize_allow_path,
     pr_diff_lines,
     unchecked_ac_count,
 )
@@ -424,3 +425,88 @@ def test_check_pr_scope_with_derived_reports_forbidden_path() -> None:
     assert violations[0].rule_id == "pr_diff_scope.forbidden_path"
     assert "jobs/exec.jsonl" in (violations[0].location or "")
 
+
+
+# --- #4813: allow_paths normalization (leading ./ and normpath) ---
+
+
+def _issue_body_with_allow_paths(*paths: str) -> str:
+    lines = "".join(f"  - {p!r}\n" for p in paths)
+    return f"```yaml\ntarget_repo: sumipan/issuesmith\nallow_paths:\n{lines}```\n"
+
+
+def test_normalize_allow_path_strips_leading_dot_slash() -> None:
+    assert normalize_allow_path("./CHANGELOG.md") == "CHANGELOG.md"
+    assert normalize_allow_path("./docs/*.md") == "docs/*.md"
+    assert normalize_allow_path("src//pkg/./mod.py") == "src/pkg/mod.py"
+    assert normalize_allow_path("src/**") == "src/**"
+
+
+@pytest.mark.parametrize("bad", ["", " ", ".", "./", "/etc/passwd", "../README.md", "src/../../x"])
+def test_normalize_allow_path_rejects_invalid(bad: str) -> None:
+    with pytest.raises(ValueError):
+        normalize_allow_path(bad)
+
+
+def test_allow_paths_from_issue_body_normalizes_dot_slash() -> None:
+    body = _issue_body_with_allow_paths("./CHANGELOG.md", "src/**")
+    assert allow_paths_from_issue_body(body) == ["CHANGELOG.md", "src/**"]
+
+
+@pytest.mark.parametrize("bad", ["/etc/passwd", "../README.md", "."])
+def test_allow_paths_from_issue_body_rejects_invalid(bad: str) -> None:
+    body = _issue_body_with_allow_paths("src/**", bad)
+    with pytest.raises(ValueError):
+        allow_paths_from_issue_body(body)
+
+
+def test_check_pr_diff_scope_dot_slash_allow_path_matches() -> None:
+    violations = check_pr_diff_scope(["CHANGELOG.md"], ["./CHANGELOG.md"], [])
+    assert not any(v.rule_id == "pr_diff_scope.out_of_scope" for v in violations)
+
+
+def test_check_pr_diff_scope_dot_slash_glob_matches() -> None:
+    assert check_pr_diff_scope(["docs/a.md"], ["./docs/*.md"], []) == []
+
+
+def test_check_pr_diff_scope_dot_slash_filename_keeps_original_location() -> None:
+    assert check_pr_diff_scope(["./src/a.py"], ["src/**"], []) == []
+    violations = check_pr_diff_scope(["./docs/b.md"], ["src/**"], [])
+    assert len(violations) == 1
+    assert violations[0].location == "./docs/b.md"
+    assert "./docs/b.md" in violations[0].message
+
+
+def test_check_pr_diff_scope_normalized_forbidden_still_detected() -> None:
+    violations = check_pr_diff_scope(
+        ["./jobs/exec.jsonl"], ["./jobs/**"], list(DEFAULT_FORBIDDEN_PR_PATHS)
+    )
+    assert len(violations) == 1
+    assert violations[0].rule_id == "pr_diff_scope.forbidden_path"
+
+
+def test_publish_only_exceptions_kept_with_dot_slash_allow_paths() -> None:
+    entries = [_FILE_PYPROJECT_VERSION_ONLY, _FILE_CHANGELOG_APPEND_ONLY]
+    violations = check_pr_diff_scope(
+        _filenames(*entries),
+        allow_paths=["./src/**", "./tests/**"],
+        forbidden_patterns=list(DEFAULT_FORBIDDEN_PR_PATHS),
+        file_entries=entries,
+    )
+    assert violations == []
+
+
+def test_derived_allow_paths_from_result_normalizes_dot_slash(tmp_path: Path) -> None:
+    path = tmp_path / "p1.md"
+    path.write_text("derived_allow_paths:\n  - ./tests/test_foo.py\n", encoding="utf-8")
+    assert derived_allow_paths_from_result(path) == ["tests/test_foo.py"]
+
+
+@pytest.mark.parametrize("bad", [".", "../x.py", "tests/../../x.py"])
+def test_derived_allow_paths_from_result_rejects_like_allow_paths(
+    tmp_path: Path, bad: str
+) -> None:
+    path = tmp_path / "p1.md"
+    path.write_text(f"derived_allow_paths:\n  - {bad}\n", encoding="utf-8")
+    with pytest.raises(DerivedAllowPathsError):
+        derived_allow_paths_from_result(path)
