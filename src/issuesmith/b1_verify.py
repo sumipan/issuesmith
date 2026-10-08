@@ -169,6 +169,7 @@ def apply_deterministic_recovery(
        Remaining non-auto-fixable violations are returned as ``llm_violations``.
     """
     from issuesmith.gate_rules.b1_milestone_subdesign import (
+        PLACEHOLDER_DESIGN_ID,
         apply_inferred_dependency_fixes,
     )
     from issuesmith.gate_rules.milestone_consistency import (
@@ -235,6 +236,11 @@ def apply_deterministic_recovery(
             unresolved_reason = (
                 "verify still failing after deterministic recovery: "
                 + ", ".join(sorted(remaining_ids))
+            )
+        if PLACEHOLDER_DESIGN_ID in remaining_ids:
+            unresolved_reason = (
+                (unresolved_reason or "")
+                + "; promoted sub designs need LLM design (b1_milestone_subdesign.placeholder_design)"
             )
 
     llm_violations = tuple(v for v in remaining if not v.auto_fixable)

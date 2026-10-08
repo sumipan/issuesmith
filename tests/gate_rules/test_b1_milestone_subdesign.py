@@ -1639,3 +1639,263 @@ def test_behavior_test_in_sibling_deletion_no_false_positive_other_dir():
         ("tests", [("tests/tools/bar/test_b.py", "Add", "test")]),
     ])
     assert _sibling_hits(body) == []
+
+
+def test_promoted_oversized_body_reports_placeholder_design_per_sub():
+    """AC (#4915): each promoted sub gets exactly one placeholder_design violation."""
+    from issuesmith.gate_rules.b1_milestone_subdesign import PLACEHOLDER_DESIGN_ID
+    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
+
+    promoted = promote_oversized_issue_body(_oversized_non_milestone_body())
+    hits = [v for v in _check(promoted, MILESTONE_LABELS) if v.rule_id == PLACEHOLDER_DESIGN_ID]
+    assert len(hits) == 3
+    assert all(v.auto_fixable is False for v in hits)
+    assert all(v.fix_hint for v in hits)
+
+
+def test_placeholder_design_cleared_when_one_sub_is_filled_in():
+    """AC (#4915): a sub with real design and extra AC no longer reports placeholder."""
+    from issuesmith.gate_rules.b1_milestone_subdesign import (
+        PLACEHOLDER_AC_TEMPLATES,
+        PLACEHOLDER_DESIGN_ID,
+    )
+    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
+
+    promoted = promote_oversized_issue_body(_oversized_non_milestone_body())
+    scope, policy, changed, ac = get_config().sub_design_subsections
+    concern = "src/a"
+    real_ac = [
+        PLACEHOLDER_AC_TEMPLATES[0].format(concern=concern, num=1),
+        "Run unit tests for module a",
+    ]
+    ac_lines = "\n".join(f"- [ ] {line}" for line in real_ac)
+    replacement = f"""\
+#### {SUB}1: {concern}
+
+**{scope}**: Real scope for concern a
+**{policy}**: Implement module a with shared helpers
+**{changed}**:
+| {_TABLE_HEADER} |
+|---|---|---|---|
+| `sumipan/nexus` | `src/a/f1.py` | Modify | implement f1 |
+| `sumipan/nexus` | `src/a/f2.py` | Modify | implement f2 |
+| `sumipan/nexus` | `src/a/f3.py` | Modify | implement f3 |
+
+**{ac}**:
+{ac_lines}
+"""
+    design_hdr = f"## {get_config().sections['design']}"
+    design = promoted.split(design_hdr, 1)[1]
+    first_sub_end = design.find(f"#### {SUB}2:")
+    patched = (
+        promoted[: promoted.index(design_hdr) + len(design_hdr)]
+        + "\n\n"
+        + replacement
+        + design[first_sub_end:]
+    )
+    hits = [v for v in _check(patched, MILESTONE_LABELS) if v.rule_id == PLACEHOLDER_DESIGN_ID]
+    assert all("Sub 1" not in v.message for v in hits)
+    assert len(hits) == 2
+
+
+def _minimal_milestone_with_sub(block: str) -> str:
+    return f"""\
+```yaml
+target_repo: sumipan/nexus
+base_branch: main
+allow_paths:
+  - tools/foo/**
+```
+
+## Design
+
+{block}
+
+## Milestone
+
+### Sub-issue Plan
+| # | Title | c5185_c5BB9 | Dependency |
+|---|--------|------|------|
+| 1 | foo | scope1 | None |
+
+## Changed Files
+| {_TABLE_HEADER} |
+|---|---|---|---|
+| `sumipan/nexus` | `tools/foo/a.py` | Add | add a |
+
+## Acceptance Criteria
+
+```yaml
+paths_must_exist:
+  - tools/foo/a.py
+```
+"""
+
+
+def test_placeholder_design_detects_scope_marker_only():
+    from issuesmith.gate_rules.b1_milestone_subdesign import (
+        PLACEHOLDER_DESIGN_ID,
+        PLACEHOLDER_DESIGN_MARKER,
+    )
+
+    scope, policy, changed, ac = get_config().sub_design_subsections
+    block = f"""\
+#### {SUB}1: foo
+
+**{scope}**: Real scope text here
+**{policy}**: {PLACEHOLDER_DESIGN_MARKER} `tools/foo`
+**{changed}**:
+| {_TABLE_HEADER} |
+|---|---|---|---|
+| `sumipan/nexus` | `tools/foo/a.py` | Add | concrete change description |
+
+**{ac}**:
+- [ ] First real acceptance criterion alpha
+- [ ] Second real acceptance criterion beta
+- [ ] Third real acceptance criterion gamma
+"""
+    hits = [
+        v
+        for v in _check(_minimal_milestone_with_sub(block), MILESTONE_LABELS)
+        if v.rule_id == PLACEHOLDER_DESIGN_ID
+    ]
+    assert len(hits) == 1
+    assert "scope/design policy marker" in hits[0].message
+
+
+def test_placeholder_design_detects_change_content_only():
+    from issuesmith.gate_rules.b1_milestone_subdesign import (
+        PLACEHOLDER_CHANGE_CONTENT,
+        PLACEHOLDER_DESIGN_ID,
+    )
+
+    scope, policy, changed, ac = get_config().sub_design_subsections
+    block = f"""\
+#### {SUB}1: foo
+
+**{scope}**: Real scope text here
+**{policy}**: Real design policy without marker prefix
+**{changed}**:
+| {_TABLE_HEADER} |
+|---|---|---|---|
+| `sumipan/nexus` | `tools/foo/a.py` | Add | {PLACEHOLDER_CHANGE_CONTENT} |
+
+**{ac}**:
+- [ ] First real acceptance criterion alpha
+- [ ] Second real acceptance criterion beta
+- [ ] Third real acceptance criterion gamma
+"""
+    hits = [
+        v
+        for v in _check(_minimal_milestone_with_sub(block), MILESTONE_LABELS)
+        if v.rule_id == PLACEHOLDER_DESIGN_ID
+    ]
+    assert len(hits) == 1
+    assert "change content" in hits[0].message
+
+
+def test_placeholder_design_detects_template_ac_only():
+    from issuesmith.gate_rules.b1_milestone_subdesign import (
+        PLACEHOLDER_AC_TEMPLATES,
+        PLACEHOLDER_DESIGN_ID,
+    )
+
+    scope, policy, changed, ac = get_config().sub_design_subsections
+    concern = "tools/foo"
+    ac_lines = "\n".join(
+        f"- [ ] {tpl.format(concern=concern, num=1)}" for tpl in PLACEHOLDER_AC_TEMPLATES
+    )
+    block = f"""\
+#### {SUB}1: foo
+
+**{scope}**: Real scope text here
+**{policy}**: Real design policy without marker prefix
+**{changed}**:
+| {_TABLE_HEADER} |
+|---|---|---|---|
+| `sumipan/nexus` | `tools/foo/a.py` | Add | concrete change description |
+
+**{ac}**:
+{ac_lines}
+"""
+    hits = [
+        v
+        for v in _check(_minimal_milestone_with_sub(block), MILESTONE_LABELS)
+        if v.rule_id == PLACEHOLDER_DESIGN_ID
+    ]
+    assert len(hits) == 1
+    assert "template-only AC" in hits[0].message
+
+
+def test_placeholder_design_no_false_positive_marker_mid_sentence():
+    from issuesmith.gate_rules.b1_milestone_subdesign import (
+        PLACEHOLDER_DESIGN_ID,
+        PLACEHOLDER_DESIGN_MARKER,
+    )
+
+    scope, policy, changed, ac = get_config().sub_design_subsections
+    block = f"""\
+#### {SUB}1: foo
+
+**{scope}**: Work continues after {PLACEHOLDER_DESIGN_MARKER} `tools/foo` in prose
+**{policy}**: Real design policy
+**{changed}**:
+| {_TABLE_HEADER} |
+|---|---|---|---|
+| `sumipan/nexus` | `tools/foo/a.py` | Add | concrete change description |
+
+**{ac}**:
+- [ ] First real acceptance criterion alpha
+- [ ] Second real acceptance criterion beta
+- [ ] Third real acceptance criterion gamma
+"""
+    hits = [
+        v
+        for v in _check(_minimal_milestone_with_sub(block), MILESTONE_LABELS)
+        if v.rule_id == PLACEHOLDER_DESIGN_ID
+    ]
+    assert hits == []
+
+
+def test_placeholder_design_no_false_positive_mixed_ac():
+    from issuesmith.gate_rules.b1_milestone_subdesign import (
+        PLACEHOLDER_AC_TEMPLATES,
+        PLACEHOLDER_DESIGN_ID,
+    )
+
+    scope, policy, changed, ac = get_config().sub_design_subsections
+    concern = "tools/foo"
+    block = f"""\
+#### {SUB}1: foo
+
+**{scope}**: Real scope text here
+**{policy}**: Real design policy without marker prefix
+**{changed}**:
+| {_TABLE_HEADER} |
+|---|---|---|---|
+| `sumipan/nexus` | `tools/foo/a.py` | Add | concrete change description |
+
+**{ac}**:
+- [ ] {PLACEHOLDER_AC_TEMPLATES[0].format(concern=concern, num=1)}
+- [ ] Real acceptance criterion beyond templates
+- [ ] Another real acceptance criterion item
+"""
+    hits = [
+        v
+        for v in _check(_minimal_milestone_with_sub(block), MILESTONE_LABELS)
+        if v.rule_id == PLACEHOLDER_DESIGN_ID
+    ]
+    assert hits == []
+
+
+def test_placeholder_design_skipped_without_milestone_label():
+    from issuesmith.gate_rules.b1_milestone_subdesign import PLACEHOLDER_DESIGN_ID
+    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
+
+    promoted = promote_oversized_issue_body(_oversized_non_milestone_body())
+    hits = [
+        v
+        for v in _check(promoted, NON_MILESTONE_LABELS)
+        if v.rule_id == PLACEHOLDER_DESIGN_ID
+    ]
+    assert hits == []
