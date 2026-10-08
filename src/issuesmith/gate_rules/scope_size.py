@@ -166,7 +166,7 @@ def _fix_hint(body: str, cfg: ScopeSizeConfig) -> str:
             f"That helper adds `## {sections['milestone']}` > `### {sections['sub_plan']}`, "
             f"`#### {_sub_header_prefix()}N: <title>` blocks under `## {sections['design']}` with "
             + ", ".join(f"**{name}**" for name in get_config().sub_design_subsections)
-            + ", scope:milestone, and the GitHub milestone object. "
+            + f", {_MILESTONE_LABEL}, and the GitHub milestone object. "
             "b1_milestone_subdesign fails when the plan row count and the sub header "
             "count differ. Example plan:",
             "",
