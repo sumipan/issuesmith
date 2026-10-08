@@ -387,6 +387,13 @@ _EN_MESSAGES: dict[str, str] = {
     "milestone.v4_missing_dep_section": "V4: has dependencies but no ## {dependencies} section",
     "milestone.v5_dep_self": "V5: dependency points to the parent Issue itself (#{issue})",
     "milestone.v5_dep_milestone": "V5: dependency points to a scope:milestone Issue (#{issue})",
+    "milestone.v6_dep_line_unresolved": "V6: dependency line does not carry #{issue}",
+    "milestone.sub1_polish_timeout": (
+        "## SUB1 error: body polish timed out\n\n"
+        "{sub_prefix}{row}: {title} (timeout {timeout}s). "
+        "No child was created for this row or later rows. "
+        "Re-run SUB1 with resume --from sub1."
+    ),
     # milestone (child Issue body written by SUB1)
     "milestone.child_from_parent_ac": "- [ ] (from parent)",
     "milestone.child_cross_repo_note": (
