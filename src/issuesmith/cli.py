@@ -27,6 +27,7 @@ commands:
   milestone  status / resume / prune / consolidate <child> --into <sibling>
   config show
   observe [--apply] [--json]
+  lanes check [--apply] [--json]  report [--json]
   metrics rework [--since YYYY-MM-DD] [--issue N] [--audit PATH] [--json]
   main-health  (run observe.main_health.command on the base branch, write state)
   apply  ingest-review  (moved to tools/stash/; exit 2)
