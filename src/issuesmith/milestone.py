@@ -500,6 +500,24 @@ def _dependency_refs_unresolved(body: str) -> list[str]:
     return failures
 
 
+def check_v6_dependency_refs(body: str, resolved_dep: str) -> list[str]:
+    """Pre-creation V6: dependency table and dependency line carry resolved #NNNN refs."""
+    lang = _lang()
+    dep = (resolved_dep or "").strip()
+    if not dep or dep == lang.no_deps_word:
+        return []
+    failures = list(_dependency_refs_unresolved(body))
+    dep_col = lang.sub_plan_columns[4]
+    dep_line_re = re.compile(rf"^{re.escape(dep_col)}:\s*(.*)$", re.MULTILINE)
+    line_match = dep_line_re.search(body)
+    line_text = line_match.group(1) if line_match else ""
+    for match in _RESOLVED_ISSUE_REF_RE.finditer(dep):
+        issue_num = match.group(1)
+        if f"#{issue_num}" not in line_text:
+            failures.append(_msg("v6_dep_line_unresolved", issue=issue_num))
+    return failures
+
+
 def validate_children(
     parent: dict[str, Any],
     children: list[dict[str, Any]],
@@ -1556,6 +1574,7 @@ def prevalidate_child_body(
                 labels = []
             if "scope:milestone" in labels:
                 failures.append(_msg("v5_dep_milestone", issue=num))
+        failures.extend(check_v6_dependency_refs(body, resolved_dep))
     return failures
 
 
@@ -1791,6 +1810,8 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
             parent_labels=labels,
             allow_paths=row_allow_paths,
         )
+        draft_body = body
+        body_was_polished = False
 
         if template_name:
             with tempfile.NamedTemporaryFile(
@@ -1806,13 +1827,32 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
                     generated = tmp_path.read_text(encoding="utf-8")
                     if generated.strip():
                         body = generated
+                        body_was_polished = True
             except (ValueError, KeyError) as exc:
                 print(
                     f"PIPELINE_STATUS: SUB1_BODY_INIT_ERROR\n{exc}",
                     file=sys.stderr,
                 )
                 sys.exit(1)
-            except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as exc:
+            except subprocess.TimeoutExpired as exc:
+                print("PIPELINE_STATUS: SUB1_BODY_POLISH_TIMEOUT", file=sys.stderr)
+                print(
+                    f"{sub_prefix}{row.row_num}: {row.title} ({exc.timeout}s)",
+                    file=sys.stderr,
+                )
+                return _sub1_fail(
+                    client,
+                    issue_number,
+                    _msg(
+                        "sub1_polish_timeout",
+                        sub_prefix=sub_prefix,
+                        row=row.row_num,
+                        title=row.title,
+                        timeout=exc.timeout,
+                    ),
+                    status="SUB1_BODY_POLISH_TIMEOUT",
+                )
+            except subprocess.CalledProcessError as exc:
                 print(f"WARN: run-guarded body skipped: {exc}", file=sys.stderr)
                 skip_count += 1
             finally:
@@ -1820,11 +1860,14 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
 
         from issuesmith.gate_rules.cp1 import Cp1Rules
 
-        cp1_hits = [
-            v
-            for v in Cp1Rules().check(body, [])
-            if getattr(v, "rule_id", "") != "cp1.intentional_hold"
-        ]
+        def _sub1_cp1_hits(text: str) -> list:
+            return [
+                v
+                for v in Cp1Rules().check(text, [])
+                if getattr(v, "rule_id", "") != "cp1.intentional_hold"
+            ]
+
+        cp1_hits = _sub1_cp1_hits(body)
         if cp1_hits:
             detail = "\n".join(f"{v.rule_id}: {v.message}" for v in cp1_hits)
             try:
@@ -1848,6 +1891,27 @@ def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepRes
             client=client,
             supported=supported,
         )
+        if pre_fail and body_was_polished:
+            v6_on_polished = check_v6_dependency_refs(body, resolved_dep)
+            if v6_on_polished and any(item in pre_fail for item in v6_on_polished):
+                draft_cp1 = _sub1_cp1_hits(draft_body)
+                if not draft_cp1:
+                    draft_pre_fail = prevalidate_child_body(
+                        body=draft_body,
+                        row_repo=row.repo,
+                        parent_issue_number=issue_number,
+                        resolved_dep=resolved_dep,
+                        client=client,
+                        supported=supported,
+                    )
+                    if not draft_pre_fail:
+                        print(
+                            "WARN: polished body failed V6, falling back to draft "
+                            f"({sub_prefix}{row.row_num})",
+                            file=sys.stderr,
+                        )
+                        body = draft_body
+                        pre_fail = []
         if pre_fail:
             state.validation_failures.append(
                 _msg(

@@ -608,57 +608,163 @@ def test_run_guarded_body_value_error_exits_nonzero(capsys) -> None:
     assert "SUB1_BODY_INIT_ERROR" in captured.err
 
 
-# AC-2: TimeoutExpired in _run_guarded_body → WARN + fallback body, processing continues
-def test_run_guarded_body_timeout_warns_and_continues(capsys) -> None:
-    """AC-2: TimeoutExpired is caught as WARN; fallback body used; loop continues for remaining rows.
-
-    Uses 2 plan rows with 1 existing so that skip_count (1) < table_row_count (2) and the
-    all-skip check does not fire, confirming that TimeoutExpired does NOT cause early exit.
-    """
-    # 2-row plan: "existing row" (already has issue #8000) + "new row" (template fails)
+# AC-2: TimeoutExpired stops SUB1 for this row and later rows
+def test_run_guarded_body_timeout_stops_sub1(capsys) -> None:
+    """TimeoutExpired on row 2 polish: row 1 create only once, SUB1_BODY_POLISH_TIMEOUT."""
     two_row_body = (
         _yaml("sumipan/nexus", ["src/**"])
         + f"\n## {DESIGN}\n\nParent design.\n\n"
-        f"#### {SUB}1: existing row\n\n**Scope**: x\n\n"
-        f"#### {SUB}2: new row\n\n**Scope**: y\n\n"
+        f"#### {SUB}1: first row\n\n**Scope**: x\n\n"
         f"**{CHANGED_FILES}**:\n"
         f"| {_CHANGE_TABLE_HEADER} |\n"
         "|---|---|---|---|\n"
         "| `sumipan/nexus` | `src/a.py` | Modify | x |\n\n"
+        f"#### {SUB}2: second row\n\n**Scope**: y\n\n"
+        f"**{CHANGED_FILES}**:\n"
+        f"| {_CHANGE_TABLE_HEADER} |\n"
+        "|---|---|---|---|\n"
+        "| `sumipan/nexus` | `src/b.py` | Modify | y |\n\n"
         "```yaml\npaths_must_exist: []\n```\n\n"
         f"## {ACCEPTANCE_CRITERIA}\n\n- [x] ok\n\n"
         "## Milestone\n\n"
         "### Sub-issue Plan\n"
         f"| # | {TITLE} | {TARGET_REPOSITORY} | {CONTENT} | {DEPENDENCY} |\n"
         "|---|--------|----------------|------|------|\n"
-        f"| 1 | existing row | `sumipan/nexus` | do | {NONE} |\n"
-        f"| 2 | new row | `sumipan/nexus` | do | {NONE} |\n"
+        f"| 1 | first row | `sumipan/nexus` | do | {NONE} |\n"
+        f"| 2 | second row | `sumipan/nexus` | do | {NONE} |\n"
     )
     client = MagicMock()
-    client.issue_get.side_effect = [
-        _parent_issue_dict(two_row_body),
-        # ensure_sub1_binding for existing row
-        {"number": 3166, "milestone": {"number": 7}},
-        # ensure_sub1_binding for new row + validate_children
-        {"number": 3166, "milestone": {"number": 7}},
-        {
-            "number": 9001,
-            "title": "new row",
-            "body": "",
-            "milestone": {"number": 7},
-            "labels": [{"name": "issuesmith:draft-done"}],
-        },
-    ]
-    # Row 1 ("existing row") is already in the chain
-    client.list_sub_issues = MagicMock(return_value=[{"number": 8000, "title": "existing row"}])
+    parent_dict = _parent_issue_dict(two_row_body)
+
+    def _issue_get(num, **kwargs):
+        if num == 3166:
+            return parent_dict
+        if num == 9001:
+            return {
+                "number": 9001,
+                "title": "first row",
+                "body": "",
+                "milestone": {"number": 7},
+                "labels": [{"name": "issuesmith:draft-done"}],
+            }
+        return {"number": num, "labels": []}
+
+    client.issue_get.side_effect = _issue_get
+    client.list_sub_issues = MagicMock(return_value=[])
     client.issue_create.return_value = 9001
+
+    def _guarded_timeout(ctx, *, row, body_path, template_name):
+        if row.row_num == 2:
+            raise subprocess.TimeoutExpired(cmd="claude", timeout=30)
+        return 0
+
+    with (
+        patch("issuesmith.milestone.get_forge", return_value=client),
+        patch("issuesmith.milestone.resolve_sub1_template", return_value="sub-ready.md"),
+        patch("issuesmith.milestone.run_guarded_sub1_body", side_effect=_guarded_timeout),
+        patch("issuesmith.milestone.ensure_sub1_binding", return_value=True),
+        patch("issuesmith.milestone.get_config") as cfg,
+    ):
+        cfg.return_value.language = _real_get_config().language
+        _cfg_mock(cfg)
+        result = run_sub1_create(_ctx())
+
+    captured = capsys.readouterr()
+    assert result.pipeline_status == "SUB1_BODY_POLISH_TIMEOUT"
+    assert "PIPELINE_STATUS: SUB1_BODY_POLISH_TIMEOUT" in captured.err
+    assert "30" in captured.err
+    assert client.issue_create.call_count == 1
+
+
+def test_run_guarded_body_timeout_on_first_row_never_creates(capsys) -> None:
+    parent_body = _parent_body()
+    client = MagicMock()
+    client.issue_get.return_value = _parent_issue_dict(parent_body)
+    client.list_sub_issues = MagicMock(return_value=[])
 
     with (
         patch("issuesmith.milestone.get_forge", return_value=client),
         patch("issuesmith.milestone.resolve_sub1_template", return_value="sub-ready.md"),
         patch(
             "issuesmith.milestone.run_guarded_sub1_body",
-            side_effect=subprocess.TimeoutExpired(cmd="claude", timeout=30),
+            side_effect=subprocess.TimeoutExpired(cmd="claude", timeout=45),
+        ),
+        patch("issuesmith.milestone.get_config") as cfg,
+    ):
+        cfg.return_value.language = _real_get_config().language
+        _cfg_mock(cfg)
+        result = run_sub1_create(_ctx())
+
+    captured = capsys.readouterr()
+    assert result.pipeline_status == "SUB1_BODY_POLISH_TIMEOUT"
+    assert client.issue_create.call_count == 0
+    assert "45" in captured.err
+
+
+def _parent_body_with_issue_dep() -> str:
+    plan = (
+        "### Sub-issue Plan\n"
+        f"| # | {TITLE} | {TARGET_REPOSITORY} | {CONTENT} | {DEPENDENCY} |\n"
+        "|---|--------|----------------|------|------|\n"
+        f"| 1 | child work | `sumipan/nexus` | do work | #4886 |\n"
+    )
+    return (
+        _yaml("sumipan/nexus", ["src/**"])
+        + f"\n## {DESIGN}\n\nParent design body.\n\n"
+        f"#### {SUB}1: child\n\n"
+        "**Scope**: do work\n\n"
+        f"**{CHANGED_FILES}**:\n"
+        f"| {_CHANGE_TABLE_HEADER} |\n"
+        "|---|---|---|---|\n"
+        f"| `sumipan/nexus` | `src/a.py` | {MODIFY} | x |\n\n"
+        f"## {ACCEPTANCE_CRITERIA}\n\n- [x] ok\n\n"
+        "## Milestone\n\n"
+        + plan
+    )
+
+
+def test_polish_v6_failure_falls_back_to_draft_body(capsys) -> None:
+    """Polish strips #NNNN from deps table; draft passes V6 and is used for create."""
+    parent_body = _parent_body_with_issue_dep()
+    dep_issue = {
+        "title": "prior work",
+        "state": "OPEN",
+        "body": "```yaml\ntarget_repo: sumipan/nexus\n```",
+        "labels": [],
+    }
+    client = MagicMock()
+
+    def _issue_get(num, **kwargs):
+        if num == 4886:
+            return dep_issue
+        if num == 3166:
+            return _parent_issue_dict(parent_body)
+        if num == 9002:
+            return {
+                "number": 9002,
+                "title": "child work",
+                "body": "",
+                "milestone": {"number": 7},
+                "labels": [{"name": "issuesmith:draft-done"}],
+            }
+        return {"number": num, "labels": []}
+
+    client.issue_get.side_effect = _issue_get
+    client.list_sub_issues = MagicMock(return_value=[])
+    client.issue_create.return_value = 9002
+
+    def _guarded_strip_issue_refs(ctx, *, row, body_path, template_name):
+        text = body_path.read_text(encoding="utf-8")
+        broken = text.replace("#4886", "prior work")
+        body_path.write_text(broken, encoding="utf-8")
+        return 0
+
+    with (
+        patch("issuesmith.milestone.get_forge", return_value=client),
+        patch("issuesmith.milestone.resolve_sub1_template", return_value="sub-ready.md"),
+        patch(
+            "issuesmith.milestone.run_guarded_sub1_body",
+            side_effect=_guarded_strip_issue_refs,
         ),
         patch("issuesmith.milestone.ensure_sub1_binding", return_value=True),
         patch(
@@ -672,8 +778,9 @@ def test_run_guarded_body_timeout_warns_and_continues(capsys) -> None:
         run_sub1_create(_ctx())
 
     captured = capsys.readouterr()
-    assert "WARN" in captured.err
-    assert client.issue_create.called
+    assert "falling back to draft" in captured.err
+    create_body = client.issue_create.call_args[0][1]
+    assert "#4886" in create_body
 
 
 # AC-3: All rows fail with CalledProcessError → non-zero exit
