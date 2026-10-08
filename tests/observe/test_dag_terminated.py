@@ -13,7 +13,11 @@ from ghdag.forge import get_forge
 
 from issuesmith.andon import list_open
 from issuesmith.config import get_config, reset_config_cache
-from issuesmith.observe import _detect_dag_terminated, _detect_orphan_exec
+from issuesmith.observe import (
+    _detect_dag_terminated,
+    _detect_dag_terminated_local,
+    _detect_orphan_exec,
+)
 from issuesmith.observe.dag_state import DagState, load_dag_states
 from issuesmith.observe.events import DagTerminatedEvent, OrphanExecEvent
 from issuesmith.observe.policy import (
@@ -70,6 +74,19 @@ def _dag_running_states(issue_num: int) -> dict[int, DagState]:
     key = f"issuesmith:impl:{issue_num}"
     return {
         issue_num: DagState(issue=issue_num, key=key, status="running")
+    }
+
+
+def _dag_deferred_states(issue_num: int) -> dict[int, DagState]:
+    key = f"issuesmith:impl:{issue_num}"
+    return {
+        issue_num: DagState(
+            issue=issue_num,
+            key=key,
+            status="deferred",
+            deferred_step="p2",
+            deferred_uuid="p2",
+        )
     }
 
 
@@ -150,6 +167,43 @@ def test_ac1b_second_observe_does_not_re_raise_andon(env):
     _run_once()
     comments_after_second = client.get_issue_comments(issue_num)
     assert len(comments_after_second) == len(comments_after_first)
+
+
+def test_deferred_only_dag_does_not_emit_terminated(env):
+    """Deferred-only DAG must not produce DagTerminatedEvent."""
+    store, client, _tmp_path = env
+    cfg = get_config()
+    ns = cfg.label_namespace
+
+    issue_num = client.issue_create("deferred only", "body")
+    client.issue_update(issue_num, labels_add=[f"{ns}:develop-running"])
+    store.add_in_flight(issue_num, "claude", role="implementation")
+    snap = store.snapshot()
+
+    dag_states = _dag_deferred_states(issue_num)
+    events = _detect_dag_terminated(snap, client, cfg, cfg.observe.max_api_calls, dag_states)
+    assert events == []
+
+    local_events = _detect_dag_terminated_local(snap, cfg, dag_states)
+    assert local_events == []
+
+
+def test_failed_and_deferred_dag_still_emits_terminated(env):
+    """Failed plus deferred -> DagTerminatedEvent still fires for failed DAG."""
+    store, client, _tmp_path = env
+    cfg = get_config()
+    ns = cfg.label_namespace
+
+    issue_num = client.issue_create("failed and deferred", "body")
+    client.issue_update(issue_num, labels_add=[f"{ns}:develop-running"])
+    store.add_in_flight(issue_num, "claude", role="implementation")
+    snap = store.snapshot()
+
+    events = _detect_dag_terminated(
+        snap, client, cfg, cfg.observe.max_api_calls, _dag_failed_states(issue_num),
+    )
+    assert len(events) == 1
+    assert isinstance(events[0], DagTerminatedEvent)
 
 
 def test_ac2_running_dag_not_released(env):
