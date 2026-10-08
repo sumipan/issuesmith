@@ -441,23 +441,22 @@ def _root_readable_extractor(monkeypatch):
 
 
 @pytest.mark.usefixtures("_root_readable_extractor")
-def test_promote_names_root_level_concern_root():
+def test_promote_reference_rows_ride_first_slice():
     from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
 
     rows = [(f"src/{d}/x.py", _MODIFY) for d in ("a", "b", "c")]
     rows += [("README.md", _MODIFY), ("CHANGELOG.md", _MODIFY)]
     promoted = promote_oversized_issue_body(_body(rows))
     headers = _sub_header_concerns(promoted)
-    assert headers == ["src/a", "src/b", "src/c", "root"]
-    assert "." not in headers
+    assert headers == ["src/a", "src/b", "src/c"]
     assert _plan_concerns(promoted) == headers
-    assert "Concern `root` change table lists every assigned path" in promoted
-    assert "Concern `.`" not in promoted
-    root_block = promoted.split(": root\n", 1)[1]
+    first_block = promoted.split(": src/a\n", 1)[1].split("#### ", 1)[0]
     split_rows = [
-        line for line in root_block.splitlines() if line.startswith(_SUB_ROW_PREFIX)
+        line for line in first_block.splitlines() if line.startswith(_SUB_ROW_PREFIX)
     ]
-    assert [line.split("`")[3] for line in split_rows] == ["README.md", "CHANGELOG.md"]
+    paths = [line.split("`")[3] for line in split_rows]
+    assert "README.md" in paths
+    assert "CHANGELOG.md" in paths
 
 
 @pytest.mark.usefixtures("_root_readable_extractor")
@@ -468,12 +467,7 @@ def test_promote_keeps_subdirectory_concern_names():
     rows += [(f"tests/gate_rules/t{i}.py", _MODIFY) for i in range(3)]
     rows += [("docs/x.md", _MODIFY), ("README.md", _MODIFY)]
     promoted = promote_oversized_issue_body(_body(rows))
-    assert _sub_header_concerns(promoted) == [
-        "src/issuesmith/gate_rules",
-        "tests/gate_rules",
-        "docs",
-        "root",
-    ]
+    assert _sub_header_concerns(promoted) == ["src/issuesmith/gate_rules"]
     block = promoted.split(": src/issuesmith/gate_rules\n", 1)[1].split("#### ", 1)[0]
     assert (
         "Concern `src/issuesmith/gate_rules` change table lists every assigned path"
@@ -569,7 +563,7 @@ def test_promote_without_target_repo_skips_readability_gate(monkeypatch):
     rows += [("README.md", _MODIFY)]
     body = _body(rows).replace("target_repo: sumipan/issuesmith\n", "")
     promoted = scope_size.promote_oversized_issue_body(body)
-    assert _sub_header_concerns(promoted) == ["src/a", "src/b", "src/c", "root"]
+    assert _sub_header_concerns(promoted) == ["src/a", "src/b", "src/c"]
 
 
 # nexus #4825: change content survives promotion and drives the depends-on column.
@@ -685,3 +679,77 @@ def test_promote_dependency_vocabulary_from_pack(tmp_path, monkeypatch):
     promoted = promote_oversized_issue_body(body)
     assert "| # | Title | Repo | What | Needs |" in promoted
     assert [line.rsplit("|", 2)[1].strip() for line in _plan_lines(promoted)] == ["-", "#1", "-"]
+
+
+def test_promotion_declined_when_slice_count_exceeds_max():
+    from issuesmith.gate_rules.scope_size import (
+        promote_oversized_issue_body,
+        promotion_declined,
+    )
+
+    rows = [(f"src/{d}/f{i}.py", _MODIFY) for d in ("a", "b", "c", "d") for i in range(3)]
+    body = _body(rows)
+    assert promotion_declined(body)
+    assert promote_oversized_issue_body(body) == body
+    violations = ScopeSizeRules().check(body, [])
+    hints = "\n".join(v.fix_hint for v in violations if v.rule_id.startswith("scope_size."))
+    assert "not auto-promoted" in hints
+    assert "apply_deterministic_recovery" not in hints.splitlines()[0]
+
+
+def test_promotion_declined_when_no_core_rows():
+    from issuesmith.gate_rules.scope_size import (
+        promote_oversized_issue_body,
+        promotion_declined,
+    )
+
+    rows = [(f"configs/c{i}.yaml", _MODIFY) for i in range(9)]
+    body = _body(rows)
+    assert promotion_declined(body)
+    assert promote_oversized_issue_body(body) == body
+
+
+@pytest.mark.usefixtures("_root_readable_extractor")
+def test_corklab_style_promotion_uses_three_slices():
+    from issuesmith.contract import extract_change_table_rows
+    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
+
+    step_files = [f"tools/corklab/steps/{name}.py" for name in (
+        "b1", "cp1", "cp2", "develop", "drive", "m1", "m2", "merge", "p1", "p2",
+    )]
+    rows: list[tuple[str, str, str]] = [
+        ("tools/corklab/config.py", _MODIFY, "refactor config"),
+        ("tools/corklab/labels.py", _DELETE, "remove labels module"),
+        ("tools/corklab/steps/merge.py", _MODIFY, "drop labels import"),
+    ]
+    for path in step_files:
+        rows.append((path, _MODIFY, "step change"))
+    for name in ("b1.md", "cp1.md", "develop.md"):
+        rows.append((f"workflows/corklab/{name}", _MODIFY, "workflow doc"))
+    rows += [
+        ("workflows/corklab.yml", _MODIFY, "pipeline"),
+        ("configs/corklab.yaml", _MODIFY, "tune config knobs"),
+        ("issuesmith-corklab.yaml", _MODIFY, "consumer"),
+        ("tests/tools/corklab/test_config.py", _MODIFY, "mirror config"),
+        ("tests/tools/corklab/test_steps.py", _MODIFY, "mirror steps"),
+        ("tests/workflows/test_corklab_workflow.py", _MODIFY, "workflow test"),
+        ("docs/CORKLAB.md", _MODIFY, "doc"),
+    ]
+    body = _content_body(rows)
+    promoted = promote_oversized_issue_body(body)
+    headers = _sub_header_concerns(promoted)
+    assert headers == ["tools/corklab", "tools/corklab/steps", "workflows/corklab"]
+    assert "tests/gate_rules" not in headers
+    assert "root" not in headers
+    assert "configs" not in headers
+    corklab_block = promoted.split(": tools/corklab\n", 1)[1].split("#### ", 1)[0]
+    assert "`tools/corklab/labels.py`" in corklab_block
+    assert "`tools/corklab/steps/merge.py`" in corklab_block
+    assert "`tests/tools/corklab/test_config.py`" in corklab_block
+    assert "`configs/corklab.yaml`" in corklab_block
+    parent_paths = {path for _, path, _ in extract_change_table_rows(body)}
+    promoted_paths = {path for _, path, _ in extract_change_table_rows(promoted)}
+    assert parent_paths <= promoted_paths
+    assert len(promoted_paths) == len(
+        {(r, p) for r, p, _ in extract_change_table_rows(promoted)}
+    )
