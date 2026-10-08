@@ -2292,3 +2292,6 @@ def issue_target_meta(issue: dict[str, Any]) -> tuple[str, tuple[str, ...]]:
 def resolve_engine(phase: str) -> str:
     """Public wrapper of ``_resolve_engine``: engine currently assigned to ``phase``'s role."""
     return _resolve_engine(phase)
+
+
+import issuesmith.pins  # noqa: E402,F401  (registers the pins_landed predicate)

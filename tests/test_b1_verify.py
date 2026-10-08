@@ -101,6 +101,38 @@ def test_milestone_subdesign_gate_is_registered():
     assert "b1_milestone_subdesign" in _GATES
 
 
+def test_pin_bump_gate_is_registered():
+    from issuesmith.b1_verify import _GATES
+
+    assert "pin_bump" in _GATES
+
+
+def test_pin_bump_collected_for_feature_pin_change(tmp_path, monkeypatch):
+    import yaml
+
+    from issuesmith.config import reset_config_cache
+    from tests.gate_rules.test_pin_bump import _FEATURE_BODY_PIN
+
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump(
+            {
+                "repo": "sumipan/nexus",
+                "scope_gate": {"enabled": False},
+                "installs": {"issuesmith": "/var/tmp/issuesmith"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    try:
+        rule_ids = {v.rule_id for v in collect_violations(_FEATURE_BODY_PIN, [])}
+    finally:
+        reset_config_cache()
+    assert "pin_bump.in_feature_issue" in rule_ids
+
+
 def test_promoted_milestone_without_sub_blocks_fails_verify():
     """Regression (nexus #4002): 3 plan rows vs 0 sub blocks must not reach draft-done."""
     rule_ids = {v.rule_id for v in collect_violations(_PROMOTED_MILESTONE_BODY, ["scope:milestone"])}
