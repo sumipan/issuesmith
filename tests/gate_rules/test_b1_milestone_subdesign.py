@@ -1502,3 +1502,140 @@ def test_sub_order_words_come_from_language_pack(tmp_path, monkeypatch):
     assert len(_order_hits(_order_body(f"Start following {SUB} 1.", "none"))) == 1
     assert _order_hits(_order_body(f"Start following {SUB} 1.", "#1")) == []
     assert _order_hits(_order_body(f"Start after {SUB} 1 is merged.", "none")) == []
+
+
+# ---------------------------------------------------------------------------
+# #4912 — glob / deletion sibling test matching (#4793)
+# ---------------------------------------------------------------------------
+
+
+def _milestone_body_rows(
+    subs: list[tuple[str, list[tuple[str, str, str]]]],
+    *,
+    allow_paths: tuple[str, ...] = ("tools/**", "tests/**", "src/**"),
+) -> str:
+    """Like ``_milestone_body`` but each row is ``(path, change_type, content)``."""
+    blocks: list[str] = []
+    plan_rows: list[str] = []
+    for num, (policy, rows) in enumerate(subs, start=1):
+        table = "\n".join(
+            f"| `sumipan/nexus` | `{path}` | {change_type} | {content} |"
+            for path, change_type, content in rows
+        )
+        blocks.append(f"""\
+#### {SUB}{num}: sub{num}
+
+**Scope**: scope {num}
+**Design Policy**: {policy}
+**Changed Files**:
+| {_TABLE_HEADER} |
+|---|---|---|---|
+{table}
+
+**Acceptance Criteria**:
+- [ ] Sub{num} alpha
+- [ ] Sub{num} beta
+- [ ] Sub{num} gamma
+""")
+        plan_rows.append(f"| {num} | sub{num} | scope{num} | None |")
+    allow = "\n".join(f"  - {p}" for p in allow_paths)
+    return f"""\
+```yaml
+target_repo: sumipan/nexus
+base_branch: main
+allow_paths:
+{allow}
+```
+
+## Design
+
+{chr(10).join(blocks)}
+## Milestone
+
+### Sub-issue Plan
+| # | Title | c5185_c5BB9 | Dependency |
+|---|--------|------|------|
+{chr(10).join(plan_rows)}
+"""
+
+
+def _sibling_hits(body: str):
+    return [v for v in _check(body, MILESTONE_LABELS) if v.rule_id == _SIBLING_TEST_RULE]
+
+
+def test_behavior_test_in_sibling_glob_deletion_rejects_despite_dependency():
+    delete_word = get_config().language.delete_words[0]
+    body = _with_test_sub_dependency(
+        _milestone_body_rows([
+            ("impl", [("tools/corklab/config.py", "Modify", f"drop symbols {delete_word}")]),
+            ("tests", [("tests/tools/corklab/test_*.py", "Modify", "update tests")]),
+        ]),
+        "#1",
+    )
+    hits = _sibling_hits(body)
+    assert len(hits) == 1
+    msg = hits[0].message
+    assert "tools/corklab/config.py" in msg
+    assert "tests/tools/corklab/test_*.py" in msg
+    assert "(deletion)" in msg
+    assert "depend" not in (hits[0].fix_hint or "").lower()
+
+
+def test_behavior_test_in_sibling_glob_without_deletion():
+    body = _milestone_body_rows([
+        ("impl", [("tools/corklab/config.py", "Modify", "refactor only")]),
+        ("tests", [("tests/tools/corklab/test_*.py", "Modify", "update tests")]),
+    ])
+    hits = _sibling_hits(body)
+    assert len(hits) == 1
+    assert "(deletion)" not in hits[0].message
+
+
+def test_behavior_test_in_sibling_glob_dependency_exemption_without_deletion():
+    body = _with_test_sub_dependency(
+        _milestone_body_rows([
+            ("impl", [("tools/corklab/config.py", "Modify", "refactor only")]),
+            ("tests", [("tests/tools/corklab/test_*.py", "Modify", "update tests")]),
+        ]),
+        "#1",
+    )
+    assert _sibling_hits(body) == []
+
+
+def test_behavior_test_in_sibling_src_layout_glob_mirror():
+    body = _milestone_body_rows([
+        ("impl", [("src/pkg/gate_rules/foo.py", "Modify", "change")]),
+        ("tests", [("tests/gate_rules/test_*.py", "Modify", "update")]),
+    ])
+    assert len(_sibling_hits(body)) == 1
+
+
+def test_behavior_test_in_sibling_deletion_prefix_despite_dependency():
+    delete_word = get_config().language.delete_words[0]
+    body = _with_test_sub_dependency(
+        _milestone_body_rows([
+            ("impl", [("tools/corklab/labels.py", f"Modify {delete_word}", "drop labels")]),
+            ("tests", [("tests/tools/corklab/test_steps_verify.py", "Add", "new test")]),
+        ]),
+        "#1",
+    )
+    hits = _sibling_hits(body)
+    assert len(hits) == 1
+    assert "(deletion)" in hits[0].message
+
+
+def test_behavior_test_in_sibling_glob_no_false_positive_other_dir():
+    body = _milestone_body_rows([
+        ("impl", [("src/x/a.py", "Modify", "change")]),
+        ("tests", [("tests/y/test_*.py", "Modify", "update")]),
+    ])
+    assert _sibling_hits(body) == []
+
+
+def test_behavior_test_in_sibling_deletion_no_false_positive_other_dir():
+    delete_word = get_config().language.delete_words[0]
+    body = _milestone_body_rows([
+        ("impl", [("tools/foo/a.py", f"Modify {delete_word}", "drop")]),
+        ("tests", [("tests/tools/bar/test_b.py", "Add", "test")]),
+    ])
+    assert _sibling_hits(body) == []

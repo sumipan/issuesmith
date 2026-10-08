@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fnmatch
 import re
 from pathlib import Path
 
@@ -147,6 +148,79 @@ def _sub_plan_dependencies(body: str) -> dict[int, set[int]]:
 def _normalize_stem(stem: str) -> str:
     """Fold case and treat ``-`` / ``_`` as one separator for stem matching (#4745)."""
     return stem.lower().replace("-", "_")
+
+
+def _mirror_test_dirs(path: str) -> list[str]:
+    """Mirror directories under ``tests/`` for a non-test file path (#4912)."""
+    parent = Path(path).parent.as_posix()
+    if parent == ".":
+        parent = ""
+    dirs: list[str] = []
+    seen: set[str] = set()
+
+    def add(directory: str) -> None:
+        if directory not in seen:
+            seen.add(directory)
+            dirs.append(directory)
+
+    if parent:
+        add(f"tests/{parent}")
+    else:
+        add("tests")
+    if parent.startswith("src/"):
+        rest = parent[4:]
+        if rest:
+            add(f"tests/{rest}")
+        else:
+            add("tests")
+        parts = parent.split("/")
+        if len(parts) >= 3 and parts[0] == "src":
+            tail = "/".join(parts[2:])
+            if tail:
+                add(f"tests/{tail}")
+            else:
+                add("tests")
+    return dirs
+
+
+def _has_glob(path: str) -> bool:
+    return any(ch in path for ch in "*?[")
+
+
+def _is_deletion_row(change_type: str, content: str) -> bool:
+    from issuesmith.gate_rules import scope_coupling
+
+    lowered = change_type.lower()
+    if any(word in lowered for word in scope_coupling._delete_move_keywords()):
+        return True
+    content_lower = content.lower()
+    return any(word in content_lower for word in get_config().language.delete_words)
+
+
+def _sibling_test_matches_non_deletion(path: str, test_path: str) -> bool:
+    if _has_glob(test_path):
+        stem_name = Path(path).stem
+        for directory in _mirror_test_dirs(path):
+            candidate = f"{directory}/test_{stem_name}.py"
+            if fnmatch.fnmatchcase(
+                _normalize_stem(candidate), _normalize_stem(test_path)
+            ):
+                return True
+        return False
+    stem = _normalize_stem(Path(path).stem)
+    stem_re = re.compile(rf"(?<![a-z0-9]){re.escape(stem)}(?![a-z0-9])")
+    return bool(stem_re.search(_normalize_stem(Path(test_path).stem)))
+
+
+def _sibling_test_matches(path: str, test_path: str, *, deletion: bool) -> bool:
+    if deletion:
+        for directory in _mirror_test_dirs(path):
+            if directory == "tests":
+                continue
+            if test_path.startswith(f"{directory}/"):
+                return True
+        return _sibling_test_matches_non_deletion(path, test_path)
+    return _sibling_test_matches_non_deletion(path, test_path)
 
 
 def _extract_ac_items(section: str) -> list[str]:
@@ -839,37 +913,48 @@ class B1MilestoneSubdesignRules:
         A test sub that declares the impl sub in its depends-on cell is allowed (#4745).
         """
         owned = [
-            (sub_num, repo, path)
+            (sub_num, repo, path, change_type, content)
             for sub_num, block in sub_blocks
-            for repo, path, _ in _extract_paths_from_change_table(block)
+            for repo, path, change_type, content in change_rows_with_content(block)
         ]
-        tests = [row for row in owned if row[2].startswith("tests/")]
+        tests = [
+            (sub_num, repo, path)
+            for sub_num, repo, path, _, _ in owned
+            if path.startswith("tests/")
+        ]
         violations: list[Violation] = []
-        for sub_num, repo, path in owned:
+        for sub_num, repo, path, change_type, content in owned:
             if path.startswith("tests/"):
                 continue
-            stem = _normalize_stem(Path(path).stem)
-            stem_re = re.compile(rf"(?<![a-z0-9]){re.escape(stem)}(?![a-z0-9])")
+            is_deletion = _is_deletion_row(change_type, content)
             for test_sub, test_repo, test_path in tests:
                 if test_sub == sub_num or test_repo != repo:
                     continue
-                if not stem_re.search(_normalize_stem(Path(test_path).stem)):
+                if not _sibling_test_matches(path, test_path, deletion=is_deletion):
                     continue
-                if sub_num in dependencies.get(test_sub, set()):
+                if not is_deletion and sub_num in dependencies.get(test_sub, set()):
                     continue
+                deletion_suffix = " (deletion)" if is_deletion else ""
+                if is_deletion:
+                    fix_hint = (
+                        "move the test into the same sub's change table as the impl,"
+                        " or merge the two subs"
+                    )
+                else:
+                    fix_hint = (
+                        "move the test into the same sub's change table as the impl,"
+                        f" merge the two subs, or make Sub {test_sub} depend on Sub {sub_num}"
+                    )
                 violations.append(Violation(
                     rule_id="b1_milestone_subdesign.behavior_test_in_sibling",
                     severity="fail",
                     message=(
                         f"Sub {sub_num}: `{path}` is changed here but its test"
-                        f" `{test_path}` is in Sub {test_sub}"
+                        f" `{test_path}` is in Sub {test_sub}{deletion_suffix}"
                     ),
                     location=_sub_location(sub_num),
                     auto_fixable=False,
-                    fix_hint=(
-                        "move the test into the same sub's change table as the impl,"
-                        f" merge the two subs, or make Sub {test_sub} depend on Sub {sub_num}"
-                    ),
+                    fix_hint=fix_hint,
                 ))
         return violations
 
