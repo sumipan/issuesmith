@@ -12,6 +12,7 @@ from packaging.version import InvalidVersion, Version
 
 if TYPE_CHECKING:
     from issuesmith.config import IssuesmithConfig
+    from issuesmith.preconditions import PreconditionContext
 
 _PIN_RE = re.compile(
     r"(?P<package>[a-zA-Z0-9_-]+)(?:\[[^\]]*\])?"
@@ -158,3 +159,16 @@ def develop_pins_landed(body: str, config: IssuesmithConfig) -> tuple[bool, str]
 
     joined = "; ".join(_queue_reason(item) for item in unlanded)
     return False, f"dependencies not satisfied: {joined}"
+
+
+def _pins_landed(ctx: PreconditionContext, config: IssuesmithConfig) -> tuple[bool, str]:
+    return develop_pins_landed(str(ctx.issue.get("body") or ""), config)
+
+
+def _register_predicate() -> None:
+    from issuesmith.preconditions import register
+
+    register("pins_landed", _pins_landed)
+
+
+_register_predicate()

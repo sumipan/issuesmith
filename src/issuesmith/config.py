@@ -604,6 +604,7 @@ def _build_phases(raw: Any) -> tuple[PhaseConfig, ...]:
         return _DEFAULT_PHASES
     if not isinstance(raw, list):
         raise ValueError("phases must be a list of mappings")
+    import issuesmith.pins  # noqa: F401  (registers pins_landed)
     from issuesmith.preconditions import PRECONDITION_REGISTRY
 
     phases: list[PhaseConfig] = []

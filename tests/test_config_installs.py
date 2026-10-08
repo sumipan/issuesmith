@@ -77,3 +77,20 @@ def test_load_config_rejects_non_string_install_path(tmp_path, monkeypatch):
     monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
     with pytest.raises(ConfigError, match="string path"):
         load_config()
+
+
+def test_phases_yaml_accepts_pins_landed_predicate():
+    from issuesmith.config import _build_phases
+
+    phases = _build_phases(
+        [
+            {
+                "name": "develop",
+                "role": "implementation",
+                "entry_step": "cp2",
+                "handler": "impl",
+                "advance_when": ["deps_terminal", "pins_landed"],
+            }
+        ]
+    )
+    assert phases[0].advance_when == ("deps_terminal", "pins_landed")
