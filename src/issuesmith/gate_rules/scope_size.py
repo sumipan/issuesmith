@@ -215,16 +215,13 @@ def _test_mirror_dir(path: str) -> str:
     if not path.startswith("tests/"):
         return ""
     rest = path[len("tests/") :]
+    segments = rest.split("/")
     parts: list[str] = []
-    for part in rest.split("/"):
+    for part in segments[:-1]:
         if "*" in part:
             break
         parts.append(part)
-    if not parts:
-        return ""
-    if len(parts) == 1:
-        return ""
-    return posixpath.dirname("/".join(parts)) or ""
+    return "/".join(parts)
 
 
 def _path_stem(path: str) -> str:
@@ -384,9 +381,9 @@ def _rows_by_slice(body: str, cfg: ScopeSizeConfig) -> dict[str, list[_Row]]:
             for deleted_path in deleted_cores:
                 if not _test_belongs_to_core(test_row[1], deleted_path):
                     continue
-                for idx, (_, rows) in enumerate(named_slices):
+                for idx, (name, rows) in enumerate(named_slices):
                     if test_row in rows and idx != slice_idx:
-                        named_slices[idx][1] = [r for r in rows if r != test_row]
+                        named_slices[idx] = (name, [r for r in rows if r != test_row])
                         named_slices[slice_idx][1].append(test_row)
                 break
 

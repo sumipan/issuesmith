@@ -753,3 +753,28 @@ def test_corklab_style_promotion_uses_three_slices():
     assert len(promoted_paths) == len(
         {(r, p) for r, p, _ in extract_change_table_rows(promoted)}
     )
+
+
+def test_mirror_dir_keeps_directories_before_wildcard():
+    from issuesmith.gate_rules.scope_size import _test_mirror_dir
+
+    assert _test_mirror_dir("tests/tools/corklab/test_*.py") == "tools/corklab"
+    assert _test_mirror_dir("tests/tools/corklab/**") == "tools/corklab"
+    assert _test_mirror_dir("tests/tools/corklab/test_a.py") == "tools/corklab"
+    assert _test_mirror_dir("tests/test_a.py") == ""
+
+
+def test_deleted_core_pulls_stem_test_from_other_slice():
+    from issuesmith.gate_rules.scope_size import _rows_by_slice, get_config
+
+    rows = [
+        ("src/a/x.py", _MODIFY, "a"),
+        ("src/a/y.py", _MODIFY, "a"),
+        ("src/b/old.py", _DELETE, "gone"),
+        ("src/b/z.py", _MODIFY, "b"),
+        ("tests/a/test_old.py", _MODIFY, "test"),
+    ]
+    slices = _rows_by_slice(_content_body(rows), get_config().scope_size)
+    paths = {name: [r[1] for r in rs] for name, rs in slices.items()}
+    assert "tests/a/test_old.py" in paths["src/b"]
+    assert "tests/a/test_old.py" not in paths["src/a"]
