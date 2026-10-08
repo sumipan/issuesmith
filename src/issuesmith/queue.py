@@ -562,6 +562,24 @@ def _conflict_overlap_path(
     return entry_paths[0] if entry_paths else "?"
 
 
+def _issue_dag_live(issue_number: int) -> bool:
+    """True when the issue's current DAG may still run a step (running or runnable pending)."""
+    from issuesmith.observe.dag_state import load_dag_states
+
+    try:
+        dag_states = load_dag_states(EXEC_PATH, DONE_DIR, DONE_DIR.parent / "running")
+    except Exception:
+        return True
+    state = dag_states.get(issue_number)
+    if state is None:
+        return False
+    if state.status in {"running", "pending"}:
+        return True
+    if state.status in {"failed", "deferred", "succeeded"}:
+        return False
+    return True
+
+
 def _in_flight_should_release(client: ForgePort, entry: dict[str, Any]) -> bool:
     """True when an in_flight entry should be dropped.
 
@@ -578,6 +596,12 @@ def _in_flight_should_release(client: ForgePort, entry: dict[str, Any]) -> bool:
     except Exception:
         return False
     if _issue_state_is_terminal(issue):
+        return True
+    if str(issue.get("state", "")).upper() == "CLOSED" and not _issue_dag_live(issue_num):
+        print(
+            f"[queue] in_flight released: #{issue_num} closed without terminal label",
+            file=sys.stderr,
+        )
         return True
     labels = label_names(issue)
     role = entry.get("role")
