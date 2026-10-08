@@ -176,7 +176,10 @@ def apply_deterministic_recovery(
         apply_body_autofixes,
         fix_label_missing,
     )
-    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
+    from issuesmith.gate_rules.scope_size import (
+        promote_oversized_issue_body,
+        promotion_declined,
+    )
 
     original_body = body
     new_labels = list(labels)
@@ -185,7 +188,7 @@ def apply_deterministic_recovery(
     before = collect_violations(body, new_labels)
     before_ids = {v.rule_id for v in before}
 
-    if before_ids & _SCOPE_SIZE_PROMOTE_IDS:
+    if before_ids & _SCOPE_SIZE_PROMOTE_IDS and not promotion_declined(body):
         promoted = promote_oversized_issue_body(body)
         if promoted != body:
             body = promoted

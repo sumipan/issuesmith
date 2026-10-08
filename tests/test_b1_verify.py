@@ -424,6 +424,39 @@ def test_deterministic_recovery_skips_normal_sized_issue(tmp_path, monkeypatch):
     assert "scope:milestone" not in result.labels
 
 
+def test_deterministic_recovery_skips_promotion_when_declined(tmp_path, monkeypatch):
+    """When promotion_declined, do not promote or attach milestone label."""
+    import yaml
+
+    from issuesmith.b1_verify import apply_deterministic_recovery
+    from issuesmith.config import reset_config_cache
+    from tests.gate_rules.test_scope_size import _MODIFY, _body
+
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "sumipan/issuesmith", "scope_gate": {"enabled": False}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+
+    rows = [(f"src/{d}/f{i}.py", _MODIFY) for d in ("a", "b", "c", "d") for i in range(3)]
+    body = _body(rows)
+    client = _FakeForge(body=body)
+    try:
+        result = apply_deterministic_recovery(client, 4914, body, [], persist=True)
+    finally:
+        reset_config_cache()
+
+    assert result.body == body
+    assert "scope:milestone" not in result.labels
+    assert client.issue_milestone is None
+    assert "scope_size.promote_to_milestone" not in result.applied
+    assert "milestone_consistency.fix_label_missing" not in result.applied
+    assert result.can_done is False
+    assert any(v.rule_id.startswith("scope_size.") for v in result.remaining)
+
+
 def test_deterministic_recovery_reports_unresolved_when_same_rule_remains(
     tmp_path, monkeypatch
 ):

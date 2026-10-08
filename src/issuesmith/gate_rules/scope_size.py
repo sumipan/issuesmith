@@ -27,6 +27,12 @@ from issuesmith.gate_rules.b1_milestone_subdesign import (
 
 _MILESTONE_LABEL = "scope:milestone"
 _SPLIT_CONTENT = "split from oversized issue"
+_MAX_SLICES = 3
+_REFERENCE_SUFFIXES = frozenset({".yaml", ".yml", ".toml", ".json", ".ini", ".cfg"})
+_DECLINED_HINT = (
+    "Split yields {n} slices (max {max}); not auto-promoted. "
+    "Split the Issue, or write the sub plan by hand."
+)
 
 # (repo, path, change type, change content) of one parent change-table row.
 _Row = tuple[str, str, str, str]
@@ -153,6 +159,22 @@ def measure_size(body: str, cfg: ScopeSizeConfig | None = None) -> SizeMeasure:
 
 def _fix_hint(body: str, cfg: ScopeSizeConfig) -> str:
     sections = get_config().sections
+    if promotion_declined(body, cfg):
+        target_repo, concerns, deps = _split_plan(body, cfg)
+        lines = [
+            _DECLINED_HINT.format(n=len(concerns), max=_MAX_SLICES),
+            f"That helper adds `## {sections['milestone']}` > `### {sections['sub_plan']}`, "
+            f"`#### {_sub_header_prefix()}N: <title>` blocks under `## {sections['design']}` with "
+            + ", ".join(f"**{name}**" for name in get_config().sub_design_subsections)
+            + f", {_MILESTONE_LABEL}, and the GitHub milestone object. "
+            "b1_milestone_subdesign fails when the plan row count and the sub header "
+            "count differ. Example plan:",
+            "",
+            cfg.sub_plan_header,
+            "|---|---|---|---|---|",
+        ]
+        lines.extend(_plan_rows(target_repo, concerns, deps, cfg))
+        return "\n".join(lines)
     lines = [
         "Run issuesmith.b1_verify.apply_deterministic_recovery() (or "
         "issuesmith.gate_rules.scope_size.promote_oversized_issue_body() then "
@@ -172,41 +194,220 @@ def _fix_hint(body: str, cfg: ScopeSizeConfig) -> str:
     return "\n".join(lines)
 
 
-def _rows_by_concern(body: str, cfg: ScopeSizeConfig) -> dict[str, list[_Row]]:
-    """Group every change-table row by parent directory (file-union complete).
+def _is_test_row(path: str) -> bool:
+    return path.startswith("tests/")
+
+
+def _is_reference_row(path: str, cfg: ScopeSizeConfig) -> bool:
+    if _is_test_row(path):
+        return False
+    for prefix in cfg.exclude_prefixes:
+        if path.startswith(prefix):
+            return True
+    if "/" not in path:
+        return True
+    _, ext = posixpath.splitext(path)
+    return ext.lower() in _REFERENCE_SUFFIXES
+
+
+def _test_mirror_dir(path: str) -> str:
+    """Directory under ``tests/`` used to mirror-test-match core slices."""
+    if not path.startswith("tests/"):
+        return ""
+    rest = path[len("tests/") :]
+    segments = rest.split("/")
+    parts: list[str] = []
+    for part in segments[:-1]:
+        if "*" in part:
+            break
+        parts.append(part)
+    return "/".join(parts)
+
+
+def _path_stem(path: str) -> str:
+    base = posixpath.basename(path)
+    name, _ext = posixpath.splitext(base)
+    if name.startswith("test_"):
+        return name[len("test_") :]
+    return name or base
+
+
+def _core_parent(path: str) -> str:
+    return posixpath.dirname(path) or "."
+
+
+def _iter_slice_cores(
+    rows: list[_Row], cfg: ScopeSizeConfig
+) -> list[tuple[str, str]]:
+    return [
+        (path, content)
+        for _, path, _, content in rows
+        if _row_is_core(path, cfg)
+    ]
+
+
+def _test_belongs_to_core(test_path: str, core_path: str) -> bool:
+    mirror = _test_mirror_dir(test_path)
+    parent = _core_parent(core_path)
+    if mirror and (parent == mirror or parent.endswith("/" + mirror)):
+        return True
+    return _path_stem(test_path) == _path_stem(core_path)
+
+
+def _match_slice_for_test(
+    path: str,
+    slices: list[tuple[str, list[_Row]]],
+    cfg: ScopeSizeConfig,
+) -> int:
+    mirror = _test_mirror_dir(path)
+    best_idx = -1
+    best_len = -1
+    if mirror:
+        for idx, (_, rows) in enumerate(slices):
+            for core_path, _ in _iter_slice_cores(rows, cfg):
+                parent = _core_parent(core_path)
+                if parent == mirror or parent.endswith("/" + mirror):
+                    if len(mirror) > best_len:
+                        best_len = len(mirror)
+                        best_idx = idx
+    if best_idx >= 0:
+        return best_idx
+    stem = _path_stem(path)
+    for idx, (_, rows) in enumerate(slices):
+        for core_path, _ in _iter_slice_cores(rows, cfg):
+            if _path_stem(core_path) == stem:
+                return idx
+    return 0
+
+
+def _match_slice_for_reference(
+    content: str,
+    slices: list[tuple[str, list[_Row]]],
+    cfg: ScopeSizeConfig,
+) -> int:
+    for idx, (_, rows) in enumerate(slices):
+        for core_path, _ in _iter_slice_cores(rows, cfg):
+            if core_path in content:
+                return idx
+    for idx, (_, rows) in enumerate(slices):
+        for core_path, _ in _iter_slice_cores(rows, cfg):
+            if _path_stem(core_path) in content:
+                return idx
+    return 0
+
+
+def _row_is_core(path: str, cfg: ScopeSizeConfig) -> bool:
+    return not _is_test_row(path) and not _is_reference_row(path, cfg)
+
+
+def _rows_by_slice(body: str, cfg: ScopeSizeConfig) -> dict[str, list[_Row]]:
+    """Group change-table rows into promotion slices (file-union complete).
 
     Unlike :func:`measure_size`, excluded prefixes are kept so promoted sub
     designs cover the full parent change table. Rows keep the change-content
     column so sub designs (and dependency inference) see it (#4825).
     """
     seen: set[tuple[str, str]] = set()
-    by_parent: dict[str, list[_Row]] = {}
+    core_rows: list[_Row] = []
+    test_rows: list[_Row] = []
+    reference_rows: list[_Row] = []
     for repo, path, change_type, content in change_rows_with_content(body):
         key = (repo, path)
         if key in seen:
             continue
         seen.add(key)
-        parent = posixpath.dirname(path) or "."
-        by_parent.setdefault(parent, []).append((repo, path, change_type, content))
-    measured = measure_size(body, cfg)
-    ordered: dict[str, list[_Row]] = {}
-    consumed: set[str] = set()
-    for concern, paths in measured.concerns.items():
-        rows_for_concern: list[_Row] = []
+        row: _Row = (repo, path, change_type, content)
+        if _is_test_row(path):
+            test_rows.append(row)
+        elif _is_reference_row(path, cfg):
+            reference_rows.append(row)
+        else:
+            core_rows.append(row)
+
+    core_paths = [path for _, path, _, _ in core_rows]
+    concern_groups = _group_paths_by_concern(core_paths)
+
+    named_slices: list[tuple[str, list[_Row]]] = []
+    assigned_cores: set[tuple[str, str]] = set()
+    for concern_key, paths in concern_groups.items():
+        slice_rows: list[_Row] = []
         for path in paths:
-            parent = posixpath.dirname(path) or "."
-            if parent in consumed:
+            for row in core_rows:
+                if row[1] == path and (row[0], row[1]) not in assigned_cores:
+                    slice_rows.append(row)
+                    assigned_cores.add((row[0], row[1]))
+        if slice_rows:
+            named_slices.append((_concern_display_name(concern_key), slice_rows))
+
+    for row in core_rows:
+        if (row[0], row[1]) not in assigned_cores:
+            parent = _concern_display_name(_core_parent(row[1]))
+            named_slices.append((parent, [row]))
+            assigned_cores.add((row[0], row[1]))
+
+    if not named_slices:
+        return {}
+
+    for row in test_rows:
+        idx = _match_slice_for_test(row[1], named_slices, cfg)
+        named_slices[idx][1].append(row)
+
+    for row in reference_rows:
+        idx = _match_slice_for_reference(row[3], named_slices, cfg)
+        named_slices[idx][1].append(row)
+
+    for slice_idx, (_, slice_rows) in enumerate(named_slices):
+        deleted_cores = [
+            path
+            for _, path, change_type, _ in slice_rows
+            if _row_is_core(path, cfg) and _normalize_kind(change_type, cfg) == "delete"
+        ]
+        if not deleted_cores:
+            continue
+        delete_stems = [_path_stem(p) for p in deleted_cores]
+        for other_idx, (_, other_rows) in enumerate(named_slices):
+            if other_idx == slice_idx:
                 continue
-            consumed.add(parent)
-            rows_for_concern.extend(by_parent.get(parent, []))
-        if rows_for_concern:
-            ordered[concern] = rows_for_concern
-    # Excluded prefixes and root-level files are not measured concerns but must
-    # stay in the promoted sub designs (file-union complete).
-    for parent, rows in by_parent.items():
-        if parent not in consumed:
-            ordered.setdefault(parent, []).extend(rows)
-    return ordered
+            kept: list[_Row] = []
+            for row in other_rows:
+                _, path, _, content = row
+                if _row_is_core(path, cfg) or _is_reference_row(path, cfg):
+                    if any(ds in content or ds == _path_stem(path) for ds in delete_stems):
+                        named_slices[slice_idx][1].append(row)
+                        continue
+                kept.append(row)
+            named_slices[other_idx] = (named_slices[other_idx][0], kept)
+        for test_row in list(test_rows):
+            for deleted_path in deleted_cores:
+                if not _test_belongs_to_core(test_row[1], deleted_path):
+                    continue
+                for idx, (name, rows) in enumerate(named_slices):
+                    if test_row in rows and idx != slice_idx:
+                        named_slices[idx] = (name, [r for r in rows if r != test_row])
+                        named_slices[slice_idx][1].append(test_row)
+                break
+
+    filtered: list[tuple[str, list[_Row]]] = []
+    orphans: list[_Row] = []
+    for name, rows in named_slices:
+        if any(_row_is_core(r[1], cfg) for r in rows):
+            filtered.append((name, rows))
+        else:
+            orphans.extend(rows)
+    if not filtered:
+        return {}
+    if orphans:
+        filtered[0][1].extend(orphans)
+
+    return {name: rows for name, rows in filtered}
+
+
+def promotion_declined(body: str, cfg: ScopeSizeConfig | None = None) -> bool:
+    """True when auto-promotion would yield zero slices or exceed ``_MAX_SLICES``."""
+    cfg = cfg or get_config().scope_size
+    _, concerns, _ = _split_plan(body, cfg)
+    n = len(concerns)
+    return n == 0 or n > _MAX_SLICES
 
 
 def _build_sub_block(
@@ -354,7 +555,7 @@ def _split_plan(
         target_repo = str(parse_issue_metadata(body).get("target_repo") or "").strip()
     except Exception:
         target_repo = ""
-    concerns = _rows_by_concern(body, cfg)
+    concerns = _rows_by_slice(body, cfg)
     if target_repo and concerns:
         concerns = _merge_unreadable_concerns(
             concerns,
@@ -422,12 +623,16 @@ def promote_oversized_issue_body(body: str, cfg: ScopeSizeConfig | None = None) 
     subsections = get_config().sub_design_subsections
 
     target_repo, concerns, deps = _split_plan(body, cfg)
-    if not concerns:
-        return relocate_sub_plan(normalize_sub_headers(body))
 
     design = get_section(body, design_name) or ""
     existing_subs = SUB_HEADER_RE.findall(design)
-    if len(existing_subs) >= len(concerns):
+    if concerns and len(existing_subs) >= len(concerns):
+        return relocate_sub_plan(normalize_sub_headers(body))
+
+    if promotion_declined(body, cfg):
+        return body
+
+    if not concerns:
         return relocate_sub_plan(normalize_sub_headers(body))
 
     plan_lines = [
