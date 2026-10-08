@@ -247,6 +247,58 @@ def _extract_file_refs_from_text(text: str) -> set[str]:
 
 _DEPENDENCY_MISSING_ID = "b1_milestone_subdesign.sibling_new_file_unreferenced_dependency"
 _DEPENDENCY_CYCLE_ID = "b1_milestone_subdesign.dependency_cycle"
+
+PLACEHOLDER_DESIGN_MARKER = "Split work for concern"
+PLACEHOLDER_CHANGE_CONTENT = "split from oversized issue"
+PLACEHOLDER_DESIGN_ID = "b1_milestone_subdesign.placeholder_design"
+PLACEHOLDER_AC_TEMPLATES: tuple[str, ...] = (
+    "Concern `{concern}` change table lists every assigned path",
+    "Sub design `{num}` includes the required subsections",
+    "Parent change-file union includes every path under `{concern}`",
+)
+
+
+def _placeholder_ac_regexes() -> tuple[re.Pattern[str], ...]:
+    patterns: list[re.Pattern[str]] = []
+    for tpl in PLACEHOLDER_AC_TEMPLATES:
+        regex_parts: list[str] = []
+        rest = tpl
+        while rest:
+            if rest.startswith("{concern}"):
+                regex_parts.append(".+?")
+                rest = rest[len("{concern}") :]
+            elif rest.startswith("{num}"):
+                regex_parts.append(".+?")
+                rest = rest[len("{num}") :]
+            else:
+                next_at = len(rest)
+                for marker in ("{concern}", "{num}"):
+                    pos = rest.find(marker)
+                    if pos != -1:
+                        next_at = min(next_at, pos)
+                regex_parts.append(re.escape(rest[:next_at]))
+                rest = rest[next_at:]
+        patterns.append(re.compile("^" + "".join(regex_parts) + "$"))
+    return tuple(patterns)
+
+
+_PLACEHOLDER_AC_REGEXES = _placeholder_ac_regexes()
+
+
+def _ac_items_are_template_only(items: list[str]) -> bool:
+    if not items:
+        return False
+    return all(
+        any(pattern.fullmatch(item.strip()) for pattern in _PLACEHOLDER_AC_REGEXES)
+        for item in items
+    )
+
+
+def _subsection_body_starts_with_marker(text: str) -> bool:
+    body = text.strip()
+    if body.startswith(":"):
+        body = body[1:].lstrip()
+    return body.startswith(PLACEHOLDER_DESIGN_MARKER)
 _URL_RE = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]*://\S+")
 _FENCE_LANG_RE = re.compile(r"^(\s*(?:```|~~~))[^\s`]*", re.MULTILINE)
 
@@ -565,7 +617,55 @@ class B1MilestoneSubdesignRules:
             violations.extend(
                 self._check_sub_order_without_dependency(sub_num, block, dependencies)
             )
+            violations.extend(self._check_placeholder_design(sub_num, block))
         return violations
+
+    def _check_placeholder_design(self, sub_num: int, block: str) -> list[Violation]:
+        """Detect scope_size promotion placeholders that still need real sub design (#4915)."""
+        cfg = get_config()
+        sections = cfg.sections
+        changed = sections["changed_files"]
+        ac = sections["acceptance_criteria"]
+        skip = {changed, ac}
+        reasons: list[str] = []
+        for name in cfg.sub_design_subsections:
+            if name in skip:
+                continue
+            if _subsection_body_starts_with_marker(_subsection_text(block, name)):
+                reasons.append("scope/design policy marker")
+                break
+        if any(
+            content.strip() == PLACEHOLDER_CHANGE_CONTENT
+            for _, _, _, content in change_rows_with_content(block)
+        ):
+            reasons.append("change content")
+        if _ac_items_are_template_only(_extract_ac_items(block)):
+            reasons.append("template-only AC")
+        if not reasons:
+            return []
+        fix_hint = (
+            f"Replace the promoted placeholder in Sub {sub_num}: write real scope and"
+            " design policy text instead of paragraphs starting with"
+            f" `{PLACEHOLDER_DESIGN_MARKER}`; replace change-table cells that say"
+            f" `{PLACEHOLDER_CHANGE_CONTENT}` with concrete change descriptions; add"
+            " acceptance criteria beyond the three promotion templates (concern path"
+            " list, required subsections, parent union). Derive scope, design policy,"
+            " change content and AC from the parent ## Design section and the parent"
+            f" change table. Do not change the `####` sub header, change-table paths,"
+            " or YAML blocks."
+        )
+        return [
+            Violation(
+                rule_id=PLACEHOLDER_DESIGN_ID,
+                severity="fail",
+                message=(
+                    f"Sub {sub_num}: promoted placeholder design ({', '.join(reasons)})"
+                ),
+                location=_sub_location(sub_num),
+                auto_fixable=False,
+                fix_hint=fix_hint,
+            )
+        ]
 
     def _check_sub_count(self, body: str) -> list[Violation]:
         cfg = get_config()

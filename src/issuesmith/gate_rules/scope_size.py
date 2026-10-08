@@ -20,13 +20,15 @@ from issuesmith.config import ScopeSizeConfig, get_config
 from issuesmith.context_hook import parse_issue_metadata
 from issuesmith.contract import change_paths_for_repo, extract_change_table_rows
 from issuesmith.gate_rules.b1_milestone_subdesign import (
+    PLACEHOLDER_AC_TEMPLATES,
+    PLACEHOLDER_CHANGE_CONTENT,
+    PLACEHOLDER_DESIGN_MARKER,
     change_rows_with_content,
     find_dependency_cycles,
     infer_sub_dependencies,
 )
 
 _MILESTONE_LABEL = "scope:milestone"
-_SPLIT_CONTENT = "split from oversized issue"
 _MAX_SLICES = 3
 _REFERENCE_SUFFIXES = frozenset({".yaml", ".yml", ".toml", ".json", ".ini", ".cfg"})
 _DECLINED_HINT = (
@@ -431,7 +433,7 @@ def _build_sub_block(
         repo_cell = repo or target_repo
         table_lines.append(
             f"| `{repo_cell}` | `{path}` | {change_type or 'modify'} "
-            f"| {content or _SPLIT_CONTENT} |"
+            f"| {content or PLACEHOLDER_CHANGE_CONTENT} |"
         )
     yaml_paths = "\n".join(f"  - {p}" for p in paths) or "  - []"
     concern = _concern_display_name(concern)
@@ -446,18 +448,13 @@ def _build_sub_block(
             sub_parts.append("paths_must_exist:")
             sub_parts.append(yaml_paths)
             sub_parts.append("```")
-            sub_parts.append(
-                f"- [ ] Concern `{concern}` change table lists every assigned path"
-            )
-            sub_parts.append(
-                f"- [ ] Sub design `{num}` includes the required subsections"
-            )
-            sub_parts.append(
-                f"- [ ] Parent change-file union includes every path under `{concern}`"
-            )
+            for tpl in PLACEHOLDER_AC_TEMPLATES:
+                sub_parts.append(f"- [ ] {tpl.format(concern=concern, num=num)}")
             sub_parts.append("")
         else:
-            sub_parts.append(f"**{name}**: Split work for concern `{concern}`")
+            sub_parts.append(
+                f"**{name}**: {PLACEHOLDER_DESIGN_MARKER} `{concern}`"
+            )
             sub_parts.append("")
     return "\n".join(sub_parts).rstrip() + "\n"
 

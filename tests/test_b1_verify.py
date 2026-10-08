@@ -315,9 +315,49 @@ def test_deterministic_recovery_promotes_oversized_issue_in_one_pass(tmp_path, m
     assert not any(
         v.rule_id == "milestone_consistency.label_missing" for v in result.remaining
     )
-    assert not any(
-        v.rule_id.startswith("b1_milestone_subdesign.") for v in result.remaining
+    placeholder = [
+        v for v in result.remaining if v.rule_id == "b1_milestone_subdesign.placeholder_design"
+    ]
+    assert len(placeholder) >= 3
+    assert all(not v.auto_fixable for v in placeholder)
+    assert result.can_done is False
+    assert result.unresolved_reason is not None
+    assert "promoted sub designs need LLM design" in result.unresolved_reason
+    assert any(
+        v.rule_id == "b1_milestone_subdesign.placeholder_design"
+        for v in result.llm_violations
     )
+
+
+def test_deterministic_recovery_promoted_placeholder_design_needs_llm(
+    tmp_path, monkeypatch,
+):
+    """AC (#4915): promotion leaves placeholder_design for LLM recovery."""
+    import yaml
+
+    from issuesmith.b1_verify import apply_deterministic_recovery
+    from issuesmith.config import reset_config_cache
+    from issuesmith.gate_rules.b1_milestone_subdesign import PLACEHOLDER_DESIGN_ID
+
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "sumipan/nexus", "scope_gate": {"enabled": False}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+
+    body = _oversized_body()
+    client = _FakeForge(body=body)
+    try:
+        result = apply_deterministic_recovery(client, 4915, body, [], persist=True)
+    finally:
+        reset_config_cache()
+
+    assert result.can_done is False
+    assert PLACEHOLDER_DESIGN_ID in {v.rule_id for v in result.llm_violations}
+    assert result.unresolved_reason is not None
+    assert "promoted sub designs need LLM design" in result.unresolved_reason
 
 
 def test_verify_b1_cli_applies_deterministic_recovery_by_default(
