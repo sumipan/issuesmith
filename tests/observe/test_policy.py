@@ -1,12 +1,15 @@
 """tests/observe/test_policy.py -- policy evaluation and execution tests (AC-2, AC-5, AC-7)."""
 from __future__ import annotations
 
+import json
+from dataclasses import asdict
 from pathlib import Path
 from unittest.mock import MagicMock
 
 from issuesmith.config import ObserveConfig
 from issuesmith.observe.events import (
     AllEnginesPausedEvent,
+    DagDeferredEvent,
     DagTerminatedEvent,
     ForgeUnavailableEvent,
     IssueStallEvent,
@@ -97,6 +100,37 @@ class TestEvaluate:
     def test_empty_events_produces_no_actions(self):
         cfg_obs = ObserveConfig()
         assert evaluate([], cfg_obs) == []
+
+
+class TestEvaluateDagDeferred:
+    def test_dag_deferred_produces_wait_only(self):
+        cfg_obs = ObserveConfig()
+        event = DagDeferredEvent(
+            issue=4909,
+            key="issuesmith:impl:4909",
+            step="p2",
+            uuid="p2",
+        )
+        actions = evaluate([event], cfg_obs)
+        assert len(actions) == 1
+        assert isinstance(actions[0], WaitAction)
+        assert not any(isinstance(a, AndonAction) for a in actions)
+        assert not any(isinstance(a, RemoveRunningLabelAction) for a in actions)
+
+    def test_dag_deferred_serializes_to_json(self):
+        event = DagDeferredEvent(
+            issue=4909,
+            key="issuesmith:impl:4909",
+            step="cp2",
+            uuid="cp2-uuid",
+        )
+        payload = asdict(event)
+        text = json.dumps(payload)
+        parsed = json.loads(text)
+        assert parsed["kind"] == "dag_deferred"
+        assert parsed["issue"] == 4909
+        assert parsed["step"] == "cp2"
+        assert parsed["uuid"] == "cp2-uuid"
 
 
 class TestEvaluateDagTerminated:

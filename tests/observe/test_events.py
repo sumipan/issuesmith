@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 from issuesmith.config import get_config
 from issuesmith.observe import observe
 from issuesmith.observe.events import (
+    DagDeferredEvent,
     IssueStallEvent,
     LabelDriftEvent,
     OrphanExecEvent,
@@ -91,6 +92,59 @@ class TestIssueStallDetection:
         events = observe(snap, client, cfg, now=_NOW)
         stall_events = [e for e in events if isinstance(e, IssueStallEvent)]
         assert len(stall_events) == 0
+
+
+class TestDeferredDagObservation:
+    def test_stall_suppressed_and_dag_deferred_emitted(self, tmp_path):
+        import dataclasses
+
+        exec_path = tmp_path / "exec.jsonl"
+        done_dir = tmp_path / "done"
+        done_dir.mkdir()
+        running_dir = tmp_path / "running"
+        running_dir.mkdir()
+
+        issue = 501
+        key = f"issuesmith:impl:{issue}"
+        rows = [
+            {"uuid": "p1", "idempotency_key": key, "depends": []},
+            {
+                "uuid": "p2",
+                "idempotency_key": key,
+                "depends": ["p1"],
+                "annotations": {"step_name": "p2"},
+            },
+        ]
+        exec_path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+        (done_dir / "p1").write_text("0", encoding="utf-8")
+        (done_dir / "p2").write_text("DEFERRED", encoding="utf-8")
+
+        store = _store(tmp_path)
+        _enqueue(store, issue, "develop")
+        base = store.snapshot()
+        dispatched_at = (_NOW - timedelta(minutes=130)).isoformat()
+        snap = _snap_with_in_flight(base, [
+            {"issue": issue, "engine": "claude", "role": "implementation", "dispatched_at": dispatched_at},
+        ])
+
+        cfg = get_config()
+        patched_paths = dataclasses.replace(
+            cfg.paths,
+            exec_jsonl=exec_path,
+            done_dir=done_dir,
+        )
+        patched_cfg = dataclasses.replace(cfg, paths=patched_paths)
+        client = _fake_client()
+
+        events = observe(snap, client, patched_cfg, now=_NOW)
+        stall_events = [e for e in events if isinstance(e, IssueStallEvent)]
+        deferred_events = [e for e in events if isinstance(e, DagDeferredEvent)]
+        assert stall_events == []
+        assert len(deferred_events) == 1
+        ev = deferred_events[0]
+        assert ev.issue == issue
+        assert ev.step == "p2"
+        assert ev.uuid == "p2"
 
 
 class TestOrphanExecDetection:

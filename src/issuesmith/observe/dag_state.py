@@ -9,7 +9,7 @@ from typing import Literal
 
 logger = logging.getLogger(__name__)
 
-DagStatus = Literal["running", "pending", "failed", "succeeded"]
+DagStatus = Literal["running", "pending", "failed", "deferred", "succeeded"]
 
 
 @dataclass(frozen=True)
@@ -20,6 +20,8 @@ class DagState:
     failed_step: str = ""
     failed_uuid: str = ""
     failed_result_path: str = ""
+    deferred_step: str = ""
+    deferred_uuid: str = ""
 
 
 def load_dag_states(
@@ -103,13 +105,14 @@ def _compute_dag_state(
     done_dir: Path,
     running_dir: Path,
 ) -> DagState:
+    from ghdag.core.vocabulary import DONE_DEFERRED
     from ghdag.io.done import interpret_done, read_done_content
 
     if not rows:
         return DagState(issue=issue, key=key, status="pending")
 
     # First pass: collect per-step status
-    step_results: dict[str, str] = {}  # uuid -> "running" | "success" | "failed" | "pending"
+    step_results: dict[str, str] = {}  # uuid -> "running" | "success" | "failed" | "deferred" | "pending"
 
     for row in rows:
         uuid = str(row.get("uuid", ""))
@@ -119,6 +122,9 @@ def _compute_dag_state(
             step_results[uuid] = "running"
             continue
         raw = read_done_content(done_dir, uuid)
+        if raw is not None and raw.strip() == DONE_DEFERRED:
+            step_results[uuid] = "deferred"
+            continue
         outcome = interpret_done(raw)
         if outcome is None:
             step_results[uuid] = "pending"
@@ -164,7 +170,7 @@ def _compute_dag_state(
     has_any_pending = any(s == "pending" for s in step_results.values())
 
     # Priority order: running (handled above), then pending with runnable deps, then failed,
-    # then pending (with unmet deps), then succeeded
+    # then deferred, then pending (with unmet deps), then succeeded
     if has_runnable_pending:
         return DagState(issue=issue, key=key, status="pending")
 
@@ -176,6 +182,24 @@ def _compute_dag_state(
             failed_step=first_failed_step,
             failed_uuid=first_failed_uuid,
             failed_result_path=first_failed_result,
+        )
+
+    first_deferred_uuid: str | None = None
+    first_deferred_step: str = ""
+    for row in rows:
+        uuid = str(row.get("uuid", ""))
+        if step_results.get(uuid) == "deferred":
+            first_deferred_uuid = uuid
+            first_deferred_step = _step_name_from_row(row)
+            break
+
+    if first_deferred_uuid is not None:
+        return DagState(
+            issue=issue,
+            key=key,
+            status="deferred",
+            deferred_step=first_deferred_step,
+            deferred_uuid=first_deferred_uuid,
         )
 
     if has_any_pending:
