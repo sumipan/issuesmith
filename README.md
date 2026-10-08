@@ -5,23 +5,23 @@ issuesmith is a GitHub Issue label-driven workflow toolkit built on [ghdag](http
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.135.0-blue)
+![version](https://img.shields.io/badge/version-v0.139.1-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.135.0** (pre-1.0). Public interfaces may change before `1.0.0`; see [CHANGELOG.md](./CHANGELOG.md) for breaking changes.
+The current release is **v0.139.1** (pre-1.0). Public interfaces may change before `1.0.0`; see [CHANGELOG.md](./CHANGELOG.md) for breaking changes.
 
 ## Installation
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.135.0"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.139.1"
 ```
 
 Most runtime paths (gates, forge access, `observe`, `andon`, `metrics`) import ghdag. Install it with the `ghdag` extra:
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.135.0"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.139.1"
 ```
 
 | Item | Value |
@@ -212,7 +212,16 @@ Global options: `--queue-path`, `--state-path`, `--lock-path`.
 | `PreconditionContext` | Context passed to predicates (`issue`, `labels`, `client`, `issue_number`) |
 | `evaluate` | Evaluate whether a phase may advance |
 
-Built-in predicates: `deps_terminal`, `closing_pr_exists`.
+Built-in predicates: `deps_terminal`, `closing_pr_exists`, `pins_landed` (registered from `issuesmith.pins` when the config loader imports it).
+
+### `issuesmith.pins`
+
+| Symbol | Notes |
+|---|---|
+| `requires_pins` | Parse `requires_pins` from Issue frontmatter YAML |
+| `pin_version` | Read a git-pinned package version from `pyproject.toml` text |
+| `installed_version` | Latest tag at an `installs` directory via `git describe` |
+| `develop_pins_landed` | Check whether pinned packages meet `requires_pins` for develop |
 
 ### `issuesmith.projection`
 
@@ -388,6 +397,8 @@ issuesmith is pre-1.0. The modules and `__all__` lists above are the supported s
 
 ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, label transitions and idempotency. issuesmith provides the Issue-domain gates, steps and tools that the workflow templates call. Label writes during step dispatch are guarded by `forge_guard`; the runner projects labels through `projection` and `ops/labels.project_issue`.
 
+Issue frontmatter may set `requires_pins` (package to minimum SemVer). The develop phase's `pins_landed` precondition compares those pins to `issuesmith.yaml` `installs` paths and optional in-repo `pyproject.toml` git pins. Feature Issues cannot bump pins in scope (`gate_rules/pin_bump`). The `scope_size` gate can promote oversized B1 bodies into slice-based sub plans (up to three slices; excess slices decline auto-promotion). Milestone SUB1 runs V6 dependency-ref prevalidation (`check_v6_dependency_refs`) and stops polish on timeout. The queue releases stale `in_flight` entries when a CLOSED Issue's DAG is no longer live.
+
 | Module | Role |
 |---|---|
 | `issuesmith/__init__.py` | Package marker; empty `__all__` |
@@ -416,9 +427,10 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/gate_rules/cp1.py` | CP1 design rules |
 | `issuesmith/gate_rules/m2.py` | M2 merge rules |
 | `issuesmith/gate_rules/milestone_consistency.py` | Split plan without the `scope:milestone` label |
+| `issuesmith/gate_rules/pin_bump.py` | Reject pin bumps in feature Issues (`pin_bump` gate) |
 | `issuesmith/gate_rules/scope_breadth.py` | allow_paths breadth rules |
 | `issuesmith/gate_rules/scope_coupling.py` | Caller / test coupling and deletion reference rules |
-| `issuesmith/gate_rules/scope_size.py` | Issue size rules |
+| `issuesmith/gate_rules/scope_size.py` | Issue size rules and slice-based sub-plan promotion |
 | `issuesmith/gates/__init__.py` | Unified gate API: `GATE_REGISTRY`, `Verdict` |
 | `issuesmith/gates/base.py` | `Gate` protocol and `ContractInput` |
 | `issuesmith/gates/dep.py` | Dependency gate |
@@ -450,6 +462,7 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/ops/smoke.py` | `smoke`: pipeline smoke test on real Issues |
 | `issuesmith/ops/version_bump.py` | `version-bump`: `pyproject.toml` version bump |
 | `issuesmith/pipeline_comments.py` | Pipeline comment filter |
+| `issuesmith/pins.py` | `requires_pins` parsing and `pins_landed` precondition |
 | `issuesmith/pr_scope.py` | PR diff scope: allow_paths and `forbidden_pr_paths` |
 | `issuesmith/preconditions.py` | `PRECONDITION_REGISTRY` / `evaluate` phase advance predicates |
 | `issuesmith/projection.py` | `IssueState` / `project` / `diff` / `state_from_labels` |
@@ -529,6 +542,7 @@ Relative paths in the file resolve against the directory that holds it.
 | `observe` | see below | Observe layer thresholds and `main_health` |
 | `api_brake` | `enabled: false` | GitHub API brake: `min_remaining` (`800`) |
 | `language_pack` | (unset: `EN`) | Path to a language pack YAML; see [Language packs](#language-packs) |
+| `installs` | `{}` | Package name to install directory (paths relative to the config file); non-mapping or non-string values raise `ConfigError` |
 | `sections` / `sub_design_subsections` | (deprecated) | Use `language_pack` |
 
 `tests`, `metrics`, `derived_allow` and `external_leak` reject unknown keys with `ConfigError`. `scope_coupling.ignore_symbols` is no longer supported and raises `ConfigError`.
@@ -544,7 +558,7 @@ Relative paths in the file resolve against the directory that holds it.
 | `preconditions` | `[]` | Labels that must be present before the phase can start |
 | `excludes` | `[]` | Labels that block the phase |
 | `writes_files` | `true` (`false` for `draft` and `sub`) | Whether the phase writes files |
-| `advance_when` | `deps_terminal` (`merge` also `closing_pr_exists`) | Predicates from `PRECONDITION_REGISTRY` |
+| `advance_when` | `deps_terminal` (`develop` also `pins_landed`; `merge` also `closing_pr_exists`) | Predicates from `PRECONDITION_REGISTRY` |
 | `steps` | `[]` | Step ids in run order; empty means `(entry_step,)` |
 
 #### `steps.*` fields
