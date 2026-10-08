@@ -432,3 +432,22 @@ def test_andon_list_json_and_note_with_local_forge(tmp_path, monkeypatch, capsys
         assert _cmd_andon(["note", "wf:999:cp2:0", "--key", "k", "--value", "v"]) == 1
     finally:
         reset_config_cache()
+
+
+def test_andon_auto_answer_json_empty_rules(tmp_path, monkeypatch, capsys):
+    import yaml
+
+    from issuesmith.__main__ import _cmd_andon
+    from issuesmith.config import reset_config_cache
+
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(yaml.safe_dump({"repo": "example/repo"}), encoding="utf-8")
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    monkeypatch.setenv("GHDAG_FORGE", "local")
+    monkeypatch.setenv("GHDAG_FORGE_ROOT", str(tmp_path / "forge"))
+    reset_config_cache()
+    with patch("ghdag.forge.get_forge", return_value=MagicMock(list_issues=lambda **k: [])):
+        assert _cmd_andon(["auto-answer", "--json"]) == 0
+    out = capsys.readouterr().out
+    assert "answers" in out
+    reset_config_cache()

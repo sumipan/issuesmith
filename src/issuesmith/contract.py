@@ -353,6 +353,7 @@ class Andon:
     """
     kind: str  # "decision" | "blocked" | "broken"
     summary: str = ""
+    rule_id: str = ""
 
 
 @dataclass

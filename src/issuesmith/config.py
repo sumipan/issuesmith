@@ -100,6 +100,23 @@ class PathsConfig:
     # For the budget brake. When unset, _build_paths falls back to quota_state.
     # Defaults to None for manually built test configs (None means quota_state).
     brake_state: Path | None = None
+    lanes: Path | None = None
+
+
+_AUTO_ANSWER_MATCH_KEYS = frozenset({"step", "kind", "rule_id"})
+
+
+@dataclass(frozen=True)
+class AutoAnswerRule:
+    name: str
+    match: Mapping[str, str]
+    action: str
+    max_per_issue: int = 1
+
+
+@dataclass(frozen=True)
+class AndonConfig:
+    auto_answer: tuple[AutoAnswerRule, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -380,6 +397,7 @@ class IssuesmithConfig:
     language: LanguagePack = EN
     label_write_guard: Literal["warn", "enforce"] = "warn"
     installs: Mapping[str, Path] = field(default_factory=dict)
+    andon: AndonConfig = field(default_factory=AndonConfig)
 
     def phase(self, name: str) -> PhaseConfig:
         for ph in self.phases:
@@ -515,7 +533,10 @@ def _build_paths(raw: Mapping[str, Any] | None, root: Path) -> PathsConfig:
         resolved["brake_state"] = _abs(root, str(raw["brake_state"]))
     else:
         resolved["brake_state"] = resolved["quota_state"]
-    return PathsConfig(**resolved)
+    lanes: Path | None = None
+    if raw and raw.get("lanes") is not None:
+        lanes = _abs(root, str(raw["lanes"]))
+    return PathsConfig(**resolved, lanes=lanes)
 
 
 def _build_role(raw: Mapping[str, Any]) -> RoleConfig:
@@ -1082,6 +1103,53 @@ def _build_installs(raw: Any, root: Path) -> dict[str, Path]:
     return out
 
 
+def _build_andon(raw: Mapping[str, Any] | None) -> AndonConfig:
+    if not raw:
+        return AndonConfig()
+    auto_raw = raw.get("auto_answer")
+    if auto_raw is None:
+        return AndonConfig()
+    if not isinstance(auto_raw, list):
+        raise ConfigError("andon.auto_answer must be a list")
+    rules: list[AutoAnswerRule] = []
+    seen_names: set[str] = set()
+    for idx, item in enumerate(auto_raw):
+        if not isinstance(item, dict):
+            raise ConfigError(f"andon.auto_answer[{idx}] must be a mapping")
+        name = str(item.get("name") or "").strip()
+        if not name:
+            raise ConfigError(f"andon.auto_answer[{idx}].name is required")
+        if name in seen_names:
+            raise ConfigError(f"andon.auto_answer: duplicate name {name!r}")
+        seen_names.add(name)
+        match_raw = item.get("match")
+        if not isinstance(match_raw, dict) or not match_raw:
+            raise ConfigError(f"andon.auto_answer[{name!r}].match must be a non-empty mapping")
+        match: dict[str, str] = {}
+        for key, value in match_raw.items():
+            key_s = str(key)
+            if key_s not in _AUTO_ANSWER_MATCH_KEYS:
+                raise ConfigError(
+                    f"andon.auto_answer[{name!r}].match: unknown key {key_s!r}"
+                )
+            match[key_s] = str(value)
+        action = str(item.get("action") or "").strip()
+        if not action:
+            raise ConfigError(f"andon.auto_answer[{name!r}].action is required")
+        max_per_issue = int(item.get("max_per_issue", 1))
+        if max_per_issue < 1:
+            raise ConfigError(f"andon.auto_answer[{name!r}].max_per_issue must be >= 1")
+        rules.append(
+            AutoAnswerRule(
+                name=name,
+                match=match,
+                action=action,
+                max_per_issue=max_per_issue,
+            )
+        )
+    return AndonConfig(auto_answer=tuple(rules))
+
+
 def _build_api_brake(raw: Mapping[str, Any] | None) -> ApiBreakConfig:
     defaults = ApiBreakConfig()
     if not raw:
@@ -1133,6 +1201,7 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     api_brake_raw = (
         data.get("api_brake") if isinstance(data.get("api_brake"), dict) else None
     )
+    andon_raw = data.get("andon") if isinstance(data.get("andon"), dict) else None
     language = _build_language(data, root=root.resolve())
     using_default_phases = data.get("phases") is None
     return IssuesmithConfig(
@@ -1168,4 +1237,5 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         language=language,
         label_write_guard=_build_label_write_guard(data.get("label_write_guard")),
         installs=_build_installs(data.get("installs"), root.resolve()),
+        andon=_build_andon(andon_raw),
     )

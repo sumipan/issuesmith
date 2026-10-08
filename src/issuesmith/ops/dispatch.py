@@ -283,6 +283,7 @@ def map_step_result(
                 issue=issue_num,
                 step=step_id,
                 summary=summary,
+                rule_id=getattr(andon, "rule_id", "") or "",
             )
             _raise_andon(get_forge(), full_andon)
         return 1

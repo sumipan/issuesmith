@@ -35,6 +35,13 @@ class Andon:
     options: list[str] = field(default_factory=list)
     default: str = ""
     mention: str = ""
+    rule_id: str = ""
+
+
+@dataclass
+class AutoAnswerPlan:
+    answers: list[dict[str, Any]] = field(default_factory=list)
+    escalations: list[dict[str, Any]] = field(default_factory=list)
 
 
 @runtime_checkable
@@ -86,6 +93,7 @@ def from_comment(text: str) -> Andon | None:
             options=list(data.get("options") or []),
             default=str(data.get("default") or ""),
             mention=str(data.get("mention") or ""),
+            rule_id=str(data.get("rule_id") or ""),
         )
     except (KeyError, TypeError, ValueError):
         return None
@@ -255,6 +263,15 @@ def _call_resume_hook(client: Any, andon_id: str, action: str) -> None:
             resume(issue_num, from_step=step)
         except Exception:
             pass
+        return
+
+    if action.startswith("resume_from_"):
+        from_step = action[len("resume_from_") :]
+        if from_step:
+            try:
+                resume(issue_num, from_step=from_step, force=True)
+            except Exception:
+                pass
         return
 
     if action.startswith("widen:"):
@@ -474,3 +491,89 @@ def answer_if_open(
 
     path = metrics_path if metrics_path is not None else _default_metrics_path()
     _write_metrics(path, "andon_answered", target)
+
+
+def _count_auto_answer_notes(client: Any, issue: int, rule_name: str) -> int:
+    count = 0
+    for comment in client.get_issue_comments(issue):
+        parsed = _parse_note(str(comment.get("body") or ""))
+        if parsed is None:
+            continue
+        _, key, value = parsed
+        if key == "auto_answer" and value == rule_name:
+            count += 1
+    return count
+
+
+def _andon_matches_rule(andon: Andon, rule: Any) -> bool:
+    match = rule.match
+    if not match:
+        return False
+    for key, expected in match.items():
+        if key == "step":
+            if andon.step != str(expected):
+                return False
+        elif key == "kind":
+            if andon.kind != str(expected):
+                return False
+        elif key == "rule_id":
+            prefix = str(expected)
+            rid = andon.rule_id
+            if rid != prefix and not rid.startswith(prefix + "."):
+                return False
+    return True
+
+
+def plan_auto_answers(client: Any, rules: tuple[Any, ...]) -> AutoAnswerPlan:
+    """Plan automatic andon answers from declarative rules."""
+    plan = AutoAnswerPlan()
+    for andon in list_open(client):
+        matched_rule = None
+        for rule in rules:
+            if _andon_matches_rule(andon, rule):
+                matched_rule = rule
+                break
+        if matched_rule is None:
+            if andon.kind == "decision":
+                plan.escalations.append(
+                    {
+                        "kind": "decision",
+                        "issue": andon.issue,
+                        "andon_id": andon.id,
+                        "summary": andon.summary,
+                    }
+                )
+            continue
+        used = _count_auto_answer_notes(client, andon.issue, matched_rule.name)
+        if used >= matched_rule.max_per_issue:
+            plan.escalations.append(
+                {
+                    "kind": "auto_answer_exhausted",
+                    "issue": andon.issue,
+                    "andon_id": andon.id,
+                    "rule": matched_rule.name,
+                    "summary": andon.summary,
+                }
+            )
+            continue
+        plan.answers.append(
+            {
+                "andon_id": andon.id,
+                "issue": andon.issue,
+                "rule": matched_rule.name,
+                "action": matched_rule.action,
+            }
+        )
+    return plan
+
+
+def apply_auto_answers(client: Any, plan: AutoAnswerPlan) -> AutoAnswerPlan:
+    """Apply a plan: note first, then answer (so counts advance even if answer fails)."""
+    for entry in plan.answers:
+        andon_id = str(entry["andon_id"])
+        action = str(entry["action"])
+        rule_name = str(entry["rule"])
+        issue = int(entry["issue"])
+        client.issue_comment(issue, _note_comment(andon_id, "auto_answer", rule_name))
+        answer(client, andon_id, action)
+    return plan

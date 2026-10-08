@@ -420,6 +420,143 @@ def _cmd_stash_moved(_argv: list[str]) -> int:
     return 2
 
 
+def _lanes_role_engine_map() -> dict[str, str]:
+    from issuesmith.queue import _required_engines
+
+    return _required_engines()
+
+
+def _cmd_lanes(argv: list[str]) -> int:
+    import json
+    import re
+    from datetime import datetime
+
+    from ghdag.forge import get_forge
+
+    from issuesmith.andon import plan_auto_answers
+    from issuesmith.config import ConfigError, get_config
+    from issuesmith.lanes import (
+        IssueView,
+        apply,
+        count_merge_done_since,
+        ledger_state_path,
+        load_ledger,
+        load_report_state,
+        plan,
+        report,
+        resolve_report_since,
+        save_report_state,
+    )
+    from issuesmith.queue_store import QueueStore
+    from issuesmith.quota_gate import is_github_api_low, read_github_api_state
+
+    if not argv or argv[0] in {"-h", "--help"}:
+        print("usage: issuesmith lanes check [--apply] [--json]", file=sys.stderr)
+        print("       issuesmith lanes report [--json]", file=sys.stderr)
+        return 0 if argv and argv[0] in {"-h", "--help"} else 1
+
+    sub, *rest = argv
+    cfg = get_config()
+    if cfg.paths.lanes is None:
+        print("lanes: paths.lanes is not configured", file=sys.stderr)
+        return 2
+
+    ledger_path = cfg.paths.lanes
+    try:
+        ledger = load_ledger(ledger_path, default_api_min=cfg.api_brake.min_remaining)
+    except ConfigError as exc:
+        print(f"lanes: {exc}", file=sys.stderr)
+        return 2
+
+    apply_enqueue = "--apply" in rest
+    as_json = "--json" in rest
+    now = datetime.now().astimezone()
+    client = get_forge()
+    snapshot = QueueStore().snapshot()
+    audit_path = cfg.paths.exec_jsonl.parent / "audit.jsonl"
+    api_state = read_github_api_state(audit_path)
+    api_low = is_github_api_low(api_state, ledger.api_min_remaining, now)
+
+    issue_numbers: set[int] = set(ledger.hold) | set(ledger.backlog)
+    for nums in ledger.lanes.values():
+        issue_numbers.update(nums)
+
+    issues: dict[int, IssueView] = {}
+    for num in issue_numbers:
+        try:
+            raw = client.issue_get(num, fields=["number", "state", "labels", "body"])
+        except Exception:
+            continue
+        if not isinstance(raw, dict):
+            continue
+        labels = tuple(
+            str(lab.get("name") if isinstance(lab, dict) else lab)
+            for lab in (raw.get("labels") or [])
+        )
+        body = str(raw.get("body") or "")
+        m = re.search(r"^\s*target_repo:\s*([\w.-]+/[\w.-]+)", body, re.MULTILINE)
+        target_repo = m.group(1) if m else ""
+        issues[num] = IssueView(
+            number=num,
+            labels=labels,
+            state=str(raw.get("state") or "open"),
+            target_repo=target_repo,
+        )
+
+    lane_plan = plan(
+        ledger,
+        snapshot,
+        issues,
+        cfg,
+        now,
+        api_low,
+        role_engine_map=_lanes_role_engine_map(),
+    )
+
+    if sub == "check":
+        if apply_enqueue and not api_low:
+            apply(lane_plan, QueueStore())
+        if as_json:
+            print(
+                json.dumps(
+                    {
+                        "slots": lane_plan.slots,
+                        "candidates": lane_plan.candidates,
+                        "enqueue": lane_plan.enqueue,
+                        "escalations": lane_plan.escalations,
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            return 0
+        for entry in lane_plan.enqueue:
+            print(f"enqueue #{entry['issue']} phase={entry['phase']} lane={entry.get('lane')}")
+        for entry in lane_plan.escalations:
+            print(f"escalation {entry['kind']}")
+        return 0
+
+    if sub == "report":
+        auto_plan = plan_auto_answers(client, cfg.andon.auto_answer)
+        since = resolve_report_since(ledger.report_since, now, cfg.timezone)
+        merged = count_merge_done_since(client, since, cfg) if since.strip() else None
+        state_path = ledger_state_path(ledger_path)
+        state = load_report_state(state_path)
+        payload, summary = report(lane_plan, auto_plan, merged, state, now, ledger)
+        if payload.get("report_due"):
+            state["last_report_at"] = now.isoformat()
+            state["enqueue"] = lane_plan.enqueue
+            state["escalations"] = payload["escalations"]
+            save_report_state(state_path, state)
+        if as_json:
+            print(json.dumps(payload, ensure_ascii=False))
+            return 0
+        print(summary)
+        return 0
+
+    print(f"lanes: unknown subcommand: {sub}", file=sys.stderr)
+    return 2
+
+
 _HANDLERS = {
     "context": _run_context,
     "context_hook": _run_context,
@@ -454,6 +591,7 @@ _HANDLERS = {
     "main-health": _cmd_main_health,
     "apply": _cmd_stash_moved,
     "ingest-review": _cmd_stash_moved,
+    "lanes": _cmd_lanes,
 }
 
 
