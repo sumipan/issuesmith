@@ -12,6 +12,7 @@ issuesmith.contract, the single parser the B1 gate also uses) and return []
 
 from __future__ import annotations
 
+from issuesmith.config import reset_config_cache
 from issuesmith.language import EN
 from issuesmith.milestone import PlanRow, allow_paths_for_row
 from tests.legacy_text import (
@@ -88,6 +89,51 @@ def test_row_without_change_table_and_different_repo_returns_empty() -> None:
     assert paths == []
     for parent_path in _PARENT_ALLOW_PATHS:
         assert parent_path not in paths
+
+
+def test_path_env_prefix_excludes_notes_root_paths(tmp_path, monkeypatch) -> None:
+    import yaml
+
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump(
+            {
+                "repo": "sumipan/nexus",
+                "path_env_prefixes": ["${NOTES_ROOT}"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    body = _parent_body_bold_label_table()
+    rows = "\n".join(
+        f"| `sumipan/issuesmith` | `${{NOTES_ROOT}}/{p}` | {MODIFY} | x |"
+        for p in ("a.md",)
+    )
+    body = body.replace(
+        "\n".join(
+            f"| `sumipan/issuesmith` | `{p}` | {MODIFY} | narrow it |"
+            for p in _CHILD_PATHS
+        ),
+        rows,
+    )
+    row = PlanRow(row_num=1, title="fix scope gate", repo="sumipan/issuesmith", scope="x", dep_raw="")
+    assert allow_paths_for_row(body, row) == []
+
+
+def test_path_env_prefix_unset_does_not_exclude_nikki_paths() -> None:
+    body = _parent_body_bold_label_table()
+    extra = (
+        f"| `sumipan/issuesmith` | `${{NIKKI_ROOT}}/notes/x.md` | {MODIFY} | x |\n"
+    )
+    body = body.replace(
+        f"| `sumipan/issuesmith` | `{_CHILD_PATHS[0]}` | {MODIFY} | narrow it |\n",
+        f"| `sumipan/issuesmith` | `{_CHILD_PATHS[0]}` | {MODIFY} | narrow it |\n{extra}",
+    )
+    row = PlanRow(row_num=1, title="fix scope gate", repo="sumipan/issuesmith", scope="x", dep_raw="")
+    paths = allow_paths_for_row(body, row)
+    assert "${NIKKI_ROOT}/notes/x.md" in paths
 
 
 def test_missing_sub_block_returns_empty() -> None:

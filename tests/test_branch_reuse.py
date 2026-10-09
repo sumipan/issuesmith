@@ -258,6 +258,26 @@ def test_find_reusable_branch_diary_suffix_excluded(tmp_path: Path) -> None:
     assert result is None
 
 
+def test_find_reusable_branch_host_suffix_excluded(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_init_repo(repo)
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", "-b", "feat/issue-7-aaaa1111-host"],
+        check=True,
+        capture_output=True,
+    )
+    _commit(repo, "host work")
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", "main"],
+        check=True,
+        capture_output=True,
+    )
+    branch_reuse.record_base(repo, "feat/issue-7-aaaa1111-host", "main")
+
+    result = branch_reuse.find_reusable_branch(repo, 7, "main")
+    assert result is None
+
+
 def test_find_reusable_branch_picks_newest_of_two(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _git_init_repo(repo)

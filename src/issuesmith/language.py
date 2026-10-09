@@ -240,7 +240,7 @@ _EN_MESSAGES: dict[str, str] = {
     # steps/m1_merge
     "m1_merge.companion_not_ready": (
         "## M1: companion PR not approved or CI not passing\n\n"
-        "Re-run after companion PR (#{pr}, branch: {branch}-diary) is approved and CI passes."
+        "Re-run after companion PR (#{pr}, base branch: {branch}) is approved and CI passes."
     ),
     "m1_merge.m2_gate_blocked": (
         "## M1 stopped: M2 gate not passed\n\n"

@@ -27,6 +27,16 @@ def _normalize_allow_paths(raw: Any) -> tuple[str, ...]:
     return tuple(str(p) for p in raw)
 
 
+def companion_allow_paths_raw(body_metadata: dict[str, Any]) -> list[Any]:
+    """YAML host_allow_paths with diary_allow_paths fallback (host wins when both set)."""
+    raw = body_metadata.get("host_allow_paths") or body_metadata.get("diary_allow_paths") or []
+    if isinstance(raw, str):
+        return [raw]
+    if isinstance(raw, list):
+        return raw
+    return []
+
+
 def _empty_contract() -> ContractDict:
     return {}
 
@@ -153,7 +163,7 @@ def targets_from_issue(
 
     allow_paths = _normalize_allow_paths(body_metadata.get("allow_paths", []))
     diary_allow_paths = _normalize_allow_paths(
-        body_metadata.get("diary_allow_paths", [])
+        companion_allow_paths_raw(body_metadata)
     )
 
     if not target_repo:

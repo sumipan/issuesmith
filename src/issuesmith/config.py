@@ -371,6 +371,7 @@ class IssuesmithConfig:
     label_write_guard: Literal["warn", "enforce"] = "warn"
     installs: Mapping[str, Path] = field(default_factory=dict)
     andon: AndonConfig = field(default_factory=AndonConfig)
+    path_env_prefixes: tuple[str, ...] = ()
 
     def phase(self, name: str) -> PhaseConfig:
         for ph in self.phases:
@@ -965,6 +966,14 @@ def _build_terminal_labels(raw: Any) -> tuple[str, ...]:
     return tuple(str(x) for x in raw)
 
 
+def _build_path_env_prefixes(raw: Any) -> tuple[str, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ValueError("path_env_prefixes must be a list of strings")
+    return tuple(str(x) for x in raw)
+
+
 def _build_terminal_without_merge(raw: Any) -> tuple[str, ...]:
     if raw is None:
         return ()
@@ -1310,4 +1319,5 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         label_write_guard=_build_label_write_guard(data.get("label_write_guard")),
         installs=_build_installs(data.get("installs"), root.resolve()),
         andon=_build_andon(andon_raw),
+        path_env_prefixes=_build_path_env_prefixes(data.get("path_env_prefixes")),
     )

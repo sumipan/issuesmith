@@ -383,14 +383,18 @@ def test_allowed_repos_unions_every_metadata_block():
     assert _allowed_repos(body) == {"sumipan/nexus", "sumipan/ghdag"}
 
 
-def test_allowed_repos_adds_diary_from_any_block():
+def test_allowed_repos_adds_host_repo_from_companion_paths():
     from issuesmith.gate_rules.b1_milestone_subdesign import _allowed_repos
 
     body = (
         "```yaml\ntarget_repo: sumipan/nexus\n```\n\n"
         "```yaml\ntarget_repo: sumipan/ghdag\ndiary_allow_paths:\n  - notes/a.md\n```\n"
     )
-    assert _allowed_repos(body) == {"sumipan/nexus", "sumipan/ghdag", "sumipan/diary"}
+    assert _allowed_repos(body) == {
+        "sumipan/nexus",
+        "sumipan/ghdag",
+        get_config().repo,
+    }
 
 
 def test_two_repo_milestone_passes():

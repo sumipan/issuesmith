@@ -28,6 +28,29 @@ def _ac_body(*, paths_must_exist=None, targets=None) -> str:
     return "\n".join(lines)
 
 
+def test_old_format_target_repo_with_host_allow_paths():
+    metadata = {
+        "target_repo": "sumipan/issuesmith",
+        "allow_paths": ["src/**"],
+        "host_allow_paths": ["workflows/**"],
+        "base_branch": "main",
+    }
+    targets = targets_from_issue(metadata, issue_repo=ISSUE_REPO)
+    assert len(targets) == 2
+    assert targets[1].allow_paths == ("workflows/**",)
+
+
+def test_host_allow_paths_preferred_over_diary_allow_paths():
+    metadata = {
+        "target_repo": "sumipan/issuesmith",
+        "host_allow_paths": ["host/**"],
+        "diary_allow_paths": ["diary/**"],
+        "base_branch": "main",
+    }
+    targets = targets_from_issue(metadata, issue_repo=ISSUE_REPO)
+    assert targets[1].allow_paths == ("host/**",)
+
+
 def test_old_format_target_repo_with_diary_allow_paths():
     metadata = {
         "target_repo": "sumipan/issuesmith",
