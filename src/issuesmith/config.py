@@ -841,10 +841,6 @@ def _build_review(raw: Any, step_id: str) -> ReviewConfig | None:
     )
 
 
-# Convention tests declare every gate id in one step's requires list (18+ gates).
-_REGISTRY_PROBE_MIN_REQUIRES = 18
-
-
 def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
     steps = dict(_DEFAULT_STEPS)
     if not raw:
@@ -896,19 +892,7 @@ def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
 
         repair = _build_repair(conf.get("repair"), str(step_id))
         review = _build_review(conf.get("review"), str(step_id))
-        probe_requires = len(requires) >= _REGISTRY_PROBE_MIN_REQUIRES
-        if "review" in requires and review is None and probe_requires:
-            review = ReviewConfig(
-                role="review",
-                template="cp2.md",
-                success_status="CP2_PASS",
-                failure_status="CP2_FAIL",
-            )
-        if (
-            ("review" in requires or "review" in accepts)
-            and review is None
-            and not probe_requires
-        ):
+        if ("review" in requires or "review" in accepts) and review is None:
             raise ConfigError(
                 f"steps.{step_id}: gate 'review' requires steps.{step_id}.review"
             )
