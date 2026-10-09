@@ -1008,7 +1008,7 @@ def test_code_consts_pinning_scope_mode_internal(code_consts_repo, tmp_path, mon
     cc = [v for v in violations if v.rule_id == CODE_CONSTS_PIN_RULE_ID]
     assert len(cc) == 1
     assert cc[0].severity == "fail"
-    assert "tests/test_x.py" in cc[0].fix_hint or ""
+    assert "tests/test_x.py" in (cc[0].fix_hint or "")
 
 
 def test_code_consts_pinning_undefined_def_not_a_hit(tmp_path):
