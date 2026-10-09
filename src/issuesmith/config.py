@@ -227,7 +227,8 @@ class ScopeSizeConfig:
 
     enabled: bool = True
     max_files: int = 8
-    max_concerns: int = 2
+    max_concerns: int = 4
+    max_slices: int = 3
     delete_with_new: bool = False
     exclude_prefixes: tuple[str, ...] = (
         "tests/", "docs/", "README.md", "CHANGELOG.md", "pyproject.toml",
@@ -897,7 +898,7 @@ def _build_scope_size(
     if not raw:
         return defaults
     limits: dict[str, int] = {}
-    for key in ("max_files", "max_concerns"):
+    for key in ("max_files", "max_concerns", "max_slices"):
         value = raw.get(key, getattr(defaults, key))
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise ConfigError(f"scope_size.{key} must be an integer >= 1 (got {value!r})")
@@ -912,6 +913,7 @@ def _build_scope_size(
         enabled=bool(raw.get("enabled", defaults.enabled)),
         max_files=limits["max_files"],
         max_concerns=limits["max_concerns"],
+        max_slices=limits["max_slices"],
         delete_with_new=bool(raw.get("delete_with_new", defaults.delete_with_new)),
         exclude_prefixes=exclude_prefixes,
         **vocab,

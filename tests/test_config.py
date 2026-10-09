@@ -397,7 +397,8 @@ def test_scope_size_defaults_when_section_absent(tmp_path, monkeypatch):
     assert cfg.scope_size == ScopeSizeConfig()
     assert cfg.scope_size.enabled is True
     assert cfg.scope_size.max_files == 8
-    assert cfg.scope_size.max_concerns == 2
+    assert cfg.scope_size.max_concerns == 4
+    assert cfg.scope_size.max_slices == 3
     assert cfg.scope_size.delete_with_new is False
     assert cfg.scope_size.exclude_prefixes == (
         "tests/", "docs/", "README.md", "CHANGELOG.md", "pyproject.toml",
@@ -458,6 +459,7 @@ def test_scope_size_overrides(tmp_path, monkeypatch):
         enabled=False,
         max_files=12,
         max_concerns=3,
+        max_slices=3,
         delete_with_new=True,
         exclude_prefixes=("tests/",),
     )
@@ -471,6 +473,8 @@ def test_scope_size_overrides(tmp_path, monkeypatch):
         {"max_files": "8"},
         {"max_concerns": 1.5},
         {"max_files": True},
+        {"max_slices": 0},
+        {"max_slices": 1.5},
         {"exclude_prefixes": "tests/"},
         {"exclude_prefixes": ["tests/", 1]},
     ],

@@ -36,10 +36,12 @@ def _fixture(name: str) -> str:
     return _decode((_FIXTURES / name).read_text(encoding="utf-8"))
 
 
-def _body(rows: list[tuple[str, str]]) -> str:
+def _body(rows: list[tuple[str, str]], yaml_extra: str = "") -> str:
     table = "".join(f"| `sumipan/issuesmith` | `{p}` | {k} | x |\n" for p, k in rows)
     return _decode(
-        "```yaml\ntarget_repo: sumipan/issuesmith\nbase_branch: main\n```\n\n"
+        "```yaml\ntarget_repo: sumipan/issuesmith\nbase_branch: main\n"
+        f"{yaml_extra}"
+        "```\n\n"
         "## Changed Files\n\n" + _HEADER + table
     )
 
@@ -56,7 +58,7 @@ def _write_config(tmp_path: Path, monkeypatch, extra: dict | None = None) -> Non
     data: dict = {
         "repo": "sumipan/issuesmith",
         "sections": {"changed_files": "Changed Files"},
-        "scope_size": _vocabulary(),
+        "scope_size": {**_vocabulary(), "max_concerns": 2},
     }
     for key, value in (extra or {}).items():
         if key == "scope_size":
@@ -778,3 +780,52 @@ def test_deleted_core_pulls_stem_test_from_other_slice():
     paths = {name: [r[1] for r in rs] for name, rs in slices.items()}
     assert "tests/a/test_old.py" in paths["src/b"]
     assert "tests/a/test_old.py" not in paths["src/a"]
+
+
+def test_fix_hint_includes_split_atomic_guidance():
+    rows = [("src/a/x.py", _MODIFY), ("src/b/x.py", _MODIFY), ("src/c/x.py", _MODIFY)]
+    (violation,) = ScopeSizeRules().check(_body(rows), [])
+    assert "split: atomic" in violation.fix_hint
+
+
+def test_three_concerns_pass_with_default_max_concerns(tmp_path, monkeypatch):
+    _write_config(tmp_path, monkeypatch, {"scope_size": {"max_concerns": 4}})
+    rows = [("src/a/x.py", _MODIFY), ("src/b/x.py", _MODIFY), ("src/c/x.py", _MODIFY)]
+    assert ScopeSizeRules().check(_body(rows), []) == []
+
+
+def test_atomic_skips_scope_size_checks():
+    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
+
+    rows = [(f"src/{d}/f{i}.py", _MODIFY) for d in ("a", "b", "c", "d", "e") for i in range(2)]
+    body = _body(rows, yaml_extra="split: atomic\n")
+    assert ScopeSizeRules().check(body, []) == []
+    assert promote_oversized_issue_body(body) == body
+
+
+def test_atomic_skips_delete_with_new():
+    rows = [("src/a/old.py", _DELETE), ("src/a/new.py", _NEW)]
+    body = _body(rows, yaml_extra="split: atomic\n")
+    assert ScopeSizeRules().check(body, []) == []
+
+
+def test_split_foo_still_triggers_scope_size():
+    rows = [("src/a/x.py", _MODIFY), ("src/b/x.py", _MODIFY), ("src/c/x.py", _MODIFY)]
+    body = _body(rows, yaml_extra="split: foo\n")
+    assert _ids(ScopeSizeRules().check(body, [])) == {"scope_size.too_many_concerns"}
+
+
+def test_body_without_yaml_still_triggers_scope_size():
+    rows = [("src/a/x.py", _MODIFY), ("src/b/x.py", _MODIFY), ("src/c/x.py", _MODIFY)]
+    table = "".join(f"| `sumipan/issuesmith` | `{p}` | {k} | x |\n" for p, k in rows)
+    body = _decode("## Changed Files\n\n" + _HEADER + table)
+    assert _ids(ScopeSizeRules().check(body, [])) == {"scope_size.too_many_concerns"}
+
+
+def test_max_slices_override_allows_four_slices(tmp_path, monkeypatch):
+    from issuesmith.gate_rules.scope_size import promotion_declined
+
+    _write_config(tmp_path, monkeypatch, {"scope_size": {"max_slices": 4}})
+    rows = [(f"src/{d}/f{i}.py", _MODIFY) for d in ("a", "b", "c", "d") for i in range(3)]
+    body = _body(rows)
+    assert not promotion_declined(body)

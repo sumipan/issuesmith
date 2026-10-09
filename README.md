@@ -533,7 +533,7 @@ Relative paths in the file resolve against the directory that holds it.
 | `forbidden_pr_paths` | `jobs/**`, `logs/**`, `.sessions/**`, `*.jsonl`, `*.pid`, `*.lock` | Paths a PR may not touch |
 | `scope_gate` | `enabled: true` | P0 allow_paths size: `max_files` (`80`), `max_lines` (`20000`), `hard_max_files` (`200`) |
 | `scope_coupling` | `enabled: true` | `search_dirs` (`[tests, src]`), `data_file_tests` (`true`) |
-| `scope_size` | `enabled: true` | B1 Issue size: `max_files` (`8`), `max_concerns` (`2`), `delete_with_new` (`false`), `exclude_prefixes` |
+| `scope_size` | `enabled: true` | B1 Issue size: `max_files` (`8`), `max_concerns` (`4`), `max_slices` (`3`), `delete_with_new` (`false`), `exclude_prefixes` |
 | `tests` | `flaky_reruns: 2` | Reruns of newly failing tests on the branch (`0` turns flaky detection off) |
 | `metrics` | `done_step: m2` | Rework metrics: `done_step`, `repair_templates`, `cause_targets` |
 | `derived_allow` | `enabled: true`, `ledger_globs: [tests/conventions/known_*.txt]` | Allow repair to edit newly failing tests outside allow_paths; ledgers matching `ledger_globs` next to a failing test may only shrink (`[]` turns ledger derivation off) |
