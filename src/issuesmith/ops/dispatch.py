@@ -650,6 +650,10 @@ def _format_pass_summary(step_id: str, gates: dict[str, object], violations: lis
 _MAX_AUTO_FIX_ROUNDS = 2
 
 
+def _violation_fingerprint(v) -> tuple[str, str, str]:
+    return (v.rule_id, v.location or "", v.message)
+
+
 def run_requires_loop(
     step_cfg: StepConfig,
     step_id: str,
@@ -657,7 +661,7 @@ def run_requires_loop(
     *,
     repair_count: int = 0,
     auto_fix_round: int = 0,
-    _prev_blocking_rule_ids: frozenset[str] | None = None,
+    _prev_blocking_fingerprints: frozenset[tuple[str, str, str]] | None = None,
     origin: Literal["requires", "accepts"] = "requires",
 ) -> int | None:
     """Evaluate requires gates; auto-fix, repair, or raise andon as needed.
@@ -779,11 +783,12 @@ def run_requires_loop(
         return None
 
     # Oscillation detection: repair made no progress (same or worsened violations).
+    current_fingerprints = frozenset(_violation_fingerprint(v) for v in result.blocking)
     current_rule_ids = frozenset(v.rule_id for v in result.blocking)
     if (
-        _prev_blocking_rule_ids is not None
+        _prev_blocking_fingerprints is not None
         and result.blocking
-        and _prev_blocking_rule_ids.issubset(current_rule_ids)
+        and _prev_blocking_fingerprints.issubset(current_fingerprints)
     ):
         options = _build_andon_options(result.blocking)
         summary = (
@@ -856,7 +861,7 @@ def run_requires_loop(
     return run_requires_loop(
         step_cfg, step_id, context,
         repair_count=repair_count + 1,
-        _prev_blocking_rule_ids=current_rule_ids,
+        _prev_blocking_fingerprints=current_fingerprints,
         origin=origin,
     )
 
