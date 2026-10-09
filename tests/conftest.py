@@ -2,6 +2,7 @@
 Shared pytest fixtures for the issuesmith test suite.
 """
 
+import atexit
 import builtins
 import contextlib
 import dataclasses
@@ -161,6 +162,7 @@ _SESSION_TEST_CONFIG.write_text(
     yaml.safe_dump(_subprocess_config_payload),
     encoding="utf-8",
 )
+atexit.register(_SESSION_TEST_CONFIG.unlink, missing_ok=True)
 
 _NEXUS_CONFIG_MODULES = frozenset({
     "tests.test_preconditions",

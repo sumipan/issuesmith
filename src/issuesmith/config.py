@@ -414,8 +414,9 @@ def load_config(path: Path | None = None) -> IssuesmithConfig:
       2. env ``ISSUESMITH_CONFIG``
       3. ``issuesmith.yaml`` found by walking up from cwd
       4. ``Path(__file__).resolve().parents[2] / "issuesmith.yaml"`` (package repo root)
-      5. package repo root ``issuesmith.yaml`` (no builtin phase defaults; missing
-         ``phases:`` raises ``ConfigError``)
+
+    There are no builtin phase defaults: when no file is found, or the file
+    omits ``phases:``, ``_build_config`` raises ``ConfigError``.
     """
     resolved = _resolve_config_path(path)
     if resolved is None:
