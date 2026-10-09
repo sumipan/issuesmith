@@ -155,40 +155,47 @@ from issuesmith.gates.scope import check_scope  # noqa: E402
 
 
 def validate_step_requires(steps: "Mapping[str, Any]") -> None:
-    """Validate ``StepConfig.requires`` against GATE_REGISTRY (unknown ids, input_kind rules).
+    """Validate ``StepConfig.requires`` and ``accepts`` against GATE_REGISTRY.
 
-    Kept out of ``config.load_config`` so loading the config never imports the gate registry
-    (sumipan/nexus#3687). Raises ``issuesmith.config.ConfigError`` with the same messages the
-    loader used to raise. Call from doctor, dispatch and ``config show``.
+    Unknown gate ids and input_kind mismatches are checked for both fields using the
+    same rules. Kept out of ``config.load_config`` so loading the config never imports
+    the gate registry (sumipan/nexus#3687). Raises ``issuesmith.config.ConfigError``.
+    Call from doctor, dispatch and ``config show``.
     """
     from issuesmith.config import ConfigError  # noqa: PLC0415 - config must not import gates
 
     known = sorted(GATE_REGISTRY)
     for step_id, step in steps.items():
-        requires = tuple(getattr(step, "requires", ()) or ())
-        if not requires:
-            continue
-        unknown = [g for g in requires if g not in GATE_REGISTRY]
-        if unknown:
-            raise ConfigError(
-                f"steps.{step_id}.requires contains unknown gate ids"
-                f" (missing gate ids: {unknown}). Known ids: {known}"
-            )
         input_kind = getattr(step, "input_kind", "issue")
-        for gate_id in requires:
-            gate_input_kind = GATE_REGISTRY[gate_id].input_kind
-            if gate_input_kind == "worktree" and input_kind != "worktree":
+        for field_name in ("requires", "accepts"):
+            gate_ids = tuple(getattr(step, field_name, ()) or ())
+            if not gate_ids:
+                continue
+            unknown = [g for g in gate_ids if g not in GATE_REGISTRY]
+            if unknown:
                 raise ConfigError(
-                    f"steps.{step_id}: worktree gate {gate_id!r} can only be used"
-                    f" in worktree steps, but step input_kind={input_kind!r}"
+                    f"steps.{step_id}.{field_name} contains unknown gate ids"
+                    f" (missing gate ids: {unknown}). Known ids: {known}"
                 )
-            if gate_input_kind == "artifact" and input_kind != "artifact":
-                raise ConfigError(
-                    f"steps.{step_id}: artifact gate {gate_id!r} can only be used"
-                    f" in artifact steps, but step input_kind={input_kind!r}"
-                )
-            if gate_input_kind == "issue" and input_kind == "artifact":
-                raise ConfigError(
-                    f"steps.{step_id}: issue gate {gate_id!r} cannot be used"
-                    f" in artifact steps"
-                )
+            loc = (
+                f"steps.{step_id}"
+                if field_name == "requires"
+                else f"steps.{step_id}.{field_name}"
+            )
+            for gate_id in gate_ids:
+                gate_input_kind = GATE_REGISTRY[gate_id].input_kind
+                if gate_input_kind == "worktree" and input_kind != "worktree":
+                    raise ConfigError(
+                        f"{loc}: worktree gate {gate_id!r} can only be used"
+                        f" in worktree steps, but step input_kind={input_kind!r}"
+                    )
+                if gate_input_kind == "artifact" and input_kind != "artifact":
+                    raise ConfigError(
+                        f"{loc}: artifact gate {gate_id!r} can only be used"
+                        f" in artifact steps, but step input_kind={input_kind!r}"
+                    )
+                if gate_input_kind == "issue" and input_kind == "artifact":
+                    raise ConfigError(
+                        f"{loc}: issue gate {gate_id!r} cannot be used"
+                        f" in artifact steps"
+                    )
