@@ -2,7 +2,7 @@
 context_hook.py — ghdag context_hook for issuesmith
 
 Invoked through the context_hook feature of ghdag WorkflowDispatcher.
-Builds diary-specific context variables from a GitHub Issue body and prints them as JSON on stdout.
+Builds host-companion context variables from a GitHub Issue body and prints them as JSON on stdout.
 
 Invocation:
     python -m issuesmith.context_hook <issue_number>
@@ -34,7 +34,7 @@ from issuesmith.branch_reuse import find_reusable_branch
 from issuesmith.branch_reuse import is_base_recorded as _is_base_recorded
 from issuesmith.branch_reuse import previous_commits as _prev_commits
 from issuesmith.config import get_config
-from issuesmith.targets import targets_from_issue
+from issuesmith.targets import companion_allow_paths_raw, targets_from_issue
 
 _PIPELINE_BRANCH_RE = re.compile(
     r"<!--\s*pipeline-branch:\s*feat/issue-(\d+)-([a-f0-9]+)\s*-->",
@@ -54,10 +54,26 @@ except ValueError:
     _EXTERNAL_REL = str(_cfg.paths.external_dir)
 
 
-# Phrases in the out-of-scope section that mean "diary-side change" (matched lowercased).
-_DIARY_AVOIDANCE_PATTERNS: tuple[str, ...] = (
-    "diary-side", "diary side", "update diary", "diary changes",
+# Phrases in the out-of-scope section that mean host-side change (matched lowercased).
+_HOST_AVOIDANCE_PATTERNS: tuple[str, ...] = (
+    "host-side",
+    "host side",
+    "update host",
+    "host changes",
+    "diary-side",
+    "diary side",
+    "update diary",
+    "diary changes",
 )
+
+
+def _companion_worktree_path(pipeline_id: str) -> str:
+    """Absolute path for the host companion worktree (resume prefers existing ``-diary``)."""
+    base = Path(_REPO_ROOT) / _WORKTREES_REL
+    legacy = base / f"{pipeline_id}-diary"
+    if legacy.is_dir():
+        return str(legacy)
+    return str(base / f"{pipeline_id}-host")
 
 
 @dataclass
@@ -340,32 +356,34 @@ def build_context(
 
     source = str(metadata.get("source", ""))
 
-    diary_allow_paths_raw = metadata.get("diary_allow_paths", [])
-    if isinstance(diary_allow_paths_raw, str):
-        diary_allow_paths_raw = [diary_allow_paths_raw]
+    companion_allow_raw = companion_allow_paths_raw(metadata)
 
-    has_diary_changes = "true" if (target_repo and diary_allow_paths_raw) else "false"
+    has_host_changes = "true" if (target_repo and companion_allow_raw) else "false"
 
-    if has_diary_changes == "true":
-        diary_allow_paths = "\n".join(f"- {p}" for p in diary_allow_paths_raw)
-        diary_worktree_path = f"{_REPO_ROOT}/{_WORKTREES_REL}/{pipeline_id}-diary"
+    if has_host_changes == "true":
+        host_allow_paths = "\n".join(f"- {p}" for p in companion_allow_raw)
+        host_worktree_path = _companion_worktree_path(pipeline_id)
     else:
-        diary_allow_paths = ""
-        diary_worktree_path = ""
+        host_allow_paths = ""
+        host_worktree_path = ""
 
-    # Lint warning: target_repo set + diary_allow_paths unset + diary mentioned out of scope
-    if target_repo and not diary_allow_paths_raw and body:
+    has_diary_changes = has_host_changes
+    diary_allow_paths = host_allow_paths
+    diary_worktree_path = host_worktree_path
+
+    # Lint warning: target_repo set + host_allow_paths unset + host mentioned out of scope
+    if target_repo and not companion_allow_raw and body:
         out_of_scope = get_config().language.out_of_scope_heading
         nodo_match = re.search(
             rf"## {re.escape(out_of_scope)}(.*?)(?=\n## |\Z)", body, re.DOTALL
         )
         if nodo_match:
             nodo_text = nodo_match.group(1).lower()
-            if any(p in nodo_text for p in _DIARY_AVOIDANCE_PATTERNS):
+            if any(p in nodo_text for p in _HOST_AVOIDANCE_PATTERNS):
                 print(
-                    f"Warning: Issue #{issue_number}: '{out_of_scope}' mentions diary-side"
-                    " changes but diary_allow_paths is not set."
-                    " Consider setting diary_allow_paths during the B1 brush-up.",
+                    f"Warning: Issue #{issue_number}: '{out_of_scope}' mentions host-side"
+                    " changes but host_allow_paths is not set."
+                    " Consider setting host_allow_paths during the B1 brush-up.",
                     file=sys.stderr,
                 )
 
@@ -396,6 +414,9 @@ def build_context(
         "target_clone_path": target_clone_path,
         "target_worktree_path": target_worktree_path,
         "is_cross_repo": is_cross_repo,
+        "has_host_changes": has_host_changes,
+        "host_worktree_path": host_worktree_path,
+        "host_allow_paths": host_allow_paths,
         "has_diary_changes": has_diary_changes,
         "diary_worktree_path": diary_worktree_path,
         "diary_allow_paths": diary_allow_paths,

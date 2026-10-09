@@ -1192,7 +1192,6 @@ def milestone_prune(*, dry_run: bool = False, store: QueueStore | None = None) -
 
 _DEFAULT_SUB1_TEMPLATE = "_sub1-body-order.md"
 _SUB1_DEP_REF_RE = re.compile(r"#(\d+)")
-_SUB1_NIKKI_PREFIX = "${NIKKI_ROOT}"
 # Not a language pack field (#4469): an English literal, matched as a heading substring.
 _BREAKING_CHANGE_HEADING = "Breaking Change Impact"
 
@@ -1339,7 +1338,7 @@ def allow_paths_for_row(parent_body: str, row: PlanRow) -> list[str]:
         if path.startswith("/var/tmp/"):
             print(f"WARN: skip invalid allow_path {path!r}", file=sys.stderr)
             continue
-        if path.startswith(_SUB1_NIKKI_PREFIX):
+        if any(path.startswith(prefix) for prefix in get_config().path_env_prefixes):
             continue
         paths.append(path)
     return paths
@@ -1424,10 +1423,10 @@ def build_child_body(
         yaml_lines.append("allow_paths:")
         for path in allow_paths:
             yaml_lines.append(f'  - "{path}"')
-    diary_allow = parent_meta.get("diary_allow_paths")
-    if isinstance(diary_allow, list) and diary_allow:
-        yaml_lines.append("diary_allow_paths:")
-        for path in diary_allow:
+    host_allow = parent_meta.get("host_allow_paths") or parent_meta.get("diary_allow_paths")
+    if isinstance(host_allow, list) and host_allow:
+        yaml_lines.append("host_allow_paths:")
+        for path in host_allow:
             if isinstance(path, str):
                 yaml_lines.append(f'  - "{path}"')
 

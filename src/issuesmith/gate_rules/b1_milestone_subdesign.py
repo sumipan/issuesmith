@@ -18,6 +18,7 @@ from issuesmith.contract import (  # noqa: F401 — re-exported for legacy impor
     parse_table_rows,
     plan_dep_refs,
 )
+from issuesmith.targets import companion_allow_paths_raw
 
 _SUB_HEADER_RE = SUB_HEADER_RE
 _BACKTICK_PATH_RE = re.compile(r"`([^`]+)`")
@@ -96,14 +97,14 @@ def _extract_parent_change_paths(body: str) -> set[str]:
 
 
 def _allowed_repos(body: str) -> set[str]:
-    """Union of every metadata block's target_repo (+ diary) — one block per repo (#4076)."""
+    """Union of every metadata block's target_repo (+ host companion) — one block per repo (#4076)."""
     repos: set[str] = set()
     for metadata in parse_issue_metadata_blocks(body):
         target_repo = metadata.get("target_repo")
         if isinstance(target_repo, str) and target_repo.strip():
             repos.add(target_repo.strip())
-        if metadata.get("diary_allow_paths"):
-            repos.add("sumipan/diary")
+        if companion_allow_paths_raw(metadata):
+            repos.add(get_config().repo)
     return repos
 
 
@@ -894,7 +895,7 @@ class B1MilestoneSubdesignRules:
                     severity="fail",
                     message=(
                         f"Sub {sub_num}: repository column `{repo}` does not match"
-                        f" the target_repo / diary_allow_paths of any metadata block"
+                        f" the target_repo / host_allow_paths of any metadata block"
                         f" ({path})"
                     ),
                     location=_sub_location(sub_num),

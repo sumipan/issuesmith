@@ -554,3 +554,36 @@ def test_derived_allow_ledger_globs_loaded(tmp_path, monkeypatch):
 def test_derived_allow_ledger_globs_invalid_raises(tmp_path, monkeypatch, value):
     with pytest.raises(ConfigError, match="ledger_globs must be a list of strings"):
         _load_derived_allow(tmp_path, monkeypatch, {"ledger_globs": value})
+
+
+def test_path_env_prefixes_default_empty(tmp_path, monkeypatch):
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(yaml.safe_dump({"repo": "example/repo"}), encoding="utf-8")
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    assert load_config().path_env_prefixes == ()
+
+
+def test_path_env_prefixes_loaded(tmp_path, monkeypatch):
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump(
+            {"repo": "example/repo", "path_env_prefixes": ["${NOTES_ROOT}", "${NIKKI_ROOT}"]}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    assert load_config().path_env_prefixes == ("${NOTES_ROOT}", "${NIKKI_ROOT}")
+
+
+def test_path_env_prefixes_invalid_type_raises(tmp_path, monkeypatch):
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "example/repo", "path_env_prefixes": "x"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    with pytest.raises(ValueError, match="path_env_prefixes must be a list"):
+        load_config()

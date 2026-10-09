@@ -79,6 +79,24 @@ def test_pin_bump_skipped_for_bump_label():
     assert _check(_FEATURE_BODY_PIN, ["bump:issuesmith"]) == []
 
 
+def test_pin_bump_scans_host_allow_paths():
+    body = """\
+```yaml
+target_repo: sumipan/nexus
+base_branch: main
+host_allow_paths:
+  - pyproject.toml
+```
+
+## Design
+
+Requires issuesmith v0.133.1 after the bump workflow lands.
+"""
+    violations = _check(body, [])
+    assert len(violations) == 1
+    assert violations[0].rule_id == "pin_bump.in_feature_issue"
+
+
 def test_pin_bump_ignores_pyproject_without_pin_line():
     body = """\
 ```yaml

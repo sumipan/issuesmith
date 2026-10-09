@@ -12,7 +12,7 @@ Checks:
   2. `import ghdag` succeeds and `get_adapter('shell')` resolves correctly
 
 ghdag is obtained as a transitive dependency via mltgnt (#1148). A direct
-dependency would mean double bookkeeping, with diary and mltgnt pinning
+dependency would mean double bookkeeping, with the host and mltgnt pinning
 different versions.
 
 Past incident: pip resolve read a stale egg-info and kept downgrading ghdag to
@@ -20,7 +20,7 @@ v0.15.0; ShellAdapter disappeared and every SHR dispatch failed. Template render
 tests could never have caught it.
 
 CLAUDE.md rule: a PR that changes workflows/issuesmith/* / pyproject.toml /
-scripts/diary_hooks.py / scripts/dag-runner.py must run this script **in the
+the host's DAG hook script / scripts/dag-runner.py must run this script **in the
 real Python environment** and confirm exit 0 before merging.
 """
 from __future__ import annotations

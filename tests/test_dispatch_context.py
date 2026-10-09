@@ -77,3 +77,67 @@ def test_context_to_step_without_execution_constraints() -> None:
         }
     )
     assert ctx.execution_constraints == ""
+
+
+def test_context_to_step_maps_host_companion_fields() -> None:
+    ctx = _context_to_step(
+        {
+            "issue_number": "1",
+            "base_branch": "main",
+            "handler_name": "sub",
+            "is_cross_repo": "true",
+            "target_clone_path": "",
+            "source": "",
+            "workflow_name": "w",
+            "m1_result_filename": "",
+            "m1r_result_filename": "",
+            "has_host_changes": "true",
+            "host_worktree_path": "/tmp/issue-1-host",
+            "host_allow_paths": "- a",
+        }
+    )
+    assert ctx.has_host_changes == "true"
+    assert ctx.host_worktree_path == "/tmp/issue-1-host"
+    assert ctx.host_allow_paths == "- a"
+    assert ctx.has_diary_changes == "true"
+    assert ctx.diary_worktree_path == "/tmp/issue-1-host"
+    assert ctx.diary_allow_paths == "- a"
+
+
+def test_step_context_syncs_diary_keyword_to_host_fields() -> None:
+    ctx = StepContext(
+        issue_number="1",
+        base_branch="main",
+        handler_name="h",
+        is_cross_repo="false",
+        target_clone_path="",
+        source="",
+        workflow_name="w",
+        m1_result_filename="",
+        m1r_result_filename="",
+        diary_worktree_path="x",
+        has_diary_changes="true",
+        diary_allow_paths="- p",
+    )
+    assert ctx.host_worktree_path == "x"
+    assert ctx.has_host_changes == "true"
+    assert ctx.host_allow_paths == "- p"
+
+
+def test_step_context_replace_accepts_diary_worktree_path_keyword() -> None:
+    from dataclasses import replace
+
+    ctx = StepContext(
+        issue_number="1",
+        base_branch="main",
+        handler_name="h",
+        is_cross_repo="false",
+        target_clone_path="",
+        source="",
+        workflow_name="w",
+        m1_result_filename="",
+        m1r_result_filename="",
+        host_worktree_path="old",
+    )
+    updated = replace(ctx, diary_worktree_path="new")
+    assert updated.diary_worktree_path == "new"
