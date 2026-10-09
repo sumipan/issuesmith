@@ -77,6 +77,7 @@ def _require_worktree(gate_id: str, ctx: GateBuildContext) -> Path:
 
 def _build_registry() -> dict[str, GateEntry]:
     """Build the unified GATE_REGISTRY from gate modules and gate_rules."""
+    from issuesmith.gates.ac_contract import AcContractGate
     from issuesmith.gates.dep import DepsGate
     from issuesmith.gates.pr_scope import PrScopeGate
     from issuesmith.gates.scope import ScopeGate
@@ -121,6 +122,15 @@ def _build_registry() -> dict[str, GateEntry]:
 
     registry["scope"] = GateEntry(input_kind="worktree", build=_build_scope)
     registry["pr_scope"] = GateEntry(input_kind="worktree", build=_build_pr_scope)
+
+    def _build_ac_contract(ctx: GateBuildContext) -> RequiresGate:
+        p = _require_worktree("ac_contract", ctx)
+        return AcContractGate(p)
+
+    registry["ac_contract"] = GateEntry(
+        input_kind="worktree",
+        build=_build_ac_contract,
+    )
 
     # Gate rules registered in ghdag's GATE_REGISTRY (via import issuesmith.gate_rules).
     from ghdag.workflow.gates import GATE_REGISTRY as _IMPL_REG
