@@ -178,6 +178,59 @@ def test_merge_state_blocked_parses_graphql_blocked_fixture() -> None:
     assert got.merge_state_status == "BLOCKED"
 
 
+def test_graphql_merge_state_uses_client_graphql_data() -> None:
+    payload = json.loads(GQL_CLEAN_JSON)
+    data = payload["data"]
+    client = MagicMock()
+    client.graphql.return_value = data
+    got = merge_api.graphql_merge_state(client, "sumipan/nexus", 3183)
+    assert got.merge_state_status == "CLEAN"
+    assert got.head_ref_name == "feat/issue-3173-eb3c5291-diary"
+    client.graphql.assert_called_once()
+    _, variables = client.graphql.call_args.args
+    assert variables == {"owner": "sumipan", "name": "nexus", "number": 3183}
+    client.pr_get.assert_not_called()
+
+
+def test_graphql_merge_state_fallback_not_implemented(capsys) -> None:
+    detail = json.loads(PR_DETAIL_OPEN_JSON)
+    client = MagicMock()
+    client.graphql.side_effect = NotImplementedError("no graphql")
+    client.pr_get.return_value = detail
+    got = merge_api.graphql_merge_state(client, "sumipan/nexus", 3183)
+    client.pr_get.assert_called_once_with(3183, repo="sumipan/nexus")
+    assert got.merge_state_status == "UNKNOWN"
+    assert "falling back to pr_get" in capsys.readouterr().err
+
+
+def test_graphql_merge_state_fallback_on_exception(capsys) -> None:
+    detail = json.loads(PR_DETAIL_OPEN_JSON)
+    client = MagicMock()
+    client.graphql.side_effect = RuntimeError("network")
+    client.pr_get.return_value = detail
+    merge_api.graphql_merge_state(client, "sumipan/nexus", 3183)
+    client.pr_get.assert_called_once_with(3183, repo="sumipan/nexus")
+    assert "falling back to pr_get" in capsys.readouterr().err
+
+
+def test_graphql_merge_state_fallback_invalid_repo() -> None:
+    detail = json.loads(PR_DETAIL_OPEN_JSON)
+    client = MagicMock()
+    client.pr_get.return_value = detail
+    merge_api.graphql_merge_state(client, "invalid-repo", 3183)
+    client.graphql.assert_not_called()
+    client.pr_get.assert_called_once_with(3183, repo="invalid-repo")
+
+
+def test_graphql_merge_state_fallback_when_merge_state_missing() -> None:
+    detail = json.loads(PR_DETAIL_OPEN_JSON)
+    client = MagicMock()
+    client.graphql.return_value = {"repository": {"pullRequest": {}}}
+    client.pr_get.return_value = detail
+    merge_api.graphql_merge_state(client, "sumipan/nexus", 3183)
+    client.pr_get.assert_called_once_with(3183, repo="sumipan/nexus")
+
+
 def test_wait_merge_state_retries_on_blocked() -> None:
     blocked = merge_api.MergeStateInfo.from_mapping(
         json.loads(GQL_BLOCKED_JSON)["data"]["repository"]["pullRequest"]
