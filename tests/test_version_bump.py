@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from issuesmith.ops.version_bump import decide_bump
+from issuesmith.ops.version_bump import decide_bump, run_bump
 
 _STALE_BUMP_SUBJECT = (
     "chore: bump version to 0.2.0 (Y: B1 — commit message indicates breaking change)"
@@ -108,3 +108,15 @@ def test_prose_mentioning_breaking_is_not_b1(tmp_path: Path, message: str):
     decision = decide_bump(repo, "origin/main")
 
     assert decision.bump_type == "Z", decision.reason
+
+
+def test_run_bump_without_changelog_commits_only_pyproject(tmp_path: Path):
+    repo = _init_repo(tmp_path)
+    _point_origin_main_at_head(repo)
+    _commit(repo, "src/pkg/mod.py", "def api():\n    return 3\n", "fix: tweak internals")
+
+    assert run_bump(repo, "origin/main") == 0
+
+    files = _git(repo, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD").split()
+    assert files == ["pyproject.toml"]
+    assert not (repo / "CHANGELOG.md").exists()

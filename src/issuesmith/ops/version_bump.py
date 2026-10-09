@@ -11,6 +11,7 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 _PUBLIC_DEF = re.compile(r"^([+-])((?:async\s+)?def)\s+([A-Za-z][A-Za-z0-9_]*)\s*\((.*)$")
@@ -28,6 +29,8 @@ _ENTRY_SECTION = re.compile(
 )
 _ENTRY_KEY = re.compile(r"^([+-])\s*([A-Za-z0-9_.-]+)\s*=")
 _VERSION_RE = re.compile(r'^version\s*=\s*"([^"]+)"', re.MULTILINE)
+_UNRELEASED_HEADING = re.compile(r"^## \[?Unreleased\]?\s*$")
+_RELEASE_HEADING = re.compile(r"^## (v?)\d+\.\d+\.\d+( - \d{4}-\d{2}-\d{2})?\s*$")
 
 
 @dataclass(frozen=True)
@@ -303,6 +306,39 @@ def apply_bump(content: str, bump_type: str) -> tuple[str, str, str] | None:
     return new_content, old_ver, new_ver
 
 
+def fold_unreleased(text: str, version: str, today: date) -> str | None:
+    """Insert a release heading right under the Unreleased heading (#5042).
+
+    The Unreleased body ends up under the new release heading. Only two lines are
+    inserted, so the diff has zero deleted lines. Returns None when there is no
+    Unreleased heading or its body is blank.
+    """
+    lines = text.splitlines(keepends=True)
+    start = next(
+        (i for i, line in enumerate(lines) if _UNRELEASED_HEADING.match(line)), None
+    )
+    if start is None:
+        return None
+    end = next(
+        (i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")),
+        len(lines),
+    )
+    if not any(line.strip() for line in lines[start + 1 : end]):
+        return None
+
+    release = next(
+        (m for line in lines[start + 1 :] if (m := _RELEASE_HEADING.match(line))), None
+    )
+    if release is None:
+        heading = f"## {version} - {today.isoformat()}"
+    else:
+        heading = f"## {release.group(1)}{version}"
+        if release.group(2):
+            heading += f" - {today.isoformat()}"
+    lines[start + 1 : start + 1] = ["\n", f"{heading}\n"]
+    return "".join(lines)
+
+
 def run_bump(worktree: Path, base: str) -> int:
     pyproject = worktree / "pyproject.toml"
     if not pyproject.is_file():
@@ -325,7 +361,16 @@ def run_bump(worktree: Path, base: str) -> int:
         return 0
 
     pyproject.write_text(new_content, encoding="utf-8")
-    add = _run_git(worktree, "add", "pyproject.toml")
+    to_add = ["pyproject.toml"]
+    changelog = worktree / "CHANGELOG.md"
+    if changelog.is_file():
+        folded = fold_unreleased(
+            changelog.read_text(encoding="utf-8"), new_ver, date.today()
+        )
+        if folded is not None:
+            changelog.write_text(folded, encoding="utf-8")
+            to_add.append("CHANGELOG.md")
+    add = _run_git(worktree, "add", *to_add)
     if add.returncode != 0:
         print(add.stderr, file=sys.stderr)
         return 1
