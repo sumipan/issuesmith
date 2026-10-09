@@ -55,7 +55,6 @@ TEMPLATE_DIR = _cfg.paths.template_dir
 _STEP_MODULES: dict[str, str] | None = None
 
 # Maximum number of LLM repair cycles before raising andon(decision).
-_MAX_REPAIRS: int = 3
 # Step ID used for the repair template (nexus-side workflow template).
 _REPAIR_STEP_ID: str = "repair"
 
@@ -351,6 +350,7 @@ def _merge_derived_allow_paths(context: dict[str, str], gates: dict[str, object]
 def _build_requires_gates(
     requires: tuple[str, ...],
     context: dict[str, str],
+    step_id: str = "",
 ) -> dict[str, object]:
     """Build gate instances for requires evaluation from context via GATE_REGISTRY."""
     from issuesmith.config import ConfigError
@@ -372,6 +372,8 @@ def _build_requires_gates(
         allow_paths=allow_paths,
         base_branch=base_branch,
         derived_allow_paths=tuple(_derived_allow_paths(context)),
+        step_id=step_id,
+        variables=dict(context),
     )
 
     gates: dict[str, object] = {}
@@ -701,7 +703,7 @@ def run_requires_loop(
 
     from issuesmith.gates import GateBuildError
     try:
-        gates = _build_requires_gates(gate_ids, eval_context)
+        gates = _build_requires_gates(gate_ids, eval_context, step_id)
     except GateBuildError as exc:
         summary = f"gate could not be built in step {step_id}: {exc}"
         full_andon = _FullAndon(
@@ -832,7 +834,7 @@ def run_requires_loop(
         return 1
 
     # Non-auto-fixable repairable violations remain → repair step or andon.
-    if repair_count >= _MAX_REPAIRS:
+    if repair_count >= step_cfg.repair.max:
         options = _build_andon_options(result.blocking)
         summary = (
             f"requires evaluation failed after {repair_count} repair(s)"

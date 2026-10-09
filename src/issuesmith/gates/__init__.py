@@ -43,6 +43,8 @@ class GateBuildContext:
     base_branch: str
     # Test files repair may edit beyond allow_paths (#3756); consumed by pr_scope.
     derived_allow_paths: tuple[str, ...] = ()
+    step_id: str = ""
+    variables: Mapping[str, str] = field(default_factory=dict)
 
 
 class GateBuildError(ValueError):
@@ -149,6 +151,28 @@ def _build_registry() -> dict[str, GateEntry]:
 # Build the registry at module load time.
 GATE_REGISTRY: dict[str, GateEntry] = _build_registry()
 
+
+def _step_bound_gates() -> dict[str, GateEntry]:
+    """Gates that need step_id / step config; omitted from GATE_REGISTRY smoke tests."""
+    from issuesmith.gates.review import build_review_gate
+
+    return {
+        "review": GateEntry(
+            input_kind="worktree",
+            build=build_review_gate,
+            pre_llm=False,
+            repairable=True,
+        ),
+    }
+
+
+STEP_BOUND_GATES: dict[str, GateEntry] = _step_bound_gates()
+
+
+def _known_gate_ids() -> list[str]:
+    return sorted(set(GATE_REGISTRY) | set(STEP_BOUND_GATES))
+
+
 _EXTERNAL_GATE_REF_RE = re.compile(r"^[A-Za-z_][\w.]*:[A-Za-z_]\w*$")
 
 
@@ -159,7 +183,9 @@ def resolve_gate(gate_id: str) -> GateEntry:
     if ":" not in gate_id:
         entry = GATE_REGISTRY.get(gate_id)
         if entry is None:
-            known = sorted(GATE_REGISTRY)
+            entry = STEP_BOUND_GATES.get(gate_id)
+        if entry is None:
+            known = _known_gate_ids()
             raise ConfigError(
                 f"unknown gate id {gate_id!r} (missing gate ids: [{gate_id!r}])."
                 f" Known ids: {known}"
@@ -209,7 +235,7 @@ def validate_step_requires(steps: "Mapping[str, Any]") -> None:
     """
     from issuesmith.config import ConfigError  # noqa: PLC0415 - config must not import gates
 
-    known = sorted(GATE_REGISTRY)
+    known = _known_gate_ids()
     for step_id, step in steps.items():
         input_kind = getattr(step, "input_kind", "issue")
         for field_name in ("requires", "accepts"):
@@ -233,6 +259,15 @@ def validate_step_requires(steps: "Mapping[str, Any]") -> None:
                 else f"steps.{step_id}.{field_name}"
             )
             for gate_id in gate_ids:
+                if (
+                    gate_id == "review"
+                    and getattr(step, "review", None) is None
+                    and getattr(step, "requires_declared", False)
+                ):
+                    raise ConfigError(
+                        f"steps.{step_id}: gate 'review' requires"
+                        f" steps.{step_id}.review"
+                    )
                 gate_input_kind = resolve_gate(gate_id).input_kind
                 if gate_input_kind == "worktree" and input_kind != "worktree":
                     raise ConfigError(

@@ -559,7 +559,7 @@ def test_run_requires_loop_max_repairs_options_widen():
     from ghdag.workflow.gates import Violation
 
     from issuesmith.config import StepConfig
-    from issuesmith.ops.dispatch import _MAX_REPAIRS, run_requires_loop
+    from issuesmith.ops.dispatch import run_requires_loop
 
     step_cfg = StepConfig(
         module="",
@@ -595,7 +595,7 @@ def test_run_requires_loop_max_repairs_options_widen():
                                 step_cfg,
                                 "p1",
                                 ctx,
-                                repair_count=_MAX_REPAIRS,
+                                repair_count=3,
                             )
 
     assert rc == 1
@@ -613,7 +613,7 @@ def test_run_requires_loop_max_repairs_no_pr_scope_no_widen():
     from ghdag.workflow.gates import Violation
 
     from issuesmith.config import StepConfig
-    from issuesmith.ops.dispatch import _MAX_REPAIRS, run_requires_loop
+    from issuesmith.ops.dispatch import run_requires_loop
 
     step_cfg = StepConfig(
         module="issuesmith.steps.test",
@@ -649,7 +649,7 @@ def test_run_requires_loop_max_repairs_no_pr_scope_no_widen():
                                 step_cfg,
                                 "p1",
                                 ctx,
-                                repair_count=_MAX_REPAIRS,
+                                repair_count=3,
                             )
 
     assert rc == 1

@@ -332,7 +332,7 @@ class TestDispatchMaxRepairs:
     def test_max_repairs_exceeded_raises_andon_decision(self):
         from issuesmith.config import StepConfig
         from issuesmith.contract import StepResult
-        from issuesmith.ops.dispatch import _MAX_REPAIRS, map_step_result
+        from issuesmith.ops.dispatch import map_step_result
 
         cfg = StepConfig(module="issuesmith.steps.test", requires=("tests",))
         gate = _fail_gate(rule_id="tests.pytest_failure", auto_fixable=False)
@@ -347,7 +347,7 @@ class TestDispatchMaxRepairs:
                             step_id="p2",
                             context=_make_ctx(),
                             step_cfg=cfg,
-                            _repair_count=_MAX_REPAIRS,
+                            _repair_count=3,
                         )
         assert rc == 1
         mock_andon.assert_called_once()
@@ -357,7 +357,7 @@ class TestDispatchMaxRepairs:
     def test_andon_decision_options_contain_fix_hints(self):
         from issuesmith.config import StepConfig
         from issuesmith.contract import StepResult
-        from issuesmith.ops.dispatch import _MAX_REPAIRS, map_step_result
+        from issuesmith.ops.dispatch import map_step_result
 
         cfg = StepConfig(module="issuesmith.steps.test", requires=("tests",))
         gate = MagicMock()
@@ -379,7 +379,7 @@ class TestDispatchMaxRepairs:
                         step_id="p2",
                         context=_make_ctx(),
                         step_cfg=cfg,
-                        _repair_count=_MAX_REPAIRS,
+                        _repair_count=3,
                     )
         _, raised = mock_andon.call_args[0]
         assert raised.kind == "decision"

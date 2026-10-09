@@ -106,7 +106,7 @@ class TestDispatchAcceptsRepair:
 
 class TestDispatchAcceptsMaxRepairs:
     def test_accepts_max_repairs_exceeded_raises_andon_no_markers(self, capsys):
-        from issuesmith.ops.dispatch import _MAX_REPAIRS, run_requires_loop
+        from issuesmith.ops.dispatch import run_requires_loop
 
         cfg = StepConfig(module="issuesmith.steps.test", accepts=("tests",))
         gate = _fail_gate(rule_id="tests.pytest_failure", auto_fixable=False)
@@ -123,7 +123,7 @@ class TestDispatchAcceptsMaxRepairs:
                             "p2",
                             _make_ctx(),
                             origin="accepts",
-                            repair_count=_MAX_REPAIRS,
+                            repair_count=3,
                         )
         assert rc == 1
         mock_andon.assert_called_once()

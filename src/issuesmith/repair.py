@@ -49,6 +49,10 @@ def evaluate_requires(
             vs = gate.check(body, labels)
             all_violations.extend(vs)
         except Exception as exc:
+            from issuesmith.engine import RetrySignal
+
+            if isinstance(exc, RetrySignal):
+                raise
             return RequiresResult(gate_error=exc)
 
     preexisting = [v for v in all_violations if v.rule_id in preexisting_rule_ids]

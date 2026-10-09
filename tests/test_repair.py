@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 from ghdag.workflow.gates import Violation
 
 from issuesmith.config import StepConfig
@@ -73,6 +74,22 @@ class TestEvaluateRequiresSeverity:
         assert not updated.blocking
         assert len(updated.warnings) == 1
         assert updated.warnings[0].rule_id == "tests.flaky"
+
+
+class TestEvaluateRequiresRetrySignal:
+    def test_retry_signal_reraised(self):
+        from issuesmith.engine import RetryReason, RetrySignal
+
+        gate = MagicMock()
+        gate.check.side_effect = RetrySignal(reason=RetryReason.QUOTA_PAUSED)
+        with pytest.raises(RetrySignal):
+            evaluate_requires({"g": gate}, "body", [])
+
+    def test_other_exception_becomes_gate_error(self):
+        gate = MagicMock()
+        gate.check.side_effect = RuntimeError("broken gate")
+        result = evaluate_requires({"g": gate}, "body", [])
+        assert result.gate_error is not None
 
 
 class TestRunRequiresLoopFlaky:

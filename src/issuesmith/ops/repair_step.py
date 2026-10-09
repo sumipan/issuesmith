@@ -91,6 +91,43 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
         else:
             os.environ[_REPAIR_ACTIVE_ENV] = old_env
 
-    if rc == 0:
-        return StepResult(status="done")
-    return StepResult(exit_code=rc)
+    if rc != 0:
+        return StepResult(exit_code=rc)
+
+    origin_id = ctx.repair_step_origin or ""
+    origin_step = get_config().steps.get(origin_id)
+    if (
+        origin_step is not None
+        and origin_step.repair.push
+        and worktree_path
+    ):
+        try:
+            push_proc = subprocess.run(
+                ["git", "push", "origin", "HEAD"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=120,
+                cwd=worktree_path,
+            )
+        except subprocess.TimeoutExpired:
+            return StepResult(
+                status="andon",
+                andon=Andon(
+                    kind="broken",
+                    summary="repair push failed: timeout",
+                ),
+            )
+        if push_proc.returncode != 0:
+            err_tail = (push_proc.stderr or push_proc.stdout or "").strip()
+            if len(err_tail) > 500:
+                err_tail = err_tail[-500:]
+            return StepResult(
+                status="andon",
+                andon=Andon(
+                    kind="broken",
+                    summary=f"repair push failed: {err_tail}",
+                ),
+            )
+
+    return StepResult(status="done")
