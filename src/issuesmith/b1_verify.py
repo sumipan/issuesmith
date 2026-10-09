@@ -171,6 +171,7 @@ def apply_deterministic_recovery(
     from issuesmith.gate_rules.b1_milestone_subdesign import (
         PLACEHOLDER_DESIGN_ID,
         apply_inferred_dependency_fixes,
+        apply_sub_plan_dep_format_fixes,
     )
     from issuesmith.gate_rules.milestone_consistency import (
         apply_auto_fixable_helpers,
@@ -202,10 +203,11 @@ def apply_deterministic_recovery(
 
     # Body autofixes (english headers / misplaced plan) — safe and idempotent.
     body, body_applied = apply_body_autofixes(body)
+    body, dep_format_applied = apply_sub_plan_dep_format_fixes(body)
     # Sibling new-file references missing from the depends-on column (#4825);
     # edges closing a cycle are left for dependency_cycle to report.
     body, dep_applied = apply_inferred_dependency_fixes(body)
-    for fix_id in (*body_applied, *dep_applied):
+    for fix_id in (*body_applied, *dep_format_applied, *dep_applied):
         if fix_id not in applied:
             applied.append(fix_id)
 

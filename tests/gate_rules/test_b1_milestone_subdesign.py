@@ -1899,3 +1899,46 @@ def test_placeholder_design_skipped_without_milestone_label():
         if v.rule_id == PLACEHOLDER_DESIGN_ID
     ]
     assert hits == []
+
+
+def test_sub_plan_dep_format_fixes_cases():
+    from issuesmith.gate_rules.b1_milestone_subdesign import (
+        _SUB_PLAN_DEP_FORMAT_ID,
+        apply_sub_plan_dep_format_fixes,
+    )
+    from tests.legacy_text import NONE
+
+    def _plan_body(dep: str) -> str:
+        return _dep_body(_projection_subs(), ["none", dep])
+
+    natural_dep = "after sub2 merge"
+    cases = [
+        ("2", "#2"),
+        ("4, 2", "#4, #2"),
+        ("#2", "#2"),
+        (NONE, NONE),
+        (natural_dep, natural_dep),
+    ]
+    for dep, expected in cases:
+        body = _plan_body(dep)
+        fixed, applied = apply_sub_plan_dep_format_fixes(body)
+        if dep in ("#2", NONE, natural_dep):
+            assert applied == []
+            assert dep in fixed
+        else:
+            assert applied == [_SUB_PLAN_DEP_FORMAT_ID]
+            assert f"| 2 | part 2 | {_REPO} | c | {expected} |" in fixed
+    once, first_applied = apply_sub_plan_dep_format_fixes(_plan_body("2"))
+    assert first_applied == [_SUB_PLAN_DEP_FORMAT_ID]
+    _, second_applied = apply_sub_plan_dep_format_fixes(once)
+    assert second_applied == []
+
+
+def test_sub_plan_dep_format_violation_auto_fixable():
+    from issuesmith.gate_rules.b1_milestone_subdesign import _SUB_PLAN_DEP_FORMAT_ID
+
+    bare = _dep_body(_projection_subs(), ["none", "2"])
+    hits = [v for v in _check(bare, MILESTONE_LABELS) if v.rule_id == _SUB_PLAN_DEP_FORMAT_ID]
+    assert len(hits) == 1 and hits[0].auto_fixable
+    fixed = _dep_body(_projection_subs(), ["none", "#2"])
+    assert not [v for v in _check(fixed, MILESTONE_LABELS) if v.rule_id == _SUB_PLAN_DEP_FORMAT_ID]
