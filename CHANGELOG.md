@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.147.0 - 2026-10-10
+
 ### Added
 
 - Host companion naming: Issue YAML `host_allow_paths`, context variables `has_host_changes` / `host_worktree_path` / `host_allow_paths`, and matching `StepContext` fields. Legacy `diary_*` keys and context fields are still emitted with the same values for one release. `path_env_prefixes` in `issuesmith.yaml` replaces the hard-coded `${NIKKI_ROOT}` SUB1 path exclusion.
