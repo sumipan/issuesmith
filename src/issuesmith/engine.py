@@ -1220,12 +1220,17 @@ def _build_pre_gates(
     context: dict[str, str],
 ) -> dict[str, object]:
     """Build pre_llm=True gates for pre-LLM evaluation."""
-    from issuesmith.gates import GATE_REGISTRY, GateBuildContext, GateBuildError
+    from issuesmith.config import ConfigError
+    from issuesmith.gates import GateBuildContext, GateBuildError, resolve_gate
 
-    pre_gate_ids = [
-        gid for gid in step_cfg.requires
-        if gid in GATE_REGISTRY and getattr(GATE_REGISTRY[gid], "pre_llm", False)
-    ]
+    pre_gate_ids: list[str] = []
+    for gid in step_cfg.requires:
+        try:
+            entry = resolve_gate(gid)
+        except ConfigError:
+            continue
+        if getattr(entry, "pre_llm", False):
+            pre_gate_ids.append(gid)
     if not pre_gate_ids:
         return {}
 
@@ -1246,8 +1251,8 @@ def _build_pre_gates(
     gates: dict[str, object] = {}
     for gid in pre_gate_ids:
         try:
-            gates[gid] = GATE_REGISTRY[gid].build(build_ctx)
-        except GateBuildError:
+            gates[gid] = resolve_gate(gid).build(build_ctx)
+        except (ConfigError, GateBuildError):
             pass
     return gates
 
@@ -1262,7 +1267,8 @@ def _run_pre_gate_phase(
 
     Returns None to proceed to LLM, or exit code to stop.
     """
-    from issuesmith.gates import GATE_REGISTRY
+    from issuesmith.config import ConfigError
+    from issuesmith.gates import resolve_gate
     from issuesmith.gates.base import ContractInput
     from issuesmith.repair import apply_auto_fixes, evaluate_requires
 
@@ -1294,12 +1300,20 @@ def _run_pre_gate_phase(
         return None
 
     # Non-repairable violations → andon(decision), stop before LLM
+    def _repairable_for_rule(rule_id: str) -> bool:
+        gid = next(
+            (g for g in pre_gates if rule_id == g or rule_id.startswith(g + ".")),
+            "",
+        )
+        if not gid:
+            return True
+        try:
+            return resolve_gate(gid).repairable
+        except ConfigError:
+            return True
+
     non_repairable = [
-        v for v in result.blocking
-        if not getattr(GATE_REGISTRY.get(
-            next((gid for gid in pre_gates if v.rule_id == gid or v.rule_id.startswith(gid + ".") ), ""),
-            object()
-        ), "repairable", True)
+        v for v in result.blocking if not _repairable_for_rule(v.rule_id)
     ]
     if non_repairable:
         issue_num = int(context.get("issue_number") or "0")

@@ -16,8 +16,6 @@ def validate_requires_chain(steps: Mapping[str, StepConfig]) -> list[str]:
     Uses requires_declared to distinguish 'requires: []' (explicit empty) from
     a missing requires key. repair is exempt from this check.
     """
-    from issuesmith.gates import GATE_REGISTRY
-
     violations: list[str] = []
     for step_id, step in steps.items():
         if step_id in _REPAIR_EXEMPT_IDS:
@@ -28,12 +26,37 @@ def validate_requires_chain(steps: Mapping[str, StepConfig]) -> list[str]:
                 f"steps.{step_id}: missing requires declaration"
             )
             continue
-        missing = [g for g in step.requires if g not in GATE_REGISTRY]
+        from issuesmith.config import ConfigError
+        from issuesmith.gates import resolve_gate
+
+        missing: list[str] = []
+        for g in step.requires:
+            try:
+                resolve_gate(g)
+            except ConfigError:
+                missing.append(g)
         if missing:
             violations.append(
                 f"steps.{step_id}: missing gate ids: {missing}"
             )
     return violations
+
+
+def advance_when_report(phases: tuple) -> str:
+    """Return advance_when doctor line: ok or a semicolon-separated failure summary."""
+    from issuesmith.config import ConfigError
+    from issuesmith.preconditions import resolve_predicate
+
+    failures: list[str] = []
+    for phase in phases:
+        for pred in phase.advance_when:
+            try:
+                resolve_predicate(pred)
+            except ConfigError as exc:
+                failures.append(str(exc))
+    if not failures:
+        return "advance_when: ok"
+    return "advance_when: " + "; ".join(failures)
 
 
 def requires_chain_report(steps: Mapping[str, StepConfig]) -> str:

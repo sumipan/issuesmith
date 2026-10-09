@@ -852,6 +852,78 @@ class TestAutoFixRoundLimit:
 # ---------------------------------------------------------------------------
 
 
+class TestExternalGateRequires:
+    def test_build_requires_gates_external_gate(self, tmp_path, monkeypatch):
+        from issuesmith.ops.dispatch import _build_requires_gates
+
+        mod_name = "mypkg_gates_dispatch"
+        gate_ref = f"{mod_name}:MY_GATE"
+
+        class _G:
+            def check(self, body, labels):
+                return []
+
+        (tmp_path / f"{mod_name}.py").write_text(
+            """
+from issuesmith.gates import GateEntry
+
+class _G:
+    def check(self, body, labels):
+        return []
+
+MY_GATE = GateEntry(
+    input_kind="worktree",
+    build=lambda ctx: _G(),
+)
+""",
+            encoding="utf-8",
+        )
+        monkeypatch.syspath_prepend(str(tmp_path))
+        gates = _build_requires_gates(
+            (gate_ref,),
+            {"worktree_path": str(tmp_path), "allow_paths": "- x.py", "base_branch": "main"},
+        )
+        assert gate_ref in gates
+        assert gates[gate_ref].check("body", []) == []
+
+    def test_build_requires_gates_unresolved_raises_gate_build_error(self, tmp_path, monkeypatch):
+        from issuesmith.gates import GateBuildError
+        from issuesmith.ops.dispatch import _build_requires_gates
+
+        ref = "mypkg_gates_dispatch_fail:MISSING"
+        (tmp_path / "mypkg_gates_dispatch_fail.py").write_text("pass\n", encoding="utf-8")
+        monkeypatch.syspath_prepend(str(tmp_path))
+        with pytest.raises(GateBuildError, match=ref):
+            _build_requires_gates((ref,), {"worktree_path": str(tmp_path)})
+
+    def test_is_violation_repairable_external_non_repairable(self, tmp_path, monkeypatch):
+        from issuesmith.ops.dispatch import _is_violation_repairable
+
+        mod_name = "mypkg_gates_repair"
+        gate_ref = f"{mod_name}:MY_GATE"
+        (tmp_path / f"{mod_name}.py").write_text(
+            """
+from issuesmith.gates import GateEntry
+
+class _G:
+    def check(self, body, labels):
+        return []
+
+MY_GATE = GateEntry(
+    input_kind="worktree",
+    build=lambda ctx: _G(),
+    repairable=False,
+)
+""",
+            encoding="utf-8",
+        )
+        monkeypatch.syspath_prepend(str(tmp_path))
+        assert (
+            _is_violation_repairable(f"{gate_ref}.rule", {gate_ref: object()}, "p1")
+            is False
+        )
+
+
 class TestTargetUnknownNotRepairable:
     def test_is_violation_repairable_excludes_target_unknown(self):
         from issuesmith.ops.dispatch import _is_violation_repairable

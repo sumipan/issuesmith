@@ -282,6 +282,20 @@ def check_post_merge(items: list[dict]) -> list[tuple[bool, str]]:
     return results
 
 
+def _check_advance_when() -> tuple[bool, str]:
+    """Check that all phase advance_when predicates resolve."""
+    try:
+        from issuesmith.config import get_config
+        from issuesmith.ops.doctor import advance_when_report
+
+        cfg = get_config()
+        report = advance_when_report(cfg.phases)
+        ok = report == "advance_when: ok"
+        return ok, report
+    except Exception as exc:
+        return False, f"advance_when: FAIL ({exc})"
+
+
 def _check_requires_chain() -> tuple[bool, str]:
     """Check that all step requires declarations reference known gate ids."""
     from issuesmith.config import ConfigError
@@ -311,6 +325,7 @@ def main() -> int:
         _check_shell_adapter,
         _check_agent_skill_manifests,
         _check_requires_chain,
+        _check_advance_when,
     ):
         ok, msg = fn()
         print(("OK " if ok else "FAIL ") + msg)
