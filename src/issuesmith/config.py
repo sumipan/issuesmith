@@ -125,6 +125,8 @@ class RoleConfig:
     default_model: Mapping[str, str]
     timeout_sec: float
     light_model: Mapping[str, str] = field(default_factory=dict)
+    # Rate-limit pause lifetime; resume_at = observed_at + pause_ttl_sec (#4987).
+    pause_ttl_sec: int = 3600
 
 
 @dataclass(frozen=True)
@@ -353,6 +355,7 @@ class IssuesmithConfig:
     sub_design_subsections: tuple[str, ...] = EN.sub_design_subsections
     steps: Mapping[str, StepConfig] = field(default_factory=lambda: dict(_DEFAULT_STEPS))
     forbidden_pr_paths: tuple[str, ...] = _DEFAULT_FORBIDDEN_PR_PATHS
+    forbidden_pr_paths_except: tuple[str, ...] = ()
     scope_gate: ScopeGateConfig = field(default_factory=ScopeGateConfig)
     scope_coupling: ScopeCouplingConfig = field(default_factory=ScopeCouplingConfig)
     scope_size: ScopeSizeConfig = field(default_factory=ScopeSizeConfig)
@@ -511,7 +514,15 @@ def _build_paths(raw: Mapping[str, Any] | None, root: Path) -> PathsConfig:
     return PathsConfig(**resolved, lanes=lanes)
 
 
-def _build_role(raw: Mapping[str, Any]) -> RoleConfig:
+def _build_pause_ttl_sec(raw: Any, role: str) -> int:
+    if raw is None:
+        return 3600
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1:
+        raise ValueError(f"engines.{role}.pause_ttl_sec must be a positive integer")
+    return raw
+
+
+def _build_role(raw: Mapping[str, Any], role: str) -> RoleConfig:
     allowed = frozenset(str(x) for x in (raw.get("allowed") or ()))
     default_model = {
         str(k): str(v) for k, v in dict(raw.get("default_model") or {}).items()
@@ -524,6 +535,7 @@ def _build_role(raw: Mapping[str, Any]) -> RoleConfig:
         default_model=default_model,
         light_model=light_model,
         timeout_sec=timeout,
+        pause_ttl_sec=_build_pause_ttl_sec(raw.get("pause_ttl_sec"), role),
     )
 
 
@@ -536,7 +548,7 @@ def _build_engines(raw: Mapping[str, Any] | None) -> dict[str, RoleConfig]:
             merged = dict(base.get(str(role), {}))
             merged.update(conf)
             base[str(role)] = merged
-    return {role: _build_role(conf) for role, conf in base.items()}
+    return {role: _build_role(conf, role) for role, conf in base.items()}
 
 
 def _build_concurrency(raw: Mapping[str, Any] | None) -> ConcurrencyConfig:
@@ -925,6 +937,14 @@ def _build_forbidden_pr_paths(raw: Any) -> tuple[str, ...]:
     return tuple(str(x) for x in raw)
 
 
+def _build_forbidden_pr_paths_except(raw: Any) -> tuple[str, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ValueError("forbidden_pr_paths_except must be a list of strings")
+    return tuple(str(x) for x in raw)
+
+
 def _build_scope_gate(raw: Mapping[str, Any] | None) -> ScopeGateConfig:
     defaults = ScopeGateConfig()
     if not raw:
@@ -1270,6 +1290,9 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         sub_design_subsections=language.sub_design_subsections,
         steps=_build_steps(steps_raw),
         forbidden_pr_paths=_build_forbidden_pr_paths(data.get("forbidden_pr_paths")),
+        forbidden_pr_paths_except=_build_forbidden_pr_paths_except(
+            data.get("forbidden_pr_paths_except")
+        ),
         scope_gate=_build_scope_gate(scope_gate_raw),
         scope_coupling=_build_scope_coupling(scope_coupling_raw),
         scope_size=_build_scope_size(scope_size_raw, language),

@@ -104,17 +104,24 @@ def check_pr_diff_scope(
     allow_paths: list[str],
     forbidden_patterns: list[str] | None = None,
     file_entries: Sequence[dict] | None = None,
+    *,
+    forbidden_except: list[str] | None = None,
 ) -> list[Violation]:
     """Return violations for PR files outside allow_paths or matching forbidden patterns.
 
-    ``tests/**/fixtures/**`` paths skip the forbidden-pattern check (fixture ``.jsonl``
-    etc. remain allowed) but must still match ``allow_paths``.
+    ``tests/**/fixtures/**`` paths and paths matching ``forbidden_except`` skip the
+    forbidden-pattern check (fixture ``.jsonl`` etc. remain allowed) but must still
+    match ``allow_paths``. ``forbidden_except=None`` reads
+    ``forbidden_pr_paths_except`` from config even when ``forbidden_patterns`` is
+    given (#4987).
 
     When ``file_entries`` is provided, publish-only edits (``pyproject.toml`` version
     line only, ``CHANGELOG.md`` append-only) are excluded from violations (#3216).
     """
     if forbidden_patterns is None:
         forbidden_patterns = list(get_config().forbidden_pr_paths)
+    if forbidden_except is None:
+        forbidden_except = list(get_config().forbidden_pr_paths_except)
 
     # Normalize both sides before matching so ``./CHANGELOG.md`` matches
     # ``CHANGELOG.md`` (#4813). Violations keep the original diff filename.
@@ -126,8 +133,10 @@ def check_pr_diff_scope(
         if _is_publish_only_change(name, by_name.get(filename)):
             continue
 
-        is_fixture = _is_fixture_path(name)
-        if not is_fixture:
+        is_exempt = _is_fixture_path(name) or any(
+            fnmatch.fnmatch(name, pat) for pat in forbidden_except
+        )
+        if not is_exempt:
             matched_forbidden = next(
                 (pat for pat in forbidden_patterns if fnmatch.fnmatch(name, pat)),
                 None,
