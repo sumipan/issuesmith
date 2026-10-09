@@ -109,6 +109,8 @@ def record_metrics(
     step_id: str,
     issue_num: int,
     rule_ids: list[str] | None = None,
+    *,
+    origin: str | None = None,
 ) -> None:
     """Append a requires_check or requires_repair event to the metrics file."""
     from issuesmith.metrics_events import append_event
@@ -116,6 +118,8 @@ def record_metrics(
     payload: dict = {"event": event, "step": step_id, "issue": issue_num}
     if rule_ids is not None:
         payload["rule_ids"] = rule_ids
+    if origin is not None:
+        payload["origin"] = origin
     append_event(path, payload)
 
 
