@@ -211,6 +211,52 @@ def _check_scope_gate_hard_max(metadata: dict) -> list[Violation]:
     ]
 
 
+def _allow_paths_count(metadata: dict) -> int:
+    allow_paths_raw = metadata.get("allow_paths", [])
+    if isinstance(allow_paths_raw, str):
+        return 1
+    if isinstance(allow_paths_raw, list):
+        return len(allow_paths_raw)
+    return 0
+
+
+def _check_split(metadata: dict) -> list[Violation]:
+    if "split" not in metadata:
+        return []
+    split = metadata.get("split")
+    if split == "atomic":
+        hard = get_config().scope_gate.hard_max_files
+        count = _allow_paths_count(metadata)
+        if count > hard:
+            return [
+                Violation(
+                    rule_id="cp1.yaml_contract.split_atomic_over_hard_max",
+                    severity="fail",
+                    message=(
+                        f"split: atomic Issues are limited to {hard} allow_paths "
+                        f"entries (got {count})"
+                    ),
+                    location="allow_paths",
+                    auto_fixable=False,
+                    fix_hint=(
+                        "split the Issue; atomic Issues are limited to "
+                        "hard_max_files allow_paths entries"
+                    ),
+                )
+            ]
+        return []
+    return [
+        Violation(
+            rule_id="cp1.yaml_contract.split_invalid",
+            severity="fail",
+            message=f"split must be atomic (got {split!r})",
+            location="split",
+            auto_fixable=False,
+            fix_hint="set split to atomic or remove it",
+        )
+    ]
+
+
 def _extract_sub_ac_section(block: str) -> str | None:
     ac = get_config().sections["acceptance_criteria"]
     match = re.search(
@@ -341,6 +387,7 @@ class Cp1Rules:
                     fix_hint=fix_hint,
                 ))
             violations.extend(_check_scope_gate_hard_max(metadata))
+            violations.extend(_check_split(metadata))
 
         if "scope:milestone" in labels:
             violations.append(Violation(

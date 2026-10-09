@@ -14,6 +14,7 @@ import posixpath
 import re
 from dataclasses import dataclass
 
+import yaml
 from ghdag.workflow.gates import GATE_REGISTRY, Violation
 
 from issuesmith.config import ScopeSizeConfig, get_config
@@ -29,15 +30,26 @@ from issuesmith.gate_rules.b1_milestone_subdesign import (
 )
 
 _MILESTONE_LABEL = "scope:milestone"
-_MAX_SLICES = 3
 _REFERENCE_SUFFIXES = frozenset({".yaml", ".yml", ".toml", ".json", ".ini", ".cfg"})
 _DECLINED_HINT = (
     "Split yields {n} slices (max {max}); not auto-promoted. "
     "Split the Issue, or write the sub plan by hand."
 )
+_ATOMIC_HINT = (
+    "If the change must land as one PR, add `split: atomic` to the leading yaml block instead."
+)
 
 # (repo, path, change type, change content) of one parent change-table row.
 _Row = tuple[str, str, str, str]
+
+
+def is_atomic(body: str) -> bool:
+    """True when the leading Issue YAML declares ``split: atomic`` (exact string)."""
+    try:
+        metadata = parse_issue_metadata(body)
+    except (ValueError, yaml.YAMLError):
+        return False
+    return metadata.get("split") == "atomic"
 
 
 def _sub_header_prefix() -> str:
@@ -164,7 +176,8 @@ def _fix_hint(body: str, cfg: ScopeSizeConfig) -> str:
     if promotion_declined(body, cfg):
         target_repo, concerns, deps = _split_plan(body, cfg)
         lines = [
-            _DECLINED_HINT.format(n=len(concerns), max=_MAX_SLICES),
+            _DECLINED_HINT.format(n=len(concerns), max=cfg.max_slices),
+            _ATOMIC_HINT,
             f"That helper adds `## {sections['milestone']}` > `### {sections['sub_plan']}`, "
             f"`#### {_sub_header_prefix()}N: <title>` blocks under `## {sections['design']}` with "
             + ", ".join(f"**{name}**" for name in get_config().sub_design_subsections)
@@ -182,6 +195,7 @@ def _fix_hint(body: str, cfg: ScopeSizeConfig) -> str:
         "issuesmith.gate_rules.scope_size.promote_oversized_issue_body() then "
         "milestone_consistency.fix_label_missing() + body_editor.normalize_sub_headers() "
         "+ body_editor.relocate_sub_plan()). Do not hand-edit English Sub headers.",
+        _ATOMIC_HINT,
         f"That helper adds `## {sections['milestone']}` > `### {sections['sub_plan']}`, "
         f"`#### {_sub_header_prefix()}N: <title>` blocks under `## {sections['design']}` with "
         + ", ".join(f"**{name}**" for name in get_config().sub_design_subsections)
@@ -405,11 +419,11 @@ def _rows_by_slice(body: str, cfg: ScopeSizeConfig) -> dict[str, list[_Row]]:
 
 
 def promotion_declined(body: str, cfg: ScopeSizeConfig | None = None) -> bool:
-    """True when auto-promotion would yield zero slices or exceed ``_MAX_SLICES``."""
+    """True when auto-promotion would yield zero slices or exceed ``cfg.max_slices``."""
     cfg = cfg or get_config().scope_size
     _, concerns, _ = _split_plan(body, cfg)
     n = len(concerns)
-    return n == 0 or n > _MAX_SLICES
+    return n == 0 or n > cfg.max_slices
 
 
 def _build_sub_block(
@@ -603,6 +617,8 @@ def promote_oversized_issue_body(body: str, cfg: ScopeSizeConfig | None = None) 
     must run :func:`issuesmith.gate_rules.milestone_consistency.fix_label_missing`
     (or use :func:`issuesmith.b1_verify.apply_deterministic_recovery`).
     """
+    if is_atomic(body):
+        return body
     from issuesmith.body_editor import (
         get_section,
         normalize_sub_headers,
@@ -695,6 +711,8 @@ class ScopeSizeRules:
             return []
         cfg = get_config().scope_size
         if not cfg.enabled:
+            return []
+        if is_atomic(body):
             return []
         if not extract_change_table_rows(body):
             return []
