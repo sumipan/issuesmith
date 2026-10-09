@@ -7,6 +7,7 @@ import contextlib
 import dataclasses
 import os
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -92,6 +93,75 @@ _NEXUS_CONFIG_PAYLOAD = {
     "steps": {"p1": {"andon_when": ["external_leak.target_unknown"]}},
 }
 
+_TEST_DECLARATION: dict[str, object] = {
+    "phases": [
+        {
+            "name": "draft",
+            "role": "design",
+            "entry_step": "b1",
+            "handler": "brushup",
+            "writes_files": False,
+            "advance_when": ["deps_terminal"],
+        },
+        {
+            "name": "sub",
+            "role": "implementation",
+            "entry_step": "sub-ready",
+            "handler": "subissue",
+            "writes_files": False,
+            "advance_when": ["deps_terminal"],
+        },
+        {
+            "name": "develop",
+            "role": "implementation",
+            "entry_step": "cp2",
+            "handler": "impl",
+            "advance_when": ["deps_terminal", "pins_landed"],
+        },
+        {
+            "name": "merge",
+            "role": "implementation",
+            "entry_step": "m2",
+            "handler": "merge",
+            "advance_when": ["deps_terminal", "closing_pr_exists"],
+        },
+    ],
+    "terminal_labels": ["issuesmith:merge-done", "bump:done"],
+    "terminal_without_merge": [
+        "rejected",
+        "superseded",
+        "sub-ready",
+        "sub-done",
+    ],
+}
+
+_ORIGINAL_BUILD_CONFIG = config_module._build_config
+
+
+def _build_config_for_tests(data, *, root):
+    if "phases" not in data:
+        merged = dict(data)
+        for key, value in _TEST_DECLARATION.items():
+            if key not in merged:
+                merged[key] = value
+        data = merged
+    return _ORIGINAL_BUILD_CONFIG(data, root=root)
+
+
+config_module._build_config = _build_config_for_tests
+
+_REPO_ISSUESMITH_YAML = Path(__file__).resolve().parents[1] / "issuesmith.yaml"
+_subprocess_config_payload = yaml.safe_load(_REPO_ISSUESMITH_YAML.read_text(encoding="utf-8"))
+if "phases" not in _subprocess_config_payload:
+    for key, value in _TEST_DECLARATION.items():
+        if key not in _subprocess_config_payload:
+            _subprocess_config_payload[key] = value
+_SESSION_TEST_CONFIG = Path(tempfile.gettempdir()) / f"issuesmith-pytest-{os.getpid()}.yaml"
+_SESSION_TEST_CONFIG.write_text(
+    yaml.safe_dump(_subprocess_config_payload),
+    encoding="utf-8",
+)
+
 _NEXUS_CONFIG_MODULES = frozenset({
     "tests.test_preconditions",
     "tests.test_queue",
@@ -142,6 +212,7 @@ def _is_write_mode(mode: str) -> bool:
 def _issuesmith_config_for_tests(request, monkeypatch, tmp_path):
     """Apply the nexus declaration only to modules that exercise config-driven queue logic."""
     if request.node.get_closest_marker("no_auto_phases"):
+        monkeypatch.setattr(config_module, "_build_config", _ORIGINAL_BUILD_CONFIG)
         monkeypatch.delenv("ISSUESMITH_CONFIG", raising=False)
     elif request.module.__name__ in _NEXUS_CONFIG_MODULES:
         monkeypatch.setenv("ISSUESMITH_CONFIG", str(_write_nexus_config(tmp_path)))
@@ -152,9 +223,32 @@ def _issuesmith_config_for_tests(request, monkeypatch, tmp_path):
     config_module.reset_config_cache()
 
 
+def _inject_subprocess_issuesmith_config(env: dict[str, str] | None) -> dict[str, str]:
+    merged = dict(os.environ if env is None else env)
+    if not merged.get("ISSUESMITH_CONFIG"):
+        merged["ISSUESMITH_CONFIG"] = str(_SESSION_TEST_CONFIG)
+    return merged
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _subprocess_issuesmith_config_env():
+    """Subprocess CLI tests inherit declaration-backed config when env omits ISSUESMITH_CONFIG."""
+    real_run = subprocess.run
+
+    def _run(*args, **kwargs):
+        kwargs["env"] = _inject_subprocess_issuesmith_config(kwargs.get("env"))
+        return real_run(*args, **kwargs)
+
+    with patch("subprocess.run", _run):
+        yield
+
+
 @pytest.fixture(autouse=True)
-def _redirect_metrics_paths(english_section_defaults, monkeypatch, tmp_path_factory):
+def _redirect_metrics_paths(request, english_section_defaults, monkeypatch, tmp_path_factory):
     """Route metrics and exec.jsonl to pytest basetemp; set METRICS_JSONL_PATH."""
+    if request.node.get_closest_marker("no_auto_phases"):
+        yield
+        return
     basetemp = tmp_path_factory.getbasetemp().resolve()
     metrics_path = basetemp / "metrics.jsonl"
     exec_path = basetemp / "exec.jsonl"

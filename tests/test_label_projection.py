@@ -63,11 +63,17 @@ class TestFinalStepProjection:
             yaml.safe_dump({
                 "repo": "sumipan/issuesmith",
                 "phases": [
-                    {"name": "draft", "role": "design", "entry_step": "b1"},
+                    {
+                        "name": "draft",
+                        "role": "design",
+                        "entry_step": "b1",
+                        "handler": "brushup",
+                    },
                     {
                         "name": "merge",
                         "role": "implementation",
                         "entry_step": "m2",
+                        "handler": "merge",
                         "steps": ["m1", "m2-role-dispatch"],
                     },
                 ],
@@ -136,14 +142,25 @@ class TestProjectPreservePreconditions:
             yaml.safe_dump({
                 "repo": "sumipan/issuesmith",
                 "phases": [
-                    {"name": "draft", "role": "design", "entry_step": "b1"},
+                    {
+                        "name": "draft",
+                        "role": "design",
+                        "entry_step": "b1",
+                        "handler": "brushup",
+                    },
                     {
                         "name": "develop",
                         "role": "implementation",
                         "entry_step": "cp2",
+                        "handler": "impl",
                         "preconditions": ["draft-done"],
                     },
-                    {"name": "merge", "role": "implementation", "entry_step": "m2"},
+                    {
+                        "name": "merge",
+                        "role": "implementation",
+                        "entry_step": "m2",
+                        "handler": "merge",
+                    },
                 ],
             }),
             encoding="utf-8",
@@ -202,9 +219,24 @@ class TestProjectPreservePreconditions:
             yaml.safe_dump({
                 "repo": "sumipan/issuesmith",
                 "phases": [
-                    {"name": "draft", "role": "design", "entry_step": "b1"},
-                    {"name": "develop", "role": "implementation", "entry_step": "cp2"},
-                    {"name": "merge", "role": "implementation", "entry_step": "m2"},
+                    {
+                        "name": "draft",
+                        "role": "design",
+                        "entry_step": "b1",
+                        "handler": "brushup",
+                    },
+                    {
+                        "name": "develop",
+                        "role": "implementation",
+                        "entry_step": "cp2",
+                        "handler": "impl",
+                    },
+                    {
+                        "name": "merge",
+                        "role": "implementation",
+                        "entry_step": "m2",
+                        "handler": "merge",
+                    },
                 ],
             }),
             encoding="utf-8",

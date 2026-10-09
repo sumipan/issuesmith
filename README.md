@@ -527,7 +527,7 @@ Relative paths in the file resolve against the directory that holds it.
 | `concurrency` | `default: 1` | `default`, `per_engine`, `strict_order` (`false`) |
 | `milestone_chain` | `enabled: false` | `enabled`, `child_priority` (`normal`), `auto_develop` (`true`), `auto_close_parent` (`true`) |
 | `triage` | `enabled: true` | Queue LLM triage: `engine` (`claude`), `model` (`claude-sonnet-4-6`), `timeout` (`60`), `body_chars` (`500`), `circuit_breaker_threshold` (`3`), `circuit_breaker_reset_seconds` (`1800`) |
-| `phases` | `draft`, `sub`, `develop`, `merge` | List of phase mappings (see below) |
+| `phases` | (required) | List of phase mappings (see below); no built-in default |
 | `steps` | `p1` with `andon_when` | Per step: `module`, `template`, `requires`, `input_kind`, `accepts`, `andon_when` |
 | `label_write_guard` | `warn` | `warn` or `enforce`: block step label writes through the forge |
 | `forbidden_pr_paths` | `jobs/**`, `logs/**`, `.sessions/**`, `*.jsonl`, `*.pid`, `*.lock` | Paths a PR may not touch |
@@ -538,7 +538,7 @@ Relative paths in the file resolve against the directory that holds it.
 | `metrics` | `done_step: m2` | Rework metrics: `done_step`, `repair_templates`, `cause_targets` |
 | `derived_allow` | `enabled: true`, `ledger_globs: [tests/conventions/known_*.txt]` | Allow repair to edit newly failing tests outside allow_paths; ledgers matching `ledger_globs` next to a failing test may only shrink (`[]` turns ledger derivation off) |
 | `external_leak` | `cjk_free_external_targets: false` | Fail added CJK lines on branches for external targets |
-| `terminal_labels` | `issuesmith:merge-done`, `bump:done` | Labels that mark a finished Issue |
+| `terminal_labels` | `[]` | Labels that mark a finished Issue |
 | `observe` | see below | Observe layer thresholds and `main_health` |
 | `api_brake` | `enabled: false` | GitHub API brake: `min_remaining` (`800`) |
 | `language_pack` | (unset: `EN`) | Path to a language pack YAML; see [Language packs](#language-packs) |
@@ -551,10 +551,10 @@ Relative paths in the file resolve against the directory that holds it.
 
 | Field | Default | Description |
 |---|---|---|
-| `name` | (required) | Phase name (`draft`, `sub`, `develop`, `merge` in the built-in set) |
+| `name` | (required) | Phase name |
 | `role` | (required) | `design` or `implementation` |
 | `entry_step` | (required) | First step id of the phase |
-| `handler` | `brushup` / `subissue` / `impl` / `merge` by phase name | Workflow handler name |
+| `handler` | (required) | Workflow handler name |
 | `preconditions` | `[]` | Labels that must be present before the phase can start |
 | `excludes` | `[]` | Labels that block the phase |
 | `writes_files` | `true` (`false` for `draft` and `sub`) | Whether the phase writes files |
@@ -616,7 +616,7 @@ Logs, exception messages, CLI help and stderr, and violation `message` / `fix_hi
 
 | Type | Module | Base | When |
 |---|---|---|---|
-| `ConfigError` | `issuesmith.config` | `ValueError` | Invalid `issuesmith.yaml`, language pack or `steps.*.requires` |
+| `ConfigError` | `issuesmith.config` | `ValueError` | Invalid `issuesmith.yaml`, language pack or `steps.*.requires`; missing `phases:`; missing `phases[].handler` |
 | `QueueValidationError` | `issuesmith.queue_store` | `ValueError` | Invalid queue request input (CLI exits 2) |
 | `GateBuildError` | `issuesmith.gates` | `ValueError` | `GateEntry.build` cannot instantiate a gate |
 | `DerivedAllowPathsError` | `issuesmith.pr_scope` | `ValueError` | `derived_allow_paths_from_result` finds malformed entries |
@@ -627,7 +627,7 @@ Logs, exception messages, CLI help and stderr, and violation `message` / `fix_hi
 | `WorktreeError` | `issuesmith.worktree` | `Exception` | Worktree preparation failed |
 | `MergeStateTimeoutError` | `issuesmith.merge` | `Exception` | PR merge state stayed `BLOCKED` until the timeout |
 
-A config file without `repo`, or with a malformed `phases`, `forbidden_pr_paths`, `terminal_labels` or `observe.main_health`, raises plain `ValueError`. `TemplateVariableError` (`ghdag.pipeline.order`) can propagate from `issuesmith.engine` when a template variable is missing at render time.
+A config file without `repo`, or with a malformed `forbidden_pr_paths`, `terminal_labels` or `observe.main_health`, raises plain `ValueError`. A config without `phases:` or with a phase that omits `handler` raises `ConfigError`. `TemplateVariableError` (`ghdag.pipeline.order`) can propagate from `issuesmith.engine` when a template variable is missing at render time.
 
 ## License
 

@@ -7,6 +7,7 @@ import argparse
 import pytest
 import yaml
 
+import issuesmith.config as issuesmith_config_module
 from issuesmith import engine
 from issuesmith.config import ConfigError, get_config, load_config, reset_config_cache
 from tests.conftest import NEXUS_TEST_PHASES
@@ -54,19 +55,16 @@ def _subparser_option_choices(
 
 
 @pytest.mark.no_auto_phases
-def test_missing_phases_uses_default_phases(tmp_path, monkeypatch):
+def test_missing_phases_raises_config_error(tmp_path, monkeypatch):
     _write_config(tmp_path, monkeypatch, {"repo": "example/app"})
-    cfg = load_config()
-    assert tuple(p.name for p in cfg.phases) == _DEFAULT_PHASE_NAMES
-    assert cfg.phases[0].handler == "brushup"
-    assert cfg.phases[0].writes_files is False
-    assert cfg.phases[0].advance_when == ("deps_terminal",)
-    assert cfg.phases[1].preconditions == ()
-    assert cfg.phases[2].excludes == ()
+    with pytest.raises(ConfigError, match="phases must be declared"):
+        load_config()
+    assert not hasattr(issuesmith_config_module, "_DEFAULT_PHASES")
+    assert not hasattr(issuesmith_config_module, "_DEFAULT_HANDLER_BY_PHASE")
 
 
 @pytest.mark.no_auto_phases
-def test_default_phase_name_omits_handler_uses_default(tmp_path, monkeypatch):
+def test_default_phase_name_omits_handler_raises(tmp_path, monkeypatch):
     _write_config(
         tmp_path,
         monkeypatch,
@@ -75,8 +73,30 @@ def test_default_phase_name_omits_handler_uses_default(tmp_path, monkeypatch):
             "phases": [{"name": "draft", "role": "design", "entry_step": "b1"}],
         },
     )
+    with pytest.raises(ConfigError, match=r"phases\[0\]\.handler is required"):
+        load_config()
+
+
+@pytest.mark.no_auto_phases
+def test_terminal_labels_empty_when_not_declared(tmp_path, monkeypatch):
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "repo": "example/app",
+            "phases": [
+                {
+                    "name": "draft",
+                    "role": "design",
+                    "entry_step": "b1",
+                    "handler": "brushup",
+                },
+            ],
+        },
+    )
     cfg = load_config()
-    assert cfg.phases[0].handler == "brushup"
+    assert cfg.terminal_labels == ()
+    assert cfg.terminal_without_merge == ()
 
 
 @pytest.mark.no_auto_phases

@@ -18,6 +18,10 @@ SRC_PATH = REPO_ROOT / "src"
 
 _REPO_REQUIRED_MSG = r"issuesmith\.yaml.*repo: owner/name"
 
+_MINIMAL_PHASES = [
+    {"name": "draft", "role": "design", "entry_step": "b1", "handler": "brushup"},
+]
+
 
 @pytest.fixture(autouse=True)
 def _clear_config_cache():
@@ -78,6 +82,7 @@ def test_config_show_prints_json(tmp_path, monkeypatch, capsys):
         {
             "repo": "example/app",
             "supported_repos": ["example/app", "example/other"],
+            "phases": _MINIMAL_PHASES,
         },
     )
     from issuesmith.cli import main
@@ -100,7 +105,11 @@ def test_config_show_via_module_subprocess(tmp_path, monkeypatch):
     """python -m issuesmith config show returns JSON and exits 0."""
     cfg_path = tmp_path / "issuesmith.yaml"
     cfg_path.write_text(
-        yaml.safe_dump({"repo": "example/cli-show", "supported_repos": ["example/cli-show"]}),
+        yaml.safe_dump({
+            "repo": "example/cli-show",
+            "supported_repos": ["example/cli-show"],
+            "phases": _MINIMAL_PHASES,
+        }),
         encoding="utf-8",
     )
     env = {**os.environ, "PYTHONPATH": _pythonpath(), "ISSUESMITH_CONFIG": str(cfg_path)}
