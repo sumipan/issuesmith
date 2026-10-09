@@ -10,8 +10,23 @@ import sys
 import zipfile
 from pathlib import Path
 
+import yaml
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_PATH = REPO_ROOT / "src"
+
+_MINIMAL_PHASES = [
+    {"name": "draft", "role": "design", "entry_step": "b1", "handler": "brushup"},
+]
+
+
+def _subprocess_config_path(tmp_path: Path) -> Path:
+    cfg_path = tmp_path / "issuesmith-cli.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "example/cli", "phases": _MINIMAL_PHASES}),
+        encoding="utf-8",
+    )
+    return cfg_path
 
 
 def _pythonpath() -> str:
@@ -19,14 +34,21 @@ def _pythonpath() -> str:
     return str(SRC_PATH) + (f":{existing}" if existing else "")
 
 
-def _run_module(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+def _run_module(
+    *args: str,
+    check: bool = True,
+    extra_env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "PYTHONPATH": _pythonpath()}
+    if extra_env:
+        env.update(extra_env)
     return subprocess.run(
         [sys.executable, "-m", "issuesmith", *args],
         cwd=str(REPO_ROOT),
         capture_output=True,
         text=True,
         check=check,
-        env={**os.environ, "PYTHONPATH": _pythonpath()},
+        env=env,
     )
 
 
@@ -80,16 +102,20 @@ def test_gate_alias_matches_gate_preflight(tmp_path: Path) -> None:
     body = tmp_path / "body.md"
     # ASCII fixture data.
     body.write_text("## Acceptance Criteria\n\n```yaml\npaths_must_exist: []\n```\n", encoding="utf-8")
+    cfg_env = {"ISSUESMITH_CONFIG": str(_subprocess_config_path(tmp_path))}
 
-    old = _run_module("gate-preflight", "--gate", "cp1", "--body-file", str(body))
-    new = _run_module("gate", "cp1", "--body-file", str(body))
+    old = _run_module(
+        "gate-preflight", "--gate", "cp1", "--body-file", str(body), extra_env=cfg_env
+    )
+    new = _run_module("gate", "cp1", "--body-file", str(body), extra_env=cfg_env)
     assert old.returncode == 0, old.stderr
     assert new.returncode == 0, new.stderr
     assert json.loads(old.stdout) == json.loads(new.stdout)
 
 
-def test_engine_show_runs() -> None:
-    via_cli = _run_module("engine", "show")
+def test_engine_show_runs(tmp_path: Path) -> None:
+    cfg_env = {"ISSUESMITH_CONFIG": str(_subprocess_config_path(tmp_path))}
+    via_cli = _run_module("engine", "show", extra_env=cfg_env)
     assert via_cli.returncode == 0, via_cli.stderr
     assert via_cli.stdout.strip()
 

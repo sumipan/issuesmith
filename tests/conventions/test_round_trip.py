@@ -63,10 +63,16 @@ def _managed(client, number: int) -> set[str]:
 
 # Merge declared as a multi-step phase: m1 -> m2. Only the final step (m2) projects merge-done.
 _MERGE_STEPS_PHASES = [
-    {"name": "draft", "role": "design", "entry_step": "b1"},
-    {"name": "sub", "role": "implementation", "entry_step": "sub-ready"},
-    {"name": "develop", "role": "implementation", "entry_step": "cp2"},
-    {"name": "merge", "role": "implementation", "entry_step": "m2", "steps": ["m1", "m2"]},
+    {"name": "draft", "role": "design", "entry_step": "b1", "handler": "brushup"},
+    {"name": "sub", "role": "implementation", "entry_step": "sub-ready", "handler": "subissue"},
+    {"name": "develop", "role": "implementation", "entry_step": "cp2", "handler": "impl"},
+    {
+        "name": "merge",
+        "role": "implementation",
+        "entry_step": "m2",
+        "handler": "merge",
+        "steps": ["m1", "m2"],
+    },
 ]
 
 _HAS_PHASE_STEPS = "steps" in {f.name for f in dataclasses.fields(config_module.PhaseConfig)}

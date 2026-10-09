@@ -34,8 +34,17 @@ def _write_config(tmp_path: Path, monkeypatch, payload: dict) -> Path:
     return cfg_path
 
 
+_MINIMAL_PHASES = [
+    {"name": "draft", "role": "design", "entry_step": "b1", "handler": "brushup"},
+]
+
+
 def _minimal_config(tmp_path: Path, monkeypatch, **metrics_kwargs) -> None:
-    payload = {"repo": "example/app", "timezone": "Asia/Tokyo"}
+    payload = {
+        "repo": "example/app",
+        "timezone": "Asia/Tokyo",
+        "phases": _MINIMAL_PHASES,
+    }
     if metrics_kwargs:
         payload["metrics"] = metrics_kwargs
     _write_config(tmp_path, monkeypatch, payload)

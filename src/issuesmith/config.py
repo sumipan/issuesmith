@@ -185,46 +185,6 @@ _DEFAULT_STEPS: dict[str, StepConfig] = {
     "p1": StepConfig(andon_when=("external_leak.target_unknown",)),
 }
 
-_DEFAULT_HANDLER_BY_PHASE: dict[str, str] = {
-    "draft": "brushup",
-    "sub": "subissue",
-    "develop": "impl",
-    "merge": "merge",
-}
-
-_DEFAULT_PHASES: tuple[PhaseConfig, ...] = (
-    PhaseConfig(
-        name="draft",
-        role="design",
-        entry_step="b1",
-        handler="brushup",
-        writes_files=False,
-        advance_when=("deps_terminal",),
-    ),
-    PhaseConfig(
-        name="sub",
-        role="implementation",
-        entry_step="sub-ready",
-        handler="subissue",
-        writes_files=False,
-        advance_when=("deps_terminal",),
-    ),
-    PhaseConfig(
-        name="develop",
-        role="implementation",
-        entry_step="cp2",
-        handler="impl",
-        advance_when=("deps_terminal", "pins_landed"),
-    ),
-    PhaseConfig(
-        name="merge",
-        role="implementation",
-        entry_step="m2",
-        handler="merge",
-        advance_when=("deps_terminal", "closing_pr_exists"),
-    ),
-)
-
 # PR diff scope gate defaults (#3178). Mirrored in issuesmith.yaml.
 _DEFAULT_FORBIDDEN_PR_PATHS: tuple[str, ...] = (
     "jobs/**",
@@ -324,17 +284,6 @@ class ExternalLeakConfig:
     cjk_free_external_targets: bool = False
 
 
-_DEFAULT_TERMINAL_LABELS: tuple[str, ...] = ("issuesmith:merge-done", "bump:done")
-
-_DEFAULT_TERMINAL_WITHOUT_MERGE: tuple[str, ...] = (
-    "rejected",
-    "superseded",
-    "sub-ready",
-    "sub-done",
-)
-
-
-
 @dataclass(frozen=True)
 class MainHealthConfig:
     """Periodic base-branch test run (issuesmith.yaml observe.main_health:, #3664)."""
@@ -378,7 +327,7 @@ class IssuesmithConfig:
     concurrency: ConcurrencyConfig
     milestone_chain: MilestoneChainConfig = field(default_factory=MilestoneChainConfig)
     triage: TriageConfig = field(default_factory=TriageConfig)
-    phases: tuple[PhaseConfig, ...] = _DEFAULT_PHASES
+    phases: tuple[PhaseConfig, ...] = ()
     sections: Mapping[str, str] = field(default_factory=lambda: dict(EN.sections))
     sub_design_subsections: tuple[str, ...] = EN.sub_design_subsections
     steps: Mapping[str, StepConfig] = field(default_factory=lambda: dict(_DEFAULT_STEPS))
@@ -390,7 +339,7 @@ class IssuesmithConfig:
     metrics: MetricsConfig = field(default_factory=MetricsConfig)
     derived_allow: DerivedAllowConfig = field(default_factory=DerivedAllowConfig)
     external_leak: ExternalLeakConfig = field(default_factory=ExternalLeakConfig)
-    terminal_labels: tuple[str, ...] = _DEFAULT_TERMINAL_LABELS
+    terminal_labels: tuple[str, ...] = ()
     terminal_without_merge: tuple[str, ...] = ()
     observe: ObserveConfig = field(default_factory=ObserveConfig)
     api_brake: ApiBreakConfig = field(default_factory=ApiBreakConfig)
@@ -465,7 +414,9 @@ def load_config(path: Path | None = None) -> IssuesmithConfig:
       2. env ``ISSUESMITH_CONFIG``
       3. ``issuesmith.yaml`` found by walking up from cwd
       4. ``Path(__file__).resolve().parents[2] / "issuesmith.yaml"`` (package repo root)
-      5. builtin defaults (legacy nexus values)
+
+    There are no builtin phase defaults: when no file is found, or the file
+    omits ``phases:``, ``_build_config`` raises ``ConfigError``.
     """
     resolved = _resolve_config_path(path)
     if resolved is None:
@@ -622,7 +573,7 @@ def _label_list(raw: Any, *, field: str, index: int) -> tuple[str, ...]:
 
 def _build_phases(raw: Any) -> tuple[PhaseConfig, ...]:
     if raw is None:
-        return _DEFAULT_PHASES
+        raise ConfigError("phases must be declared")
     if not isinstance(raw, list):
         raise ValueError("phases must be a list of mappings")
     import issuesmith.pins  # noqa: F401  (registers pins_landed)
@@ -640,8 +591,6 @@ def _build_phases(raw: Any) -> tuple[PhaseConfig, ...]:
                 f"phases[{i}] requires non-empty name, role, and entry_step"
             )
         handler = str(item.get("handler") or "").strip()
-        if not handler:
-            handler = _DEFAULT_HANDLER_BY_PHASE.get(str(name), "")
         if not handler:
             raise ConfigError(f"phases[{i}].handler is required")
         preconditions = _label_list(item.get("preconditions"), field="preconditions", index=i)
@@ -888,16 +837,15 @@ def _build_scope_gate(raw: Mapping[str, Any] | None) -> ScopeGateConfig:
 
 def _build_terminal_labels(raw: Any) -> tuple[str, ...]:
     if raw is None:
-        # Kept even when phases are declared; emptying the default is #4881.
-        return _DEFAULT_TERMINAL_LABELS
+        return ()
     if not isinstance(raw, list):
         raise ValueError("terminal_labels must be a list of strings")
     return tuple(str(x) for x in raw)
 
 
-def _build_terminal_without_merge(raw: Any, *, using_default_phases: bool = False) -> tuple[str, ...]:
+def _build_terminal_without_merge(raw: Any) -> tuple[str, ...]:
     if raw is None:
-        return _DEFAULT_TERMINAL_WITHOUT_MERGE if using_default_phases else ()
+        return ()
     if not isinstance(raw, list):
         raise ValueError("terminal_without_merge must be a list of strings")
     return tuple(str(x) for x in raw)
@@ -1203,7 +1151,6 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     )
     andon_raw = data.get("andon") if isinstance(data.get("andon"), dict) else None
     language = _build_language(data, root=root.resolve())
-    using_default_phases = data.get("phases") is None
     return IssuesmithConfig(
         repo=repo,
         label_namespace=label_namespace,
@@ -1230,7 +1177,6 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         terminal_labels=_build_terminal_labels(data.get("terminal_labels")),
         terminal_without_merge=_build_terminal_without_merge(
             data.get("terminal_without_merge"),
-            using_default_phases=using_default_phases,
         ),
         observe=_build_observe(observe_raw, root.resolve()),
         api_brake=_build_api_brake(api_brake_raw),

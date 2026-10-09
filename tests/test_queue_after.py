@@ -77,6 +77,13 @@ def issuesmith_config(tmp_path, monkeypatch):
             },
         },
         "concurrency": {"default": 1, "per_engine": {"claude": 2, "cursor": 2, "codex": 2}},
+        "phases": [
+            {"name": "draft", "role": "design", "entry_step": "b1", "handler": "brushup"},
+            {"name": "sub", "role": "implementation", "entry_step": "sub-ready", "handler": "subissue"},
+            {"name": "develop", "role": "implementation", "entry_step": "cp2", "handler": "impl"},
+            {"name": "merge", "role": "implementation", "entry_step": "m2", "handler": "merge"},
+        ],
+        "terminal_labels": ["issuesmith:merge-done", "bump:done"],
     }
     cfg_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
     monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))

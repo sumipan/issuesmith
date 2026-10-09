@@ -19,6 +19,10 @@ import yaml
 from issuesmith.gates import GATE_REGISTRY
 from tests.conventions._util import REPO_ROOT
 
+_MINIMAL_PHASES = [
+    {"name": "draft", "role": "design", "entry_step": "b1", "handler": "brushup"},
+]
+
 
 def _write_config(tmp_path: Path, requires: list[str], input_kind: str) -> Path:
     cfg = tmp_path / "issuesmith.yaml"
@@ -26,6 +30,7 @@ def _write_config(tmp_path: Path, requires: list[str], input_kind: str) -> Path:
         yaml.safe_dump(
             {
                 "repo": "example/repo",
+                "phases": _MINIMAL_PHASES,
                 "steps": {
                     "s1": {"module": "issuesmith.worktree", "requires": requires, "input_kind": input_kind}
                 },
