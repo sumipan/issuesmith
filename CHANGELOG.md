@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.149.0 - 2026-10-10
+
 ### Added
 
 - `ac_contract` gate: evaluates `paths_must_exist` and `paths_must_not_exist` from the
