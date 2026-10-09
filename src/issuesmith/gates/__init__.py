@@ -122,15 +122,6 @@ def _build_registry() -> dict[str, GateEntry]:
     registry["scope"] = GateEntry(input_kind="worktree", build=_build_scope)
     registry["pr_scope"] = GateEntry(input_kind="worktree", build=_build_pr_scope)
 
-    from issuesmith.gates.review import build_review_gate
-
-    registry["review"] = GateEntry(
-        input_kind="worktree",
-        build=build_review_gate,
-        pre_llm=False,
-        repairable=True,
-    )
-
     # Gate rules registered in ghdag's GATE_REGISTRY (via import issuesmith.gate_rules).
     from ghdag.workflow.gates import GATE_REGISTRY as _IMPL_REG
 
@@ -160,6 +151,28 @@ def _build_registry() -> dict[str, GateEntry]:
 # Build the registry at module load time.
 GATE_REGISTRY: dict[str, GateEntry] = _build_registry()
 
+
+def _step_bound_gates() -> dict[str, GateEntry]:
+    """Gates that need step_id / step config; omitted from GATE_REGISTRY smoke tests."""
+    from issuesmith.gates.review import build_review_gate
+
+    return {
+        "review": GateEntry(
+            input_kind="worktree",
+            build=build_review_gate,
+            pre_llm=False,
+            repairable=True,
+        ),
+    }
+
+
+STEP_BOUND_GATES: dict[str, GateEntry] = _step_bound_gates()
+
+
+def _known_gate_ids() -> list[str]:
+    return sorted(set(GATE_REGISTRY) | set(STEP_BOUND_GATES))
+
+
 _EXTERNAL_GATE_REF_RE = re.compile(r"^[A-Za-z_][\w.]*:[A-Za-z_]\w*$")
 
 
@@ -170,7 +183,9 @@ def resolve_gate(gate_id: str) -> GateEntry:
     if ":" not in gate_id:
         entry = GATE_REGISTRY.get(gate_id)
         if entry is None:
-            known = sorted(GATE_REGISTRY)
+            entry = STEP_BOUND_GATES.get(gate_id)
+        if entry is None:
+            known = _known_gate_ids()
             raise ConfigError(
                 f"unknown gate id {gate_id!r} (missing gate ids: [{gate_id!r}])."
                 f" Known ids: {known}"
@@ -220,7 +235,7 @@ def validate_step_requires(steps: "Mapping[str, Any]") -> None:
     """
     from issuesmith.config import ConfigError  # noqa: PLC0415 - config must not import gates
 
-    known = sorted(GATE_REGISTRY)
+    known = _known_gate_ids()
     for step_id, step in steps.items():
         input_kind = getattr(step, "input_kind", "issue")
         for field_name in ("requires", "accepts"):

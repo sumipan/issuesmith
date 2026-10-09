@@ -297,8 +297,6 @@ def test_gate_registry_all_entries_build_successfully(tmp_path: Path) -> None:
     )
 
     for gate_id, entry in GATE_REGISTRY.items():
-        if gate_id == "review":
-            continue
         ctx = ctx_worktree if entry.input_kind == "worktree" else ctx_issue
         gate = entry.build(ctx)
         assert hasattr(gate, "check"), f"gate {gate_id!r} missing check()"
