@@ -27,7 +27,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 from ghdag.forge import get_forge
 from ghdag.llm import call_managed
@@ -1133,11 +1133,13 @@ def _run_guarded_order(
     failure_status: str,
     cwd: str | None = None,
     tier: str | None = None,
+    out: TextIO | None = None,
 ) -> tuple[int, str]:
     """Run an order and verify its marker. Returns (returncode, stdout).
 
     Success: exit 0 and exactly one standalone status line with an allowed value.
     """
+    sink = out if out is not None else sys.stdout
     proc = _execute(
         role,
         _render_template(template_path, variables),
@@ -1145,7 +1147,7 @@ def _run_guarded_order(
         template=Path(template_path).name,
         tier=tier,
     )
-    sys.stdout.write(proc.stdout)
+    sink.write(proc.stdout)
     sys.stderr.write(proc.stderr)
     statuses = _extract_status_values(proc.stdout)
     if (
@@ -1155,20 +1157,45 @@ def _run_guarded_order(
     ):
         return 0, proc.stdout
     if proc.stdout and not proc.stdout.endswith("\n"):
-        print()  # keep the failure status a standalone line (#4530)
-    print(f"PIPELINE_STATUS: {failure_status}")
+        print(file=sink)  # keep the failure status a standalone line (#4530)
+    print(f"PIPELINE_STATUS: {failure_status}", file=sink)
     if proc.returncode != 0:
-        print(f"REASON: role process exited with code {proc.returncode}")
+        print(f"REASON: role process exited with code {proc.returncode}", file=sink)
     elif len(statuses) != 1:
         detail = f"found {len(statuses)} standalone status lines ({statuses})"
         if _has_inline_marker(proc.stdout, success_statuses):
             detail += "; marker exists only inline — it must be a standalone line"
-        print(f"REASON: status contract violated: {detail}")
+        print(f"REASON: status contract violated: {detail}", file=sink)
     else:
         expected = ", ".join(success_statuses)
-        print(f"REASON: status '{statuses[0]}' is not an allowed marker ({expected})")
+        print(
+            f"REASON: status '{statuses[0]}' is not an allowed marker ({expected})",
+            file=sink,
+        )
     _mirror_stdout_tail("run-guarded", proc.stdout)
     return 1, proc.stdout
+
+
+def run_guarded_output(
+    role: str,
+    template_path: str,
+    variables: list[str],
+    success_statuses: list[str],
+    failure_status: str,
+    cwd: str | None = None,
+    tier: str | None = None,
+) -> tuple[int, str]:
+    """Like run_guarded but writes LLM output and failure markers only to stderr."""
+    return _run_guarded_order(
+        role,
+        template_path,
+        variables,
+        success_statuses,
+        failure_status,
+        cwd=cwd,
+        tier=tier,
+        out=sys.stderr,
+    )
 
 
 def _run_emit_order(

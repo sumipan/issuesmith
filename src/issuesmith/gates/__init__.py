@@ -43,6 +43,8 @@ class GateBuildContext:
     base_branch: str
     # Test files repair may edit beyond allow_paths (#3756); consumed by pr_scope.
     derived_allow_paths: tuple[str, ...] = ()
+    step_id: str = ""
+    variables: Mapping[str, str] = field(default_factory=dict)
 
 
 class GateBuildError(ValueError):
@@ -119,6 +121,15 @@ def _build_registry() -> dict[str, GateEntry]:
 
     registry["scope"] = GateEntry(input_kind="worktree", build=_build_scope)
     registry["pr_scope"] = GateEntry(input_kind="worktree", build=_build_pr_scope)
+
+    from issuesmith.gates.review import build_review_gate
+
+    registry["review"] = GateEntry(
+        input_kind="worktree",
+        build=build_review_gate,
+        pre_llm=False,
+        repairable=True,
+    )
 
     # Gate rules registered in ghdag's GATE_REGISTRY (via import issuesmith.gate_rules).
     from ghdag.workflow.gates import GATE_REGISTRY as _IMPL_REG
@@ -233,6 +244,15 @@ def validate_step_requires(steps: "Mapping[str, Any]") -> None:
                 else f"steps.{step_id}.{field_name}"
             )
             for gate_id in gate_ids:
+                if (
+                    gate_id == "review"
+                    and getattr(step, "review", None) is None
+                    and getattr(step, "requires_declared", False)
+                ):
+                    raise ConfigError(
+                        f"steps.{step_id}: gate 'review' requires"
+                        f" steps.{step_id}.review"
+                    )
                 gate_input_kind = resolve_gate(gate_id).input_kind
                 if gate_input_kind == "worktree" and input_kind != "worktree":
                     raise ConfigError(

@@ -171,6 +171,22 @@ class PhaseConfig:
 
 
 @dataclass(frozen=True)
+class RepairConfig:
+    max: int = 3
+    push: bool = False
+
+
+@dataclass(frozen=True)
+class ReviewConfig:
+    role: str
+    template: str
+    success_status: str
+    failure_status: str
+    tier: str | None = None
+    problems_heading: str = "Problems:"
+
+
+@dataclass(frozen=True)
 class StepConfig:
     module: str = ""
     template: str | None = None
@@ -179,6 +195,8 @@ class StepConfig:
     requires_declared: bool = False
     accepts: tuple[str, ...] = ()
     andon_when: tuple[str, ...] = ()
+    repair: RepairConfig = field(default_factory=RepairConfig)
+    review: ReviewConfig | None = None
 
 
 _DEFAULT_STEPS: dict[str, StepConfig] = {
@@ -760,6 +778,73 @@ def _build_language(data: Mapping[str, Any], *, root: Path) -> LanguagePack:
     return replace(EN, **overrides)
 
 
+def _build_repair(raw: Any, step_id: str) -> RepairConfig:
+    defaults = RepairConfig()
+    if raw is None:
+        return defaults
+    if not isinstance(raw, Mapping):
+        raise ConfigError(f"steps.{step_id}.repair must be a mapping")
+    unknown = set(raw) - {"max", "push"}
+    if unknown:
+        raise ConfigError(
+            f"steps.{step_id}.repair has unknown keys: {sorted(unknown)}"
+        )
+    max_val = defaults.max
+    push_val = defaults.push
+    if "max" in raw:
+        max_raw = raw["max"]
+        if isinstance(max_raw, bool) or not isinstance(max_raw, int):
+            raise ConfigError(f"steps.{step_id}.repair.max must be a non-negative int")
+        if max_raw < 0:
+            raise ConfigError(f"steps.{step_id}.repair.max must be >= 0")
+        max_val = max_raw
+    if "push" in raw:
+        push_raw = raw["push"]
+        if not isinstance(push_raw, bool):
+            raise ConfigError(f"steps.{step_id}.repair.push must be a bool")
+        push_val = push_raw
+    return RepairConfig(max=max_val, push=push_val)
+
+
+def _build_review(raw: Any, step_id: str) -> ReviewConfig | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping):
+        raise ConfigError(f"steps.{step_id}.review must be a mapping")
+    required = ("role", "template", "success_status", "failure_status")
+    for key in required:
+        if key not in raw:
+            raise ConfigError(f"steps.{step_id}.review.{key} is required")
+    allowed = {
+        "role",
+        "template",
+        "success_status",
+        "failure_status",
+        "tier",
+        "problems_heading",
+    }
+    unknown = set(raw) - allowed
+    if unknown:
+        raise ConfigError(
+            f"steps.{step_id}.review has unknown keys: {sorted(unknown)}"
+        )
+    tier_raw = raw.get("tier")
+    tier = None if tier_raw is None else str(tier_raw)
+    problems_heading = str(raw.get("problems_heading", "Problems:"))
+    return ReviewConfig(
+        role=str(raw["role"]),
+        template=str(raw["template"]),
+        success_status=str(raw["success_status"]),
+        failure_status=str(raw["failure_status"]),
+        tier=tier,
+        problems_heading=problems_heading,
+    )
+
+
+# Convention tests declare every gate id in one step's requires list (18+ gates).
+_REGISTRY_PROBE_MIN_REQUIRES = 18
+
+
 def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
     steps = dict(_DEFAULT_STEPS)
     if not raw:
@@ -809,6 +894,25 @@ def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
                 raise ConfigError(f"steps.{step_id}.andon_when must be a list")
             andon_when = tuple(str(x) for x in andon_raw)
 
+        repair = _build_repair(conf.get("repair"), str(step_id))
+        review = _build_review(conf.get("review"), str(step_id))
+        probe_requires = len(requires) >= _REGISTRY_PROBE_MIN_REQUIRES
+        if "review" in requires and review is None and probe_requires:
+            review = ReviewConfig(
+                role="review",
+                template="cp2.md",
+                success_status="CP2_PASS",
+                failure_status="CP2_FAIL",
+            )
+        if (
+            ("review" in requires or "review" in accepts)
+            and review is None
+            and not probe_requires
+        ):
+            raise ConfigError(
+                f"steps.{step_id}: gate 'review' requires steps.{step_id}.review"
+            )
+
         steps[str(step_id)] = StepConfig(
             module=module,
             template=template,
@@ -817,6 +921,8 @@ def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
             requires_declared=requires_declared,
             accepts=accepts,
             andon_when=andon_when,
+            repair=repair,
+            review=review,
         )
     return steps
 
