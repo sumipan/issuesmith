@@ -450,6 +450,7 @@ def test_scope_size_overrides(tmp_path, monkeypatch):
                 "enabled": False,
                 "max_files": 12,
                 "max_concerns": 3,
+                "max_slices": 5,
                 "delete_with_new": True,
                 "exclude_prefixes": ["tests/"],
             }
@@ -459,7 +460,7 @@ def test_scope_size_overrides(tmp_path, monkeypatch):
         enabled=False,
         max_files=12,
         max_concerns=3,
-        max_slices=3,
+        max_slices=5,
         delete_with_new=True,
         exclude_prefixes=("tests/",),
     )

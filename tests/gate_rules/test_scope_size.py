@@ -825,7 +825,8 @@ def test_body_without_yaml_still_triggers_scope_size():
 def test_max_slices_override_allows_four_slices(tmp_path, monkeypatch):
     from issuesmith.gate_rules.scope_size import promotion_declined
 
-    _write_config(tmp_path, monkeypatch, {"scope_size": {"max_slices": 4}})
     rows = [(f"src/{d}/f{i}.py", _MODIFY) for d in ("a", "b", "c", "d") for i in range(3)]
     body = _body(rows)
+    assert promotion_declined(body)
+    _write_config(tmp_path, monkeypatch, {"scope_size": {"max_slices": 4}})
     assert not promotion_declined(body)
