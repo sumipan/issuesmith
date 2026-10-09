@@ -1,8 +1,13 @@
 """test_cp1.py — Cp1Rules unit tests"""
 
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
 
 from issuesmith.gate_rules import GATE_REGISTRY
-from issuesmith.gate_rules.cp1 import Cp1Rules
+from issuesmith.gate_rules.cp1 import Cp1Rules, _pytest_module_name
+from tests import legacy_text
 
 
 def test_tbd_returns_violation():
@@ -222,3 +227,301 @@ def test_broken_yaml_block_is_missing_block():
     body = "```yaml\n: : broken [\n```\n\n## c6982_c8981\nc672C_c6587\n"
     violations = Cp1Rules().check(body, [])
     assert any(v.rule_id == "cp1.yaml_contract.missing_block" for v in violations)
+
+
+# --- Issue #5105: pytest test basename collision (cp1.test_basename_collision) ---
+
+_CHANGE_TABLE_HEADER = (
+    f"| {legacy_text.REPOSITORY} | {legacy_text.FILE_PATH} | "
+    f"{legacy_text.CHANGE_TYPE} | {legacy_text.DESCRIPTION} |\n"
+    "|---|---|---|---|\n"
+)
+
+
+def _collision_body(
+    rows: list[tuple[str, str]],
+    yaml_head: str = "",
+    ac_yaml: str = "",
+) -> str:
+    table = "".join(
+        f"| `sumipan/issuesmith` | `{path}` | {kind} | x |\n" for path, kind in rows
+    )
+    ac_block = ""
+    if ac_yaml:
+        ac_block = f"\n## Acceptance Criteria\n\n```yaml\n{ac_yaml}\n```\n"
+    head = yaml_head or (
+        "target_repo: sumipan/issuesmith\n"
+        "base_branch: main\n"
+        "allow_paths:\n"
+        '  - "tests/**"\n'
+    )
+    return f"```yaml\n{head}```\n\n## Changed Files\n\n{_CHANGE_TABLE_HEADER}{table}{ac_block}"
+
+
+def _git_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-b", "main", str(repo)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "user.email", "t@test.com"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "user.name", "Test"],
+        check=True,
+        capture_output=True,
+    )
+    return repo
+
+
+def _track(repo: Path, rel_path: str, content: str = "#\n") -> None:
+    path = repo / rel_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", rel_path], check=True, capture_output=True)
+
+
+def _commit(repo: Path, message: str = "init") -> None:
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-m", message],
+        check=True,
+        capture_output=True,
+    )
+
+
+def _collision_violations(body: str, repo: Path, monkeypatch) -> list:
+    monkeypatch.setattr(
+        "issuesmith.gate_rules.cp1.resolve_scope_root",
+        lambda metadata, cfg: repo,
+    )
+    all_v = Cp1Rules().check(body, [])
+    return [v for v in all_v if v.rule_id == "cp1.test_basename_collision"]
+
+
+def test_pytest_module_name_unit():
+    assert _pytest_module_name("tests/a/b/test_x.py", {"tests/a/b"}) == "b.test_x"
+    assert _pytest_module_name("tests/a/test_x.py", {"tests", "tests/a"}) == "tests.a.test_x"
+    assert _pytest_module_name("tests/a/test_x.py", {"tests"}) == "test_x"
+
+
+def test_two_new_same_basename_no_init(tmp_path, monkeypatch):
+    repo = _git_repo(tmp_path)
+    body = _collision_body([
+        ("tests/a/test_x.py", "new"),
+        ("tests/b/test_x.py", "new"),
+    ])
+    violations = _collision_violations(body, repo, monkeypatch)
+    assert len(violations) == 2
+    locations = {v.location for v in violations}
+    assert locations == {"tests/a/test_x.py", "tests/b/test_x.py"}
+    for v in violations:
+        assert v.severity == "fail"
+        assert v.auto_fixable is True
+        assert "pytest module" in v.message
+
+
+def test_new_collides_with_tracked(tmp_path, monkeypatch):
+    repo = _git_repo(tmp_path)
+    _track(repo, "tests/b/test_x.py")
+    _commit(repo)
+    body = _collision_body([("tests/a/test_x.py", "new")])
+    violations = _collision_violations(body, repo, monkeypatch)
+    assert len(violations) == 1
+    assert violations[0].location == "tests/a/test_x.py"
+    assert "tests/b/test_x.py" in violations[0].message
+
+
+def test_paths_must_exist_and_new_table_row(tmp_path, monkeypatch):
+    repo = _git_repo(tmp_path)
+    _track(repo, "tests/b/test_x.py")
+    _commit(repo)
+    body = _collision_body(
+        [("tests/a/test_x.py", "new")],
+        ac_yaml="paths_must_exist:\n  - tests/b/test_x.py\n",
+    )
+    violations = _collision_violations(body, repo, monkeypatch)
+    assert len(violations) == 2
+
+
+def test_package_init_avoids_false_positive(tmp_path, monkeypatch):
+    repo = _git_repo(tmp_path)
+    _track(repo, "tests/a/__init__.py")
+    _track(repo, "tests/b/__init__.py")
+    _track(repo, "tests/a/test_x.py")
+    _track(repo, "tests/b/test_x.py")
+    _commit(repo)
+    body = _collision_body([
+        ("tests/a/test_x.py", "new"),
+        ("tests/b/test_x.py", "new"),
+    ])
+    violations = _collision_violations(body, repo, monkeypatch)
+    assert violations == []
+
+
+def test_nested_init_same_module_name_collides(tmp_path, monkeypatch):
+    repo = _git_repo(tmp_path)
+    _track(repo, "tests/a/b/__init__.py")
+    _track(repo, "tests/c/b/__init__.py")
+    _commit(repo)
+    body = _collision_body([
+        ("tests/a/b/test_x.py", "new"),
+        ("tests/c/b/test_x.py", "new"),
+    ])
+    violations = _collision_violations(body, repo, monkeypatch)
+    assert len(violations) == 2
+
+
+def test_nested_vs_flat_no_collision(tmp_path, monkeypatch):
+    repo = _git_repo(tmp_path)
+    _track(repo, "tests/a/b/__init__.py")
+    _commit(repo)
+    body = _collision_body([
+        ("tests/a/b/test_x.py", "new"),
+        ("tests/c/test_x.py", "new"),
+    ])
+    violations = _collision_violations(body, repo, monkeypatch)
+    assert violations == []
+
+
+def test_importlib_addopts_skips_check(tmp_path, monkeypatch):
+    repo = _git_repo(tmp_path)
+    _track(
+        repo,
+        "pyproject.toml",
+        '[tool.pytest.ini_options]\naddopts = "-q --import-mode=importlib"\n',
+    )
+    _commit(repo)
+    body = _collision_body([
+        ("tests/a/test_x.py", "new"),
+        ("tests/b/test_x.py", "new"),
+    ])
+    assert _collision_violations(body, repo, monkeypatch) == []
+
+
+def test_importlib_addopts_list_form(tmp_path, monkeypatch):
+    repo = _git_repo(tmp_path)
+    _track(
+        repo,
+        "pyproject.toml",
+        '[tool.pytest.ini_options]\naddopts = ["--import-mode=importlib"]\n',
+    )
+    _commit(repo)
+    body = _collision_body([
+        ("tests/a/test_x.py", "new"),
+        ("tests/b/test_x.py", "new"),
+    ])
+    assert _collision_violations(body, repo, monkeypatch) == []
+
+
+def test_importlib_addopts_split_tokens(tmp_path, monkeypatch):
+    repo = _git_repo(tmp_path)
+    _track(
+        repo,
+        "pyproject.toml",
+        '[tool.pytest.ini_options]\naddopts = "--import-mode importlib"\n',
+    )
+    _commit(repo)
+    body = _collision_body([
+        ("tests/a/test_x.py", "new"),
+        ("tests/b/test_x.py", "new"),
+    ])
+    assert _collision_violations(body, repo, monkeypatch) == []
+
+
+def test_append_import_mode_still_collides(tmp_path, monkeypatch):
+    repo = _git_repo(tmp_path)
+    _track(
+        repo,
+        "pyproject.toml",
+        '[tool.pytest.ini_options]\naddopts = "--import-mode=append"\n',
+    )
+    _commit(repo)
+    body = _collision_body([
+        ("tests/a/test_x.py", "new"),
+        ("tests/b/test_x.py", "new"),
+    ])
+    assert len(_collision_violations(body, repo, monkeypatch)) == 2
+
+
+def test_no_pyproject_still_collides(tmp_path, monkeypatch):
+    repo = _git_repo(tmp_path)
+    body = _collision_body([
+        ("tests/a/test_x.py", "new"),
+        ("tests/b/test_x.py", "new"),
+    ])
+    assert len(_collision_violations(body, repo, monkeypatch)) == 2
+
+
+def test_invalid_toml_still_collides(tmp_path, monkeypatch):
+    repo = _git_repo(tmp_path)
+    _track(repo, "pyproject.toml", "not valid [[[\n")
+    _commit(repo)
+    body = _collision_body([
+        ("tests/a/test_x.py", "new"),
+        ("tests/b/test_x.py", "new"),
+    ])
+    assert len(_collision_violations(body, repo, monkeypatch)) == 2
+
+
+def test_non_new_modify_and_outside_tests_no_violation(tmp_path, monkeypatch):
+    repo = _git_repo(tmp_path)
+    _track(repo, "tests/b/test_x.py")
+    _commit(repo)
+    body = _collision_body([
+        ("tests/a/test_x.py", "modify"),
+        ("src/test_x.py", "new"),
+        ("tests/a/helper.py", "new"),
+        ("tests/a/test_y.py", "new"),
+    ])
+    assert _collision_violations(body, repo, monkeypatch) == []
+
+
+def test_multiple_tracked_opponents_sorted_in_message(tmp_path, monkeypatch):
+    repo = _git_repo(tmp_path)
+    _track(repo, "tests/c/test_x.py")
+    _track(repo, "tests/b/test_x.py")
+    _commit(repo)
+    body = _collision_body([("tests/a/test_x.py", "new")])
+    violations = _collision_violations(body, repo, monkeypatch)
+    assert len(violations) == 1
+    msg = violations[0].message
+    assert msg.index("tests/b/test_x.py") < msg.index("tests/c/test_x.py")
+
+
+def test_resolve_scope_root_none_skips(monkeypatch):
+    body = _collision_body([
+        ("tests/a/test_x.py", "new"),
+        ("tests/b/test_x.py", "new"),
+    ])
+    monkeypatch.setattr(
+        "issuesmith.gate_rules.cp1.resolve_scope_root",
+        lambda metadata, cfg: None,
+    )
+    all_v = Cp1Rules().check(body, [])
+    assert [v for v in all_v if v.rule_id == "cp1.test_basename_collision"] == []
+
+
+def test_no_test_candidates_skips_resolve(monkeypatch):
+    calls = 0
+
+    def _boom(metadata, cfg):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("resolve_scope_root should not run")
+
+    monkeypatch.setattr("issuesmith.gate_rules.cp1.resolve_scope_root", _boom)
+    body = _collision_body([("src/foo.py", "new")])
+    assert Cp1Rules().check(body, []) == []
+    assert calls == 0
+
+
+def test_no_git_dir_body_only_collision(tmp_path, monkeypatch):
+    repo = tmp_path / "not_a_git_repo"
+    repo.mkdir()
+    body = _collision_body([
+        ("tests/a/test_x.py", "new"),
+        ("tests/b/test_x.py", "new"),
+    ])
+    violations = _collision_violations(body, repo, monkeypatch)
+    assert len(violations) == 2

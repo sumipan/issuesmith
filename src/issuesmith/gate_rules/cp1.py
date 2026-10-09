@@ -1,18 +1,29 @@
 from __future__ import annotations
 
+import posixpath
 import re
+import shlex
+import subprocess
+from pathlib import Path
 
 import yaml
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover
+    tomllib = None  # type: ignore[misc, assignment]
 from ghdag.workflow.gates import GATE_REGISTRY, Violation
 from ghdag.workflow.gates.common import strip_code_regions
 
 from issuesmith.config import get_config
 from issuesmith.context_hook import parse_issue_metadata, validate_issue_metadata
+from issuesmith.contract import extract_change_table_rows
 from issuesmith.gate_rules.b1_ac_format import extract_yaml_block, get_ac_section
 from issuesmith.gate_rules.b1_milestone_subdesign import (
     _extract_paths_from_change_table,
     extract_sub_blocks,
 )
+from issuesmith.scope_gate import resolve_scope_root
 
 _YAML_CONTRACT_FIXES: dict[str, tuple[bool, str]] = {
     "missing_required": (
@@ -283,6 +294,224 @@ def _is_new_or_modify(change_type: str) -> bool:
     return not any(w.lower() in lowered for w in get_config().language.delete_words)
 
 
+def _normalize_candidate_path(path: str) -> str:
+    normalized = path.strip().strip("`")
+    if normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized
+
+
+def _is_test_candidate_path(path: str) -> bool:
+    if not path.startswith("tests/"):
+        return False
+    name = posixpath.basename(path)
+    if name.endswith("_test.py"):
+        return True
+    return name.startswith("test_") and name.endswith(".py")
+
+
+def _change_type_is_new(change_type: str) -> bool:
+    lowered = change_type.strip().lower()
+    return any(word in lowered for word in get_config().scope_size.new_words)
+
+
+def _paths_must_exist_from_ac(body: str) -> list[str]:
+    ac_section = get_ac_section(body)
+    if ac_section is None:
+        return []
+    yaml_text = extract_yaml_block(ac_section)
+    if yaml_text is None:
+        return []
+    try:
+        data = yaml.safe_load(yaml_text)
+    except yaml.YAMLError:
+        return []
+    if not isinstance(data, dict):
+        return []
+    raw = data.get("paths_must_exist", [])
+    if not isinstance(raw, list):
+        return []
+    return [
+        _normalize_candidate_path(item)
+        for item in raw
+        if isinstance(item, str) and item.strip()
+    ]
+
+
+def _new_test_candidates_from_body(body: str, metadata: dict) -> list[str]:
+    target_repo = metadata.get("target_repo") or "sumipan/nexus"
+    seen: set[str] = set()
+    candidates: list[str] = []
+
+    def add(path: str) -> None:
+        normalized = _normalize_candidate_path(path)
+        if not _is_test_candidate_path(normalized) or normalized in seen:
+            return
+        seen.add(normalized)
+        candidates.append(normalized)
+
+    for repo, path, change_type in extract_change_table_rows(body):
+        if repo and repo != target_repo:
+            continue
+        if _change_type_is_new(change_type):
+            add(path)
+
+    for path in _paths_must_exist_from_ac(body):
+        add(path)
+
+    return candidates
+
+
+def _package_dirs_from_tracked(tracked_paths: list[str]) -> set[str]:
+    dirs: set[str] = set()
+    for path in tracked_paths:
+        if path.endswith("__init__.py"):
+            parent = posixpath.dirname(path)
+            if parent:
+                dirs.add(parent)
+    return dirs
+
+
+def _package_dirs_from_change_table(body: str) -> set[str]:
+    dirs: set[str] = set()
+    for _, path, change_type in extract_change_table_rows(body):
+        if not path.endswith("__init__.py"):
+            continue
+        if not _is_new_or_modify(change_type):
+            continue
+        parent = posixpath.dirname(path)
+        if parent:
+            dirs.add(parent)
+    return dirs
+
+
+def _pytest_module_name(path: str, package_dirs: set[str]) -> str:
+    stem = Path(path).stem
+    parts: list[str] = []
+    directory = posixpath.dirname(path)
+    while directory in package_dirs:
+        parts.insert(0, posixpath.basename(directory))
+        directory = posixpath.dirname(directory)
+    parts.append(stem)
+    return ".".join(parts)
+
+
+def _uses_importlib_mode(root: Path) -> bool:
+    if tomllib is None:
+        return False
+    pyproject = root / "pyproject.toml"
+    if not pyproject.is_file():
+        return False
+    try:
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return False
+    ini_options = data.get("tool", {}).get("pytest", {}).get("ini_options", {})
+    if not isinstance(ini_options, dict):
+        return False
+    addopts = ini_options.get("addopts")
+    if addopts is None:
+        return False
+    tokens: list[str] = []
+    if isinstance(addopts, str):
+        tokens = shlex.split(addopts)
+    elif isinstance(addopts, list):
+        for item in addopts:
+            if isinstance(item, str):
+                tokens.extend(shlex.split(item))
+    else:
+        return False
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token.startswith("--import-mode="):
+            if token.split("=", 1)[1] == "importlib":
+                return True
+        elif token == "--import-mode":
+            if index + 1 < len(tokens) and tokens[index + 1] == "importlib":
+                return True
+            index += 1
+        index += 1
+    return False
+
+
+def _tracked_paths_under_tests(root: Path) -> list[str]:
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "--", "tests"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if proc.returncode != 0:
+        return []
+    return [line for line in proc.stdout.splitlines() if line]
+
+
+def _collision_fix_hint(candidate: str) -> str:
+    parent_name = posixpath.basename(posixpath.dirname(candidate))
+    stem = Path(candidate).stem
+    suffix = stem.removeprefix("test_") if stem.startswith("test_") else stem
+    example = f"tests/{parent_name}/test_{parent_name}_{suffix}.py"
+    return f"rename it to a unique basename, e.g. {example}"
+
+
+def _check_test_basename_collision(body: str, metadata: dict) -> list[Violation]:
+    candidates = _new_test_candidates_from_body(body, metadata)
+    if not candidates:
+        return []
+
+    root = resolve_scope_root(metadata, get_config())
+    if root is None:
+        return []
+
+    if _uses_importlib_mode(root):
+        return []
+
+    tracked = _tracked_paths_under_tests(root)
+    package_dirs = _package_dirs_from_tracked(tracked) | _package_dirs_from_change_table(body)
+
+    tracked_test_py = [
+        path
+        for path in tracked
+        if path.endswith(".py") and _is_test_candidate_path(path)
+    ]
+
+    module_by_path: dict[str, str] = {}
+    for path in candidates + tracked_test_py:
+        module_by_path[path] = _pytest_module_name(path, package_dirs)
+
+    violations: list[Violation] = []
+    for candidate in sorted(candidates):
+        module_name = module_by_path[candidate]
+        opponents = sorted(
+            {
+                other
+                for other, other_module in module_by_path.items()
+                if other != candidate and other_module == module_name
+            }
+        )
+        if not opponents:
+            continue
+        violations.append(
+            Violation(
+                rule_id="cp1.test_basename_collision",
+                severity="fail",
+                message=(
+                    f'new test file {candidate} collides with {", ".join(opponents)} '
+                    f'as pytest module "{module_name}"'
+                ),
+                location=candidate,
+                auto_fixable=True,
+                fix_hint=_collision_fix_hint(candidate),
+            )
+        )
+    return violations
+
+
 def _keyword_tokens(text: str) -> list[str]:
     return [
         t
@@ -388,6 +617,7 @@ class Cp1Rules:
                 ))
             violations.extend(_check_scope_gate_hard_max(metadata))
             violations.extend(_check_split(metadata))
+            violations.extend(_check_test_basename_collision(body, metadata))
 
         if "scope:milestone" in labels:
             violations.append(Violation(
