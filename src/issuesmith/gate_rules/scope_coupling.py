@@ -871,6 +871,97 @@ def format_deletion_references(refs: dict[str, list[str]], lead: str) -> str:
 
 BEHAVIOR_PIN_RULE_ID = "scope_coupling.behavior_pinned_outside_allow_paths"
 PATH_STRING_RULE_ID = "scope_coupling.path_string_outside_allow_paths"
+CODE_CONSTS_PIN_RULE_ID = "scope_coupling.code_consts_pinned_outside_allow_paths"
+
+_CODE_ATTR_PIN_RE = re.compile(r"\b([A-Za-z_]\w*)\.(?:__(?:code|defaults)__)\b")
+_GETSOURCE_PIN_RE = re.compile(
+    r"getsource\(\s*(?:[A-Za-z_][\w.]*\.)?([A-Za-z_]\w*)\s*\)"
+)
+_DEF_NAME_RE = re.compile(r"^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)\b", re.MULTILINE)
+
+
+def _target_src_files_for_code_consts(
+    body: str,
+    allow_paths: list[str],
+    root: Path,
+) -> list[Path]:
+    try:
+        metadata = parse_issue_metadata(body)
+    except Exception:
+        metadata = {}
+    target_repo = (metadata.get("target_repo") or "").strip()
+    paths: set[str] = set()
+    for p in allow_paths:
+        if p.endswith(".py") and not _is_test_path(p) and "*" not in p:
+            paths.add(p)
+    for repo, path, _change_type in extract_change_table_rows(body):
+        if repo and target_repo and repo != target_repo:
+            continue
+        if path.endswith(".py") and not _is_test_path(path) and "*" not in path:
+            paths.add(path)
+    existing: list[Path] = []
+    for rel in sorted(paths):
+        full = root / rel
+        if full.is_file():
+            existing.append(full)
+    return existing
+
+
+def check_code_consts_pinning(
+    body: str,
+    allow_paths: list[str],
+    root: Path,
+) -> list[str]:
+    """Return test paths outside allow_paths that pin defs in changed src via __code__ etc."""
+    src_files = _target_src_files_for_code_consts(body, allow_paths, root)
+    if not src_files:
+        return []
+
+    defined_names: set[str] = set()
+    for fp in src_files:
+        try:
+            text = fp.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for m in _DEF_NAME_RE.finditer(text):
+            defined_names.add(m.group(1))
+    if not defined_names:
+        return []
+
+    cmd = [
+        "git",
+        "-C",
+        str(root),
+        "grep",
+        "-n",
+        "-E",
+        r"__code__|__defaults__|getsource\(",
+        "--",
+        "tests/",
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if proc.returncode not in (0, 1):
+        return []
+
+    hits: set[str] = set()
+    for line in proc.stdout.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split(":", 2)
+        if len(parts) < 3:
+            continue
+        rel_path, content = parts[0], parts[2]
+        if not rel_path.endswith(".py"):
+            continue
+        pinned: set[str] = set()
+        for m in _CODE_ATTR_PIN_RE.finditer(content):
+            pinned.add(m.group(1))
+        for m in _GETSOURCE_PIN_RE.finditer(content):
+            pinned.add(m.group(1))
+        if pinned & defined_names:
+            hits.add(rel_path)
+
+    return sorted(f for f in hits if not _in_allow_paths(f, allow_paths))
 
 
 def check_behavior_pinning(
@@ -1002,6 +1093,35 @@ class ScopeCouplingRules:
             ]
 
         violations = self._coupling_violations(body, metadata, allow_paths, root, cfg)
+        base = self.autofix_new_allow_paths or allow_paths
+        uncovered_cc = check_code_consts_pinning(body, base, root)
+        if uncovered_cc:
+            merged = base + [u for u in uncovered_cc if u not in base]
+            can_widen_cc = len(merged) <= cfg.scope_gate.max_files
+            if can_widen_cc:
+                self.autofix_new_allow_paths = merged
+                self.autofix_note = _format_autofix_note(
+                    allow_paths,
+                    merged,
+                    [p for p in merged if p not in allow_paths],
+                )
+            violations.append(
+                Violation(
+                    rule_id=CODE_CONSTS_PIN_RULE_ID,
+                    severity="fail",
+                    message=(
+                        "tests outside allow_paths pin functions via "
+                        "__code__/__defaults__/getsource: "
+                        + ", ".join(uncovered_cc)
+                    ),
+                    location=None,
+                    auto_fixable=can_widen_cc,
+                    fix_hint=(
+                        "add these test files to allow_paths:\n"
+                        + _yaml_list(uncovered_cc)
+                    ),
+                )
+            )
         # Referrers already added by the autofix widening are covered (nexus #3953).
         effective = self.autofix_new_allow_paths or allow_paths
         hits, sibling = _deletion_hits(body, effective, root)
