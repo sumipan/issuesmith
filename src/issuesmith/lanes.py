@@ -103,8 +103,7 @@ def count_merge_done_since(client: Any, since_iso: str, config: IssuesmithConfig
         since = datetime.fromisoformat(since_iso)
     except ValueError:
         return None
-    ns = config.label_namespace
-    merge_done_label = f"{ns}:merge-done"
+    merge_done_label = config.phase_labels(config.phases[-1].name)[2]
     try:
         issues = client.list_issues(label=merge_done_label, state="closed")
     except Exception:
@@ -377,7 +376,7 @@ def report(
     summary = (
         f"slots {', '.join(slot_parts)}, {esc_n} escalations"
         + (
-            f", merge-done {merge_done_since} since {ledger.report_since}"
+            f", done {merge_done_since} since {ledger.report_since}"
             if merge_done_since is not None
             else ""
         )

@@ -6,7 +6,7 @@ import importlib
 import json
 import sys
 from dataclasses import asdict
-from typing import Sequence
+from typing import Any, Sequence
 
 _STASH_MOVED_MSG = (
     "apply / ingest-review moved to tools/stash/. "
@@ -421,10 +421,10 @@ def _cmd_stash_moved(_argv: list[str]) -> int:
     return 2
 
 
-def _lanes_role_engine_map() -> dict[str, str]:
-    from issuesmith.queue import _required_engines
+def _lanes_role_engine_map(cfg: Any) -> dict[str, str]:
+    from issuesmith.queue import resolve_engine
 
-    return _required_engines()
+    return {ph.role: resolve_engine(ph.name) for ph in cfg.phases}
 
 
 def _cmd_lanes(argv: list[str]) -> int:
@@ -511,7 +511,7 @@ def _cmd_lanes(argv: list[str]) -> int:
         cfg,
         now,
         api_low,
-        role_engine_map=_lanes_role_engine_map(),
+        role_engine_map=_lanes_role_engine_map(cfg),
     )
 
     if sub == "check":
