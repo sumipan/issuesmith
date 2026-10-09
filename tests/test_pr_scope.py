@@ -510,3 +510,50 @@ def test_derived_allow_paths_from_result_rejects_like_allow_paths(
     path.write_text(f"derived_allow_paths:\n  - {bad}\n", encoding="utf-8")
     with pytest.raises(DerivedAllowPathsError):
         derived_allow_paths_from_result(path)
+
+
+# --- #4987: forbidden_pr_paths_except ---
+
+_LEDGER_JSONL = "skills/research-store/ledger/a/b.jsonl"
+_LEDGER_EXCEPT = ["skills/research-store/ledger/*/*.jsonl"]
+
+
+def test_forbidden_except_skips_forbidden_check() -> None:
+    violations = check_pr_diff_scope(
+        [_LEDGER_JSONL],
+        ["skills/**"],
+        list(DEFAULT_FORBIDDEN_PR_PATHS),
+        forbidden_except=_LEDGER_EXCEPT,
+    )
+    assert violations == []
+
+
+def test_forbidden_except_does_not_affect_other_paths() -> None:
+    violations = check_pr_diff_scope(
+        ["jobs/x.jsonl"],
+        ["jobs/**"],
+        list(DEFAULT_FORBIDDEN_PR_PATHS),
+        forbidden_except=_LEDGER_EXCEPT,
+    )
+    assert [v.rule_id for v in violations] == ["pr_diff_scope.forbidden_path"]
+
+
+def test_forbidden_except_still_checks_allow_paths() -> None:
+    violations = check_pr_diff_scope(
+        [_LEDGER_JSONL],
+        ["src/**"],
+        list(DEFAULT_FORBIDDEN_PR_PATHS),
+        forbidden_except=_LEDGER_EXCEPT,
+    )
+    assert [v.rule_id for v in violations] == ["pr_diff_scope.out_of_scope"]
+
+
+def test_forbidden_except_none_reads_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Explicit forbidden_patterns still take the except list from config."""
+    cfg = MagicMock()
+    cfg.forbidden_pr_paths_except = tuple(_LEDGER_EXCEPT)
+    monkeypatch.setattr("issuesmith.pr_scope.get_config", lambda: cfg)
+    violations = check_pr_diff_scope(
+        [_LEDGER_JSONL], ["skills/**"], list(DEFAULT_FORBIDDEN_PR_PATHS)
+    )
+    assert violations == []

@@ -25,7 +25,7 @@ import tempfile
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -124,6 +124,10 @@ IMPLEMENTATION_STEP_IDS = frozenset({"p1", "p3", "m2", "mg1", "sub1"})
 # Guard against runaway agent sessions: 3-5x the observed wall time (a few hundred seconds).
 DEFAULT_TIMEOUTS: dict[str, float] = {
     role: float(role_cfg.timeout_sec) for role, role_cfg in _cfg.engines.items()
+}
+# Rate-limit pause lifetime per role; written as resume_at so the pause auto-releases.
+DEFAULT_PAUSE_TTL_SEC: dict[str, int] = {
+    role: role_cfg.pause_ttl_sec for role, role_cfg in _cfg.engines.items()
 }
 TIMEOUT_ENV_VAR = "ISSUESMITH_TIMEOUT_SEC"
 
@@ -858,10 +862,15 @@ def _execute(
                 or _is_rate_limited(_LAST_LLM_STDERR[0])
             )
         ):
+            observed_at = datetime.now(timezone.utc)
+            resume_at = observed_at + timedelta(
+                seconds=DEFAULT_PAUSE_TTL_SEC.get(role, 3600)
+            )
             quota_gate.report(
                 engine=result.engine_used,
                 status="paused",
-                observed_at=datetime.now(timezone.utc),
+                observed_at=observed_at,
+                resume_at=resume_at,
                 reason="rate_limit_detected",
             )
             alt = None
@@ -892,7 +901,7 @@ def _execute(
                     quota_gate=quota_gate,
                 )
             else:
-                raise RetrySignal(reason=RetryReason.RATE_LIMITED, after=None)
+                raise RetrySignal(reason=RetryReason.RATE_LIMITED, after=resume_at)
 
         if result.failure_class == FailureClass.ENGINE_ENVIRONMENT_ERROR.value:
             if fallback_candidates:
