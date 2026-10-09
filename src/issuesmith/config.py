@@ -578,7 +578,7 @@ def _build_phases(raw: Any) -> tuple[PhaseConfig, ...]:
     if not isinstance(raw, list):
         raise ValueError("phases must be a list of mappings")
     import issuesmith.pins  # noqa: F401  (registers pins_landed)
-    from issuesmith.preconditions import PRECONDITION_REGISTRY
+    from issuesmith.preconditions import PRECONDITION_REGISTRY, external_reference_valid
 
     phases: list[PhaseConfig] = []
     for i, item in enumerate(raw):
@@ -599,7 +599,12 @@ def _build_phases(raw: Any) -> tuple[PhaseConfig, ...]:
         writes_files = bool(item.get("writes_files", True))
         advance_when = _label_list(item.get("advance_when"), field="advance_when", index=i)
         for pred in advance_when:
-            if pred not in PRECONDITION_REGISTRY:
+            if ":" in pred:
+                if not external_reference_valid(pred):
+                    raise ConfigError(
+                        f"phases[{i}].advance_when has invalid external reference {pred!r}"
+                    )
+            elif pred not in PRECONDITION_REGISTRY:
                 raise ConfigError(
                     f"phases[{i}].advance_when references unknown predicate {pred!r}"
                 )

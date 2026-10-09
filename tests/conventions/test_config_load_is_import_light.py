@@ -69,6 +69,62 @@ def test_load_config_does_not_import_the_gate_registry(tmp_path: Path):
     assert proc.stdout.strip() == "False"
 
 
+def test_load_config_with_external_refs_does_not_import_consumer_modules(tmp_path: Path):
+    consumer_pred = tmp_path / "consumer_preds_ext.py"
+    consumer_pred.write_text(
+        "def always_true(ctx, config):\n    return True, ''\n",
+        encoding="utf-8",
+    )
+    consumer_gate = tmp_path / "consumer_gates_ext.py"
+    consumer_gate.write_text(
+        """
+from issuesmith.gates import GateEntry
+
+class _G:
+    def check(self, body, labels):
+        return []
+
+EXT_GATE = GateEntry(input_kind="issue", build=lambda ctx: _G())
+""",
+        encoding="utf-8",
+    )
+    cfg = tmp_path / "issuesmith.yaml"
+    cfg.write_text(
+        yaml.safe_dump(
+            {
+                "repo": "example/repo",
+                "phases": [
+                    {
+                        "name": "draft",
+                        "role": "design",
+                        "entry_step": "b1",
+                        "handler": "brushup",
+                        "advance_when": ["consumer_preds_ext:always_true"],
+                    }
+                ],
+                "steps": {
+                    "s1": {
+                        "module": "issuesmith.worktree",
+                        "requires": ["consumer_gates_ext:EXT_GATE"],
+                        "input_kind": "issue",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    proc = _run(
+        "import sys; sys.path.insert(0, r'"
+        + str(tmp_path)
+        + "'); from issuesmith.config import load_config; load_config();"
+        " mods = [m for m in sys.modules if m.startswith('consumer_')];"
+        " print('issuesmith.gates' in sys.modules, sorted(mods))",
+        cfg,
+    )
+    assert proc.returncode == 0, proc.stderr[-1500:]
+    assert proc.stdout.strip() == "False []"
+
+
 def test_doctor_reports_unknown_gate_id_instead_of_crashing(tmp_path: Path):
     cfg = _write_config(tmp_path, ["no_such_gate"], "issue")
     proc = _run(

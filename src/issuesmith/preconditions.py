@@ -2,16 +2,59 @@
 
 from __future__ import annotations
 
+import importlib
+import re
 from dataclasses import dataclass
 from typing import Any, Callable
 
 from ghdag.forge import ForgePort
 
-from issuesmith.config import IssuesmithConfig, PhaseConfig
+from issuesmith.config import ConfigError, IssuesmithConfig, PhaseConfig
 
 Predicate = Callable[["PreconditionContext", IssuesmithConfig], tuple[bool, str]]
 
 PRECONDITION_REGISTRY: dict[str, Predicate] = {}
+
+_EXTERNAL_REFERENCE_RE = re.compile(r"^[A-Za-z_][\w.]*:[A-Za-z_]\w*$")
+
+
+def external_reference_valid(name: str) -> bool:
+    """Return True if name matches module.path:attr external reference syntax."""
+    return _EXTERNAL_REFERENCE_RE.fullmatch(name) is not None
+
+
+def resolve_predicate(name: str) -> Predicate:
+    """Resolve a registry key or module.path:attr to a predicate callable."""
+    if ":" not in name:
+        fn = PRECONDITION_REGISTRY.get(name)
+        if fn is None:
+            raise ConfigError(f"unknown predicate reference {name!r}")
+        return fn
+
+    if not external_reference_valid(name):
+        raise ConfigError(f"invalid external predicate reference {name!r}")
+
+    module_path, attr = name.split(":", 1)
+    try:
+        mod = importlib.import_module(module_path)
+    except ImportError as exc:
+        mod_name = getattr(exc, "name", module_path)
+        raise ConfigError(
+            f"cannot resolve predicate {name!r}: module {mod_name!r} not found"
+        ) from exc
+
+    try:
+        obj = getattr(mod, attr)
+    except AttributeError:
+        raise ConfigError(
+            f"cannot resolve predicate {name!r}: attribute {attr!r} not found"
+        )
+
+    if not callable(obj):
+        raise ConfigError(
+            f"cannot resolve predicate {name!r}: attribute {attr!r} is not callable"
+        )
+    return obj  # type: ignore[return-value]
 
 
 def register(name: str, fn: Predicate) -> None:
@@ -51,9 +94,10 @@ def evaluate(
             return False, f"{excl} excluded"
 
     for pred_name in phase.advance_when:
-        fn = PRECONDITION_REGISTRY.get(pred_name)
-        if fn is None:
-            return False, f"unknown predicate {pred_name}"
+        try:
+            fn = resolve_predicate(pred_name)
+        except ConfigError as exc:
+            return False, f"unknown predicate {pred_name}: {exc}"
         ok, why = fn(ctx, config)
         if not ok:
             return False, why

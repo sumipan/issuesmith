@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Literal, Mapping, Protocol
@@ -13,6 +15,7 @@ __all__ = [
     "GateEntry",
     "RequiresGate",
     "GATE_REGISTRY",
+    "resolve_gate",
     "validate_step_requires",
     "check_scope",
     "check_pr_scope",
@@ -146,6 +149,48 @@ def _build_registry() -> dict[str, GateEntry]:
 # Build the registry at module load time.
 GATE_REGISTRY: dict[str, GateEntry] = _build_registry()
 
+_EXTERNAL_GATE_REF_RE = re.compile(r"^[A-Za-z_][\w.]*:[A-Za-z_]\w*$")
+
+
+def resolve_gate(gate_id: str) -> GateEntry:
+    """Resolve a registry id or module.path:attr to a GateEntry."""
+    from issuesmith.config import ConfigError  # noqa: PLC0415 - config must not import gates
+
+    if ":" not in gate_id:
+        entry = GATE_REGISTRY.get(gate_id)
+        if entry is None:
+            known = sorted(GATE_REGISTRY)
+            raise ConfigError(
+                f"unknown gate id {gate_id!r} (missing gate ids: [{gate_id!r}])."
+                f" Known ids: {known}"
+            )
+        return entry
+
+    if not _EXTERNAL_GATE_REF_RE.fullmatch(gate_id):
+        raise ConfigError(f"invalid external gate reference {gate_id!r}")
+
+    module_path, attr = gate_id.split(":", 1)
+    try:
+        mod = importlib.import_module(module_path)
+    except ImportError as exc:
+        mod_name = getattr(exc, "name", module_path)
+        raise ConfigError(
+            f"cannot resolve gate {gate_id!r}: module {mod_name!r} not found"
+        ) from exc
+
+    try:
+        obj = getattr(mod, attr)
+    except AttributeError:
+        raise ConfigError(
+            f"cannot resolve gate {gate_id!r}: attribute {attr!r} not found"
+        )
+
+    if not isinstance(obj, GateEntry):
+        raise ConfigError(
+            f"cannot resolve gate {gate_id!r}: attribute {attr!r} is not a GateEntry"
+        )
+    return obj
+
 
 # Import after registry is built to avoid circular-import issues.
 from issuesmith.gates.dep import check_deps  # noqa: E402
@@ -171,7 +216,12 @@ def validate_step_requires(steps: "Mapping[str, Any]") -> None:
             gate_ids = tuple(getattr(step, field_name, ()) or ())
             if not gate_ids:
                 continue
-            unknown = [g for g in gate_ids if g not in GATE_REGISTRY]
+            unknown: list[str] = []
+            for g in gate_ids:
+                try:
+                    resolve_gate(g)
+                except ConfigError:
+                    unknown.append(g)
             if unknown:
                 raise ConfigError(
                     f"steps.{step_id}.{field_name} contains unknown gate ids"
@@ -183,7 +233,7 @@ def validate_step_requires(steps: "Mapping[str, Any]") -> None:
                 else f"steps.{step_id}.{field_name}"
             )
             for gate_id in gate_ids:
-                gate_input_kind = GATE_REGISTRY[gate_id].input_kind
+                gate_input_kind = resolve_gate(gate_id).input_kind
                 if gate_input_kind == "worktree" and input_kind != "worktree":
                     raise ConfigError(
                         f"{loc}: worktree gate {gate_id!r} can only be used"

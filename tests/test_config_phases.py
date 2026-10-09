@@ -471,3 +471,57 @@ def test_label_write_guard_rejects_other_values(tmp_path, monkeypatch, mode):
     )
     with pytest.raises(ConfigError, match="label_write_guard"):
         load_config()
+
+
+@pytest.mark.no_auto_phases
+def test_advance_when_report_ok(tmp_path, monkeypatch):
+    from issuesmith.ops.doctor import advance_when_report
+
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "repo": "example/app",
+            "phases": [
+                {
+                    "name": "draft",
+                    "role": "design",
+                    "entry_step": "b1",
+                    "handler": "brushup",
+                    "advance_when": ["deps_terminal"],
+                }
+            ],
+        },
+    )
+    cfg = load_config()
+    assert advance_when_report(cfg.phases) == "advance_when: ok"
+
+
+@pytest.mark.no_auto_phases
+def test_advance_when_report_external_unresolved(tmp_path, monkeypatch):
+    from issuesmith.ops.doctor import advance_when_report
+
+    mod_name = "mypkg_preds_report"
+    (tmp_path / f"{mod_name}.py").write_text("pass\n", encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    ref = f"{mod_name}:nope"
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "repo": "example/app",
+            "phases": [
+                {
+                    "name": "draft",
+                    "role": "design",
+                    "entry_step": "b1",
+                    "handler": "brushup",
+                    "advance_when": [ref],
+                }
+            ],
+        },
+    )
+    cfg = load_config()
+    report = advance_when_report(cfg.phases)
+    assert report.startswith("advance_when:")
+    assert ref in report

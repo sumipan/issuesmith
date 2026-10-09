@@ -467,3 +467,90 @@ def test_worktree_step_with_worktree_gate_in_accepts_is_valid() -> None:
         ),
     }
     validate_step_requires(steps)
+
+
+def _write_external_gate_module(tmp_path, mod_name: str, *, pre_llm: bool, repairable: bool) -> str:
+    gate_ref = f"{mod_name}:MY_GATE"
+    (tmp_path / f"{mod_name}.py").write_text(
+        f"""
+from issuesmith.gates import GateEntry
+
+class _G:
+    def check(self, body, labels):
+        return []
+
+MY_GATE = GateEntry(
+    input_kind="worktree",
+    build=lambda ctx: _G(),
+    pre_llm={pre_llm!r},
+    repairable={repairable!r},
+)
+""",
+        encoding="utf-8",
+    )
+    return gate_ref
+
+
+def test_validate_step_requires_external_worktree_gate(tmp_path, monkeypatch) -> None:
+    mod_name = "mypkg_gates_valid"
+    gate_ref = _write_external_gate_module(tmp_path, mod_name, pre_llm=False, repairable=True)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    steps = {
+        "p1": StepConfig(
+            module="issuesmith.steps.foo",
+            requires=(gate_ref,),
+            input_kind="worktree",
+            requires_declared=True,
+        ),
+    }
+    validate_step_requires(steps)
+
+
+def test_validate_step_requires_external_gate_on_issue_step_raises(tmp_path, monkeypatch) -> None:
+    mod_name = "mypkg_gates_issue"
+    gate_ref = _write_external_gate_module(tmp_path, mod_name, pre_llm=False, repairable=True)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    steps = {
+        "b1": StepConfig(
+            module="issuesmith.steps.foo",
+            requires=(gate_ref,),
+            input_kind="issue",
+            requires_declared=True,
+        ),
+    }
+    with pytest.raises(ConfigError, match="worktree steps"):
+        validate_step_requires(steps)
+
+
+def test_resolve_gate_errors_and_registry_unchanged(tmp_path, monkeypatch) -> None:
+    from issuesmith.gates import GATE_REGISTRY, resolve_gate
+
+    keys_before = set(GATE_REGISTRY)
+    with pytest.raises(ConfigError, match="no_such_mod_gates"):
+        resolve_gate("no_such_mod_gates:MY_GATE")
+
+    mod_name = "mypkg_gates_resolve"
+    (tmp_path / f"{mod_name}.py").write_text("MY_GATE = 42\n", encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    ref = f"{mod_name}:MY_GATE"
+    with pytest.raises(ConfigError, match="not a GateEntry"):
+        resolve_gate(ref)
+    assert set(GATE_REGISTRY) == keys_before
+
+
+def test_requires_chain_report_external_missing_gate(tmp_path, monkeypatch) -> None:
+    from issuesmith.ops.doctor import requires_chain_report
+
+    ref = "mypkg_gates_missing:NO_GATE"
+    (tmp_path / "mypkg_gates_missing.py").write_text("pass\n", encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    steps = {
+        "p1": StepConfig(
+            module="issuesmith.steps.foo",
+            requires=(ref,),
+            input_kind="worktree",
+            requires_declared=True,
+        ),
+    }
+    report = requires_chain_report(steps)
+    assert ref in report

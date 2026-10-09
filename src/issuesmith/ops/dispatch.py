@@ -353,7 +353,8 @@ def _build_requires_gates(
     context: dict[str, str],
 ) -> dict[str, object]:
     """Build gate instances for requires evaluation from context via GATE_REGISTRY."""
-    from issuesmith.gates import GATE_REGISTRY, GateBuildContext, GateBuildError
+    from issuesmith.config import ConfigError
+    from issuesmith.gates import GateBuildContext, GateBuildError, resolve_gate
 
     worktree_path_str = (
         context.get("worktree_path") or context.get("target_worktree_path") or ""
@@ -375,9 +376,10 @@ def _build_requires_gates(
 
     gates: dict[str, object] = {}
     for gate_id in requires:
-        entry = GATE_REGISTRY.get(gate_id)
-        if entry is None:
-            raise GateBuildError(f"gate {gate_id!r} not found in GATE_REGISTRY")
+        try:
+            entry = resolve_gate(gate_id)
+        except ConfigError as exc:
+            raise GateBuildError(str(exc)) from exc
         try:
             gates[gate_id] = entry.build(build_ctx)
         except GateBuildError:
@@ -603,8 +605,8 @@ def _is_violation_repairable(
     rule_id: str, gates: dict[str, object], step_id: str | None = None
 ) -> bool:
     """Return True if the gate that produced this violation allows LLM repair."""
-    from issuesmith.config import get_config
-    from issuesmith.gates import GATE_REGISTRY
+    from issuesmith.config import ConfigError, get_config
+    from issuesmith.gates import resolve_gate
 
     if step_id:
         step_cfg = get_config().steps.get(step_id)
@@ -613,10 +615,11 @@ def _is_violation_repairable(
     gate_id = _violation_gate_id(rule_id, gates)
     if gate_id is None:
         return True
-    entry = GATE_REGISTRY.get(gate_id)
-    if entry is None:
+    try:
+        entry = resolve_gate(gate_id)
+    except ConfigError:
         return True
-    return getattr(entry, "repairable", True)
+    return entry.repairable
 
 
 def _build_andon_options(blocking: list) -> list[str]:

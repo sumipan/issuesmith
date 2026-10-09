@@ -909,3 +909,39 @@ def test_failure_status_no_blank_line_when_stdout_ends_with_newline(capsys, fn_n
     out = capsys.readouterr().out
     assert "line\nPIPELINE_STATUS: IMPL_FAILED\n" in out
     assert "line\n\nPIPELINE_STATUS" not in out
+
+
+def test_build_pre_gates_includes_external_pre_llm_gate(tmp_path: Path, monkeypatch):
+    from issuesmith.config import StepConfig
+    from issuesmith.engine import _build_pre_gates
+
+    mod_name = "mypkg_gates_prellm"
+    gate_ref = f"{mod_name}:MY_GATE"
+    (tmp_path / f"{mod_name}.py").write_text(
+        """
+from issuesmith.gates import GateEntry
+
+class _G:
+    def check(self, body, labels):
+        return []
+
+MY_GATE = GateEntry(
+    input_kind="worktree",
+    build=lambda ctx: _G(),
+    pre_llm=True,
+)
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    step_cfg = StepConfig(
+        module="",
+        requires=(gate_ref,),
+        input_kind="worktree",
+        requires_declared=True,
+    )
+    gates = _build_pre_gates(
+        step_cfg,
+        {"worktree_path": str(tmp_path), "allow_paths": "- x.py", "base_branch": "main"},
+    )
+    assert gate_ref in gates
