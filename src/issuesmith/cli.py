@@ -482,6 +482,20 @@ def _cmd_lanes(argv: list[str]) -> int:
     for nums in ledger.lanes.values():
         issue_numbers.update(nums)
 
+    def _issue_view(num: int, raw: dict[str, Any]) -> IssueView:
+        labels = tuple(
+            str(lab.get("name") if isinstance(lab, dict) else lab)
+            for lab in (raw.get("labels") or [])
+        )
+        body = str(raw.get("body") or "")
+        m = re.search(r"^\s*target_repo:\s*([\w.-]+/[\w.-]+)", body, re.MULTILINE)
+        return IssueView(
+            number=num,
+            labels=labels,
+            state=str(raw.get("state") or "open"),
+            target_repo=m.group(1) if m else "",
+        )
+
     issues: dict[int, IssueView] = {}
     for num in issue_numbers:
         try:
@@ -490,19 +504,24 @@ def _cmd_lanes(argv: list[str]) -> int:
             continue
         if not isinstance(raw, dict):
             continue
-        labels = tuple(
-            str(lab.get("name") if isinstance(lab, dict) else lab)
-            for lab in (raw.get("labels") or [])
-        )
-        body = str(raw.get("body") or "")
-        m = re.search(r"^\s*target_repo:\s*([\w.-]+/[\w.-]+)", body, re.MULTILINE)
-        target_repo = m.group(1) if m else ""
-        issues[num] = IssueView(
-            number=num,
-            labels=labels,
-            state=str(raw.get("state") or "open"),
-            target_repo=target_repo,
-        )
+        issues[num] = _issue_view(num, raw)
+
+    # auto_lanes picks up open issues that are not in the ledger, so list them too.
+    list_all = getattr(client, "list_all_issues", None)
+    if ledger.auto_lanes_enabled and callable(list_all):
+        try:
+            open_raw = list_all(state="open")
+        except Exception:
+            open_raw = []
+        for raw in open_raw or []:
+            if not isinstance(raw, dict) or raw.get("pull_request"):
+                continue
+            try:
+                num = int(raw.get("number"))
+            except (TypeError, ValueError):
+                continue
+            if num not in issues:
+                issues[num] = _issue_view(num, raw)
 
     lane_plan = plan(
         ledger,

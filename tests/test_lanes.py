@@ -15,9 +15,11 @@ from issuesmith.lanes import (
     classify,
     ledger_state_path,
     load_ledger,
+    load_report_state,
     plan,
     report,
     resolve_report_since,
+    save_report_state,
 )
 from issuesmith.queue_store import QueueRequest, QueueSnapshot
 
@@ -195,3 +197,10 @@ def test_load_ledger(tmp_path: Path):
     assert ledger.lanes["main"] == [1, 2]
     assert ledger.queued_stale_minutes == 45
     assert ledger_state_path(path).name == "lanes.state.json"
+
+
+def test_save_report_state_atomic_round_trip(tmp_path: Path):
+    state_path = ledger_state_path(tmp_path / "lanes.yaml")
+    save_report_state(state_path, {"last_report_at": "2026-10-09T00:00:00+09:00"})
+    assert load_report_state(state_path) == {"last_report_at": "2026-10-09T00:00:00+09:00"}
+    assert [p.name for p in tmp_path.iterdir()] == [state_path.name]
