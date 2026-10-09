@@ -1461,6 +1461,10 @@ def _run_guarded_with_requires(
 
     try:
         post_rc = run_requires_loop(step_cfg, requires_step, context)
+        if post_rc is None and step_cfg.accepts:
+            post_rc = run_requires_loop(
+                step_cfg, requires_step, context, origin="accepts"
+            )
     except RetrySignal as sig:
         handle_retry_signal(sig, requires_step, issue_number)
         return 0
