@@ -519,7 +519,7 @@ def _missing_dependencies(body: str) -> dict[int, dict[int, list[str]]]:
 
 
 _SUB_PLAN_DEP_FORMAT_ID = "b1_milestone_subdesign.sub_plan_dep_format"
-_DEP_CELL_TOKEN_ONLY_RE = re.compile(r"[\d#,、\s]+")
+_DEP_CELL_TOKEN_ONLY_RE = re.compile(r"[\d#,\s\N{IDEOGRAPHIC COMMA}]+")
 
 
 def _dep_cell_needs_format_fix(cell: str) -> bool:

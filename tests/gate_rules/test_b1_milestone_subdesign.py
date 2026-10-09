@@ -1911,17 +1911,18 @@ def test_sub_plan_dep_format_fixes_cases():
     def _plan_body(dep: str) -> str:
         return _dep_body(_projection_subs(), ["none", dep])
 
+    natural_dep = "after sub2 merge"
     cases = [
         ("2", "#2"),
         ("4, 2", "#4, #2"),
         ("#2", "#2"),
         (NONE, NONE),
-        ("サブ2のマージ後", "サブ2のマージ後"),
+        (natural_dep, natural_dep),
     ]
     for dep, expected in cases:
         body = _plan_body(dep)
         fixed, applied = apply_sub_plan_dep_format_fixes(body)
-        if dep in ("#2", NONE, "サブ2のマージ後"):
+        if dep in ("#2", NONE, natural_dep):
             assert applied == []
             assert dep in fixed
         else:

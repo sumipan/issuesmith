@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from issuesmith.config import get_config
 from issuesmith.contract import plan_dep_refs
 from issuesmith.gate_rules.b1_milestone_subdesign import _sub_plan_dependencies
 from issuesmith.milestone import Sub1State, resolve_dependencies
@@ -17,7 +18,7 @@ def test_plan_dep_refs_dedupes_and_preserves_order() -> None:
 
 
 def test_plan_dep_refs_none_and_empty() -> None:
-    assert plan_dep_refs("なし") == []
+    assert plan_dep_refs(get_config().language.no_deps_word) == []
     assert plan_dep_refs("") == []
 
 
