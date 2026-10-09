@@ -63,6 +63,9 @@ def _check_pyproject_no_direct_pin() -> tuple[bool, str]:
 REQUIRED_UPSTREAM_APIS: tuple[tuple[str, str, str | None], ...] = (
     ("ghdag.quota", "QuotaGate", "defer"),
     ("ghdag.quota", "QuotaGate", "release_ready"),
+    ("ghdag.quota", "QuotaGate", "read_state"),
+    ("ghdag.quota", "QuotaGate", "modify"),
+    ("ghdag.github_client", "GitHubClient", "graphql"),
     ("ghdag.core.vocabulary", "DONE_DEFERRED", None),
     ("ghdag.forge", "get_forge", None),
 )

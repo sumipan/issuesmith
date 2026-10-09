@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from issuesmith import quota_gate
 from issuesmith.quota_gate import (
@@ -151,3 +153,82 @@ def test_notified_flag_missing_file(tmp_path):
     assert read_github_api_notified(path) is False
     assert write_github_api_notified(path, False) is False
     assert not path.exists()
+
+
+def test_notified_read_true_when_resources_flag_set(tmp_path):
+    path = tmp_path / "quota-gate.json"
+    path.write_text(
+        json.dumps({"schema_version": 1, "resources": {"github_api_notified": True}}),
+        encoding="utf-8",
+    )
+    assert read_github_api_notified(path) is True
+
+
+def test_notified_read_false_when_resources_not_dict(tmp_path):
+    path = tmp_path / "quota-gate.json"
+    path.write_text(
+        json.dumps({"schema_version": 1, "resources": "bad"}),
+        encoding="utf-8",
+    )
+    assert read_github_api_notified(path) is False
+
+
+def test_notified_read_oserror_returns_false(tmp_path):
+    path = tmp_path / "quota-gate.json"
+    with patch("ghdag.quota.QuotaGate") as mock_cls:
+        mock_cls.return_value.read_state.side_effect = OSError("denied")
+        assert read_github_api_notified(path) is False
+
+
+def test_notified_read_value_error_returns_false(tmp_path):
+    path = tmp_path / "quota-gate.json"
+    path.write_text("{not json", encoding="utf-8")
+    assert read_github_api_notified(path) is False
+
+
+def test_notified_write_preserves_unknown_top_level_keys(tmp_path):
+    path = tmp_path / "quota-gate.json"
+    path.write_text(
+        json.dumps({
+            "schema_version": 1,
+            "engines": {},
+            "deferred_tasks": {},
+            "draining_engines": {},
+            "running_tasks": {},
+            "custom_marker": 42,
+        }),
+        encoding="utf-8",
+    )
+    assert write_github_api_notified(path, True) is True
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["custom_marker"] == 42
+    assert data["resources"] == {"github_api_notified": True}
+
+
+def test_notified_concurrent_write_only_one_transition(tmp_path):
+    path = tmp_path / "quota-gate.json"
+    path.write_text(
+        json.dumps({
+            "schema_version": 1,
+            "engines": {},
+            "deferred_tasks": {},
+            "draining_engines": {},
+            "running_tasks": {},
+        }),
+        encoding="utf-8",
+    )
+    results: list[bool] = []
+    lock = threading.Lock()
+
+    def worker() -> None:
+        changed = write_github_api_notified(path, True)
+        with lock:
+            results.append(changed)
+
+    threads = [threading.Thread(target=worker) for _ in range(12)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert results.count(True) == 1
+    assert read_github_api_notified(path) is True

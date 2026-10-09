@@ -7,13 +7,11 @@ names, labels, comments, templates, Slack, diary, or ``jobs/`` paths.
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
 import time
 import urllib.parse
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -23,6 +21,19 @@ from ghdag.forge import ForgePort
 from issuesmith.forge_api import api_request
 
 _DEFAULT_BLOCKED_BACKOFF = (5.0, 10.0, 20.0)
+
+_GQL_MERGE_STATE_QUERY = """
+query($owner:String!,$name:String!,$number:Int!) {
+  repository(owner:$owner, name:$name) {
+    pullRequest(number:$number) {
+      mergeStateStatus
+      mergeable
+      state
+      headRefName
+    }
+  }
+}
+"""
 
 
 @dataclass(frozen=True)
@@ -199,42 +210,14 @@ def is_already_merged(client: ForgePort, repo: str, number: int) -> bool:
 def graphql_merge_state(client: ForgePort, repo: str, number: int) -> MergeStateInfo:
     """Fetch mergeStateStatus via GraphQL; fall back to ForgePort.pr_get."""
     owner, _, name = repo.partition("/")
-    headers_fn = getattr(client, "_headers", None)
-    if owner and name and callable(headers_fn):
+    graphql_fn = getattr(client, "graphql", None)
+    if owner and name and callable(graphql_fn):
         try:
-            from ghdag.github_client import GRAPHQL_URL
-
-            query = """
-            query($owner:String!,$name:String!,$number:Int!) {
-              repository(owner:$owner, name:$name) {
-                pullRequest(number:$number) {
-                  mergeStateStatus
-                  mergeable
-                  state
-                  headRefName
-                }
-              }
-            }
-            """
-            payload = json.dumps(
-                {
-                    "query": query,
-                    "variables": {"owner": owner, "name": name, "number": number},
-                }
-            ).encode()
-            req = urllib.request.Request(
-                GRAPHQL_URL,
-                data=payload,
-                method="POST",
-                headers={**headers_fn(), "Content-Type": "application/json"},
+            data = graphql_fn(
+                _GQL_MERGE_STATE_QUERY,
+                {"owner": owner, "name": name, "number": number},
             )
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                result = json.loads(resp.read().decode())
-            pr = (
-                (result.get("data") or {})
-                .get("repository", {})
-                .get("pullRequest")
-            )
+            pr = (data or {}).get("repository", {}).get("pullRequest")
             if isinstance(pr, dict) and pr.get("mergeStateStatus"):
                 return MergeStateInfo.from_mapping(pr)
         except Exception as exc:

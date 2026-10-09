@@ -19,6 +19,10 @@ _CHUNK_SIZE = 64 * 1024
 _NOTIFIED_KEY = "github_api_notified"
 
 
+class _GithubApiNotifiedUnchanged(Exception):
+    """Raised from QuotaGate.modify callback when the flag already matches."""
+
+
 @dataclass(frozen=True)
 class GitHubApiState:
     remaining: int
@@ -110,8 +114,7 @@ def read_github_api_notified(quota_state_path: Path) -> bool:
 
     gate = QuotaGate(state_path=quota_state_path)
     try:
-        with gate._lock(exclusive=False):
-            state = gate._load_state_unlocked()
+        state = gate.read_state()
     except (OSError, ValueError):
         return False
     resources = state.get("resources")
@@ -124,20 +127,24 @@ def write_github_api_notified(quota_state_path: Path, value: bool) -> bool:
     """Read-modify-write ``resources.github_api_notified`` under the QuotaGate lock.
 
     Returns True only when the flag actually changed (compare-and-set, so concurrent
-    observers report a transition once). Unknown fields are preserved by
-    ``QuotaGate._load_state_unlocked``.
+    observers report a transition once). Unknown top-level fields are preserved by
+    ``QuotaGate.modify()``.
     """
     from ghdag.quota import QuotaGate
 
     gate = QuotaGate(state_path=quota_state_path)
-    with gate._lock(exclusive=True):
-        state = gate._load_state_unlocked()
+
+    def _apply(state: dict) -> None:
         resources = state.get("resources")
         if not isinstance(resources, dict):
             resources = {}
         if bool(resources.get(_NOTIFIED_KEY, False)) == value:
-            return False
+            raise _GithubApiNotifiedUnchanged()
         resources[_NOTIFIED_KEY] = value
         state["resources"] = resources
-        gate._write_state_unlocked(state)
-        return True
+
+    try:
+        gate.modify(_apply)
+    except _GithubApiNotifiedUnchanged:
+        return False
+    return True
