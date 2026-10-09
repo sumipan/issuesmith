@@ -1042,6 +1042,142 @@ class TestRepairOscillation:
         assert "split" in andon_arg.options
         assert "reject" in andon_arg.options
 
+    def test_different_tests_same_rule_id_continues_repair(self):
+        from issuesmith.config import StepConfig
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        cfg = StepConfig(module="issuesmith.steps.test", requires=("tests",))
+        gate = MagicMock()
+        gate.check.side_effect = [
+            [_pytest_failure_v("tests/a.py::test_a")],
+            [
+                _pytest_failure_v("tests/b.py::test_b"),
+                _pytest_failure_v("tests/c.py::test_c"),
+            ],
+            [],
+        ]
+
+        with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"tests": gate}):
+            with patch("issuesmith.ops.dispatch.get_forge"):
+                with patch("issuesmith.ops.dispatch._raise_andon") as mock_andon:
+                    with patch("issuesmith.ops.dispatch._run_repair_step", return_value=None) as mock_repair:
+                        rc = run_requires_loop(cfg, "p1", _make_ctx())
+
+        assert rc is None
+        assert mock_repair.call_count == 2
+        mock_andon.assert_not_called()
+
+    def test_same_file_different_test_is_progress(self):
+        from issuesmith.config import StepConfig
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        cfg = StepConfig(module="issuesmith.steps.test", requires=("tests",))
+        gate = MagicMock()
+        gate.check.side_effect = [
+            [_pytest_failure_v("tests/a.py::test_a")],
+            [_pytest_failure_v("tests/a.py::test_a2")],
+            [],
+        ]
+
+        with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"tests": gate}):
+            with patch("issuesmith.ops.dispatch.get_forge"):
+                with patch("issuesmith.ops.dispatch._raise_andon") as mock_andon:
+                    with patch("issuesmith.ops.dispatch._run_repair_step", return_value=None) as mock_repair:
+                        rc = run_requires_loop(cfg, "p1", _make_ctx())
+
+        assert rc is None
+        assert mock_repair.call_count == 2
+        mock_andon.assert_not_called()
+
+    def test_identical_pytest_fingerprint_raises_oscillation(self):
+        from issuesmith.config import StepConfig
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        cfg = StepConfig(module="issuesmith.steps.test", requires=("tests",))
+        violation = _pytest_failure_v("tests/a.py::test_a")
+        gate = MagicMock()
+        gate.check.side_effect = [[violation], [violation]]
+
+        with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"tests": gate}):
+            with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
+                mock_forge.return_value = MagicMock()
+                with patch("issuesmith.ops.dispatch._raise_andon") as mock_andon:
+                    with patch("issuesmith.ops.dispatch._run_repair_step", return_value=None) as mock_repair:
+                        rc = run_requires_loop(cfg, "p1", _make_ctx())
+
+        assert rc == 1
+        mock_repair.assert_called_once()
+        andon_arg = mock_andon.call_args[0][1]
+        assert "repair oscillation detected" in andon_arg.summary
+
+    def test_partial_resolution_continues_repair(self):
+        from issuesmith.config import StepConfig
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        cfg = StepConfig(module="issuesmith.steps.test", requires=("tests",))
+        a = _pytest_failure_v("tests/a.py::test_a")
+        b = _pytest_failure_v("tests/b.py::test_b")
+        gate = MagicMock()
+        gate.check.side_effect = [[a, b], [a], []]
+
+        with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"tests": gate}):
+            with patch("issuesmith.ops.dispatch.get_forge"):
+                with patch("issuesmith.ops.dispatch._raise_andon") as mock_andon:
+                    with patch("issuesmith.ops.dispatch._run_repair_step", return_value=None) as mock_repair:
+                        rc = run_requires_loop(cfg, "p1", _make_ctx())
+
+        assert rc is None
+        assert mock_repair.call_count == 2
+        mock_andon.assert_not_called()
+
+    def test_added_failure_with_same_fingerprint_raises_oscillation(self):
+        from issuesmith.config import StepConfig
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        cfg = StepConfig(module="issuesmith.steps.test", requires=("tests",))
+        a = _pytest_failure_v("tests/a.py::test_a")
+        b = _pytest_failure_v("tests/b.py::test_b")
+        gate = MagicMock()
+        gate.check.side_effect = [[a], [a, b]]
+
+        with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"tests": gate}):
+            with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
+                mock_forge.return_value = MagicMock()
+                with patch("issuesmith.ops.dispatch._raise_andon") as mock_andon:
+                    with patch("issuesmith.ops.dispatch._run_repair_step", return_value=None) as mock_repair:
+                        rc = run_requires_loop(cfg, "p1", _make_ctx())
+
+        assert rc == 1
+        mock_repair.assert_called_once()
+        andon_arg = mock_andon.call_args[0][1]
+        assert "repair oscillation detected" in andon_arg.summary
+
+    def test_always_new_failures_hits_max_repairs_not_oscillation(self):
+        from issuesmith.config import StepConfig
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        cfg = StepConfig(module="issuesmith.steps.test", requires=("tests",))
+        gate = MagicMock()
+        gate.check.side_effect = [
+            [_pytest_failure_v("tests/a.py::test_a")],
+            [_pytest_failure_v("tests/b.py::test_b")],
+            [_pytest_failure_v("tests/c.py::test_c")],
+            [_pytest_failure_v("tests/d.py::test_d")],
+        ]
+
+        with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"tests": gate}):
+            with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
+                mock_forge.return_value = MagicMock()
+                with patch("issuesmith.ops.dispatch._raise_andon") as mock_andon:
+                    with patch("issuesmith.ops.dispatch._run_repair_step", return_value=None) as mock_repair:
+                        rc = run_requires_loop(cfg, "p1", _make_ctx())
+
+        assert rc == 1
+        assert mock_repair.call_count == 3
+        andon_arg = mock_andon.call_args[0][1]
+        assert "requires evaluation failed after 3 repair(s)" in andon_arg.summary
+        assert "repair oscillation" not in andon_arg.summary
+
 
 # ---------------------------------------------------------------------------
 # #4337: group note for shared pytest failure root cause in repair prompt
@@ -1054,6 +1190,19 @@ def _pytest_v(message: str) -> Violation:
         severity="fail",
         message=message,
         location=None,
+        auto_fixable=False,
+        fix_hint=None,
+    )
+
+
+def _pytest_failure_v(test_id: str, summary: str = "err") -> Violation:
+    """Build a tests.pytest_failure violation like TestsGate (location + FAILED line)."""
+    location = test_id.split("::", 1)[0] if "::" in test_id else None
+    return Violation(
+        rule_id="tests.pytest_failure",
+        severity="fail",
+        message=f"FAILED {test_id} - {summary}",
+        location=location,
         auto_fixable=False,
         fix_hint=None,
     )
