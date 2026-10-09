@@ -901,3 +901,138 @@ def test_status_shows_held_count_and_andon_id(tmp_path, monkeypatch, issuesmith_
     assert "codex: 0/1 (+" not in out
     assert "- in_flight issue=#53 engine=claude held=andon:wf:53:p1:0" in out
     assert "- in_flight issue=#50 engine=claude\n" in out
+
+
+def _body(paths: str) -> str:
+    return (
+        "```yaml\n"
+        "target_repo: sumipan/nexus\n"
+        "base_branch: main\n"
+        "allow_paths:\n"
+        f'  - "{paths}"\n'
+        "```\n"
+    )
+
+
+def _multi_tick_setup(tmp_path, monkeypatch, issuesmith_config, concurrency):
+    payload = yaml.safe_load(issuesmith_config.read_text(encoding="utf-8"))
+    payload["concurrency"] = concurrency
+    issuesmith_config.write_text(yaml.safe_dump(payload), encoding="utf-8")
+    reset_config_cache()
+    _patch_paths(tmp_path, monkeypatch, issuesmith_config)
+    _write_engine_state(tmp_path, design="claude", implementation="codex")
+    from issuesmith import queue as qmod
+
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
+    return qmod
+
+
+def _enqueue(store: QueueStore, issue: int, phase: str) -> None:
+    store.enqueue(
+        issue=issue,
+        phase=phase,
+        source="skill",
+        actor_kind="human",
+        priority="normal",
+        requested_by=["alice"],
+        requested_at=_NOW,
+    )
+
+
+def test_max_dispatch_per_tick_parsed():
+    from issuesmith.config import _build_concurrency
+
+    assert _build_concurrency({"default": 2}).max_dispatch_per_tick == 1
+    assert _build_concurrency({"max_dispatch_per_tick": 4}).max_dispatch_per_tick == 4
+    assert _build_concurrency({"max_dispatch_per_tick": 0}).max_dispatch_per_tick == 1
+
+
+def test_one_tick_starts_each_engine_up_to_its_limit(tmp_path, monkeypatch, issuesmith_config):
+    qmod = _multi_tick_setup(
+        tmp_path,
+        monkeypatch,
+        issuesmith_config,
+        {"default": 1, "per_engine": {"claude": 2, "codex": 1}, "max_dispatch_per_tick": 6},
+    )
+    store = _store(tmp_path)
+    _enqueue(store, 100, "develop")
+    _enqueue(store, 101, "develop")
+    _enqueue(store, 200, "draft")
+    _enqueue(store, 201, "draft")
+    _enqueue(store, 202, "draft")
+    client = _DispatchClient(
+        {
+            100: {"labels": [{"name": "issuesmith:draft-done"}], "body": _body("tools/a/**")},
+            101: {"labels": [{"name": "issuesmith:draft-done"}], "body": _body("tools/b/**")},
+            200: {"body": _body("tools/c/**")},
+            201: {"body": _body("tools/d/**")},
+            202: {"body": _body("tools/e/**")},
+        }
+    )
+    now = datetime(2026, 9, 5, 12, 0, tzinfo=_JST)
+
+    result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
+
+    assert result.dispatched is True
+    assert result.issue == result.started[0].issue
+    by_engine: dict[str, list[int]] = {}
+    for item in result.started:
+        by_engine.setdefault(item.engine, []).append(item.issue)
+    assert len(by_engine["codex"]) == 1 and set(by_engine["codex"]) <= {100, 101}
+    assert len(by_engine["claude"]) == 2 and set(by_engine["claude"]) <= {200, 201, 202}
+    snap = store.snapshot()
+    assert sorted(e["issue"] for e in snap.in_flight) == sorted(s.issue for s in result.started)
+    assert len(snap.active_order) == 2
+
+
+def test_default_starts_one_request_per_tick(tmp_path, monkeypatch, issuesmith_config):
+    qmod = _multi_tick_setup(
+        tmp_path,
+        monkeypatch,
+        issuesmith_config,
+        {"default": 1, "per_engine": {"claude": 2, "codex": 1}},
+    )
+    store = _store(tmp_path)
+    _enqueue(store, 100, "develop")
+    _enqueue(store, 200, "draft")
+    client = _DispatchClient(
+        {
+            100: {"labels": [{"name": "issuesmith:draft-done"}], "body": _body("tools/a/**")},
+            200: {"body": _body("tools/c/**")},
+        }
+    )
+    now = datetime(2026, 9, 5, 12, 0, tzinfo=_JST)
+
+    result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
+
+    assert len(result.started) == 1
+    assert len(store.snapshot().in_flight) == 1
+
+
+def test_same_tick_dispatch_sees_allow_paths_conflict(tmp_path, monkeypatch, issuesmith_config):
+    qmod = _multi_tick_setup(
+        tmp_path,
+        monkeypatch,
+        issuesmith_config,
+        {"default": 1, "per_engine": {"claude": 2, "codex": 3}, "max_dispatch_per_tick": 6},
+    )
+    store = _store(tmp_path)
+    _enqueue(store, 100, "develop")
+    _enqueue(store, 101, "develop")
+    _enqueue(store, 102, "develop")
+    client = _DispatchClient(
+        {
+            100: {"labels": [{"name": "issuesmith:draft-done"}], "body": _body("tools/a/**")},
+            101: {"labels": [{"name": "issuesmith:draft-done"}], "body": _body("tools/a/**")},
+            102: {"labels": [{"name": "issuesmith:draft-done"}], "body": _body("tools/b/**")},
+        }
+    )
+    now = datetime(2026, 9, 5, 12, 0, tzinfo=_JST)
+
+    result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
+
+    started = sorted(s.issue for s in result.started)
+    assert len(started) == 2 and 102 in started  # 100 and 101 share tools/a/**
+    snap = store.snapshot()
+    remaining = [store.effective_request(snap, rid).issue for rid in snap.active_order]
+    assert len(remaining) == 1 and remaining[0] in {100, 101}

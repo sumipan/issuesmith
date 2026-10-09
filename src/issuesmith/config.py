@@ -132,6 +132,8 @@ class ConcurrencyConfig:
     default: int
     per_engine: Mapping[str, int]
     strict_order: bool = False
+    # Requests started per dispatch tick (across engines). 1 keeps the historical one-per-tick pace.
+    max_dispatch_per_tick: int = 1
 
     def limit(self, engine: str) -> int:
         return self.per_engine.get(engine, self.default)
@@ -544,8 +546,12 @@ def _build_concurrency(raw: Mapping[str, Any] | None) -> ConcurrencyConfig:
     per_raw = raw.get("per_engine") or {}
     per_engine = {str(k): int(v) for k, v in dict(per_raw).items()}
     strict_order = bool(raw.get("strict_order", False))
+    max_dispatch_per_tick = max(1, int(raw.get("max_dispatch_per_tick") or 1))
     return ConcurrencyConfig(
-        default=default, per_engine=per_engine, strict_order=strict_order
+        default=default,
+        per_engine=per_engine,
+        strict_order=strict_order,
+        max_dispatch_per_tick=max_dispatch_per_tick,
     )
 
 
