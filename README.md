@@ -524,7 +524,7 @@ Relative paths in the file resolve against the directory that holds it.
 | `supported_repos` | `[]` | Repositories allowed as cross-repo targets |
 | `paths` | see below | Queue, state, metrics, worktree and template paths |
 | `engines` | see [Quick Start](#quick-start) | Per role (`design`, `implementation`): `allowed`, `default_model`, `light_model`, `timeout_sec` |
-| `concurrency` | `default: 1` | `default`, `per_engine`, `strict_order` (`false`) |
+| `concurrency` | `default: 1` | `default`, `per_engine`, `strict_order` (`false`), `max_dispatch_per_tick` (`1`: requests started per queue tick across engines; each engine still stops at its `per_engine` limit) |
 | `milestone_chain` | `enabled: false` | `enabled`, `child_priority` (`normal`), `auto_develop` (`true`), `auto_close_parent` (`true`) |
 | `triage` | `enabled: true` | Queue LLM triage: `engine` (`claude`), `model` (`claude-sonnet-4-6`), `timeout` (`60`), `body_chars` (`500`), `circuit_breaker_threshold` (`3`), `circuit_breaker_reset_seconds` (`1800`) |
 | `phases` | (required) | List of phase mappings (see below); no built-in default |

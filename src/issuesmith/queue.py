@@ -146,6 +146,16 @@ class DispatchResult:
     label: str | None = None
     request_id: str | None = None
     reason: str = ""
+    # Every request started in this tick; issue / label / request_id mirror the first one.
+    started: tuple[DispatchStarted, ...] = ()
+
+
+@dataclass(frozen=True)
+class DispatchStarted:
+    issue: int
+    label: str
+    request_id: str
+    engine: str
 
 
 def _now_jst() -> datetime:
@@ -1556,8 +1566,10 @@ def dispatch_one(
         role_map = _required_engines()
         counts = in_flight_by_engine(snap.in_flight, role_engine_map=role_map)
         last_paused_reason: str | None = None
+        max_per_tick = 1 if _serial_concurrency() else concurrency.max_dispatch_per_tick
+        started: list[DispatchStarted] = []
 
-        for rid in snap.active_order:
+        for rid in list(snap.active_order):
             req = store.effective_request(snap, rid)
             if req is None:
                 continue
@@ -1685,10 +1697,25 @@ def dispatch_one(
             )
             store.complete(rid, "dispatched", extra_meta={"label": label})
             store.set_last_issue(req.issue)
-            return DispatchResult(
-                True, issue=req.issue, label=label, request_id=rid, reason="dispatched"
+            started.append(
+                DispatchStarted(issue=req.issue, label=label, request_id=rid, engine=engine)
             )
+            if len(started) >= max_per_tick:
+                break
+            # Later candidates in this tick see the new in_flight entry (slots and allow_paths).
+            counts[engine] = counts.get(engine, 0) + 1
+            snap = store.snapshot()
 
+        if started:
+            first = started[0]
+            return DispatchResult(
+                True,
+                issue=first.issue,
+                label=first.label,
+                request_id=first.request_id,
+                reason="dispatched",
+                started=tuple(started),
+            )
         if last_paused_reason:
             return DispatchResult(False, reason=last_paused_reason)
 
@@ -1737,7 +1764,10 @@ def _cmd_tick(args: argparse.Namespace) -> int:
     )
     result = dispatch_one(store=store, seed_path=Path(args.seed) if getattr(args, "seed", None) else None)
     if result.dispatched:
-        print(f"dispatched #{result.issue} {result.label} request={result.request_id}")
+        for item in result.started or (
+            DispatchStarted(result.issue or 0, result.label or "", result.request_id or "", ""),
+        ):
+            print(f"dispatched #{item.issue} {item.label} request={item.request_id}")
     else:
         print(f"no dispatch: {result.reason}")
     return 0
