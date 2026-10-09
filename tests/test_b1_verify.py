@@ -773,6 +773,18 @@ def test_deterministic_recovery_dependency_fix_is_idempotent(tmp_path, monkeypat
     assert sum(1 for u in client.updates if u.get("body") is not None) == 1
 
 
+def test_deterministic_recovery_applies_sub_plan_dep_format(tmp_path, monkeypatch):
+    from issuesmith.gate_rules.b1_milestone_subdesign import _SUB_PLAN_DEP_FORMAT_ID
+    from tests.gate_rules.test_b1_milestone_subdesign import _dep_body, _projection_subs
+
+    body = _dep_body(_projection_subs(), ["4", "2"])
+    client, (result,) = _recover(tmp_path, monkeypatch, body)
+
+    assert _SUB_PLAN_DEP_FORMAT_ID in result.applied
+    assert "| 1 | part 1 | sumipan/issuesmith | c | #4 |" in result.body
+    assert "#2" in result.body.split("| 2 | part 2 | sumipan/issuesmith | c | ", 1)[1]
+
+
 def test_deterministic_recovery_does_not_write_cycle_edges(tmp_path, monkeypatch):
     from tests.gate_rules.test_b1_milestone_subdesign import _cycle_subs, _dep_body
 

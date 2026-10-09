@@ -55,6 +55,41 @@ def test_v6_skipped_when_no_resolved_dep() -> None:
     assert check_v6_dependency_refs(body, NONE) == []
 
 
+def test_prevalidate_rejects_unresolved_table_when_resolved_dep_none() -> None:
+    body = _body_with_deps(
+        dep_line=NONE,
+        table_row="| 1 | parent plan sub 4 (...) | prior |",
+    )
+    client = MagicMock()
+    failures = prevalidate_child_body(
+        body=body,
+        row_repo="sumipan/nexus",
+        parent_issue_number=100,
+        resolved_dep=NONE,
+        client=client,
+        supported=frozenset({"sumipan/nexus"}),
+    )
+    assert failures == ["unresolved plan ref #1 in dependency table"]
+
+
+def test_prevalidate_resolved_dep_does_not_double_count_v6() -> None:
+    body = _body_with_deps(
+        dep_line="#4886",
+        table_row="| 1 | parent plan sub 2 (...) | prior |",
+    )
+    client = MagicMock()
+    client.issue_get.return_value = {"labels": []}
+    failures = prevalidate_child_body(
+        body=body,
+        row_repo="sumipan/nexus",
+        parent_issue_number=100,
+        resolved_dep="#4886",
+        client=client,
+        supported=frozenset({"sumipan/nexus"}),
+    )
+    assert failures.count("unresolved plan ref #1 in dependency table") == 1
+
+
 def test_prevalidate_child_body_includes_v6_table_failure() -> None:
     body = _body_with_deps(
         dep_line="#4886",

@@ -25,6 +25,7 @@ from issuesmith.body_editor import (
 from issuesmith.config import IssuesmithConfig, MilestoneChainConfig, StepConfig, get_config
 from issuesmith.context_hook import parse_issue_metadata
 from issuesmith.contract import (
+    PLAN_DEP_REF_RE,
     StepContext,
     StepResult,
     change_paths_for_repo,
@@ -1308,7 +1309,7 @@ def resolve_dependencies(
                 return target
             if first:
                 state.unresolved_forward_logs.append(_msg("log_unresolved_forward", row=k))
-            return match.group(0)
+            return f"#{k}"
         if k not in labels_cache:
             try:
                 issue = client.issue_get(k, fields=["labels"])
@@ -1319,9 +1320,9 @@ def resolve_dependencies(
             if first:
                 state.excluded_milestone_logs.append(_msg("log_excluded_milestone", issue=k))
             return ""
-        return match.group(0)
+        return f"#{k}"
 
-    resolved = _SUB1_DEP_REF_RE.sub(_repl, dep)
+    resolved = PLAN_DEP_REF_RE.sub(_repl, dep)
     resolved = re.sub(r"\s+", " ", resolved).strip(" ,;|")
     if not resolved or resolved == no_deps:
         return no_deps
@@ -1575,6 +1576,8 @@ def prevalidate_child_body(
             if "scope:milestone" in labels:
                 failures.append(_msg("v5_dep_milestone", issue=num))
         failures.extend(check_v6_dependency_refs(body, resolved_dep))
+    else:
+        failures.extend(_dependency_refs_unresolved(body))
     return failures
 
 

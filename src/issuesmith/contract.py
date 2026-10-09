@@ -82,6 +82,22 @@ _H1_H3_RE = re.compile(r"^#{1,3}\s", re.MULTILINE)
 _TABLE_ROW_RE = re.compile(r"^\|")
 _TABLE_SEP_RE = re.compile(r"^\|[\s\-:|]+\|$")
 
+# Split-plan depends-on column tokens (#4929): shared by B1 verify and SUB1.
+PLAN_DEP_REF_RE = re.compile(r"#?(\d+)")
+
+
+def plan_dep_refs(cell: str) -> list[int]:
+    """Dependency cell refs in order, deduplicated (``#4, 2, #4`` → ``[4, 2]``)."""
+    seen: set[int] = set()
+    out: list[int] = []
+    for match in PLAN_DEP_REF_RE.finditer(cell or ""):
+        n = int(match.group(1))
+        if n not in seen:
+            seen.add(n)
+            out.append(n)
+    return out
+
+
 # Canonical extractor names. A ``def`` with one of these names outside this
 # module is a duplicate parser (R1). Keep in sync with tests/test_workflow_conventions.py.
 CONTRACT_EXTRACTORS: frozenset[str] = frozenset(

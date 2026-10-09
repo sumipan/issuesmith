@@ -16,6 +16,7 @@ from issuesmith.contract import (  # noqa: F401 — re-exported for legacy impor
     get_section,
     iter_sub_blocks,
     parse_table_rows,
+    plan_dep_refs,
 )
 
 _SUB_HEADER_RE = SUB_HEADER_RE
@@ -141,7 +142,7 @@ def _sub_plan_dependencies(body: str) -> dict[int, set[int]]:
     for row in rows[1:]:
         if len(row) <= dep_i or not row[0].strip().isdigit():
             continue
-        deps[int(row[0].strip())] = {int(n) for n in re.findall(r"\d+", row[dep_i])}
+        deps[int(row[0].strip())] = set(plan_dep_refs(row[dep_i]))
     return deps
 
 
@@ -517,6 +518,113 @@ def _missing_dependencies(body: str) -> dict[int, dict[int, list[str]]]:
     return missing
 
 
+_SUB_PLAN_DEP_FORMAT_ID = "b1_milestone_subdesign.sub_plan_dep_format"
+_DEP_CELL_TOKEN_ONLY_RE = re.compile(r"[\d#,、\s]+")
+
+
+def _dep_cell_needs_format_fix(cell: str) -> bool:
+    stripped = (cell or "").strip()
+    if not stripped:
+        return False
+    if stripped == get_config().language.no_deps_word:
+        return False
+    if not _DEP_CELL_TOKEN_ONLY_RE.fullmatch(stripped):
+        return False
+    from issuesmith.contract import PLAN_DEP_REF_RE
+
+    return any(not m.group(0).startswith("#") for m in PLAN_DEP_REF_RE.finditer(stripped))
+
+
+def _check_sub_plan_dep_format(body: str) -> list[Violation]:
+    """Depends-on cells with bare row numbers must use ``#N`` (#4929)."""
+    cfg = get_config()
+    milestone = get_section(body, cfg.sections["milestone"])
+    if not milestone:
+        return []
+    plan_match = re.search(
+        rf"###\s+{re.escape(cfg.sections['sub_plan'])}\s*\n(.*?)(?=^###|\Z)",
+        milestone,
+        re.MULTILINE | re.DOTALL,
+    )
+    if not plan_match:
+        return []
+    rows = parse_table_rows(plan_match.group(1))
+    if len(rows) <= 1:
+        return []
+    dep_column = cfg.language.sub_plan_columns[4]
+    dep_i = next((i for i, cell in enumerate(rows[0]) if dep_column in cell), None)
+    if dep_i is None:
+        return []
+    violations: list[Violation] = []
+    for row in rows[1:]:
+        if len(row) <= dep_i or not row[0].strip().isdigit():
+            continue
+        cell = row[dep_i]
+        if not _dep_cell_needs_format_fix(cell):
+            continue
+        row_num = int(row[0].strip())
+        snippet = cell.strip()
+        violations.append(
+            Violation(
+                rule_id=_SUB_PLAN_DEP_FORMAT_ID,
+                severity="fail",
+                message=(
+                    f'sub plan row {row_num} depends-on cell "{snippet}" '
+                    "must list rows as #N"
+                ),
+                location=f"## {cfg.sections['milestone']}",
+                auto_fixable=True,
+                fix_hint="",
+            )
+        )
+    return violations
+
+
+def apply_sub_plan_dep_format_fixes(body: str) -> tuple[str, list[str]]:
+    """Normalize bare row numbers in depends-on cells to ``#N`` (#4929)."""
+    cfg = get_config()
+    milestone = re.search(
+        rf"^##\s+{re.escape(cfg.sections['milestone'])}\s*\n", body, re.MULTILINE
+    )
+    if not milestone:
+        return body, []
+    plan = re.compile(
+        rf"^###\s+{re.escape(cfg.sections['sub_plan'])}\s*\n(.*?)(?=^#{{1,3}}\s|\Z)",
+        re.MULTILINE | re.DOTALL,
+    ).search(body, milestone.end())
+    if not plan:
+        return body, []
+    dep_column = cfg.language.sub_plan_columns[4]
+    lines = plan.group(1).splitlines(keepends=True)
+    dep_i: int | None = None
+    num_i = 0
+    changed = False
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped.startswith("|") or re.match(r"^\|[\s:|-]+\|$", stripped):
+            continue
+        cells = parse_table_rows(stripped)[0]
+        if dep_i is None:
+            dep_i = next((i for i, cell in enumerate(cells) if dep_column in cell), None)
+            if dep_i is None:
+                return body, []
+            continue
+        if len(cells) <= dep_i or not cells[num_i].strip().isdigit():
+            continue
+        content = line.rstrip("\r\n")
+        start, end = _table_cell_spans(content)[dep_i]
+        old_cell = content[start:end]
+        if not _dep_cell_needs_format_fix(old_cell):
+            continue
+        new_cell = ", ".join(f"#{n}" for n in plan_dep_refs(old_cell.strip()))
+        lines[idx] = content[:start] + f" {new_cell} " + content[end:] + line[len(content) :]
+        changed = True
+    if not changed:
+        return body, []
+    new_body = body[: plan.start(1)] + "".join(lines) + body[plan.end(1) :]
+    return new_body, [_SUB_PLAN_DEP_FORMAT_ID]
+
+
 def _table_cell_spans(line: str) -> list[tuple[int, int]]:
     """``(start, end)`` of each cell of a ``| a | b |`` row (same split as parse_table_rows)."""
     bounds: list[int] = []
@@ -609,6 +717,7 @@ class B1MilestoneSubdesignRules:
         violations.extend(self._check_file_union(body, sub_blocks))
         violations.extend(self._check_impact_scope(body, sub_blocks))
         violations.extend(self._check_deletion_reference_orphan(body, sub_blocks))
+        violations.extend(_check_sub_plan_dep_format(body))
         dependencies = _sub_plan_dependencies(body)
         violations.extend(self._check_behavior_test_in_sibling(sub_blocks, dependencies))
         violations.extend(self._check_inferred_dependencies(body, sub_blocks))

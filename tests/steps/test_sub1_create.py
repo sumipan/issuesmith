@@ -502,6 +502,35 @@ def test_run_all_rows_fail_validation_exits_nonzero() -> None:
     client.issue_create.assert_not_called()
 
 
+def test_resolve_dependencies_bare_digit_resolves_to_child_issue() -> None:
+    state = Sub1State()
+    client = MagicMock()
+    out = resolve_dependencies(
+        "2",
+        table_row_count=6,
+        row_to_issue={2: 4922},
+        client=client,
+        state=state,
+    )
+    assert out == "#4922"
+    assert len(state.resolved_logs) == 1
+    client.issue_get.assert_not_called()
+
+
+def test_resolve_dependencies_bare_forward_ref_becomes_hash() -> None:
+    state = Sub1State()
+    client = MagicMock()
+    out = resolve_dependencies(
+        "5",
+        table_row_count=6,
+        row_to_issue={},
+        client=client,
+        state=state,
+    )
+    assert out == "#5"
+    assert len(state.unresolved_forward_logs) == 1
+
+
 def test_resolve_dependencies_replaces_refs_token_wise() -> None:
     """Regression: after "#2" -> "#3382", "#3" must not match inside "#3382" (was "#3383382")."""
     state = Sub1State()
@@ -889,6 +918,97 @@ def test_run_guarded_body_template_expansion_does_not_raise_on_execution_constra
         )
 
     assert rc == 0
+
+
+def test_sub1_six_rows_bare_plan_deps_create_and_validate() -> None:
+    """Regression #4908/#4927: bare digits in plan deps resolve and post-validate passes."""
+    issues: dict[int, dict] = {}
+    next_num = 9101
+
+    def _sub_block(n: int) -> str:
+        return (
+            f"#### {SUB}{n}: row{n}\n\n"
+            "**Scope**: s\n\n"
+            f"**{CHANGED_FILES}**:\n"
+            f"| {_CHANGE_TABLE_HEADER} |\n"
+            "|---|---|---|---|\n"
+            f"| `sumipan/nexus` | `src/r{n}.py` | {MODIFY} | x |\n\n"
+            "```yaml\npaths_must_exist: []\n```\n"
+        )
+
+    dep_cells = [NONE, NONE, NONE, NONE, "2", "4"]
+    plan_lines = [
+        f"| # | {TITLE} | {TARGET_REPOSITORY} | {CONTENT} | {DEPENDENCY} |",
+        "|---|--------|----------------|------|------|",
+    ]
+    for n in range(1, 7):
+        plan_lines.append(
+            f"| {n} | row{n} | `sumipan/nexus` | work | {dep_cells[n - 1]} |"
+        )
+    parent_body = (
+        _yaml("sumipan/nexus", ["src/**"])
+        + f"\n## {DESIGN}\n\nParent design.\n\n"
+        + "".join(_sub_block(n) for n in range(1, 7))
+        + f"\n## {ACCEPTANCE_CRITERIA}\n\n- [x] ok\n\n"
+        "## Milestone\n\n### Sub-issue Plan\n"
+        + "\n".join(plan_lines)
+        + "\n"
+    )
+
+    client = MagicMock()
+    parent = _parent_issue_dict(parent_body)
+
+    def _issue_get(num, **kwargs):
+        if num == 3166:
+            return parent
+        if num in issues:
+            return issues[num]
+        return {
+            "number": num,
+            "labels": [],
+            "title": "?",
+            "state": "OPEN",
+            "body": "```yaml\ntarget_repo: sumipan/nexus\n```",
+        }
+
+    def _issue_create(title, body, **kwargs):
+        nonlocal next_num
+        num = next_num
+        next_num += 1
+        issues[num] = {
+            "number": num,
+            "title": title,
+            "body": body,
+            "labels": [{"name": "issuesmith:draft-done"}],
+            "milestone": {"number": 7},
+        }
+        return num
+
+    client.issue_get.side_effect = _issue_get
+    client.issue_create.side_effect = _issue_create
+    client.list_sub_issues = MagicMock(return_value=[])
+
+    with (
+        patch("issuesmith.milestone.get_forge", return_value=client),
+        patch("issuesmith.milestone.resolve_sub1_template", return_value=None),
+        patch("issuesmith.milestone.ensure_sub1_binding", return_value=True),
+        patch("issuesmith.milestone.get_config") as cfg,
+    ):
+        cfg.return_value.language = _real_get_config().language
+        cfg.return_value.supported_repos = frozenset({"sumipan/nexus"})
+        _cfg_mock(cfg)
+        result = run_sub1_create(_ctx())
+
+    assert result.pipeline_status == "SUB_CREATED"
+    assert client.issue_create.call_count == 6
+    by_title = {item["title"]: item for item in issues.values()}
+    num2 = by_title["row2"]["number"]
+    num4 = by_title["row4"]["number"]
+    deps_heading = EN.sections["dependencies"]
+    assert f"## {deps_heading}" in by_title["row5"]["body"]
+    assert f"#{num2}" in by_title["row5"]["body"]
+    assert f"## {deps_heading}" in by_title["row6"]["body"]
+    assert f"#{num4}" in by_title["row6"]["body"]
 
 
 def test_run_row_with_unreadable_change_table_creates_no_child() -> None:
