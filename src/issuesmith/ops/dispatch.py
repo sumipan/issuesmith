@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import inspect
 import os
 import string
 import subprocess
@@ -30,6 +31,7 @@ import sys
 import tempfile
 from dataclasses import replace
 from pathlib import Path
+from typing import Literal
 
 from ghdag.core.vocabulary import DONE_DEFERRED
 from ghdag.forge import get_forge
@@ -300,12 +302,19 @@ def map_step_result(
             _project_step_done(step_id, context)
         return exit_code
 
-    # Evaluate StepConfig.requires before emitting markers (#3626).
+    # Evaluate StepConfig.requires then accepts before emitting markers (#3626 / #4886).
     # Repair step: skip requires evaluation (re-evaluation is done by the caller loop).
     cfg = step_cfg if step_cfg is not None else resolve_step_config(step_id)
     if cfg.requires and step_id != _REPAIR_STEP_ID:
         rc = run_requires_loop(
             cfg, step_id, context, repair_count=_repair_count
+        )
+        if rc is not None:
+            return rc
+
+    if cfg.accepts and step_id != _REPAIR_STEP_ID:
+        rc = run_requires_loop(
+            cfg, step_id, context, origin="accepts"
         )
         if rc is not None:
             return rc
@@ -564,12 +573,19 @@ def _safe_record_metrics(
     step_id: str,
     issue_num: int,
     rule_ids: list[str] | None = None,
+    *,
+    origin: Literal["requires", "accepts"] = "requires",
 ) -> None:
     try:
         from issuesmith.repair import record_metrics
 
+        kwargs: dict[str, object] = {}
+        if rule_ids is not None:
+            kwargs["rule_ids"] = rule_ids
+        if "origin" in inspect.signature(record_metrics).parameters:
+            kwargs["origin"] = origin
         record_metrics(
-            get_config().paths.metrics, event, step_id, issue_num, rule_ids=rule_ids
+            get_config().paths.metrics, event, step_id, issue_num, **kwargs
         )
     except Exception:
         pass
@@ -642,6 +658,7 @@ def run_requires_loop(
     repair_count: int = 0,
     auto_fix_round: int = 0,
     _prev_blocking_rule_ids: frozenset[str] | None = None,
+    origin: Literal["requires", "accepts"] = "requires",
 ) -> int | None:
     """Evaluate requires gates; auto-fix, repair, or raise andon as needed.
 
@@ -652,7 +669,8 @@ def run_requires_loop(
     from issuesmith.gates.base import ContractInput
     from issuesmith.repair import apply_auto_fixes, evaluate_requires
 
-    if not step_cfg.requires:
+    gate_ids = step_cfg.requires if origin == "requires" else step_cfg.accepts
+    if not gate_ids:
         return None
 
     # Always fetch fresh issue body (not from context cache)
@@ -676,7 +694,7 @@ def run_requires_loop(
 
     from issuesmith.gates import GateBuildError
     try:
-        gates = _build_requires_gates(step_cfg.requires, eval_context)
+        gates = _build_requires_gates(gate_ids, eval_context)
     except GateBuildError as exc:
         summary = f"gate could not be built in step {step_id}: {exc}"
         full_andon = _FullAndon(
@@ -726,7 +744,7 @@ def run_requires_loop(
             _format_pass_summary(step_id, gates, [*result.blocking, *result.preexisting]),
             file=sys.stderr,
         )
-        _safe_record_metrics("requires_check", step_id, issue_num)
+        _safe_record_metrics("requires_check", step_id, issue_num, origin=origin)
         return None
 
     # Try deterministic auto-fixes for auto_fixable violations.
@@ -749,6 +767,7 @@ def run_requires_loop(
                 step_cfg, step_id, context,
                 repair_count=repair_count,
                 auto_fix_round=auto_fix_round + 1,
+                origin=origin,
             )
 
     if not result.blocking:
@@ -756,7 +775,7 @@ def run_requires_loop(
             _format_pass_summary(step_id, gates, [*result.blocking, *result.preexisting]),
             file=sys.stderr,
         )
-        _safe_record_metrics("requires_check", step_id, issue_num)
+        _safe_record_metrics("requires_check", step_id, issue_num, origin=origin)
         return None
 
     # Oscillation detection: repair made no progress (same or worsened violations).
@@ -824,7 +843,9 @@ def run_requires_loop(
         return 1
 
     blocking_rule_ids = list(dict.fromkeys(v.rule_id for v in result.blocking))
-    _safe_record_metrics("requires_repair", step_id, issue_num, rule_ids=blocking_rule_ids)
+    _safe_record_metrics(
+        "requires_repair", step_id, issue_num, rule_ids=blocking_rule_ids, origin=origin
+    )
 
     # Launch repair step — may raise RetrySignal (not counted as repair).
     rc = _run_repair_step(result.blocking, step_id, context)
@@ -836,6 +857,7 @@ def run_requires_loop(
         step_cfg, step_id, context,
         repair_count=repair_count + 1,
         _prev_blocking_rule_ids=current_rule_ids,
+        origin=origin,
     )
 
 
