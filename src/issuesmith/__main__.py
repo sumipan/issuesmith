@@ -13,6 +13,7 @@ subcommands:
   show <andon-id>          show a specific andon by id
   answer <andon-id> <action>  post answer, remove label, call resume hook
   note <andon-id> --key <key> --value <value>  record a note on an open andon (no label change)
+  auto-answer [--apply] [--json]  plan (or apply) configured auto-answer rules
 """
 
 _LABELS_USAGE = """\
@@ -26,7 +27,15 @@ subcommands:
 def _cmd_andon(argv: list[str]) -> int:
     import json
 
-    from issuesmith.andon import answer, list_open, list_open_records, note, to_comment
+    from issuesmith.andon import (
+        answer,
+        apply_auto_answers,
+        list_open,
+        list_open_records,
+        note,
+        plan_auto_answers,
+        to_comment,
+    )
 
     if not argv:
         print(_ANDON_USAGE, end="", file=sys.stderr)
@@ -81,6 +90,30 @@ def _cmd_andon(argv: list[str]) -> int:
             return 1
         a = matched[0]
         print(to_comment(a))
+        return 0
+
+    if sub == "auto-answer":
+        apply = "--apply" in rest
+        as_json = "--json" in rest
+        from ghdag.forge import get_forge
+
+        from issuesmith.config import get_config
+
+        client = get_forge()
+        rules = get_config().andon.auto_answer
+        answer_plan = plan_auto_answers(client, rules)
+        if apply:
+            apply_auto_answers(client, answer_plan)
+        if as_json:
+            print(json.dumps(answer_plan.__dict__, ensure_ascii=False))
+            return 0
+        for entry in answer_plan.answers:
+            print(
+                f"answer {entry['andon_id']} issue #{entry['issue']} "
+                f"rule={entry['rule']} action={entry['action']}"
+            )
+        for entry in answer_plan.escalations:
+            print(f"escalation {entry.get('kind')} issue #{entry.get('issue', '-')}")
         return 0
 
     if sub == "answer":
