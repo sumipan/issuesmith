@@ -1461,7 +1461,8 @@ def _run_guarded_with_requires(
 
     try:
         post_rc = run_requires_loop(step_cfg, requires_step, context)
-        if post_rc is None and step_cfg.accepts:
+        accepts = getattr(step_cfg, "accepts", ())
+        if post_rc is None and isinstance(accepts, (list, tuple)) and accepts:
             post_rc = run_requires_loop(
                 step_cfg, requires_step, context, origin="accepts"
             )
