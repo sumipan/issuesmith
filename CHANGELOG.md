@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.146.1 - 2026-10-10
+
 ### Breaking
 
 - Built-in Issue-body vocabulary is English (nexus #4469). Without a `language_pack`, sections, sub-design subsections, the sub-design header (`#### Sub<N>:`) and change-table columns are read with the `issuesmith.language.EN` words; the previous built-in Japanese defaults are gone. Hosts that write Issues in another language must set `language_pack:` (see README "Language packs") before upgrading.
