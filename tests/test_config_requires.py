@@ -407,3 +407,63 @@ def test_doctor_requires_chain_ok_with_all_registry_ids() -> None:
         )
     report = requires_chain_report(steps)
     assert report == "requires_chain: ok"
+
+
+# ---------------------------------------------------------------------------
+# accepts column — unknown gate ids and input_kind (#4804 / sub3)
+# ---------------------------------------------------------------------------
+
+
+def test_unknown_gate_id_in_accepts_raises_config_error() -> None:
+    steps = {
+        "my-step": StepConfig(
+            module="issuesmith.steps.foo",
+            accepts=("nonexistent_gate",),
+            input_kind="issue",
+        ),
+    }
+    with pytest.raises(ConfigError, match="steps.my-step.accepts") as exc_info:
+        validate_step_requires(steps)
+    msg = str(exc_info.value)
+    assert "nonexistent_gate" in msg
+    assert "missing gate ids" in msg
+
+
+def test_accepts_error_message_includes_known_gate_ids() -> None:
+    steps = {
+        "my-step": StepConfig(
+            module="issuesmith.steps.foo",
+            accepts=("bad_gate",),
+            input_kind="issue",
+        ),
+    }
+    with pytest.raises(ConfigError) as exc_info:
+        validate_step_requires(steps)
+    msg = str(exc_info.value)
+    assert "steps.my-step.accepts" in msg
+    for known_id in GATE_REGISTRY:
+        assert known_id in msg, f"expected known gate id '{known_id}' in error: {msg}"
+
+
+def test_issue_step_with_worktree_gate_in_accepts_raises_config_error() -> None:
+    steps = {
+        "issue-step": StepConfig(
+            module="issuesmith.steps.foo",
+            accepts=("lint",),
+            input_kind="issue",
+        ),
+    }
+    with pytest.raises(ConfigError, match="steps.issue-step.accepts") as exc_info:
+        validate_step_requires(steps)
+    assert "lint" in str(exc_info.value)
+
+
+def test_worktree_step_with_worktree_gate_in_accepts_is_valid() -> None:
+    steps = {
+        "wt-step": StepConfig(
+            module="issuesmith.steps.foo",
+            accepts=("scope",),
+            input_kind="worktree",
+        ),
+    }
+    validate_step_requires(steps)

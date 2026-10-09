@@ -151,6 +151,136 @@ def test_doctor_missing_requires_key_is_violation():
 # ---------------------------------------------------------------------------
 
 
+def test_run_guarded_evaluates_accepts_after_requires_pass(capsys, fresh_repo: Path):
+    """requires PASS → accepts loop runs with origin=accepts."""
+    from issuesmith.engine import run_guarded
+
+    variables = [
+        "issue_number=42",
+        "base_branch=main",
+        f"worktree_path={fresh_repo}",
+        "allow_paths=- README.md",
+        "workflow_name=issuesmith",
+    ]
+    origins: list[str] = []
+
+    def fake_loop(step_cfg, step_id, context, **kwargs):
+        origins.append(kwargs.get("origin", "requires"))
+        return None
+
+    with patch("issuesmith.engine._run_emit_order", return_value=(0, "")):
+        with patch("issuesmith.ops.dispatch.run_requires_loop", side_effect=fake_loop):
+            with patch("issuesmith.ops.dispatch.resolve_step_config") as mock_resolve:
+                from issuesmith.config import StepConfig
+                mock_resolve.return_value = StepConfig(
+                    module="",
+                    requires=("lint",),
+                    accepts=("tests",),
+                    requires_declared=True,
+                )
+                rc = run_guarded(
+                    "implementation",
+                    "fake.md",
+                    variables,
+                    success_statuses=["IMPL_DONE"],
+                    failure_status="IMPL_FAILED",
+                    emit_status="IMPL_DONE",
+                    requires_step="p1",
+                )
+
+    assert rc == 0
+    assert origins == ["requires", "accepts"]
+    assert "PIPELINE_STATUS: IMPL_DONE" in capsys.readouterr().out
+
+
+def test_run_guarded_skips_accepts_when_requires_fails(capsys, fresh_repo: Path):
+    """requires failure → accepts is not evaluated."""
+    from issuesmith.engine import run_guarded
+
+    variables = [
+        "issue_number=42",
+        "base_branch=main",
+        f"worktree_path={fresh_repo}",
+        "allow_paths=- README.md",
+        "workflow_name=issuesmith",
+    ]
+    origins: list[str] = []
+
+    def fake_loop(step_cfg, step_id, context, **kwargs):
+        origins.append(kwargs.get("origin", "requires"))
+        if kwargs.get("origin", "requires") == "requires":
+            return 1
+        return None
+
+    with patch("issuesmith.engine._run_emit_order", return_value=(0, "")):
+        with patch("issuesmith.ops.dispatch.run_requires_loop", side_effect=fake_loop):
+            with patch("issuesmith.ops.dispatch.resolve_step_config") as mock_resolve:
+                from issuesmith.config import StepConfig
+                mock_resolve.return_value = StepConfig(
+                    module="",
+                    requires=("lint",),
+                    accepts=("tests",),
+                    requires_declared=True,
+                )
+                rc = run_guarded(
+                    "implementation",
+                    "fake.md",
+                    variables,
+                    success_statuses=["IMPL_DONE"],
+                    failure_status="IMPL_FAILED",
+                    emit_status="IMPL_DONE",
+                    requires_step="p1",
+                )
+
+    assert rc == 1
+    assert origins == ["requires"]
+    out = capsys.readouterr().out
+    assert "PIPELINE_STATUS: IMPL_DONE" not in out
+    assert "PIPELINE_STATUS: IMPL_FAILED" in out
+
+
+def test_run_guarded_accepts_only_step_evaluates_accepts(capsys, fresh_repo: Path):
+    """Empty requires with accepts only still runs the accepts loop."""
+    from issuesmith.engine import run_guarded
+
+    variables = [
+        "issue_number=42",
+        "base_branch=main",
+        f"worktree_path={fresh_repo}",
+        "allow_paths=- README.md",
+        "workflow_name=issuesmith",
+    ]
+    origins: list[str] = []
+
+    def fake_loop(step_cfg, step_id, context, **kwargs):
+        origins.append(kwargs.get("origin", "requires"))
+        return None
+
+    with patch("issuesmith.engine._run_emit_order", return_value=(0, "")):
+        with patch("issuesmith.ops.dispatch.run_requires_loop", side_effect=fake_loop):
+            with patch("issuesmith.ops.dispatch.resolve_step_config") as mock_resolve:
+                from issuesmith.config import StepConfig
+                mock_resolve.return_value = StepConfig(
+                    module="",
+                    requires=(),
+                    accepts=("lint",),
+                    requires_declared=True,
+                )
+                rc = run_guarded(
+                    "implementation",
+                    "fake.md",
+                    variables,
+                    success_statuses=["IMPL_DONE"],
+                    failure_status="IMPL_FAILED",
+                    emit_status="IMPL_DONE",
+                    requires_step="p1",
+                )
+
+    assert rc == 0
+    assert origins == ["requires", "accepts"]
+    assert "PIPELINE_STATUS: IMPL_DONE" in capsys.readouterr().out
+
+
 def test_run_guarded_with_requires_step_post_pass_emits_status(capsys, fresh_repo: Path):
     """Post gates all pass after repair → emit_status output."""
     from issuesmith.engine import run_guarded
