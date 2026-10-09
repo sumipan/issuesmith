@@ -356,6 +356,12 @@ class StepContext:
     has_host_changes: str = ""
     host_allow_paths: str = ""
     issue_repo: str = ""
+    p1_result_filename: str = ""
+    p2_result_filename: str = ""
+    p3_result_filename: str = ""
+    execution_constraints: str = ""
+    repair_violations: str = ""
+    repair_step_origin: str = ""
 
     def __post_init__(self) -> None:
         for new_attr, old_attr in (
@@ -369,12 +375,6 @@ class StepContext:
                 object.__setattr__(self, old_attr, new_val)
             elif old_val and not new_val:
                 object.__setattr__(self, new_attr, old_val)
-    p1_result_filename: str = ""
-    p2_result_filename: str = ""
-    p3_result_filename: str = ""
-    execution_constraints: str = ""
-    repair_violations: str = ""
-    repair_step_origin: str = ""
 
 
 @dataclass

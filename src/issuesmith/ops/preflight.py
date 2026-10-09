@@ -20,7 +20,7 @@ v0.15.0; ShellAdapter disappeared and every SHR dispatch failed. Template render
 tests could never have caught it.
 
 CLAUDE.md rule: a PR that changes workflows/issuesmith/* / pyproject.toml /
-The host's DAG hook script / scripts/dag-runner.py must run this script **in the
+the host's DAG hook script / scripts/dag-runner.py must run this script **in the
 real Python environment** and confirm exit 0 before merging.
 """
 from __future__ import annotations
