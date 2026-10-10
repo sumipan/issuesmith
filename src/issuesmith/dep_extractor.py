@@ -157,7 +157,7 @@ def extract_dependencies(body: str) -> list[int]:
     return sorted(deps)
 
 
-def unparsed_dependency_refs(body: str) -> list[int]:
+def unparsed_dependency_refs(body: str, *, self_issue: int | None = None) -> list[int]:
     """Issue refs in the dependencies section that no declaration line carries.
 
     A dependencies section that mentions ``#N`` only in prose would otherwise
@@ -186,6 +186,8 @@ def unparsed_dependency_refs(body: str) -> list[int]:
     parent = _parent_number_re().search(body)
     if parent:
         mentioned.discard(int(parent.group(1)))
+    if self_issue is not None:
+        mentioned.discard(self_issue)
     return sorted(mentioned - declared)
 
 
@@ -342,7 +344,11 @@ def check_issue(issue_number: int, *, client: ForgePort | None = None) -> DepChe
     gh = client or get_forge()
     body = gh.issue_get(issue_number, fields=["body"])["body"]
     deps = extract_dependencies(body)
-    return check_dependencies(deps, client=gh, unparsed_refs=unparsed_dependency_refs(body))
+    return check_dependencies(
+        deps,
+        client=gh,
+        unparsed_refs=unparsed_dependency_refs(body, self_issue=issue_number),
+    )
 
 
 def main() -> None:

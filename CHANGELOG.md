@@ -7,6 +7,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.151.0 - 2026-10-10
+
+### Added
+
+- `deps_format` gate: dependencies-section format checks (`deps.unparsed_dependency_section`)
+  without forge calls; registered for `steps.*.requires` and B1 Verify (`deps_format` in
+  `b1_verify._GATES`).
+
+### Changed
+
+- `unparsed_dependency_refs(..., self_issue=)` excludes the Issue's own number from unparsed
+  refs; `check_issue`, `DepsGate`, `deps_format`, and `deps_terminal` pass the issue number.
+- `deps.unmerged` on steps whose phase uses `advance_when: [deps_terminal]` is no longer sent
+  to the repair step; phase admission waits on the same dependencies instead.
+
 ## 0.150.0 - 2026-10-10
 
 ### Added

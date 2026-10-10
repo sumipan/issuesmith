@@ -101,6 +101,21 @@ def test_evaluate_all_true_returns_ok():
     assert why == "ok"
 
 
+def test_deps_terminal_ignores_self_reference_in_dependencies_prose():
+    from issuesmith.config import get_config
+
+    cfg = get_config()
+    ph = cfg.phase("draft")
+    body = "## Dependencies\n\n#5061 mentioned only in prose here\n"
+    ok, why = evaluate(
+        ph,
+        _ctx(issue={"state": "OPEN", "labels": [], "body": body}, issue_number=5061),
+        cfg,
+    )
+    assert ok is True
+    assert why == "ok"
+
+
 def test_register_duplicate_raises():
     def _noop(ctx, config):
         return True, "ok"

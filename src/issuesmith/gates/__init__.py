@@ -67,6 +67,17 @@ class GateEntry:
     repairable: bool = True
 
 
+def _issue_number(ctx: GateBuildContext) -> int | None:
+    raw = ctx.variables.get("issue_number")
+    if raw is None or raw == "":
+        return None
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
+
+
 def _require_worktree(gate_id: str, ctx: GateBuildContext) -> Path:
     if ctx.worktree_path is None:
         raise GateBuildError(
@@ -77,6 +88,7 @@ def _require_worktree(gate_id: str, ctx: GateBuildContext) -> Path:
 
 def _build_registry() -> dict[str, GateEntry]:
     """Build the unified GATE_REGISTRY from gate modules and gate_rules."""
+    from issuesmith.gate_rules.deps_format import DepsFormatRules
     from issuesmith.gates.ac_contract import AcContractGate
     from issuesmith.gates.dep import DepsGate
     from issuesmith.gates.pr_scope import PrScopeGate
@@ -88,7 +100,11 @@ def _build_registry() -> dict[str, GateEntry]:
     # Issue-kind gate: deps.
     registry["deps"] = GateEntry(
         input_kind="issue",
-        build=lambda ctx: DepsGate(),
+        build=lambda ctx: DepsGate(issue_number=_issue_number(ctx)),
+    )
+    registry["deps_format"] = GateEntry(
+        input_kind="issue",
+        build=lambda ctx: DepsFormatRules(_issue_number(ctx)),
     )
 
     # Worktree gates defined in gates/worktree.py.

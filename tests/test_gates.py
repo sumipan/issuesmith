@@ -329,6 +329,39 @@ def test_deps_gate_no_deps_returns_empty() -> None:
     assert result == []
 
 
+def test_deps_gate_self_reference_only_returns_empty() -> None:
+    from issuesmith.gates.dep import DepsGate
+
+    body = "## Dependencies\n\nnotes for #5061 in #5061\n"
+    assert DepsGate(issue_number=5061).check(body, []) == []
+
+
+def test_deps_gate_self_reference_without_issue_number_still_fails() -> None:
+    from issuesmith.gates.dep import DepsGate
+
+    body = "## Dependencies\n\nnotes for #5061 in #5061\n"
+    result = DepsGate().check(body, [])
+    assert len(result) == 1
+    assert result[0].rule_id == "deps.unparsed_dependency_section"
+
+
+def test_deps_format_registry_build_uses_issue_number() -> None:
+    from issuesmith.gates import GATE_REGISTRY, GateBuildContext
+
+    entry = GATE_REGISTRY["deps_format"]
+    assert entry.input_kind == "issue"
+    gate = entry.build(
+        GateBuildContext(
+            worktree_path=None,
+            allow_paths=[],
+            base_branch="main",
+            variables={"issue_number": "5061"},
+        )
+    )
+    body = "## Dependencies\n\nonly #5061 in prose\n"
+    assert gate.check(body, []) == []
+
+
 def test_deps_gate_prose_only_section_returns_unparsed_violation() -> None:
     from unittest.mock import patch
 
