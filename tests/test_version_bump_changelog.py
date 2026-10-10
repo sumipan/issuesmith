@@ -160,10 +160,18 @@ def _head_files(repo: Path) -> list[str]:
     return sorted(out.split())
 
 
-def test_run_bump_includes_folded_changelog_in_bump_commit(tmp_path: Path):
+def test_run_bump_includes_folded_changelog_in_bump_commit(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
     repo = _init_repo(tmp_path, _GHDAG)
 
     assert run_bump(repo, "origin/main") == 0
+
+    folded_lines = [
+        line for line in capsys.readouterr().out.splitlines()
+        if line.startswith("CHANGELOG_FOLDED:")
+    ]
+    assert folded_lines == ["CHANGELOG_FOLDED: 0.71.1"]
 
     assert _head_files(repo) == ["CHANGELOG.md", "pyproject.toml"]
     numstat = _git(repo, "diff", "--numstat", "HEAD~1", "HEAD", "--", "CHANGELOG.md")
@@ -173,11 +181,33 @@ def test_run_bump_includes_folded_changelog_in_bump_commit(tmp_path: Path):
     assert f"## 0.71.1 - {date.today().isoformat()}" in text
 
 
-def test_run_bump_leaves_changelog_without_unreleased_body_untouched(tmp_path: Path):
+def test_run_bump_leaves_changelog_without_unreleased_body_untouched(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
     original = "# Changelog\n\n## Unreleased\n\n## 0.71.0 - 2026-09-24\n\n- old\n"
     repo = _init_repo(tmp_path, original)
 
     assert run_bump(repo, "origin/main") == 0
 
+    assert "CHANGELOG_FOLDED:" not in capsys.readouterr().out
+
     assert _head_files(repo) == ["pyproject.toml"]
     assert (repo / "CHANGELOG.md").read_bytes() == original.encode("utf-8")
+
+
+@pytest.mark.parametrize(
+    "changelog",
+    [None, "# Changelog\n\n## 0.71.0 - 2026-09-24\n\n- old\n"],
+    ids=["no-changelog", "no-unreleased-heading"],
+)
+def test_run_bump_without_fold_prints_no_changelog_folded(
+    tmp_path: Path, changelog: str | None, capsys: pytest.CaptureFixture[str]
+):
+    repo = _init_repo(tmp_path, changelog)
+
+    assert run_bump(repo, "origin/main") == 0
+
+    out = capsys.readouterr().out
+    assert "pyproject.toml: Z-bumped 0.71.0 → 0.71.1" in out
+    assert "CHANGELOG_FOLDED:" not in out
+    assert _head_files(repo) == ["pyproject.toml"]

@@ -362,6 +362,7 @@ def run_bump(worktree: Path, base: str) -> int:
 
     pyproject.write_text(new_content, encoding="utf-8")
     to_add = ["pyproject.toml"]
+    folded = None
     changelog = worktree / "CHANGELOG.md"
     if changelog.is_file():
         folded = fold_unreleased(
@@ -380,6 +381,9 @@ def run_bump(worktree: Path, base: str) -> int:
         print(commit.stderr, file=sys.stderr)
         return 1
     print(f"pyproject.toml: {decision.bump_type}-bumped {old_ver} → {new_ver}")
+    if folded is not None:
+        # publish re-runs CHANGELOG-reading tests after a fold (#5128).
+        print(f"CHANGELOG_FOLDED: {new_ver}")
     return 0
 
 
