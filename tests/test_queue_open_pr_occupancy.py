@@ -6,6 +6,9 @@ from unittest.mock import MagicMock
 
 from issuesmith.queue import (
     _allow_paths_conflict,
+    _conflict_entry_for_issue,
+    _conflict_overlap_path,
+    _format_allow_paths_wait_line,
     _open_pr_issue_refs,
     _open_pr_occupancy,
 )
@@ -218,3 +221,27 @@ class TestAllowPathsConflictCandidateIssue:
             )
             is None
         )
+
+
+class TestStatusWaitLine:
+    def test_open_pr_conflict_shows_issue_pr_and_path(self):
+        occupancy = [
+            {
+                "issue": 100,
+                "phase": "develop",
+                "target_repo": "sumipan/nexus",
+                "allow_paths": ["tools/x.py"],
+                "occupancy_source": "open_pr",
+                "open_pr_number": 55,
+            }
+        ]
+        entry = _conflict_entry_for_issue(100, [], occupancy)
+        overlap = _conflict_overlap_path(("tools/x.py",), entry)
+        line = _format_allow_paths_wait_line(200, 100, entry, overlap)
+        assert line == "    waiting: #200 (conflict with #100 via open PR #55 on tools/x.py)"
+
+    def test_in_flight_conflict_keeps_legacy_format(self):
+        in_flight = [{"issue": 100, "allow_paths": ["tools/x.py"]}]
+        entry = _conflict_entry_for_issue(100, in_flight, [])
+        line = _format_allow_paths_wait_line(200, 100, entry, "tools/x.py")
+        assert line == "    waiting: #200 (conflict with #100 on tools/x.py)"
