@@ -10,6 +10,7 @@ import ast
 import fnmatch
 import json
 import os
+import posixpath
 import re
 import shutil
 import subprocess
@@ -322,6 +323,100 @@ def _diff_public_names(root: Path, base_branch: str, path: str) -> set[str]:
     return names
 
 
+def _structural_change_paths(root: Path, base_branch: str, changed: list[str]) -> set[str]:
+    """A / D paths and both sides of R* vs origin/<base> (worktree incl.), plus untracked adds.
+
+    M and copies are excluded. Unparsable entries are skipped; git failure yields an empty set.
+    """
+    proc = subprocess.run(
+        ["git", "diff", "--name-status", "--find-renames", "-z", f"origin/{base_branch}", "--"],
+        capture_output=True, text=True, check=False, cwd=str(root),
+    )
+    if proc.returncode != 0:
+        return set()
+    paths: set[str] = set()
+    tokens = proc.stdout.split("\0")
+    i = 0
+    while i < len(tokens):
+        status = tokens[i]
+        if not status:
+            i += 1
+            continue
+        if status[0] in "RC":
+            if status[0] == "R" and i + 2 < len(tokens):
+                paths.update(p for p in tokens[i + 1:i + 3] if p)
+            i += 3
+            continue
+        if status in ("A", "D") and i + 1 < len(tokens) and tokens[i + 1]:
+            paths.add(tokens[i + 1])
+        i += 2
+    # Untracked adds are absent from `git diff`.
+    for path in changed:
+        if path not in paths and (root / path).exists() and not _exists_on_base(
+            root, base_branch, path
+        ):
+            paths.add(path)
+    return paths
+
+
+def _parent_dir_keys(paths: set[str]) -> set[str]:
+    """Immediate POSIX parent dir of each path; root-level paths yield nothing."""
+    keys: set[str] = set()
+    for path in paths:
+        parent = posixpath.dirname(posixpath.normpath(path))
+        if parent and parent != ".":
+            keys.add(parent)
+    return keys
+
+
+_HUNK_NEW_RE = re.compile(r"^@@ -\S+ \+(\d+)(?:,(\d+))? @@")
+
+
+def _hunk_enclosing_names(root: Path, base_branch: str, path: str) -> set[str]:
+    """Public def/class names (outer ones too) enclosing new-side changed lines of `path`.
+
+    Returns an empty set for non-.py / missing files, diff failure, bad hunks or SyntaxError.
+    """
+    from issuesmith.gate_rules import scope_coupling
+
+    fp = root / path
+    if not path.endswith(".py") or not fp.is_file():
+        return set()
+    proc = subprocess.run(
+        ["git", "diff", "-U0", f"origin/{base_branch}", "--", path],
+        capture_output=True, text=True, check=False, cwd=str(root),
+    )
+    if proc.returncode != 0:
+        return set()
+    ranges: list[tuple[int, int]] = []
+    for line in proc.stdout.splitlines():
+        if not line.startswith("@@"):
+            continue
+        m = _HUNK_NEW_RE.match(line)
+        if not m:
+            continue
+        start = int(m.group(1))
+        count = int(m.group(2)) if m.group(2) is not None else 1
+        if count > 0:
+            ranges.append((start, start + count - 1))
+    if not ranges:
+        return set()
+    try:
+        tree = ast.parse(fp.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
+        return set()
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        end = node.end_lineno or node.lineno
+        if node.name.startswith("_") or not scope_coupling._is_valid_key(node.name):
+            continue
+        if any(lo <= end and node.lineno <= hi for lo, hi in ranges):
+            names.add(node.name)
+    return names
+
+
 def _reference_keys(
     root: Path, base_branch: str, changed: list[str]
 ) -> tuple[set[str], set[str]]:
@@ -345,6 +440,9 @@ def _reference_keys(
             word_keys.update(
                 n for n in _diff_public_names(root, base_branch, path) if _is_valid_key(n)
             )
+            word_keys.update(_hunk_enclosing_names(root, base_branch, path))
+    # Directory enumeration tests (glob over a dir) reference the parent dir only (#5134).
+    substr_keys.update(_parent_dir_keys(_structural_change_paths(root, base_branch, changed)))
     return substr_keys, word_keys
 
 

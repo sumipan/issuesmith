@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Changed
+
+- `derive_test_allow_paths` reference keys (condition C) now also include the parent
+  directories of added / deleted / renamed paths vs `origin/<base>` (untracked adds included;
+  `M` and root-level paths excluded) as substring keys, and the public `def` / `class` names
+  (outer ones too) enclosing changed lines of `.py` files as word keys. Directory-glob and
+  `__code__.co_consts` tests broken by a design-conformant change become repairable (#5134).
+
 ## 0.151.2 - 2026-10-10
 
 ### Added
