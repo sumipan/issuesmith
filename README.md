@@ -212,7 +212,7 @@ Ledger keys: `lanes` (lane name to Issue numbers), `hold`, `backlog`, `auto_lane
 | `issuesmith.ac_contract` | `GateMaterializationError`, `materialize_gate_root`, `cleanup_gate_root`, `dual_gate_roots`, `extract_contract_from_body`, `run_checks`, `contract_failures`, `pending_manual_checks`, `is_invalid_contract_path`, `normalize_reference_entry`, `extract_key_path_values`, `manual_check_description`, `KNOWN_POST_MERGE_KINDS`, `POST_MERGE_REQUIRED_FIELDS` |
 | `issuesmith.gate_rules.b1_milestone_subdesign` | `B1MilestoneSubdesignRules`, `extract_sub_blocks`, `infer_sub_dependencies`, `find_dependency_cycles`, `apply_inferred_dependency_fixes`, `apply_sub_plan_dep_format_fixes`, `change_rows_with_content` |
 
-Gate ids usable in `steps.*.requires`: `b1_ac_format`, `b1_migration`, `b1_milestone_subdesign`, `base_freshness`, `cp1`, `deps`, `external_leak`, `lint`, `m2`, `milestone_consistency`, `pin_bump`, `pr_scope`, `scope`, `scope_breadth`, `scope_coupling`, `scope_size`, `tests` (`GATE_REGISTRY`), plus `review` (`STEP_BOUND_GATES`; needs `steps.<id>.review`). A `module.path:attr` reference loads an external gate.
+Gate ids usable in `steps.*.requires`: `b1_ac_format`, `b1_migration`, `b1_milestone_subdesign`, `base_freshness`, `cp1`, `deps`, `external_leak`, `importer_import`, `lint`, `m2`, `milestone_consistency`, `pin_bump`, `pr_scope`, `scope`, `scope_breadth`, `scope_coupling`, `scope_size`, `tests` (`GATE_REGISTRY`), plus `review` (`STEP_BOUND_GATES`; needs `steps.<id>.review`). A `module.path:attr` reference loads an external gate.
 
 ### Contract, projection and labels
 
@@ -320,7 +320,7 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/gates/pr_scope.py` | PR scope gate |
 | `issuesmith/gates/review.py` | `review` gate: runs `steps.<id>.review` through `run-guarded` and maps its problems to violations |
 | `issuesmith/gates/scope.py` | Scope gate |
-| `issuesmith/gates/worktree.py` | `lint`, `tests`, `external_leak` and `base_freshness` gates |
+| `issuesmith/gates/worktree.py` | `lint`, `tests`, `external_leak`, `base_freshness` and `importer_import` gates |
 | `issuesmith/github_api.py` | `gh` command: Issue / PR helpers with label and target guards |
 | `issuesmith/lanes.py` | Lane ledger planning: capacity, candidates, enqueue and patrol report |
 | `issuesmith/language.py` | Language packs |
