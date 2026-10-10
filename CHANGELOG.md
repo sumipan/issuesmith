@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.150.0 - 2026-10-10
+
 ### Added
 
 - `importer_import` gate: imports every importer of a modified, deleted or renamed module
