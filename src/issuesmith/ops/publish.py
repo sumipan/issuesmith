@@ -334,6 +334,111 @@ def _check_commit_diff_gates(worktree: Path, base_branch: str) -> PublishResult 
     return PublishResult(status="P3_GATE_FAILED", stderr=msgs, exit_code=1)
 
 
+_POST_BUMP_TESTS_RULE = "publish.post_bump_tests"
+_POST_BUMP_TESTS_TIMEOUT = 600
+_POST_BUMP_TESTS_TAIL_LINES = 40
+# :(glob) so ``**`` also matches zero directories (tests/test_x.py).
+_POST_BUMP_TESTS_PATHSPEC = ":(glob)tests/**/*.py"
+
+
+def _post_bump_tests_failed(message: str) -> PublishResult:
+    return PublishResult(
+        status="P3_GATE_FAILED",
+        stderr=f"[{_POST_BUMP_TESTS_RULE}] {message}",
+        exit_code=1,
+    )
+
+
+def _output_tail(stdout: str | bytes | None, stderr: str | bytes | None) -> str:
+    lines: list[str] = []
+    for stream in (stdout, stderr):
+        if isinstance(stream, bytes):
+            stream = stream.decode("utf-8", errors="replace")
+        lines.extend((stream or "").splitlines())
+    return "\n".join(lines[-_POST_BUMP_TESTS_TAIL_LINES:])
+
+
+def _has_folded_bump_commit(worktree: Path, base_branch: str) -> bool | PublishResult:
+    """True when a publish bump commit in range changed CHANGELOG.md (read from Git, #5128)."""
+    log = _run_git(
+        worktree, "log", "--format=%H %s", f"origin/{base_branch}..HEAD", check=False
+    )
+    if log.returncode != 0:
+        return _post_bump_tests_failed(
+            f"git log origin/{base_branch}..HEAD exited {log.returncode}: "
+            f"{(log.stderr or '').strip()}"
+        )
+    for line in log.stdout.splitlines():
+        sha, _, subject = line.partition(" ")
+        if not subject.startswith(_BUMP_SUBJECT_PREFIX):
+            continue
+        files = _run_git(
+            worktree, "diff-tree", "--no-commit-id", "--name-only", "-r", sha, check=False
+        )
+        if files.returncode != 0:
+            return _post_bump_tests_failed(
+                f"git diff-tree {sha} exited {files.returncode}: "
+                f"{(files.stderr or '').strip()}"
+            )
+        if "CHANGELOG.md" in files.stdout.splitlines():
+            return True
+    return False
+
+
+def _post_bump_tests(worktree: Path, base_branch: str) -> PublishResult | None:
+    """Re-run CHANGELOG-reading tests when a bump commit folded CHANGELOG.md (#5128).
+
+    The fold empties ``## Unreleased``; downstream tests that read it can turn red only
+    after the bump. Runs on every publish while a folded bump commit is in range, so a
+    re-run with fix commits stacked on top re-verifies the current tree before push.
+    """
+    folded = _has_folded_bump_commit(worktree, base_branch)
+    if isinstance(folded, PublishResult):
+        return folded
+    if not folded:
+        return None
+
+    grep = _run_git(
+        worktree, "grep", "-l", "-E", "CHANGELOG", "--", _POST_BUMP_TESTS_PATHSPEC,
+        check=False,
+    )
+    if grep.returncode == 1:
+        return None
+    if grep.returncode != 0:
+        return _post_bump_tests_failed(
+            f"git grep for CHANGELOG-reading tests exited {grep.returncode}: "
+            f"{(grep.stderr or '').strip()}"
+        )
+    files = [f for f in grep.stdout.splitlines() if f]
+    if not files:
+        return None
+
+    targets = " ".join(files)
+    cmd = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *files]
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+            timeout=_POST_BUMP_TESTS_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return _post_bump_tests_failed(
+            f"pytest timeout after {_POST_BUMP_TESTS_TIMEOUT}s on CHANGELOG-reading "
+            f"tests after the CHANGELOG fold\ntargets: {targets}\n"
+            f"{_output_tail(exc.stdout, exc.stderr)}"
+        )
+    if proc.returncode != 0:
+        return _post_bump_tests_failed(
+            f"pytest exited {proc.returncode} on CHANGELOG-reading tests after the "
+            f"CHANGELOG fold\ntargets: {targets}\n"
+            f"{_output_tail(proc.stdout, proc.stderr)}"
+        )
+    print(f"post-bump tests passed: {targets}")
+    return None
+
+
 def _discard_runtime_dir_dirt(worktree: Path, allow_paths: list[str]) -> None:
     """Drop unstaged RUNTIME_DIR_EXCLUDES dirt so rebase can proceed (#3227).
 
@@ -628,6 +733,10 @@ def publish(
     bump_fail = _maybe_bump_version(worktree, base_branch, repo, issue_repo)
     if bump_fail is not None:
         return bump_fail
+
+    post_bump_fail = _post_bump_tests(worktree, base_branch)
+    if post_bump_fail is not None:
+        return post_bump_fail
 
     if _ahead_commit_count(worktree, base_branch) == 0:
         return PublishResult(status="NO_DIFF", exit_code=1)

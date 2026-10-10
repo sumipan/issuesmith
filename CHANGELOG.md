@@ -7,6 +7,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.151.2 - 2026-10-10
+
+### Added
+
+- `publish.post_bump_tests` gate: when a publish bump commit in range folded `CHANGELOG.md`,
+  P3 re-runs the Python tests that reference `CHANGELOG` (`git grep` over `tests/**/*.py`)
+  before push and returns `P3_GATE_FAILED` on failure, timeout, or unreadable history.
+  `version-bump` prints `CHANGELOG_FOLDED: <version>` when it folds Unreleased.
+
 ## 0.151.1 - 2026-10-10
 
 ### Changed

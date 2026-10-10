@@ -170,6 +170,7 @@ def test_publish_reports_pr_list_failure_instead_of_crashing(tmp_path: Path):
          patch("issuesmith.ops.publish._ensure_rebased", return_value=None), \
          patch("issuesmith.ops.publish._check_commit_diff_gates", return_value=None), \
          patch("issuesmith.ops.publish._maybe_bump_version", return_value=None), \
+         patch("issuesmith.ops.publish._post_bump_tests", return_value=None), \
          patch("issuesmith.ops.publish._ahead_commit_count", return_value=2), \
          patch("issuesmith.ops.publish._push_branch", return_value=None), \
          patch("issuesmith.ops.publish.get_forge", return_value=client):
@@ -181,3 +182,32 @@ def test_publish_reports_pr_list_failure_instead_of_crashing(tmp_path: Path):
     assert "rate limit" in result.stderr
     assert result.exit_code == 1
     client.pr_create.assert_not_called()
+
+
+def test_rerun_after_post_bump_failure_keeps_bump_and_retests_current_tree(tmp_path: Path):
+    """#5128: fix commit on top of a folded bump → no new bump, tests run on the fixed tree."""
+    from tests.test_publish_post_bump_tests import (
+        _FAILING_TEST,
+        _PASSING_TEST,
+        _git,
+        bump_commit_count,
+        make_folded_repo,
+        run_publish,
+    )
+
+    repo = make_folded_repo(tmp_path, _FAILING_TEST)
+    first, push, _, run_version_bump = run_publish(repo)
+    assert first.status == "P3_GATE_FAILED"
+    push.assert_not_called()
+    run_version_bump.assert_not_called()
+    assert bump_commit_count(repo) == 1
+
+    (repo / "tests" / "test_changelog.py").write_text(_PASSING_TEST, encoding="utf-8")
+    _git(repo, "commit", "-q", "-am", "test: read released section too")
+
+    second, push, client, run_version_bump = run_publish(repo)
+    assert second.status == "OK"
+    run_version_bump.assert_not_called()
+    assert bump_commit_count(repo) == 1
+    push.assert_called_once()
+    client.pr_create.assert_called_once()
