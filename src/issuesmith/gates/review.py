@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Mapping
 
@@ -30,7 +31,20 @@ class ReviewGate:
         from issuesmith.engine import run_guarded_output
 
         template_dir = get_config().paths.template_dir
-        variables = [f"{k}={v}" for k, v in self._variables.items()]
+        # Orders frozen before a template gained a variable lack its k=v (#5143).
+        merged = dict(self._variables)
+        filled: list[str] = []
+        for key in self._review_cfg.optional_variables:
+            if key not in merged:
+                merged[key] = ""
+                filled.append(key)
+        if filled:
+            print(
+                f"[issuesmith-review] step={self._step_id} optional variables "
+                f"missing from order, filled empty: {', '.join(filled)}",
+                file=sys.stderr,
+            )
+        variables = [f"{k}={v}" for k, v in merged.items()]
         rc, stdout = run_guarded_output(
             self._review_cfg.role,
             str(template_dir / self._review_cfg.template),

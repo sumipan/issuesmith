@@ -188,6 +188,7 @@ class ReviewConfig:
     failure_status: str
     tier: str | None = None
     problems_heading: str = "Problems:"
+    optional_variables: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -841,6 +842,7 @@ def _build_review(raw: Any, step_id: str) -> ReviewConfig | None:
         "failure_status",
         "tier",
         "problems_heading",
+        "optional_variables",
     }
     unknown = set(raw) - allowed
     if unknown:
@@ -850,6 +852,13 @@ def _build_review(raw: Any, step_id: str) -> ReviewConfig | None:
     tier_raw = raw.get("tier")
     tier = None if tier_raw is None else str(tier_raw)
     problems_heading = str(raw.get("problems_heading", "Problems:"))
+    optional_raw = raw.get("optional_variables", [])
+    if not isinstance(optional_raw, list) or any(
+        not isinstance(v, str) or not v.strip() for v in optional_raw
+    ):
+        raise ConfigError(
+            f"steps.{step_id}.review.optional_variables must be a list of non-empty strings"
+        )
     return ReviewConfig(
         role=str(raw["role"]),
         template=str(raw["template"]),
@@ -857,6 +866,7 @@ def _build_review(raw: Any, step_id: str) -> ReviewConfig | None:
         failure_status=str(raw["failure_status"]),
         tier=tier,
         problems_heading=problems_heading,
+        optional_variables=tuple(optional_raw),
     )
 
 

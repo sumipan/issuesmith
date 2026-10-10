@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Added
+
+- `steps.<id>.review.optional_variables` (list of non-empty strings, default empty). `ReviewGate`
+  fills any listed variable missing from the frozen order's `k=v` arguments with an empty string
+  and logs one `[issuesmith-review] ... filled empty: ...` line to stderr, so orders frozen before
+  a review template gained a variable no longer fail CP2 with an undefined-variable error.
+  Unlisted undefined variables still raise as before (#5143).
+
 ## 0.151.3 - 2026-10-10
 
 ### Changed
