@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.151.4 - 2026-10-10
+
 ### Added
 
 - `steps.<id>.review.optional_variables` (list of non-empty strings, default empty). `ReviewGate`
