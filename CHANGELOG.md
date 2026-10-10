@@ -7,6 +7,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Changed
+
+- Queue dispatch and `queue status` treat open PRs as synthetic `allow_paths` occupancy
+  (alongside `in_flight`), including self-exclusion for the candidate Issue and
+  `via open PR #N` wait reasons.
+- P0 `ensure_base_included` rebase conflicts raise `andon(decision)` with
+  `rule_id=p0.base_rebase_conflict` and resume/restart options instead of posting
+  a stale-base Issue comment.
+
 ## 0.151.0 - 2026-10-10
 
 ### Added

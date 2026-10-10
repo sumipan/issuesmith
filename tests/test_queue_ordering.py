@@ -286,6 +286,33 @@ def test_allow_paths_conflict_legacy_entry_is_conflict():
     assert _allow_paths_conflict("sumipan/issuesmith", ("src/issuesmith/queue.py",), [legacy]) == 2980
 
 
+def test_allow_paths_conflict_candidate_issue_excludes_self():
+    from issuesmith.queue import _allow_paths_conflict
+
+    entry = {
+        "issue": 100,
+        "phase": "develop",
+        "target_repo": "sumipan/nexus",
+        "allow_paths": ["tools/x.py"],
+        "occupancy_source": "open_pr",
+    }
+    paths = ("tools/x.py",)
+    assert (
+        _allow_paths_conflict(
+            "sumipan/nexus", paths, [entry], candidate_phase="develop", candidate_issue=100
+        )
+        is None
+    )
+    assert (
+        _allow_paths_conflict(
+            "sumipan/nexus", paths, [entry], candidate_phase="develop", candidate_issue=200
+        )
+        == 100
+    )
+    # Legacy call without candidate_issue still conflicts with self entry
+    assert _allow_paths_conflict("sumipan/nexus", paths, [entry], candidate_phase="develop") == 100
+
+
 def test_dispatch_skips_overlapping_paths(tmp_path, monkeypatch, issuesmith_config):
     _patch_paths(tmp_path, monkeypatch, issuesmith_config)
     from issuesmith import queue as qmod

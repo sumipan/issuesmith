@@ -15,7 +15,7 @@ from pathlib import Path
 
 from ghdag.forge import ForgePort, get_forge
 
-from issuesmith.contract import StepResult
+from issuesmith.contract import Andon, StepResult
 
 _TRANSIENT_FETCH_MARKERS = ("cannot lock ref", "unable to update local ref")
 
@@ -425,16 +425,28 @@ def ensure_base_included(
         check=False,
     )
 
-    comment = stale_base_comment_template.format(
-        base_branch=base_branch,
-        conflict_files=conflict_files,
+    worktree = str(worktree_dir)
+    summary = (
+        f"P0 rebase onto origin/{base_branch} conflicted in: {conflict_files}.\n"
+        f"Option 1: In {worktree}, run `git rebase origin/{base_branch}`, resolve "
+        f"conflicts, then `issuesmith resume {issue_number} --from p1 --force` to "
+        f"resume this generation.\n"
+        f"Option 2: If discarding this branch's work, recreate the worktree/branch "
+        f"and restart from P0."
     )
-    try:
-        client.issue_comment(issue_number, comment)
-    except Exception as exc:  # noqa: BLE001
-        print(f"P0 stale_base comment failed: {exc}", file=sys.stderr)
-
-    return StepResult(exit_code=1, pipeline_status="STALE_BASE")
+    print("PIPELINE_STATUS: STALE_BASE", file=sys.stderr)
+    return StepResult(
+        status="andon",
+        andon=Andon(
+            kind="decision",
+            rule_id="p0.base_rebase_conflict",
+            summary=summary,
+            options=[
+                "manual_rebase_then_resume_p1",
+                "discard_branch_then_restart_p0",
+            ],
+        ),
+    )
 
 
 def assert_jobs_clean(worktree_dir: Path, jobs_path: str) -> None:

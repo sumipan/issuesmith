@@ -158,6 +158,27 @@ class TestAndonMapping:
         _, full_andon = mock_raise.call_args[0]
         assert full_andon.kind == "broken"
 
+    def test_andon_options_propagated_to_full_andon(self):
+        options = ["manual_rebase_then_resume_p1", "discard_branch_then_restart_p0"]
+        with patch("issuesmith.ops.dispatch.get_forge") as mock_forge, \
+             patch("issuesmith.ops.dispatch._raise_andon") as mock_raise:
+            mock_forge.return_value = MagicMock()
+            map_step_result(
+                StepResult(
+                    status="andon",
+                    andon=Andon(
+                        kind="decision",
+                        rule_id="p0.base_rebase_conflict",
+                        summary="conflict",
+                        options=options,
+                    ),
+                ),
+                step_id="p0",
+                context=_make_context(),
+            )
+        _, full_andon = mock_raise.call_args[0]
+        assert full_andon.options == options
+
 
 # ---------------------------------------------------------------------------
 # irreversible gate failure → andon(broken), no merge
