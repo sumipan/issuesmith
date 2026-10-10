@@ -924,6 +924,71 @@ MY_GATE = GateEntry(
         )
 
 
+class TestDepsUnmergedRequires:
+    def test_unmerged_deferred_when_phase_has_deps_terminal(self, capsys):
+        from issuesmith.config import StepConfig
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        cfg = StepConfig(module="", requires=("deps",))
+        gate = _fail_gate("deps.unmerged")
+        with (
+            patch(
+                "issuesmith.ops.dispatch._build_requires_gates",
+                return_value={"deps": gate},
+            ),
+            patch("issuesmith.ops.dispatch._deps_gated_by_admission", return_value=True),
+            patch("issuesmith.ops.dispatch.get_forge"),
+            patch("issuesmith.ops.dispatch._raise_andon") as mock_andon,
+            patch("issuesmith.ops.dispatch._run_repair_step") as mock_repair,
+        ):
+            rc = run_requires_loop(cfg, "b1", _make_ctx())
+        assert rc is None
+        mock_repair.assert_not_called()
+        mock_andon.assert_not_called()
+        assert "deps.unmerged deferred to phase admission" in capsys.readouterr().err
+
+    def test_unmerged_raises_andon_when_not_gated_by_admission(self):
+        from issuesmith.config import StepConfig
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        cfg = StepConfig(module="", requires=("deps",))
+        gate = _fail_gate("deps.unmerged")
+        with (
+            patch(
+                "issuesmith.ops.dispatch._build_requires_gates",
+                return_value={"deps": gate},
+            ),
+            patch("issuesmith.ops.dispatch._deps_gated_by_admission", return_value=False),
+            patch("issuesmith.ops.dispatch.get_forge"),
+            patch("issuesmith.ops.dispatch._raise_andon") as mock_andon,
+            patch("issuesmith.ops.dispatch._run_repair_step") as mock_repair,
+        ):
+            rc = run_requires_loop(cfg, "repair", _make_ctx())
+        assert rc == 1
+        mock_repair.assert_not_called()
+        assert mock_andon.call_args[0][1].kind == "decision"
+
+    def test_unparsed_dependency_section_still_triggers_repair(self):
+        from issuesmith.config import RepairConfig, StepConfig
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        cfg = StepConfig(
+            module="", requires=("deps",), repair=RepairConfig(max=1)
+        )
+        gate = _fail_gate("deps.unparsed_dependency_section")
+        with (
+            patch(
+                "issuesmith.ops.dispatch._build_requires_gates",
+                return_value={"deps": gate},
+            ),
+            patch("issuesmith.ops.dispatch.get_forge"),
+            patch("issuesmith.ops.dispatch._raise_andon"),
+            patch("issuesmith.ops.dispatch._run_repair_step") as mock_repair,
+        ):
+            run_requires_loop(cfg, "b1", _make_ctx())
+        mock_repair.assert_called_once()
+
+
 class TestTargetUnknownNotRepairable:
     def test_is_violation_repairable_excludes_target_unknown(self):
         from issuesmith.ops.dispatch import _is_violation_repairable

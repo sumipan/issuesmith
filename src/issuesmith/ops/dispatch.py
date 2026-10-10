@@ -598,6 +598,17 @@ def _safe_record_metrics(
         pass
 
 
+def _deps_gated_by_admission(step_id: str) -> bool:
+    """True when the step's phase waits on deps_terminal before admission."""
+    from issuesmith.config import get_config
+
+    for ph in get_config().phases:
+        steps = ph.steps or (ph.entry_step,)
+        if step_id in steps and "deps_terminal" in (ph.advance_when or ()):
+            return True
+    return False
+
+
 def _violation_gate_id(rule_id: str, gates: dict[str, object]) -> str | None:
     """Map a violation rule_id to its gate_id by prefix matching."""
     for gate_id in gates:
@@ -613,6 +624,10 @@ def _is_violation_repairable(
     from issuesmith.config import ConfigError, get_config
     from issuesmith.gates import resolve_gate
 
+    if rule_id == "deps.unmerged":
+        if step_id and _deps_gated_by_admission(step_id):
+            return True
+        return False
     if step_id:
         step_cfg = get_config().steps.get(step_id)
         if step_cfg and rule_id in step_cfg.andon_when:
@@ -789,6 +804,32 @@ def run_requires_loop(
         )
         _safe_record_metrics("requires_check", step_id, issue_num, origin=origin)
         return None
+
+    unmerged = [v for v in result.blocking if v.rule_id == "deps.unmerged"]
+    if unmerged:
+        if _deps_gated_by_admission(step_id):
+            for v in unmerged:
+                print(
+                    f"[requires] {step_id} deps.unmerged deferred to phase admission "
+                    f"(deps_terminal): {v.message}",
+                    file=sys.stderr,
+                )
+            _safe_record_metrics(
+                "requires_deps_deferred", step_id, issue_num, origin=origin
+            )
+            result = replace(
+                result,
+                blocking=[v for v in result.blocking if v.rule_id != "deps.unmerged"],
+            )
+        if not result.blocking:
+            print(
+                _format_pass_summary(
+                    step_id, gates, [*result.blocking, *result.preexisting]
+                ),
+                file=sys.stderr,
+            )
+            _safe_record_metrics("requires_check", step_id, issue_num, origin=origin)
+            return None
 
     # Oscillation detection: repair made no progress (same or worsened violations).
     current_fingerprints = frozenset(_violation_fingerprint(v) for v in result.blocking)

@@ -8,11 +8,10 @@ from ghdag.forge import ForgePort
 from ghdag.workflow.gates import Violation
 
 from issuesmith.dep_extractor import (
-    UNPARSED_DEPENDENCY_SECTION,
     check_dependencies,
     extract_dependencies,
-    unparsed_dependency_refs,
 )
+from issuesmith.gate_rules.deps_format import DepsFormatRules
 from issuesmith.gate_rules.scope_coupling import (
     deletion_references_for_body,
     format_deletion_references,
@@ -29,6 +28,8 @@ def check_deps(
     result = check_dependencies(issue_numbers, client=client)
     if result.decision == "PASS":
         return Verdict(passed=True, reasons=[])
+    from issuesmith.dep_extractor import UNPARSED_DEPENDENCY_SECTION
+
     if result.reason == UNPARSED_DEPENDENCY_SECTION:
         refs = ", ".join(f"#{n}" for n in result.unparsed_refs)
         return Verdict(passed=False, reasons=[f"{UNPARSED_DEPENDENCY_SECTION}: {refs}"])
@@ -42,18 +43,13 @@ def check_deps(
 class DepsGate:
     """RequiresGate adapter: extracts deps from issue body and checks merge state."""
 
+    def __init__(self, issue_number: int | None = None) -> None:
+        self.issue_number = issue_number
+
     def check(self, body: str, labels: list[str]) -> list[Violation]:
-        unparsed = unparsed_dependency_refs(body)
-        if unparsed:
-            refs = ", ".join(f"#{n}" for n in unparsed)
-            return [Violation(
-                rule_id=f"deps.{UNPARSED_DEPENDENCY_SECTION}",
-                severity="fail",
-                message=f"dependencies section mentions {refs} without declaring them",
-                location=None,
-                auto_fixable=False,
-                fix_hint="Declare each dependency as a table row or list item in the dependencies section",
-            )]
+        format_violations = DepsFormatRules(self.issue_number).check(body, labels)
+        if format_violations:
+            return format_violations
         issue_numbers = extract_dependencies(body)
         if not issue_numbers:
             return []

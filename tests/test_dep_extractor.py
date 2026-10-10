@@ -8,6 +8,7 @@ from issuesmith.dep_extractor import (
     UNPARSED_DEPENDENCY_SECTION,
     DepStatus,
     check_dependencies,
+    check_issue,
     extract_dependencies,
     get_dep_status,
     is_satisfied,
@@ -142,6 +143,26 @@ def test_unparsed_refs_ignores_mention_of_own_parent():
 def test_unparsed_refs_still_reports_other_prose_mentions_with_parent():
     body = f"{_PARENT_PREFIX}: #3985\n\n## Dependencies\n\nafter #4053 lands, parallel with #3985\n"
     assert unparsed_dependency_refs(body) == [4053]
+
+
+def test_unparsed_refs_excludes_self_issue_when_given():
+    body = "## Dependencies\n\nissue #5061 body replaced in #5061\n"
+    assert unparsed_dependency_refs(body, self_issue=5061) == []
+    assert unparsed_dependency_refs(body) == [5061]
+
+
+def test_unparsed_refs_self_issue_does_not_hide_other_refs():
+    body = "## Dependencies\n\n#5049 and #5061 in prose\n"
+    assert unparsed_dependency_refs(body, self_issue=5061) == [5049]
+
+
+def test_check_issue_self_reference_only_passes():
+    body = "## Dependencies\n\nonly mentions #777 in prose\n"
+    client = MagicMock()
+    client.issue_get.return_value = {"body": body}
+    result = check_issue(777, client=client)
+    assert result.decision == "PASS"
+    client.issue_get.assert_called_once()
 
 
 def test_unparsed_refs_ignores_parent_child_lines_and_code_blocks():

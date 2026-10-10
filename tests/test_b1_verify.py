@@ -1,7 +1,7 @@
 """test_b1_verify.py — unit tests for B1 deterministic Verify (#2541)."""
 from __future__ import annotations
 
-from issuesmith.b1_verify import collect_violations, format_report
+from issuesmith.b1_verify import _GATES, collect_violations, format_report
 
 _VALID_BODY = (
     '```yaml\n'
@@ -18,6 +18,24 @@ _VALID_BODY = (
 
 def test_valid_body_has_no_violations():
     assert collect_violations(_VALID_BODY, []) == []
+
+
+def test_deps_format_gate_is_in_b1_verify_gates():
+    assert "deps_format" in _GATES
+
+
+def test_collect_violations_reports_unparsed_dependency_section():
+    body = _VALID_BODY + "\n## Dependencies\n\nsee #999 in prose\n"
+    violations = collect_violations(body, [])
+    assert any(v.rule_id == "deps.unparsed_dependency_section" for v in violations)
+    report = format_report(violations)
+    assert "deps.unparsed_dependency_section" in report
+
+
+def test_collect_violations_self_issue_skips_self_unparsed():
+    body = _VALID_BODY + "\n## Dependencies\n\ncontext #5061 only\n"
+    violations = collect_violations(body, [], issue_number=5061)
+    assert not any(v.rule_id == "deps.unparsed_dependency_section" for v in violations)
 
 
 def test_missing_yaml_is_reported():

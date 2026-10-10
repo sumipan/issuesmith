@@ -18,6 +18,7 @@ oversized Issues and applies auto-fixable milestone helpers before any LLM recov
 from __future__ import annotations
 
 import argparse
+import contextvars
 import sys
 from collections import Counter
 from dataclasses import dataclass
@@ -27,8 +28,13 @@ from ghdag.workflow.gates import Violation
 
 from issuesmith.gate_rules import GATE_REGISTRY
 
+_verify_issue_number: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "_verify_issue_number", default=None
+)
+
 _GATES = (
     "cp1",
+    "deps_format",
     "b1_ac_format",
     "b1_migration",
     "milestone_consistency",
@@ -79,12 +85,24 @@ def check_paths_must_not_exist_validity(body: str, labels: list[str] | None = No
     return check_paths_must_not_exist_contract(body, root)
 
 
-def collect_violations(body: str, labels: list[str]):
+def collect_violations(body: str, labels: list[str], *, issue_number: int | None = None):
+    from issuesmith.gate_rules.deps_format import DepsFormatRules
+
+    effective_issue = (
+        issue_number
+        if issue_number is not None
+        else _verify_issue_number.get()
+    )
     _assumed = assumed_labels(body, labels)
     violations = []
     for gate in _GATES:
         gate_labels = labels if gate in _REAL_LABEL_GATES else _assumed
-        violations.extend(GATE_REGISTRY[gate]().check(body, gate_labels))
+        if gate == "deps_format":
+            violations.extend(
+                DepsFormatRules(self_issue=effective_issue).check(body, gate_labels)
+            )
+        else:
+            violations.extend(GATE_REGISTRY[gate]().check(body, gate_labels))
     return [
         v for v in violations
         if v.rule_id not in _EXCLUDED_RULE_IDS and getattr(v, "severity", "fail") == "fail"
@@ -187,7 +205,7 @@ def apply_deterministic_recovery(
     new_labels = list(labels)
     applied: list[str] = []
 
-    before = collect_violations(body, new_labels)
+    before = collect_violations(body, new_labels, issue_number=issue)
     before_ids = {v.rule_id for v in before}
 
     if before_ids & _SCOPE_SIZE_PROMOTE_IDS and not promotion_declined(body):
@@ -212,7 +230,7 @@ def apply_deterministic_recovery(
             applied.append(fix_id)
 
     # Remaining auto-fixable helpers (e.g. label_missing after a hand-written plan).
-    mid = collect_violations(body, new_labels)
+    mid = collect_violations(body, new_labels, issue_number=issue)
     body, new_labels, helper_applied = apply_auto_fixable_helpers(
         client, issue, body, new_labels, mid, dry_run=dry_run
     )
@@ -223,7 +241,7 @@ def apply_deterministic_recovery(
     if persist and not dry_run and body != original_body:
         client.issue_update(issue, body=body)
 
-    remaining = collect_violations(body, new_labels)
+    remaining = collect_violations(body, new_labels, issue_number=issue)
     remaining_ids = {v.rule_id for v in remaining}
     can_done = not remaining
     unresolved_reason: str | None = None
@@ -283,42 +301,45 @@ def main() -> int:
     data = forge.issue_get(args.issue_number, fields=["body", "labels", "milestone"])
     body = data["body"] or ""
     labels = [label["name"] for label in data.get("labels", [])]
-
-    if args.apply_deterministic:
-        result = apply_deterministic_recovery(
-            forge,
-            args.issue_number,
-            body,
-            labels,
-            dry_run=args.dry_run,
-            persist=not args.dry_run,
-        )
-        body = result.body
-        labels = result.labels
-        if result.applied:
-            sys.stdout.write(
-                "DETERMINISTIC_APPLIED: " + " ".join(result.applied) + "\n"
+    issue_ctx = _verify_issue_number.set(args.issue_number)
+    try:
+        if args.apply_deterministic:
+            result = apply_deterministic_recovery(
+                forge,
+                args.issue_number,
+                body,
+                labels,
+                dry_run=args.dry_run,
+                persist=not args.dry_run,
             )
-        if result.can_done:
-            sys.stdout.write("B1_RECOVERY: DONE\n")
-        elif result.unresolved_reason:
-            sys.stdout.write("B1_RECOVERY: UNRESOLVED\n")
-            sys.stdout.write(f"REASON: {result.unresolved_reason}\n")
-        violations = list(result.remaining)
-    else:
-        violations = collect_violations(body, labels)
-
-    if args.prev_report is not None:
-        if args.prev_report == "-":
-            prev_report = sys.stdin.read()
+            body = result.body
+            labels = result.labels
+            if result.applied:
+                sys.stdout.write(
+                    "DETERMINISTIC_APPLIED: " + " ".join(result.applied) + "\n"
+                )
+            if result.can_done:
+                sys.stdout.write("B1_RECOVERY: DONE\n")
+            elif result.unresolved_reason:
+                sys.stdout.write("B1_RECOVERY: UNRESOLVED\n")
+                sys.stdout.write(f"REASON: {result.unresolved_reason}\n")
+            violations = list(result.remaining)
         else:
-            with open(args.prev_report, encoding="utf-8") as fh:
-                prev_report = fh.read()
-        oscillation = detect_oscillation(violations, prev_report)
-        if oscillation is not None:
-            violations.append(oscillation)
-    sys.stdout.write(format_report(violations))
-    return 1 if violations else 0
+            violations = collect_violations(body, labels)
+
+        if args.prev_report is not None:
+            if args.prev_report == "-":
+                prev_report = sys.stdin.read()
+            else:
+                with open(args.prev_report, encoding="utf-8") as fh:
+                    prev_report = fh.read()
+            oscillation = detect_oscillation(violations, prev_report)
+            if oscillation is not None:
+                violations.append(oscillation)
+        sys.stdout.write(format_report(violations))
+        return 1 if violations else 0
+    finally:
+        _verify_issue_number.reset(issue_ctx)
 
 
 if __name__ == "__main__":

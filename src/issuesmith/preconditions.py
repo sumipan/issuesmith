@@ -115,7 +115,7 @@ def _deps_terminal(ctx: PreconditionContext, config: IssuesmithConfig) -> tuple[
     )
 
     body = str(ctx.issue.get("body") or "")
-    unparsed = unparsed_dependency_refs(body)
+    unparsed = unparsed_dependency_refs(body, self_issue=ctx.issue_number)
     if unparsed:
         refs = ", ".join(f"#{n}" for n in unparsed)
         return False, f"dependencies section mentions {refs} without declaring them"
