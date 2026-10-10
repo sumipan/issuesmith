@@ -288,6 +288,7 @@ def map_step_result(
                 step=step_id,
                 summary=summary,
                 rule_id=getattr(andon, "rule_id", "") or "",
+                options=list(getattr(andon, "options", None) or []),
             )
             _raise_andon(get_forge(), full_andon)
         return 1

@@ -518,12 +518,163 @@ def _writes_files(entry: dict[str, Any]) -> bool:
     return True
 
 
+_FEAT_ISSUE_HEAD_RE = re.compile(r"^feat/issue-(\d+)", re.IGNORECASE)
+_ISSUE_REF_IN_TEXT_RE = re.compile(r"(?i)\b(?:closes|refs)\s+#(\d+)(?!\d)")
+
+
+def _issue_excluded_from_open_pr_occupancy(issue: dict[str, Any]) -> bool:
+    state = str(issue.get("state", "")).upper()
+    if state == "CLOSED":
+        return True
+    labels = label_names(issue)
+    terminal = set(get_config().terminal_labels)
+    return bool(labels & terminal) or bool(labels & get_terminal_without_merge())
+
+
+def _issue_number_from_pr_text(*parts: str) -> int | None:
+    for part in parts:
+        if not part:
+            continue
+        match = _ISSUE_REF_IN_TEXT_RE.search(part)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def _open_pr_issue_refs(client: ForgePort) -> list[tuple[int, int]]:
+    """Return ``(issue_number, pr_number)`` for each open PR linked to an Issue."""
+    try:
+        prs = client.pr_list(state="open", limit=100)
+    except Exception as exc:
+        print(
+            f"warning: open_pr occupancy pr_list failed: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        return []
+    if not isinstance(prs, list):
+        return []
+    by_issue: dict[int, int] = {}
+    for pr in prs:
+        if not isinstance(pr, dict):
+            continue
+        pr_number = pr.get("number")
+        if not isinstance(pr_number, int):
+            continue
+        head = str(pr.get("headRefName") or "")
+        issue_num: int | None = None
+        head_match = _FEAT_ISSUE_HEAD_RE.match(head)
+        if head_match:
+            issue_num = int(head_match.group(1))
+        if issue_num is None:
+            title = str(pr.get("title") or "")
+            body = str(pr.get("body") or "")
+            issue_num = _issue_number_from_pr_text(title, body)
+            if issue_num is None:
+                try:
+                    detail = client.pr_get(pr_number)
+                except Exception as exc:
+                    print(
+                        f"warning: open_pr occupancy pr_get #{pr_number} failed: "
+                        f"{type(exc).__name__}: {exc}",
+                        file=sys.stderr,
+                    )
+                    continue
+                if isinstance(detail, dict):
+                    issue_num = _issue_number_from_pr_text(
+                        str(detail.get("title") or ""),
+                        str(detail.get("body") or ""),
+                    )
+        if issue_num is None:
+            continue
+        existing = by_issue.get(issue_num)
+        if existing is None or pr_number < existing:
+            by_issue[issue_num] = pr_number
+    return sorted((issue, pr) for issue, pr in by_issue.items())
+
+
+def _open_pr_occupancy(client: ForgePort, snap: QueueSnapshot) -> list[dict[str, Any]]:
+    """Synthetic in_flight entries for Issues with open PRs not already in_flight."""
+    in_flight_issues = {
+        e.get("issue")
+        for e in snap.in_flight
+        if isinstance(e.get("issue"), int)
+    }
+    entries: list[dict[str, Any]] = []
+    for issue_num, pr_num in _open_pr_issue_refs(client):
+        if issue_num in in_flight_issues:
+            continue
+        try:
+            issue = client.issue_get(
+                issue_num, fields=["state", "labels", "body", "number"]
+            )
+        except Exception as exc:
+            print(
+                f"warning: open_pr occupancy issue_get #{issue_num} failed: "
+                f"{type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            continue
+        if _issue_excluded_from_open_pr_occupancy(issue):
+            continue
+        target_repo, allow_paths = _issue_target_meta(issue)
+        if not target_repo:
+            continue
+        entries.append(
+            {
+                "issue": issue_num,
+                "target_repo": target_repo,
+                "allow_paths": list(allow_paths),
+                "phase": "develop",
+                "occupancy_source": "open_pr",
+                "open_pr_number": pr_num,
+            }
+        )
+    return entries
+
+
+def _allow_paths_conflict_inputs(
+    client: ForgePort, snap: QueueSnapshot
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    occupancy = _open_pr_occupancy(client, snap)
+    return list(snap.in_flight) + occupancy, occupancy
+
+
+def _conflict_entry_for_issue(
+    conflict: int,
+    in_flight: list[dict[str, Any]],
+    occupancy: list[dict[str, Any]],
+) -> dict[str, Any]:
+    for entry in in_flight:
+        if entry.get("issue") == conflict:
+            return entry
+    for entry in occupancy:
+        if entry.get("issue") == conflict:
+            return entry
+    return {}
+
+
+def _format_allow_paths_wait_line(
+    req_issue: int,
+    conflict: int,
+    conflict_entry: dict[str, Any],
+    overlap: str,
+) -> str:
+    if conflict_entry.get("occupancy_source") == "open_pr":
+        pr = conflict_entry.get("open_pr_number")
+        pr_part = f" via open PR #{pr}" if isinstance(pr, int) else " via open PR"
+        return (
+            f"    waiting: #{req_issue} (conflict with #{conflict}{pr_part} on {overlap})"
+        )
+    return f"    waiting: #{req_issue} (conflict with #{conflict} on {overlap})"
+
+
 def _allow_paths_conflict(
     candidate_repo: str,
     candidate_paths: tuple[str, ...],
     in_flight: list[dict[str, Any]],
     *,
     candidate_phase: str | None = None,
+    candidate_issue: int | None = None,
 ) -> int | None:
     """Return conflicting in_flight issue number, or None if no conflict.
 
@@ -536,6 +687,13 @@ def _allow_paths_conflict(
     if _phase_writes_files(candidate_phase) is False:
         return None
     for entry in in_flight:
+        entry_issue = entry.get("issue")
+        if (
+            candidate_issue is not None
+            and isinstance(entry_issue, int)
+            and entry_issue == candidate_issue
+        ):
+            continue
         if not _writes_files(entry):
             continue
         entry_repo = entry.get("target_repo")
@@ -1568,6 +1726,7 @@ def dispatch_one(
         last_paused_reason: str | None = None
         max_per_tick = 1 if _serial_concurrency() else concurrency.max_dispatch_per_tick
         started: list[DispatchStarted] = []
+        open_pr_occupancy = _open_pr_occupancy(client, snap)
 
         for rid in list(snap.active_order):
             req = store.effective_request(snap, rid)
@@ -1653,7 +1812,11 @@ def dispatch_one(
 
             candidate_repo, candidate_paths = _issue_target_meta(issue)
             conflict = _allow_paths_conflict(
-                candidate_repo, candidate_paths, snap.in_flight, candidate_phase=req.phase
+                candidate_repo,
+                candidate_paths,
+                list(snap.in_flight) + open_pr_occupancy,
+                candidate_phase=req.phase,
+                candidate_issue=req.issue,
             )
             if conflict is not None:
                 if concurrency.strict_order:
@@ -1803,6 +1966,10 @@ def _cmd_status(args: argparse.Namespace) -> int:
         client = get_forge(repo=REPO)
     except Exception:
         client = None
+    open_pr_occupancy: list[dict[str, Any]] = []
+    conflict_inputs: list[dict[str, Any]] = list(snap.in_flight)
+    if client is not None:
+        conflict_inputs, open_pr_occupancy = _allow_paths_conflict_inputs(client, snap)
     if snap.last_issue is not None and client is not None:
         try:
             last = client.issue_get(snap.last_issue, fields=["state", "labels"])
@@ -1866,17 +2033,20 @@ def _cmd_status(args: argparse.Namespace) -> int:
             continue
         candidate_repo, candidate_paths = _issue_target_meta(issue)
         conflict = _allow_paths_conflict(
-            candidate_repo, candidate_paths, snap.in_flight, candidate_phase=req.phase
+            candidate_repo,
+            candidate_paths,
+            conflict_inputs,
+            candidate_phase=req.phase,
+            candidate_issue=req.issue,
         )
         if conflict is None:
             continue
-        conflict_entry = next(
-            (e for e in snap.in_flight if e.get("issue") == conflict),
-            {},
+        conflict_entry = _conflict_entry_for_issue(
+            conflict, snap.in_flight, open_pr_occupancy
         )
         overlap = _conflict_overlap_path(candidate_paths, conflict_entry)
         print(
-            f"    waiting: #{req.issue} (conflict with #{conflict} on {overlap})"
+            _format_allow_paths_wait_line(req.issue, conflict, conflict_entry, overlap)
         )
     if client is not None:
         try:

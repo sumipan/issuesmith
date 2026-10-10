@@ -386,6 +386,7 @@ class Andon:
     kind: str  # "decision" | "blocked" | "broken"
     summary: str = ""
     rule_id: str = ""
+    options: list[str] = field(default_factory=list)
 
 
 @dataclass

@@ -457,7 +457,9 @@ def test_ensure_base_included_rebase_success_returns_none(
     client.issue_comment.assert_not_called()
 
 
-def test_ensure_base_included_rebase_conflict_returns_stale_base(tmp_path: Path) -> None:
+def test_ensure_base_included_rebase_conflict_returns_andon_decision(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     repo, stale_branch = _make_repo_with_diverged_branch(tmp_path)
     subprocess.run(
         ["git", "-C", str(repo), "checkout", stale_branch],
@@ -502,11 +504,20 @@ def test_ensure_base_included_rebase_conflict_returns_stale_base(tmp_path: Path)
         stale_base_comment_template=_STALE_BASE_COMMENT_TEMPLATE,
     )
     assert result is not None
-    assert result.exit_code == 1
-    assert result.pipeline_status == "STALE_BASE"
-    client.issue_comment.assert_called_once()
-    comment = client.issue_comment.call_args.args[1]
-    assert "STALE_BASE" in comment
+    assert result.status == "andon"
+    assert result.andon is not None
+    assert result.andon.kind == "decision"
+    assert result.andon.rule_id == "p0.base_rebase_conflict"
+    assert result.andon.options == [
+        "manual_rebase_then_resume_p1",
+        "discard_branch_then_restart_p0",
+    ]
+    assert "README" in result.andon.summary
+    assert "git rebase origin/main" in result.andon.summary
+    assert "issuesmith resume 3408" in result.andon.summary
+    client.issue_comment.assert_not_called()
+    err = capsys.readouterr().err
+    assert "STALE_BASE" in err
 
 
 def test_ensure_base_included_rev_parse_fails_returns_none(tmp_path: Path) -> None:

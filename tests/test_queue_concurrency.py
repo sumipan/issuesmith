@@ -186,6 +186,9 @@ class _DispatchClient:
     def get_issue_comments(self, number):
         return []
 
+    def pr_list(self, state="open", limit=100):
+        return []
+
 
 def test_concurrency_default_when_unconfigured(tmp_path, monkeypatch):
     cfg_path = tmp_path / "issuesmith.yaml"
@@ -1036,3 +1039,49 @@ def test_same_tick_dispatch_sees_allow_paths_conflict(tmp_path, monkeypatch, iss
     snap = store.snapshot()
     remaining = [store.effective_request(snap, rid).issue for rid in snap.active_order]
     assert len(remaining) == 1 and remaining[0] in {100, 101}
+
+
+class _OpenPrDispatchClient(_DispatchClient):
+    def __init__(self, issues: dict[int, dict], prs: list[dict]):
+        super().__init__(issues)
+        self._prs = prs
+
+    def pr_list(self, state="open", limit=100):
+        return list(self._prs)
+
+    def pr_get(self, number):
+        for pr in self._prs:
+            if pr.get("number") == number:
+                return pr
+        raise RuntimeError(f"pr {number} missing")
+
+
+def test_dispatch_respects_open_pr_allow_paths_occupancy(
+    tmp_path, monkeypatch, issuesmith_config,
+):
+    qmod = _multi_tick_setup(
+        tmp_path,
+        monkeypatch,
+        issuesmith_config,
+        {"default": 1, "per_engine": {"codex": 2}, "max_dispatch_per_tick": 6},
+    )
+    store = _store(tmp_path)
+    _enqueue(store, 100, "develop")
+    _enqueue(store, 200, "develop")
+    shared = _body("tools/x.py")
+    client = _OpenPrDispatchClient(
+        {
+            100: {"labels": [{"name": "issuesmith:draft-done"}], "body": shared},
+            200: {"labels": [{"name": "issuesmith:draft-done"}], "body": shared},
+        },
+        [{"number": 55, "headRefName": "feat/issue-100-abc"}],
+    )
+    now = datetime(2026, 9, 5, 12, 0, tzinfo=_JST)
+
+    result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
+
+    started = [s.issue for s in result.started]
+    assert started == [100]
+    snap = store.snapshot()
+    remaining = [store.effective_request(snap, rid).issue for rid in snap.active_order]
+    assert remaining == [200]
