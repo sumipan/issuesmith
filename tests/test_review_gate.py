@@ -91,3 +91,70 @@ def test_build_review_gate_missing_review_config(tmp_path: Path) -> None:
     )
     with pytest.raises(GateBuildError):
         build_review_gate(ctx)
+
+
+_FILL_LINE = (
+    "[issuesmith-review] step=cp2 optional variables missing from order, "
+    "filled empty: execution_constraints"
+)
+
+
+def _optional_cfg(*names: str) -> ReviewConfig:
+    return ReviewConfig(
+        role="review",
+        template="cp2.md",
+        success_status="CP2_PASS",
+        failure_status="CP2_FAIL",
+        optional_variables=names,
+    )
+
+
+def _run_check(gate: ReviewGate) -> list[str]:
+    with patch(
+        "issuesmith.engine.run_guarded_output",
+        return_value=(0, "PIPELINE_STATUS: CP2_PASS\n"),
+    ) as mock_run:
+        assert gate.check("", []) == []
+    return mock_run.call_args.args[2]
+
+
+def test_check_fills_missing_optional_variable(tmp_path: Path, capsys) -> None:
+    gate = ReviewGate(
+        _optional_cfg("execution_constraints"), "cp2", tmp_path, {"issue_number": "1"}
+    )
+    variables = _run_check(gate)
+    assert "issue_number=1" in variables
+    assert "execution_constraints=" in variables
+    err_lines = [ln for ln in capsys.readouterr().err.splitlines() if ln]
+    assert err_lines.count(_FILL_LINE) == 1
+
+
+def test_check_does_not_override_passed_optional_variable(
+    tmp_path: Path, capsys
+) -> None:
+    gate = ReviewGate(
+        _optional_cfg("execution_constraints"),
+        "cp2",
+        tmp_path,
+        {"issue_number": "1", "execution_constraints": "abc"},
+    )
+    variables = _run_check(gate)
+    assert "execution_constraints=abc" in variables
+    assert "execution_constraints=" not in variables
+    assert "optional variables missing" not in capsys.readouterr().err
+
+
+def test_check_does_not_fill_unlisted_variable(tmp_path: Path) -> None:
+    gate = ReviewGate(
+        _optional_cfg("execution_constraints"), "cp2", tmp_path, {"issue_number": "1"}
+    )
+    variables = _run_check(gate)
+    assert not any(v.startswith("other_var=") for v in variables)
+
+
+def test_check_without_optional_variables_unchanged(tmp_path: Path, capsys) -> None:
+    passed = {"issue_number": "1", "worktree": "w"}
+    gate = ReviewGate(_review_cfg(), "cp2", tmp_path, passed)
+    variables = _run_check(gate)
+    assert variables == [f"{k}={v}" for k, v in passed.items()]
+    assert "optional variables missing" not in capsys.readouterr().err

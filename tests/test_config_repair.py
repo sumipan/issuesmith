@@ -133,3 +133,58 @@ def test_validate_review_rejects_issue_step() -> None:
     }
     with pytest.raises(ConfigError, match="worktree gate"):
         validate_step_requires(steps)
+
+
+def _review_payload(**extra) -> dict:
+    return {
+        "steps": {
+            "cp2": {
+                "review": {
+                    "role": "review",
+                    "template": "cp2.md",
+                    "success_status": "CP2_PASS",
+                    "failure_status": "CP2_FAIL",
+                    **extra,
+                }
+            }
+        }
+    }
+
+
+def test_review_optional_variables_loaded(tmp_path, monkeypatch) -> None:
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        _review_payload(optional_variables=["execution_constraints"]),
+    )
+    review = load_config().steps["cp2"].review
+    assert review is not None
+    assert review.optional_variables == ("execution_constraints",)
+
+
+def test_review_optional_variables_keeps_order(tmp_path, monkeypatch) -> None:
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        _review_payload(optional_variables=["b", "a", "b"]),
+    )
+    review = load_config().steps["cp2"].review
+    assert review is not None
+    assert review.optional_variables == ("b", "a", "b")
+
+
+def test_review_optional_variables_default_empty(tmp_path, monkeypatch) -> None:
+    _write_config(tmp_path, monkeypatch, _review_payload())
+    review = load_config().steps["cp2"].review
+    assert review is not None
+    assert review.optional_variables == ()
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [[""], ["  "], [1], "execution_constraints", {"execution_constraints": ""}],
+)
+def test_review_optional_variables_invalid(tmp_path, monkeypatch, bad) -> None:
+    _write_config(tmp_path, monkeypatch, _review_payload(optional_variables=bad))
+    with pytest.raises(ConfigError, match=r"steps\.cp2\.review\.optional_variables"):
+        load_config()
