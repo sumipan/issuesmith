@@ -1,4 +1,4 @@
-"""Worktree gates: lint, tests, external_leak, base_freshness (#3626).
+"""Worktree gates: lint, tests, external_leak, base_freshness (#3626), importer_import (#5013).
 
 Each gate checks the worktree filesystem state and, where possible, applies a
 deterministic fix (narrowing-only: ruff --fix, git ff). fix() never widens
@@ -1104,6 +1104,143 @@ class BaseFreshnessGate:
         )
 
 
+_IMPORTER_IMPORT_TIMEOUT_SEC = 60
+_IMPORTER_IMPORT_ERRORS: tuple[str, ...] = ("ImportError", "ModuleNotFoundError", "AttributeError")
+_IMPORTER_IMPORT_FIX_HINT = (
+    "Update the importer to the new public names; "
+    "widen allow_paths if the importer is outside them"
+)
+
+
+def _dotted_module_name(path: str) -> str | None:
+    """`src/a/b.py` → `a.b`; `tools/x/y.py` → `tools.x.y`; `pkg/__init__.py` → `pkg`; else None."""
+    src = _src_module_name(path)
+    if src is not None:
+        return src
+    if not path.endswith(".py"):
+        return None
+    parts = path[:-len(".py")].split("/")
+    if parts[-1] == "__init__":
+        parts = parts[:-1]
+    return ".".join(parts) or None
+
+
+def _changed_modules(root: Path, base_branch: str) -> list[str]:
+    """Dotted names of .py files modified/deleted/renamed vs origin/<base> (outside tests/).
+
+    Renames contribute the old path so importers of the old name are still checked.
+    """
+    proc = subprocess.run(
+        ["git", "diff", "--name-status", f"origin/{base_branch}...HEAD"],
+        capture_output=True, text=True, check=False, cwd=str(root),
+    )
+    if proc.returncode != 0:
+        return []
+    modules: set[str] = set()
+    for line in proc.stdout.splitlines():
+        fields = line.split("\t")
+        if len(fields) < 2 or fields[0][:1] not in ("M", "D", "R"):
+            continue
+        path = fields[1]
+        if path.startswith("tests/"):
+            continue
+        module = _dotted_module_name(path)
+        if module:
+            modules.add(module)
+    return sorted(modules)
+
+
+def _module_paths(module: str) -> list[str]:
+    base = module.replace(".", "/")
+    return [f"{base}.py", f"{base}/__init__.py", f"src/{base}.py", f"src/{base}/__init__.py"]
+
+
+def _importer_modules(root: Path, module: str) -> list[str]:
+    """Root-relative .py paths (outside tests/) that `import <module>` / `from <module> import`.
+
+    Reads the working tree (no rev), so uncommitted repair edits are reflected. The module's
+    own file is included while it still exists.
+    """
+    mod = re.escape(module)
+    pattern = rf"^[[:space:]]*(from {mod} import|import {mod}([[:space:]]|$|\.|,))"
+    proc = subprocess.run(
+        ["git", "grep", "-l", "-E", pattern, "--", "*.py", ":!tests/**"],
+        capture_output=True, text=True, check=False, cwd=str(root),
+    )
+    paths = {p.strip() for p in proc.stdout.splitlines() if p.strip()} if proc.returncode == 0 else set()
+    paths.update(p for p in _module_paths(module) if (root / p).is_file())
+    return sorted(paths)
+
+
+def _last_line(text: str) -> str:
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    return lines[-1] if lines else ""
+
+
+class ImporterImportGate:
+    """Import every importer of a changed/deleted module bare (no test stubs) (#5013).
+
+    Catches removed public names whose importers sit outside the diff: full pytest can
+    pass while tests stub the missing name into the module at import time.
+    """
+
+    def __init__(self, worktree_path: Path, base_branch: str) -> None:
+        self._root = worktree_path
+        self._base = base_branch
+
+    def _env(self) -> dict[str, str]:
+        paths = [str(self._root)]
+        if (self._root / "src").is_dir():
+            paths.append(str(self._root / "src"))
+        return {**os.environ, "PYTHONPATH": os.pathsep.join(paths)}
+
+    def check(self, body: str, labels: list[str]) -> list[Violation]:
+        modules = _changed_modules(self._root, self._base)
+        if not modules:
+            return []
+        importers: set[str] = set()
+        for module in modules:
+            importers.update(_importer_modules(self._root, module))
+        env = self._env()
+        violations: list[Violation] = []
+        for path in sorted(importers):
+            importer = _dotted_module_name(path)
+            if importer is None:
+                continue
+            try:
+                proc = subprocess.run(
+                    [
+                        sys.executable, "-c",
+                        "import importlib, sys; importlib.import_module(sys.argv[1])",
+                        importer,
+                    ],
+                    cwd=str(self._root), env=env,
+                    capture_output=True, text=True, timeout=_IMPORTER_IMPORT_TIMEOUT_SEC,
+                )
+            except subprocess.TimeoutExpired:
+                print(f"importer_import: timeout {importer}", file=sys.stderr)
+                continue
+            if proc.returncode == 0:
+                continue
+            stderr = proc.stderr or ""
+            tail = _last_line(stderr)
+            if not any(name in stderr for name in _IMPORTER_IMPORT_ERRORS):
+                print(f"importer_import: skipped {importer}: {tail}", file=sys.stderr)
+                continue
+            violations.append(Violation(
+                rule_id="importer_import.import_error",
+                severity="fail",
+                message=tail,
+                location=path,
+                auto_fixable=False,
+                fix_hint=_IMPORTER_IMPORT_FIX_HINT,
+            ))
+        return sorted(violations, key=lambda v: v.location or "")
+
+    def fix(self, inp: ContractInput) -> ContractInput:
+        return inp  # no deterministic fix: the repair LLM edits the importer
+
+
 def _build_lint(worktree_path: Path, allow_paths: list[str], base_branch: str) -> LintGate:
     return LintGate(worktree_path, allow_paths, base_branch)
 
@@ -1124,6 +1261,12 @@ def _build_base_freshness(
     return BaseFreshnessGate(worktree_path, base_branch)
 
 
+def _build_importer_import(
+    worktree_path: Path, allow_paths: list[str], base_branch: str
+) -> ImporterImportGate:
+    return ImporterImportGate(worktree_path, base_branch)
+
+
 # Maps gate id → factory(worktree_path, allow_paths, base_branch).
 # Replaces WORKTREE_GATE_IDS: all worktree gates are discoverable and buildable from here.
 WORKTREE_GATES: dict[str, object] = {
@@ -1131,6 +1274,7 @@ WORKTREE_GATES: dict[str, object] = {
     "tests": _build_tests,
     "external_leak": _build_external_leak,
     "base_freshness": _build_base_freshness,
+    "importer_import": _build_importer_import,
 }
 
 __all__ = [
@@ -1146,6 +1290,7 @@ __all__ = [
     "external_target_state",
     "is_external_target",
     "BaseFreshnessGate",
+    "ImporterImportGate",
     "WORKTREE_GATES",
     "_run_pytest",
     "_parse_failed_ids",

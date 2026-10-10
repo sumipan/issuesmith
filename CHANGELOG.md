@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Added
+
+- `importer_import` gate: imports every importer of a modified, deleted or renamed module
+  without test stubs and reports `ImportError` / `ModuleNotFoundError` / `AttributeError`
+  as `importer_import.import_error` (repairable, worktree input).
+
 ## 0.149.0 - 2026-10-10
 
 ### Added

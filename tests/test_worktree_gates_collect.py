@@ -189,3 +189,15 @@ def test_lint_gate_targets_changed_py_files(git_worktree: Path) -> None:
     # src/foo.py has unused import (F401) — should be detected
     # Since changed_files finds src/foo.py, it should be linted
     assert any(v.rule_id.startswith("lint.") for v in violations)
+
+
+def test_importer_import_registered_as_worktree_gate() -> None:
+    """importer_import is collected from WORKTREE_GATES into GATE_REGISTRY (#5013)."""
+    from issuesmith.gates import GATE_REGISTRY
+    from issuesmith.gates.worktree import WORKTREE_GATES
+
+    assert "importer_import" in WORKTREE_GATES
+    entry = GATE_REGISTRY["importer_import"]
+    assert entry.input_kind == "worktree"
+    assert entry.pre_llm is False
+    assert entry.repairable is True
