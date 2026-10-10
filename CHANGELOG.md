@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.151.1 - 2026-10-10
+
 ### Changed
 
 - Queue dispatch and `queue status` treat open PRs as synthetic `allow_paths` occupancy
