@@ -7,31 +7,31 @@ issuesmith is a toolkit for GitHub Issue workflows driven by labels, built on [g
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.146.1-blue)
+![version](https://img.shields.io/badge/version-v0.153.0-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.146.1** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.153.0** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.146.1"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.153.0"
 ```
 
 The gates, forge access, `observe`, `andon`, `lanes` and `metrics` import ghdag, so install the `ghdag` extra unless another package already provides ghdag. The base package alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.146.1"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.153.0"
 ```
 
 | Item | Value |
 |---|---|
 | Python | `>=3.10` (tested on 3.10, 3.11, 3.12) |
 | Runtime dependencies | `pyyaml`, `ruamel.yaml`, `packaging`, `python-dotenv` |
-| `[ghdag]` extra | `ghdag @ git+https://github.com/sumipan/ghdag.git@v0.72.0` |
-| `[dev]` extra | `pytest`, `pytest-cov`, `mypy`, `ruff`, ghdag `v0.72.0` |
+| `[ghdag]` extra | `ghdag @ git+https://github.com/sumipan/ghdag.git@v0.101.2` |
+| `[dev]` extra | `pytest`, `pytest-cov`, `mypy`, `ruff`, ghdag `v0.101.2` |
 | Console script | `issuesmith` (`issuesmith.cli:main`) |
 
 ## Quick Start
@@ -197,6 +197,7 @@ Ledger keys: `lanes` (lane name to Issue numbers), `hold`, `backlog`, `auto_lane
 | Module | Symbols |
 |---|---|
 | `issuesmith.gates` | `Verdict`, `GateBuildContext`, `GateBuildError`, `GateEntry`, `RequiresGate`, `GATE_REGISTRY`, `resolve_gate`, `validate_step_requires`, `check_scope`, `check_pr_scope`, `check_m2`, `check_deps` |
+| `issuesmith.gates.ac_contract` | `AcContractGate` |
 | `issuesmith.gates.base` | `ContractInput`, `Gate` |
 | `issuesmith.gates.dep` | `check_deps`, `DepsGate`, `dependents_of`, `on_dep_merge_done` |
 | `issuesmith.gates.m1` | `RULE_ID`, `VersionBehindBaseGate` |
@@ -212,7 +213,7 @@ Ledger keys: `lanes` (lane name to Issue numbers), `hold`, `backlog`, `auto_lane
 | `issuesmith.ac_contract` | `GateMaterializationError`, `materialize_gate_root`, `cleanup_gate_root`, `dual_gate_roots`, `extract_contract_from_body`, `run_checks`, `contract_failures`, `pending_manual_checks`, `is_invalid_contract_path`, `normalize_reference_entry`, `extract_key_path_values`, `manual_check_description`, `KNOWN_POST_MERGE_KINDS`, `POST_MERGE_REQUIRED_FIELDS` |
 | `issuesmith.gate_rules.b1_milestone_subdesign` | `B1MilestoneSubdesignRules`, `extract_sub_blocks`, `infer_sub_dependencies`, `find_dependency_cycles`, `apply_inferred_dependency_fixes`, `apply_sub_plan_dep_format_fixes`, `change_rows_with_content` |
 
-Gate ids usable in `steps.*.requires`: `b1_ac_format`, `b1_migration`, `b1_milestone_subdesign`, `base_freshness`, `cp1`, `deps`, `deps_format`, `external_leak`, `importer_import`, `lint`, `m2`, `milestone_consistency`, `pin_bump`, `pr_scope`, `scope`, `scope_breadth`, `scope_coupling`, `scope_size`, `tests` (`GATE_REGISTRY`), plus `review` (`STEP_BOUND_GATES`; needs `steps.<id>.review`). A `module.path:attr` reference loads an external gate.
+Gate ids usable in `steps.*.requires`: `ac_contract`, `b1_ac_format`, `b1_migration`, `b1_milestone_subdesign`, `base_freshness`, `cp1`, `deps`, `deps_format`, `external_leak`, `importer_import`, `lint`, `m2`, `milestone_consistency`, `pin_bump`, `pr_scope`, `scope`, `scope_breadth`, `scope_coupling`, `scope_size`, `tests` (`GATE_REGISTRY`), plus `review` (`STEP_BOUND_GATES`; needs `steps.<id>.review`). A `module.path:attr` reference loads an external gate.
 
 ### Contract, projection and labels
 
@@ -306,6 +307,7 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/gate_rules/b1_migration.py` | Migration plan rules |
 | `issuesmith/gate_rules/b1_milestone_subdesign.py` | Milestone sub-design rules and dependency inference |
 | `issuesmith/gate_rules/cp1.py` | CP1 design rules |
+| `issuesmith/gate_rules/deps_format.py` | Dependencies section format: unparsed `#N` refs without forge calls |
 | `issuesmith/gate_rules/m2.py` | M2 merge rules |
 | `issuesmith/gate_rules/milestone_consistency.py` | Split plan without the `scope:milestone` label |
 | `issuesmith/gate_rules/pin_bump.py` | Reject dependency pin changes in feature Issues |
@@ -313,6 +315,7 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/gate_rules/scope_coupling.py` | Caller / test coupling and deletion reference rules |
 | `issuesmith/gate_rules/scope_size.py` | Issue size rules and promotion of oversized Issues to sub plans |
 | `issuesmith/gates/__init__.py` | Unified gate API: `GATE_REGISTRY`, `resolve_gate`, `validate_step_requires` |
+| `issuesmith/gates/ac_contract.py` | Worktree gate: acceptance contract `paths_must_exist` / `paths_must_not_exist` |
 | `issuesmith/gates/base.py` | `Gate` protocol and `ContractInput` |
 | `issuesmith/gates/dep.py` | Dependency gate |
 | `issuesmith/gates/m1.py` | M1 version-behind-base gate |
@@ -365,6 +368,35 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/verbs/publish.py` | `publish_branch` |
 | `issuesmith/verbs/worktree.py` | `prepare_worktree` |
 | `issuesmith/worktree.py` | Worktree creation and base-branch fetch |
+
+## Gates
+
+Gate ids in `GATE_REGISTRY` (usable in `steps.*.requires`). `input_kind` is the step `input_kind` the gate expects. `pre_llm` gates run before the LLM in `engine run-guarded --requires-step`. Non-repairable violations raise an andon or block without a repair loop.
+
+| id | input_kind | pre_llm | repairable | Responsibility |
+|---|---|---|---|---|
+| `ac_contract` | worktree | no | yes | Enforce acceptance-contract `paths_must_exist` / `paths_must_not_exist` on the worktree diff |
+| `b1_ac_format` | issue | no | yes | Acceptance-criteria YAML format in the Issue body |
+| `b1_migration` | issue | no | yes | Migration plan rules for B1 |
+| `b1_milestone_subdesign` | issue | no | yes | Milestone sub-design blocks, dependency inference and fixes |
+| `base_freshness` | worktree | yes | yes | Worktree includes the configured base branch (P0 fetch / rebase) |
+| `cp1` | issue | no | yes | CP1 design rules |
+| `deps` | issue | no | yes | Declared Issue dependencies are satisfied |
+| `deps_format` | issue | no | yes | Dependencies section lists `#N` refs in table/list form, not prose-only |
+| `external_leak` | worktree | no | yes | Persona / CJK leak checks on external `target_repo` branches |
+| `importer_import` | worktree | no | yes | Changed modules remain importable (importer smoke) |
+| `lint` | worktree | no | yes | `ruff check` on changed files (safe auto-fix may narrow scope) |
+| `m2` | issue | no | yes | M2 merge readiness rules |
+| `milestone_consistency` | issue | no | yes | Split plan present without the `scope:milestone` label |
+| `pin_bump` | issue | no | yes | Reject dependency pin changes in feature Issues |
+| `pr_scope` | worktree | no | yes | PR diff paths stay within allow_paths (plus derived test paths) |
+| `scope` | worktree | no | yes | Changed files stay within allow_paths |
+| `scope_breadth` | issue | yes | no | P0 allow_paths breadth; oversized scope must split (no repair loop) |
+| `scope_coupling` | issue | no | yes | Caller / test coupling and deletion-reference rules |
+| `scope_size` | issue | no | yes | B1 Issue size limits and sub-plan promotion |
+| `tests` | worktree | no | yes | `pytest` on derived test paths (flaky reruns per config) |
+
+`review` is bound to `steps.<id>.review` (`STEP_BOUND_GATES`) and is not a `GATE_REGISTRY` key. Hosts may also reference `module.path:attr` gates.
 
 ## Configuration
 
