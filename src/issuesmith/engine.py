@@ -207,14 +207,42 @@ def _yaml_loader() -> YAML:
     return yaml
 
 
+def _default_engine_for_role(role: str) -> str:
+    allowed = sorted(ROLE_ENGINES[role])
+    for engine_name in allowed:
+        if (role, engine_name) in DEFAULT_MODELS:
+            return engine_name
+    return allowed[0]
+
+
 def _default_state() -> dict[str, dict[str, str]]:
-    return {
-        "design": {"engine": "claude", "model": DEFAULT_MODELS[("design", "claude")]},
-        "implementation": {
-            "engine": "claude",
-            "model": DEFAULT_MODELS[("implementation", "claude")],
-        },
-    }
+    result: dict[str, dict[str, str]] = {}
+    for role in ROLE_ENGINES:
+        eng = _default_engine_for_role(role)
+        result[role] = {"engine": eng, "model": DEFAULT_MODELS[(role, eng)]}
+    return result
+
+
+def _engine_state_path_explicit() -> bool:
+    """True when the active config file sets paths.engine_state (not the implicit default)."""
+    from issuesmith.config import _read_yaml, _resolve_config_path
+
+    resolved = _resolve_config_path(None)
+    if resolved is None:
+        return False
+    data = _read_yaml(resolved)
+    paths = data.get("paths")
+    if not isinstance(paths, dict):
+        return False
+    return paths.get("engine_state") is not None
+
+
+def _state_source_label(state_path: Path | None) -> str:
+    if state_path is None:
+        return "default"
+    if state_path == LEGACY_STATE_FILE:
+        return f"legacy:{LEGACY_STATE_FILE}"
+    return f"paths.engine_state:{state_path}"
 
 
 def _validate_state(data: Any) -> dict[str, dict[str, Any]]:
@@ -247,9 +275,19 @@ def _validate_state(data: Any) -> dict[str, dict[str, Any]]:
     return normalized
 
 
+def _resolve_state_path() -> Path | None:
+    if _engine_state_path_explicit():
+        return STATE_FILE if STATE_FILE.exists() else None
+    if STATE_FILE.exists():
+        return STATE_FILE
+    if LEGACY_STATE_FILE.exists():
+        return LEGACY_STATE_FILE
+    return None
+
+
 def load_state() -> dict[str, dict[str, Any]]:
-    state_path = STATE_FILE if STATE_FILE.exists() else LEGACY_STATE_FILE
-    if not state_path.exists():
+    state_path = _resolve_state_path()
+    if state_path is None:
         return _default_state()
     yaml = _yaml_loader()
     with state_path.open(encoding="utf-8") as stream:
@@ -258,6 +296,11 @@ def load_state() -> dict[str, dict[str, Any]]:
     if isinstance(data, str) and data in {"sonnet", "applied"}:
         return _default_state()
     return _validate_state(data)
+
+
+def state_source_label() -> str:
+    """Human-readable origin of the effective engine state (for ``engine show``)."""
+    return _state_source_label(_resolve_state_path())
 
 
 def resolve(role: str, tier: str | None = None) -> RoleSelection:
@@ -490,15 +533,18 @@ def check_state() -> list[str]:
 
     errors.extend(light_model_errors(state))
 
-    implementation = resolve("implementation")
-    if implementation.engine == "cursor" and shutil.which("agent") is not None:
-        try:
-            models = _cursor_models()
-        except RuntimeError as exc:
-            errors.append(f"implementation: {exc}")
-        else:
-            if implementation.model != "auto" and implementation.model not in models:
-                errors.append(f"implementation: unavailable Cursor model: {implementation.model}")
+    if "implementation" in ROLE_ENGINES:
+        implementation = resolve("implementation")
+        if implementation.engine == "cursor" and shutil.which("agent") is not None:
+            try:
+                models = _cursor_models()
+            except RuntimeError as exc:
+                errors.append(f"implementation: {exc}")
+            else:
+                if implementation.model != "auto" and implementation.model not in models:
+                    errors.append(
+                        f"implementation: unavailable Cursor model: {implementation.model}"
+                    )
 
     workflow = _load_workflow()
     found: set[str] = set()
@@ -1719,6 +1765,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
         if args.action == "show":
+            print(f"state_source\t{state_source_label()}")
             for role in ROLE_ENGINES:
                 selection = resolve(role)
                 print(f"{role}\t{selection.engine}\t{selection.model}")
