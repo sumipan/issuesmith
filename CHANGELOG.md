@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.151.5 - 2026-10-11
+
 ### Fixed
 
 - `publish` no longer fails with `git add` rc=128 (`pathspec ... did not match any files`) when
