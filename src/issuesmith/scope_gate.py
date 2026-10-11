@@ -2,7 +2,7 @@
 
 Public API for resolving measurement roots, counting matched files/lines,
 evaluating thresholds, and formatting P0 scope comments. Does not reference
-workflow phase names, labels, comments, templates, Slack, diary, or ``jobs/``
+workflow phase names, labels, comments, templates, Slack, or ``jobs/``
 paths beyond optional metrics append.
 """
 

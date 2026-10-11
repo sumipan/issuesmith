@@ -2,7 +2,7 @@
 
 Public API for base ref resolution, branch validation, fetch retry, worktree
 preparation, and cross-repo clone-if-missing. Does not reference workflow
-phase names, labels, comments, templates, Slack, diary, or ``jobs/`` paths.
+phase names, labels, comments, templates, Slack, or ``jobs/`` paths.
 """
 
 from __future__ import annotations

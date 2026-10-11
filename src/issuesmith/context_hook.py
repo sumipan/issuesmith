@@ -60,20 +60,12 @@ _HOST_AVOIDANCE_PATTERNS: tuple[str, ...] = (
     "host side",
     "update host",
     "host changes",
-    "diary-side",
-    "diary side",
-    "update diary",
-    "diary changes",
 )
 
 
 def _companion_worktree_path(pipeline_id: str) -> str:
-    """Absolute path for the host companion worktree (resume prefers existing ``-diary``)."""
-    base = Path(_REPO_ROOT) / _WORKTREES_REL
-    legacy = base / f"{pipeline_id}-diary"
-    if legacy.is_dir():
-        return str(legacy)
-    return str(base / f"{pipeline_id}-host")
+    """Absolute path for the host companion worktree."""
+    return str(Path(_REPO_ROOT) / _WORKTREES_REL / f"{pipeline_id}-host")
 
 
 @dataclass
@@ -367,10 +359,6 @@ def build_context(
         host_allow_paths = ""
         host_worktree_path = ""
 
-    has_diary_changes = has_host_changes
-    diary_allow_paths = host_allow_paths
-    diary_worktree_path = host_worktree_path
-
     # Lint warning: target_repo set + host_allow_paths unset + host mentioned out of scope
     if target_repo and not companion_allow_raw and body:
         out_of_scope = get_config().language.out_of_scope_heading
@@ -417,9 +405,6 @@ def build_context(
         "has_host_changes": has_host_changes,
         "host_worktree_path": host_worktree_path,
         "host_allow_paths": host_allow_paths,
-        "has_diary_changes": has_diary_changes,
-        "diary_worktree_path": diary_worktree_path,
-        "diary_allow_paths": diary_allow_paths,
         "targets_json": targets_json,
         "previous_commits": previous_commits_str,
         "reuse_source": reuse_source,

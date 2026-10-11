@@ -197,7 +197,7 @@ def _build_pr_metadata(
     # same-repo / cross-repo). Closing the issue is always M2 finalize's job (the
     # merge-done transition on the issue_repo side + issue_close()); GitHub's
     # auto-close can fire earlier and was a mechanism with strong side effects.
-    # Observed: #2852 (diary companion side) and #2873 (a regression in da499bf that
+    # Observed: #2852 (host companion side) and #2873 (a regression in da499bf that
     # made cross-repo qualified Closes actually fire) were two premature-close
     # incidents of the same class. "Refs #N" stays as the PR body search marker used
     # by queue.py (see _closes_issue_marker).

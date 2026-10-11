@@ -28,8 +28,8 @@ def _normalize_allow_paths(raw: Any) -> tuple[str, ...]:
 
 
 def companion_allow_paths_raw(body_metadata: dict[str, Any]) -> list[Any]:
-    """YAML host_allow_paths with diary_allow_paths fallback (host wins when both set)."""
-    raw = body_metadata.get("host_allow_paths") or body_metadata.get("diary_allow_paths") or []
+    """YAML host_allow_paths as a list (other keys are ignored)."""
+    raw = body_metadata.get("host_allow_paths") or []
     if isinstance(raw, str):
         return [raw]
     if isinstance(raw, list):
@@ -162,7 +162,7 @@ def targets_from_issue(
         target_repo = ""
 
     allow_paths = _normalize_allow_paths(body_metadata.get("allow_paths", []))
-    diary_allow_paths = _normalize_allow_paths(
+    host_allow_paths = _normalize_allow_paths(
         companion_allow_paths_raw(body_metadata)
     )
 
@@ -187,13 +187,13 @@ def targets_from_issue(
         primary=True,
     )
 
-    if not diary_allow_paths:
+    if not host_allow_paths:
         return [primary]
 
     secondary = Target(
         repo=issue_repo,
         base=base,
-        allow_paths=diary_allow_paths,
+        allow_paths=host_allow_paths,
         contract=_contract_for_repo(issue_repo, per_repo, legacy, primary=False),
         primary=False,
     )

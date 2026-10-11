@@ -2,7 +2,7 @@
 
 Public API for PR discovery, merge-state polling, local merge verification,
 post-merge pytest, and companion PR checks. Does not reference workflow phase
-names, labels, comments, templates, Slack, diary, or ``jobs/`` paths.
+names, labels, comments, templates, Slack, or ``jobs/`` paths.
 """
 
 from __future__ import annotations

@@ -5,6 +5,8 @@ Also covers step contract canonical location in issuesmith.contract (#4272).
 
 from __future__ import annotations
 
+import pytest
+
 from issuesmith.contract import Andon, StepContext, StepResult, Verdict
 from issuesmith.ops.dispatch import _context_to_step
 
@@ -99,45 +101,46 @@ def test_context_to_step_maps_host_companion_fields() -> None:
     assert ctx.has_host_changes == "true"
     assert ctx.host_worktree_path == "/tmp/issue-1-host"
     assert ctx.host_allow_paths == "- a"
-    assert ctx.has_diary_changes == "true"
-    assert ctx.diary_worktree_path == "/tmp/issue-1-host"
-    assert ctx.diary_allow_paths == "- a"
 
 
-def test_step_context_syncs_diary_keyword_to_host_fields() -> None:
-    ctx = StepContext(
-        issue_number="1",
-        base_branch="main",
-        handler_name="h",
-        is_cross_repo="false",
-        target_clone_path="",
-        source="",
-        workflow_name="w",
-        m1_result_filename="",
-        m1r_result_filename="",
-        diary_worktree_path="x",
-        has_diary_changes="true",
-        diary_allow_paths="- p",
+def test_context_to_step_ignores_legacy_companion_keys() -> None:
+    """#5065: frozen orders passing the removed legacy keys still dispatch."""
+    ctx = _context_to_step(
+        {
+            "issue_number": "1",
+            "base_branch": "main",
+            "handler_name": "sub",
+            "is_cross_repo": "true",
+            "target_clone_path": "",
+            "source": "",
+            "workflow_name": "w",
+            "m1_result_filename": "",
+            "m1r_result_filename": "",
+            "diary_worktree_path": "x",
+            "has_diary_changes": "true",
+            "diary_allow_paths": "- p",
+            "host_worktree_path": "y",
+        }
     )
-    assert ctx.host_worktree_path == "x"
-    assert ctx.has_host_changes == "true"
-    assert ctx.host_allow_paths == "- p"
+    assert ctx.host_worktree_path == "y"
+    assert ctx.has_host_changes == ""
+    assert ctx.host_allow_paths == ""
 
 
-def test_step_context_replace_accepts_diary_worktree_path_keyword() -> None:
-    from dataclasses import replace
-
-    ctx = StepContext(
-        issue_number="1",
-        base_branch="main",
-        handler_name="h",
-        is_cross_repo="false",
-        target_clone_path="",
-        source="",
-        workflow_name="w",
-        m1_result_filename="",
-        m1r_result_filename="",
-        host_worktree_path="old",
-    )
-    updated = replace(ctx, diary_worktree_path="new")
-    assert updated.diary_worktree_path == "new"
+@pytest.mark.parametrize(
+    "legacy_kw", ["diary_worktree_path", "has_diary_changes", "diary_allow_paths"]
+)
+def test_step_context_rejects_legacy_keyword(legacy_kw: str) -> None:
+    with pytest.raises(TypeError):
+        StepContext(
+            issue_number="1",
+            base_branch="main",
+            handler_name="h",
+            is_cross_repo="false",
+            target_clone_path="",
+            source="",
+            workflow_name="w",
+            m1_result_filename="",
+            m1r_result_filename="",
+            **{legacy_kw: "x"},
+        )

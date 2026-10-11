@@ -388,7 +388,7 @@ def test_allowed_repos_adds_host_repo_from_companion_paths():
 
     body = (
         "```yaml\ntarget_repo: sumipan/nexus\n```\n\n"
-        "```yaml\ntarget_repo: sumipan/ghdag\ndiary_allow_paths:\n  - notes/a.md\n```\n"
+        "```yaml\ntarget_repo: sumipan/ghdag\nhost_allow_paths:\n  - notes/a.md\n```\n"
     )
     assert _allowed_repos(body) == {
         "sumipan/nexus",
