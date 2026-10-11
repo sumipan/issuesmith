@@ -45,6 +45,41 @@ from issuesmith.config import get_config
 from issuesmith.template_ids import template_identifiers
 
 
+def _active_config_path() -> Path | None:
+    """Resolved issuesmith.yaml path (mirrors ``config.load_config`` discovery)."""
+    env = os.environ.get("ISSUESMITH_CONFIG", "").strip()
+    if env:
+        p = Path(env)
+        return p if p.is_file() else None
+    cur = Path.cwd().resolve()
+    for candidate in (cur, *cur.parents):
+        p = candidate / "issuesmith.yaml"
+        if p.is_file():
+            return p
+    fallback = Path(__file__).resolve().parents[2] / "issuesmith.yaml"
+    return fallback if fallback.is_file() else None
+
+
+def _active_config_data() -> dict[str, Any]:
+    resolved = _active_config_path()
+    if resolved is None:
+        return {}
+    yaml = YAML(typ="safe")
+    with resolved.open(encoding="utf-8") as stream:
+        data = yaml.load(stream)
+    return data if isinstance(data, dict) else {}
+
+
+def _configured_engine_roles() -> frozenset[str] | None:
+    """Return explicitly configured roles, or None for package defaults."""
+    engines = _active_config_data().get("engines")
+    if not isinstance(engines, dict) or not engines:
+        return None
+    return frozenset(
+        str(role) for role, value in engines.items() if isinstance(value, dict)
+    )
+
+
 class RetryReason(str, enum.Enum):
     """Reason carried by RetrySignal to classify the deferred retry cause."""
     QUOTA_PAUSED = "QUOTA_PAUSED"
@@ -79,6 +114,7 @@ class RetrySignal(RuntimeError):
 
 
 _cfg = get_config()
+_configured_roles = _configured_engine_roles()
 REPO_ROOT = _cfg.root
 WORKFLOW_FILE = _cfg.paths.workflow
 STATE_FILE = _cfg.paths.engine_state
@@ -100,11 +136,13 @@ _DEFAULT_CAPABILITIES = LLMCapabilities()
 
 ROLE_ENGINES: dict[str, frozenset[str]] = {
     role: frozenset(role_cfg.allowed) for role, role_cfg in _cfg.engines.items()
+    if _configured_roles is None or role in _configured_roles
 }
 
 DEFAULT_MODELS: dict[tuple[str, str], str] = {
     (role, engine): model
     for role, role_cfg in _cfg.engines.items()
+    if _configured_roles is None or role in _configured_roles
     for engine, model in role_cfg.default_model.items()
 }
 
@@ -114,6 +152,7 @@ DEFAULT_MODELS: dict[tuple[str, str], str] = {
 DEFAULT_LIGHT_MODELS: dict[tuple[str, str], str] = {
     (role, engine): model
     for role, role_cfg in _cfg.engines.items()
+    if _configured_roles is None or role in _configured_roles
     for engine, model in role_cfg.light_model.items()
 }
 
@@ -123,11 +162,15 @@ IMPLEMENTATION_STEP_IDS = frozenset({"p1", "p3", "m2", "mg1", "sub1"})
 
 # Guard against runaway agent sessions: 3-5x the observed wall time (a few hundred seconds).
 DEFAULT_TIMEOUTS: dict[str, float] = {
-    role: float(role_cfg.timeout_sec) for role, role_cfg in _cfg.engines.items()
+    role: float(role_cfg.timeout_sec)
+    for role, role_cfg in _cfg.engines.items()
+    if _configured_roles is None or role in _configured_roles
 }
 # Rate-limit pause lifetime per role; written as resume_at so the pause auto-releases.
 DEFAULT_PAUSE_TTL_SEC: dict[str, int] = {
-    role: role_cfg.pause_ttl_sec for role, role_cfg in _cfg.engines.items()
+    role: role_cfg.pause_ttl_sec
+    for role, role_cfg in _cfg.engines.items()
+    if _configured_roles is None or role in _configured_roles
 }
 TIMEOUT_ENV_VAR = "ISSUESMITH_TIMEOUT_SEC"
 
@@ -207,14 +250,37 @@ def _yaml_loader() -> YAML:
     return yaml
 
 
+def _default_engine_for_role(role: str) -> str:
+    allowed = sorted(ROLE_ENGINES[role])
+    for engine_name in allowed:
+        if (role, engine_name) in DEFAULT_MODELS:
+            return engine_name
+    return allowed[0]
+
+
 def _default_state() -> dict[str, dict[str, str]]:
-    return {
-        "design": {"engine": "claude", "model": DEFAULT_MODELS[("design", "claude")]},
-        "implementation": {
-            "engine": "claude",
-            "model": DEFAULT_MODELS[("implementation", "claude")],
-        },
-    }
+    result: dict[str, dict[str, str]] = {}
+    for role in ROLE_ENGINES:
+        eng = _default_engine_for_role(role)
+        result[role] = {"engine": eng, "model": DEFAULT_MODELS[(role, eng)]}
+    return result
+
+
+def _engine_state_path_explicit() -> bool:
+    """True when the active config file sets paths.engine_state (not the implicit default)."""
+    data = _active_config_data()
+    paths = data.get("paths")
+    if not isinstance(paths, dict):
+        return False
+    return paths.get("engine_state") is not None
+
+
+def _state_source_label(state_path: Path | None) -> str:
+    if state_path is None:
+        return "default"
+    if state_path == LEGACY_STATE_FILE:
+        return f"legacy:{LEGACY_STATE_FILE}"
+    return f"paths.engine_state:{state_path}"
 
 
 def _validate_state(data: Any) -> dict[str, dict[str, Any]]:
@@ -247,9 +313,19 @@ def _validate_state(data: Any) -> dict[str, dict[str, Any]]:
     return normalized
 
 
+def _resolve_state_path() -> Path | None:
+    if _engine_state_path_explicit():
+        return STATE_FILE if STATE_FILE.exists() else None
+    if STATE_FILE.exists():
+        return STATE_FILE
+    if LEGACY_STATE_FILE.exists():
+        return LEGACY_STATE_FILE
+    return None
+
+
 def load_state() -> dict[str, dict[str, Any]]:
-    state_path = STATE_FILE if STATE_FILE.exists() else LEGACY_STATE_FILE
-    if not state_path.exists():
+    state_path = _resolve_state_path()
+    if state_path is None:
         return _default_state()
     yaml = _yaml_loader()
     with state_path.open(encoding="utf-8") as stream:
@@ -258,6 +334,11 @@ def load_state() -> dict[str, dict[str, Any]]:
     if isinstance(data, str) and data in {"sonnet", "applied"}:
         return _default_state()
     return _validate_state(data)
+
+
+def state_source_label() -> str:
+    """Human-readable origin of the effective engine state (for ``engine show``)."""
+    return _state_source_label(_resolve_state_path())
 
 
 def resolve(role: str, tier: str | None = None) -> RoleSelection:
@@ -490,15 +571,18 @@ def check_state() -> list[str]:
 
     errors.extend(light_model_errors(state))
 
-    implementation = resolve("implementation")
-    if implementation.engine == "cursor" and shutil.which("agent") is not None:
-        try:
-            models = _cursor_models()
-        except RuntimeError as exc:
-            errors.append(f"implementation: {exc}")
-        else:
-            if implementation.model != "auto" and implementation.model not in models:
-                errors.append(f"implementation: unavailable Cursor model: {implementation.model}")
+    if "implementation" in ROLE_ENGINES:
+        implementation = resolve("implementation")
+        if implementation.engine == "cursor" and shutil.which("agent") is not None:
+            try:
+                models = _cursor_models()
+            except RuntimeError as exc:
+                errors.append(f"implementation: {exc}")
+            else:
+                if implementation.model != "auto" and implementation.model not in models:
+                    errors.append(
+                        f"implementation: unavailable Cursor model: {implementation.model}"
+                    )
 
     workflow = _load_workflow()
     found: set[str] = set()
@@ -1719,6 +1803,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
         if args.action == "show":
+            print(f"state_source\t{state_source_label()}")
             for role in ROLE_ENGINES:
                 selection = resolve(role)
                 print(f"{role}\t{selection.engine}\t{selection.model}")
