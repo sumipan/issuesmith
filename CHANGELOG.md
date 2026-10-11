@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.152.0 - 2026-10-11
+
 ### Removed
 
 - **BREAKING**: the legacy `diary_*` companion aliases kept for one release by #5051 are gone
