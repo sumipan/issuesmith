@@ -223,14 +223,31 @@ def _default_state() -> dict[str, dict[str, str]]:
     return result
 
 
+def _active_config_path() -> Path | None:
+    """Resolved issuesmith.yaml path (mirrors ``config.load_config`` discovery)."""
+    env = os.environ.get("ISSUESMITH_CONFIG", "").strip()
+    if env:
+        p = Path(env)
+        return p if p.is_file() else None
+    cur = Path.cwd().resolve()
+    for candidate in (cur, *cur.parents):
+        p = candidate / "issuesmith.yaml"
+        if p.is_file():
+            return p
+    fallback = Path(__file__).resolve().parents[2] / "issuesmith.yaml"
+    return fallback if fallback.is_file() else None
+
+
 def _engine_state_path_explicit() -> bool:
     """True when the active config file sets paths.engine_state (not the implicit default)."""
-    from issuesmith.config import _read_yaml, _resolve_config_path
-
-    resolved = _resolve_config_path(None)
+    resolved = _active_config_path()
     if resolved is None:
         return False
-    data = _read_yaml(resolved)
+    yaml = _yaml_loader()
+    with resolved.open(encoding="utf-8") as stream:
+        data = yaml.load(stream)
+    if not isinstance(data, dict):
+        return False
     paths = data.get("paths")
     if not isinstance(paths, dict):
         return False
