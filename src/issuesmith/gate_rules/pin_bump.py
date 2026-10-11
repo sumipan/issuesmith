@@ -14,7 +14,7 @@ _VERSION_TOKEN = re.compile(r"v?\d+\.\d+\.\d+")
 
 
 def _has_pyproject_in_paths(metadata: dict) -> bool:
-    for key in ("allow_paths", "host_allow_paths", "diary_allow_paths"):
+    for key in ("allow_paths", "host_allow_paths"):
         raw = metadata.get(key)
         if raw is None:
             continue

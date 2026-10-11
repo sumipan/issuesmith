@@ -40,18 +40,20 @@ def test_old_format_target_repo_with_host_allow_paths():
     assert targets[1].allow_paths == ("workflows/**",)
 
 
-def test_host_allow_paths_preferred_over_diary_allow_paths():
+def test_host_allow_paths_unaffected_by_legacy_key():
     metadata = {
         "target_repo": "sumipan/issuesmith",
         "host_allow_paths": ["host/**"],
-        "diary_allow_paths": ["diary/**"],
+        "diary_allow_paths": ["legacy/**"],
         "base_branch": "main",
     }
     targets = targets_from_issue(metadata, issue_repo=ISSUE_REPO)
+    assert len(targets) == 2
     assert targets[1].allow_paths == ("host/**",)
 
 
-def test_old_format_target_repo_with_diary_allow_paths():
+def test_legacy_allow_paths_key_only_yields_primary_only():
+    """#5065: the removed legacy YAML key is ignored (single-repo mode)."""
     metadata = {
         "target_repo": "sumipan/issuesmith",
         "allow_paths": ["src/**"],
@@ -59,21 +61,29 @@ def test_old_format_target_repo_with_diary_allow_paths():
         "base_branch": "main",
     }
     targets = targets_from_issue(metadata, issue_repo=ISSUE_REPO)
-    assert len(targets) == 2
-    assert targets[0] == Target(
-        repo="sumipan/issuesmith",
-        base="main",
-        allow_paths=("src/**",),
-        contract={},
-        primary=True,
-    )
-    assert targets[1] == Target(
-        repo=ISSUE_REPO,
-        base="main",
-        allow_paths=("workflows/**",),
-        contract={},
-        primary=False,
-    )
+    assert targets == [
+        Target(
+            repo="sumipan/issuesmith",
+            base="main",
+            allow_paths=("src/**",),
+            contract={},
+            primary=True,
+        )
+    ]
+
+
+def test_companion_allow_paths_raw_reads_host_key_only():
+    from issuesmith.targets import companion_allow_paths_raw
+
+    assert companion_allow_paths_raw({"diary_allow_paths": ["a"]}) == []
+    assert companion_allow_paths_raw({"host_allow_paths": ["a"]}) == ["a"]
+
+
+def test_pin_bump_scans_host_key_only():
+    from issuesmith.gate_rules.pin_bump import _has_pyproject_in_paths
+
+    assert _has_pyproject_in_paths({"diary_allow_paths": ["pyproject.toml"]}) is False
+    assert _has_pyproject_in_paths({"host_allow_paths": ["pyproject.toml"]}) is True
 
 
 def test_old_format_target_repo_only():
@@ -101,7 +111,7 @@ def test_new_format_ac_targets_distribute_contract():
     metadata = {
         "target_repo": "sumipan/issuesmith",
         "allow_paths": ["src/**"],
-        "diary_allow_paths": ["workflows/**"],
+        "host_allow_paths": ["workflows/**"],
         "base_branch": "main",
     }
     body = _ac_body(
@@ -121,10 +131,10 @@ def test_new_format_ac_targets_distribute_contract():
     assert targets[1].contract == {"paths_must_exist": ["workflows/issuesmith/bar.md"]}
 
 
-def test_old_format_legacy_contract_on_primary_with_diary():
+def test_old_format_legacy_contract_on_primary_with_host():
     metadata = {
         "target_repo": "sumipan/issuesmith",
-        "diary_allow_paths": ["workflows/**"],
+        "host_allow_paths": ["workflows/**"],
         "base_branch": "main",
     }
     body = _ac_body(paths_must_exist=["src/issuesmith/foo.py"])

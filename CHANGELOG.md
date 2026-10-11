@@ -7,6 +7,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Removed
+
+- **BREAKING**: the legacy `diary_*` companion aliases kept for one release by #5051 are gone
+  (#5065):
+  - YAML key `diary_allow_paths` is no longer read (`companion_allow_paths_raw`, SUB1 child
+    bodies, `pin_bump`). An issue with only that key runs in single-repo mode
+    (`has_host_changes=false`, primary target only). Use `host_allow_paths`.
+  - `build_context` no longer returns the context / template variables `has_diary_changes`,
+    `diary_worktree_path`, or `diary_allow_paths`. Use the `host_*` keys.
+  - `StepContext` drops the fields `diary_worktree_path`, `has_diary_changes`, and
+    `diary_allow_paths` (and the `__post_init__` that mirrored them); passing them raises
+    `TypeError`. `_context_to_step` ignores these keys in frozen orders.
+  - An existing `<pipeline_id>-diary` companion worktree is no longer preferred; the companion
+    path is always `<pipeline_id>-host`.
+
 ## 0.151.5 - 2026-10-11
 
 ### Fixed

@@ -176,116 +176,114 @@ def test_no_target_repo_field_is_diary_mode():
     assert ctx["repo_name"] == ""
 
 
-# --- Issue #990: diary_allow_paths / has_diary_changes ---
+# --- Issue #990 / #5065: host_allow_paths / has_host_changes ---
 
-def _body_cross_repo_with_diary(diary_allow_paths=None):
+_LEGACY_CONTEXT_KEYS = ("has_diary_changes", "diary_worktree_path", "diary_allow_paths")
+
+
+def _body_cross_repo(host_allow_paths=None, legacy_allow_paths=None):
     lines = [
         "base_branch: main",
         "target_repo: sumipan/ghdag",
         "allow_paths:",
         "  - src/**",
     ]
-    if diary_allow_paths is not None:
+    if host_allow_paths is not None:
+        lines.append("host_allow_paths:")
+        for p in host_allow_paths:
+            lines.append(f"  - {p}")
+    if legacy_allow_paths is not None:
         lines.append("diary_allow_paths:")
-        for p in diary_allow_paths:
+        for p in legacy_allow_paths:
             lines.append(f"  - {p}")
     yaml_block = "\n".join(lines)
     return f"```yaml\n{yaml_block}\n```\n\n## Purpose\ntest"
 
 
-def test_diary_allow_paths_has_diary_changes_true():
-    body = _body_cross_repo_with_diary(diary_allow_paths=["workflows/issuesmith/**"])
+def test_host_allow_paths_has_host_changes_true():
+    body = _body_cross_repo(host_allow_paths=["workflows/issuesmith/**"])
     ctx = build_context(990, body=body)
-    assert ctx["has_diary_changes"] == "true"
+    assert ctx["has_host_changes"] == "true"
 
 
-def test_diary_allow_paths_diary_worktree_path_format():
+def test_host_allow_paths_host_worktree_path_format():
     import os
-    body = _body_cross_repo_with_diary(diary_allow_paths=["workflows/issuesmith/**"])
+    body = _body_cross_repo(host_allow_paths=["workflows/issuesmith/**"])
     ctx = build_context(990, body=body)
-    assert os.path.isabs(ctx["diary_worktree_path"])
-    assert ctx["diary_worktree_path"].endswith(f"/.claude/worktrees/{ctx['pipeline_id']}-host")
+    assert os.path.isabs(ctx["host_worktree_path"])
+    assert ctx["host_worktree_path"].endswith(f"/.claude/worktrees/{ctx['pipeline_id']}-host")
 
 
-def test_diary_allow_paths_single():
-    body = _body_cross_repo_with_diary(diary_allow_paths=["workflows/issuesmith/**"])
+def test_host_allow_paths_single():
+    body = _body_cross_repo(host_allow_paths=["workflows/issuesmith/**"])
     ctx = build_context(990, body=body)
-    assert ctx["diary_allow_paths"] == "- workflows/issuesmith/**"
+    assert ctx["host_allow_paths"] == "- workflows/issuesmith/**"
 
 
-def test_diary_allow_paths_multiple():
-    body = _body_cross_repo_with_diary(
-        diary_allow_paths=["workflows/issuesmith/**", "tools/issuesmith/**"]
+def test_host_allow_paths_multiple():
+    body = _body_cross_repo(
+        host_allow_paths=["workflows/issuesmith/**", "tools/issuesmith/**"]
     )
     ctx = build_context(990, body=body)
-    assert ctx["diary_allow_paths"] == "- workflows/issuesmith/**\n- tools/issuesmith/**"
+    assert ctx["host_allow_paths"] == "- workflows/issuesmith/**\n- tools/issuesmith/**"
 
 
-def test_no_diary_allow_paths_has_diary_changes_false():
+def test_no_host_allow_paths_has_host_changes_false():
     body = _body(target_repo="sumipan/ghdag", allow_paths="src/**")
     ctx = build_context(123, body=body)
-    assert ctx["has_diary_changes"] == "false"
-    assert ctx["diary_worktree_path"] == ""
-    assert ctx["diary_allow_paths"] == ""
+    assert ctx["has_host_changes"] == "false"
+    assert ctx["host_worktree_path"] == ""
+    assert ctx["host_allow_paths"] == ""
 
 
-def test_diary_only_mode_has_diary_changes_false():
+def test_in_repo_mode_has_host_changes_false():
     body = "```yaml\nbase_branch: main\n```\n\n## Purpose\ntest"
     ctx = build_context(11, body=body)
-    assert ctx["has_diary_changes"] == "false"
-    assert ctx["diary_worktree_path"] == ""
-    assert ctx["diary_allow_paths"] == ""
+    assert ctx["has_host_changes"] == "false"
+    assert ctx["host_worktree_path"] == ""
+    assert ctx["host_allow_paths"] == ""
 
 
-def test_diary_allow_paths_without_target_repo_is_false():
-    body = "```yaml\nbase_branch: main\ndiary_allow_paths:\n  - workflows/**\n```\n\n## Purpose\ntest"
+def test_host_allow_paths_without_target_repo_is_false():
+    body = "```yaml\nbase_branch: main\nhost_allow_paths:\n  - workflows/**\n```\n\n## Purpose\ntest"
     ctx = build_context(100, body=body)
-    assert ctx["has_diary_changes"] == "false"
+    assert ctx["has_host_changes"] == "false"
 
 
-def _assert_host_diary_mirror(ctx: dict) -> None:
-    assert ctx["has_host_changes"] == ctx["has_diary_changes"]
-    assert ctx["host_worktree_path"] == ctx["diary_worktree_path"]
-    assert ctx["host_allow_paths"] == ctx["diary_allow_paths"]
+def test_legacy_allow_paths_key_is_ignored():
+    """#5065: the removed legacy YAML key is unknown; the issue runs in single-repo mode."""
+    body = _body_cross_repo(legacy_allow_paths=["workflows/issuesmith/**"])
+    ctx = build_context(5065, body=body)
+    assert ctx["has_host_changes"] == "false"
+    assert ctx["host_worktree_path"] == ""
+    assert ctx["host_allow_paths"] == ""
+    targets = json.loads(ctx["targets_json"])
+    assert len(targets) == 1
+    assert targets[0]["repo"] == "sumipan/ghdag"
+    assert targets[0]["primary"] is True
+    for key in _LEGACY_CONTEXT_KEYS:
+        assert key not in ctx
 
 
-def test_host_allow_paths_emits_new_and_legacy_context_keys():
-    yaml_block = (
-        "```yaml\n"
-        "base_branch: main\n"
-        "target_repo: sumipan/ghdag\n"
-        "allow_paths:\n"
-        "  - src/**\n"
-        "host_allow_paths:\n"
-        "  - workflows/issuesmith/**\n"
-        "```\n\n## Purpose\ntest"
-    )
-    ctx = build_context(5051, body=yaml_block)
+def test_host_allow_paths_emits_no_legacy_context_keys():
+    body = _body_cross_repo(host_allow_paths=["workflows/issuesmith/**"])
+    ctx = build_context(5051, body=body)
     assert ctx["has_host_changes"] == "true"
     assert ctx["host_allow_paths"] == "- workflows/issuesmith/**"
     assert ctx["host_worktree_path"].endswith(f"/{ctx['pipeline_id']}-host")
-    _assert_host_diary_mirror(ctx)
+    for key in _LEGACY_CONTEXT_KEYS:
+        assert key not in ctx
 
 
-def test_host_allow_paths_preferred_over_diary_allow_paths():
-    yaml_block = (
-        "```yaml\n"
-        "base_branch: main\n"
-        "target_repo: sumipan/ghdag\n"
-        "allow_paths:\n"
-        "  - src/**\n"
-        "host_allow_paths:\n"
-        "  - host-only/**\n"
-        "diary_allow_paths:\n"
-        "  - diary-only/**\n"
-        "```\n\n## Purpose\ntest"
+def test_host_allow_paths_unaffected_by_legacy_key():
+    body = _body_cross_repo(
+        host_allow_paths=["host-only/**"], legacy_allow_paths=["legacy-only/**"]
     )
-    ctx = build_context(1, body=yaml_block)
+    ctx = build_context(1, body=body)
     assert ctx["host_allow_paths"] == "- host-only/**"
-    _assert_host_diary_mirror(ctx)
 
 
-def test_companion_worktree_path_prefers_existing_diary_dir(tmp_path, monkeypatch):
+def test_companion_worktree_path_ignores_existing_legacy_dir(tmp_path, monkeypatch):
     import issuesmith.context_hook as ch
 
     wt_root = tmp_path / "wt"
@@ -293,12 +291,28 @@ def test_companion_worktree_path_prefers_existing_diary_dir(tmp_path, monkeypatc
     monkeypatch.setattr(ch, "_REPO_ROOT", str(tmp_path))
     monkeypatch.setattr(ch, "_WORKTREES_REL", "wt")
     pipeline_id = "issue-42-abcd1234"
-    legacy = wt_root / f"{pipeline_id}-diary"
-    legacy.mkdir()
-    assert ch._companion_worktree_path(pipeline_id) == str(legacy)
+    (wt_root / f"{pipeline_id}-diary").mkdir()
+    assert ch._companion_worktree_path(pipeline_id) == str(wt_root / f"{pipeline_id}-host")
 
 
-def test_lint_warning_nodo_diary_mention_no_diary_allow_paths(capsys):
+def test_lint_warning_nodo_host_mention_no_host_allow_paths(capsys):
+    body = (
+        "```yaml\n"
+        "base_branch: main\n"
+        "target_repo: sumipan/ghdag\n"
+        "allow_paths:\n"
+        "  - src/**\n"
+        "```\n\n"
+        "## Out of Scope\n"
+        "- host-side changes are handled separately\n"
+    )
+    build_context(990, body=body)
+    captured = capsys.readouterr()
+    assert "host_allow_paths" in captured.err
+    assert "'Out of Scope'" in captured.err
+
+
+def test_lint_warning_ignores_legacy_side_phrase(capsys):
     body = (
         "```yaml\n"
         "base_branch: main\n"
@@ -310,15 +324,13 @@ def test_lint_warning_nodo_diary_mention_no_diary_allow_paths(capsys):
         "- diary-side changes are handled separately\n"
     )
     build_context(990, body=body)
-    captured = capsys.readouterr()
-    assert "host_allow_paths" in captured.err
-    assert "'Out of Scope'" in captured.err
+    assert "host_allow_paths" not in capsys.readouterr().err
 
 
 def test_lint_warning_reads_out_of_scope_heading_from_language_pack(
     capsys, tmp_path, monkeypatch
 ):
-    """A pack with a different ASCII out-of-scope heading drives the diary lint warning."""
+    """A pack with a different ASCII out-of-scope heading drives the host lint warning."""
     import dataclasses
 
     from issuesmith import config as config_module
@@ -337,14 +349,14 @@ def test_lint_warning_reads_out_of_scope_heading_from_language_pack(
             "  - src/**\n"
             "```\n\n"
             "## Not Doing\n"
-            "- update diary docs\n"
+            "- update host docs\n"
         )
         build_context(990, body=body)
         assert "'Not Doing'" in capsys.readouterr().err
 
         body_default = body.replace("## Not Doing", "## Out of Scope")
         build_context(990, body=body_default)
-        assert "diary_allow_paths" not in capsys.readouterr().err
+        assert "host_allow_paths" not in capsys.readouterr().err
     finally:
         reset_config_cache()
 
@@ -449,8 +461,8 @@ def test_targets_json_present_and_parseable():
     assert targets[0]["primary"] is True
 
 
-def test_targets_json_cross_repo_with_diary():
-    body = _body_cross_repo_with_diary(diary_allow_paths=["workflows/issuesmith/**"])
+def test_targets_json_cross_repo_with_host():
+    body = _body_cross_repo(host_allow_paths=["workflows/issuesmith/**"])
     ctx = build_context(2866, body=body)
     targets = json.loads(ctx["targets_json"])
     assert len(targets) == 2
@@ -461,12 +473,12 @@ def test_targets_json_cross_repo_with_diary():
 
 
 def test_targets_json_backward_compat_flat_keys():
-    body = _body_cross_repo_with_diary(diary_allow_paths=["workflows/issuesmith/**"])
+    body = _body_cross_repo(host_allow_paths=["workflows/issuesmith/**"])
     ctx = build_context(2866, body=body)
     assert ctx["target_repo"] == "sumipan/ghdag"
     assert ctx["is_cross_repo"] == "true"
-    assert ctx["has_diary_changes"] == "true"
-    assert ctx["diary_allow_paths"] == "- workflows/issuesmith/**"
+    assert ctx["has_host_changes"] == "true"
+    assert ctx["host_allow_paths"] == "- workflows/issuesmith/**"
 
 
 # ===========================================================================
@@ -506,21 +518,21 @@ def test_worktree_path_no_tools_issuesmith():
     assert "tools/issuesmith" not in ctx["worktree_path"]
 
 
-def test_diary_worktree_path_is_absolute():
-    """diary_worktree_path is an absolute path (in dual mode)."""
+def test_host_worktree_path_is_absolute():
+    """host_worktree_path is an absolute path (in dual mode)."""
     import os
 
     body = textwrap.dedent("""\
         ```yaml
         target_repo: sumipan/ghdag
-        diary_allow_paths:
+        host_allow_paths:
           - notes/**
         ```
     """)
     ctx = build_context(42, body=body)
-    assert ctx["has_diary_changes"] == "true"
-    assert os.path.isabs(ctx["diary_worktree_path"])
-    assert ctx["diary_worktree_path"].endswith(f"/.claude/worktrees/{ctx['pipeline_id']}-host")
+    assert ctx["has_host_changes"] == "true"
+    assert os.path.isabs(ctx["host_worktree_path"])
+    assert ctx["host_worktree_path"].endswith(f"/.claude/worktrees/{ctx['pipeline_id']}-host")
 
 
 def test_build_context_with_metadata():
@@ -646,7 +658,7 @@ def test_build_context_all_values_are_strings():
 
 
 def test_build_context_output_keys():
-    """All expected keys are present (stash_file_rel/diary_branch removed)."""
+    """All expected keys are present (stash_file_rel/diary_branch/legacy companion keys removed)."""
     ctx = build_context(42, body="# Title")
     expected_keys = {
         "pipeline_id",
@@ -664,9 +676,6 @@ def test_build_context_output_keys():
         "has_host_changes",
         "host_worktree_path",
         "host_allow_paths",
-        "has_diary_changes",
-        "diary_worktree_path",
-        "diary_allow_paths",
         "targets_json",
         "previous_commits",
         "reuse_source",
@@ -680,9 +689,9 @@ def test_stash_file_rel_not_in_output():
     assert "stash_file_rel" not in ctx
 
 
-def test_diary_keys_not_in_output():
-    """diary_branch is removed and absent from the output dict.
-    With target_repo set and diary_allow_paths unset, has_diary_changes == 'false' and diary_worktree_path is empty.
+def test_legacy_keys_not_in_output():
+    """diary_branch and the legacy companion keys are absent from the output dict (#5065).
+    With target_repo set and host_allow_paths unset, has_host_changes == 'false'.
     """
     body = textwrap.dedent("""\
         ```yaml
@@ -691,8 +700,10 @@ def test_diary_keys_not_in_output():
     """)
     ctx = build_context(42, body=body)
     assert "diary_branch" not in ctx
-    assert ctx.get("has_diary_changes") == "false"
-    assert ctx.get("diary_worktree_path") == ""
+    for key in _LEGACY_CONTEXT_KEYS:
+        assert key not in ctx
+    assert ctx["has_host_changes"] == "false"
+    assert ctx["host_worktree_path"] == ""
 
 
 def test_no_local_file_created(tmp_path, monkeypatch):

@@ -348,10 +348,7 @@ class StepContext:
     branch: str = ""
     target_repo: str = ""
     allow_paths: str = ""
-    diary_worktree_path: str = ""
-    has_diary_changes: str = ""
     pipeline_id: str = ""
-    diary_allow_paths: str = ""
     host_worktree_path: str = ""
     has_host_changes: str = ""
     host_allow_paths: str = ""
@@ -362,19 +359,6 @@ class StepContext:
     execution_constraints: str = ""
     repair_violations: str = ""
     repair_step_origin: str = ""
-
-    def __post_init__(self) -> None:
-        for new_attr, old_attr in (
-            ("host_worktree_path", "diary_worktree_path"),
-            ("has_host_changes", "has_diary_changes"),
-            ("host_allow_paths", "diary_allow_paths"),
-        ):
-            new_val = getattr(self, new_attr)
-            old_val = getattr(self, old_attr)
-            if new_val and not old_val:
-                object.__setattr__(self, old_attr, new_val)
-            elif old_val and not new_val:
-                object.__setattr__(self, new_attr, old_val)
 
 
 @dataclass

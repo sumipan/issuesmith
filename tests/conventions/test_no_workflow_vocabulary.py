@@ -85,3 +85,33 @@ def test_vocabulary_gate_matches_ledger():
 def test_vocabulary_free_paths_have_zero_hits(rel: str):
     path = REPO_ROOT / rel
     assert _count_hits(path) == 0, f"{rel} must not contain workflow vocabulary literals"
+
+
+# #5065: unlike the ledger above (shrinks over time), this keeps the count at zero.
+_DIARY = re.compile("diary", re.IGNORECASE)
+
+
+def _diary_hits(root: Path) -> list[str]:
+    hits: list[str] = []
+    for path in sorted(p for p in root.rglob("*") if p.is_file()):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            if _DIARY.search(line):
+                hits.append(f"{path.relative_to(root.parent.parent)}:{lineno}")
+    return hits
+
+
+def test_src_has_no_diary_word():
+    hits = _diary_hits(REPO_ROOT / "src/issuesmith")
+    assert not hits, "src/issuesmith must not mention 'diary':\n" + "\n".join(hits)
+
+
+def test_diary_hits_reports_path_and_line(tmp_path: Path):
+    pkg = tmp_path / "src/issuesmith"
+    pkg.mkdir(parents=True)
+    (pkg / "mod.py").write_text("x = 1\n# legacy Diary note\n", encoding="utf-8")
+    (pkg / "data.yaml").write_text("diary: true\n", encoding="utf-8")
+    assert _diary_hits(pkg) == ["src/issuesmith/data.yaml:1", "src/issuesmith/mod.py:2"]

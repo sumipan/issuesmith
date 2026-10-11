@@ -160,7 +160,7 @@ def test_build_child_body_writes_host_allow_paths_only() -> None:
         "```yaml\n"
         "target_repo: sumipan/ghdag\n"
         "base_branch: main\n"
-        "diary_allow_paths:\n"
+        "host_allow_paths:\n"
         '  - "notes/a.md"\n'
         "```\n\n"
         "## Design\n\nparent\n"
@@ -177,6 +177,30 @@ def test_build_child_body_writes_host_allow_paths_only() -> None:
     assert "host_allow_paths:" in child
     assert "diary_allow_paths:" not in child
     assert "notes/a.md" in child
+
+
+def test_build_child_body_ignores_legacy_companion_key() -> None:
+    """#5065: a parent with only the removed legacy key yields no companion key."""
+    parent_body = (
+        "```yaml\n"
+        "target_repo: sumipan/ghdag\n"
+        "base_branch: main\n"
+        "diary_allow_paths:\n"
+        '  - "notes/a.md"\n'
+        "```\n\n"
+        "## Design\n\nparent\n"
+    )
+    row = PlanRow(row_num=1, title="c", repo="sumipan/ghdag", scope="s", dep_raw="None")
+    child = build_child_body(
+        parent_body=parent_body,
+        parent_number=1,
+        row=row,
+        resolved_dep="None",
+        client=MagicMock(),
+        parent_labels=[],
+    )
+    assert "host_allow_paths:" not in child
+    assert "diary_allow_paths:" not in child
 
 
 def test_milestone_public_api_exports_sub1_helpers() -> None:

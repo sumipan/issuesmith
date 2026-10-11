@@ -1423,7 +1423,7 @@ def build_child_body(
         yaml_lines.append("allow_paths:")
         for path in allow_paths:
             yaml_lines.append(f'  - "{path}"')
-    host_allow = parent_meta.get("host_allow_paths") or parent_meta.get("diary_allow_paths")
+    host_allow = parent_meta.get("host_allow_paths")
     if isinstance(host_allow, list) and host_allow:
         yaml_lines.append("host_allow_paths:")
         for path in host_allow:
