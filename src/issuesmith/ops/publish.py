@@ -106,9 +106,14 @@ def _matches_allow_paths(path: str, allow_paths: list[str]) -> bool:
     return any(fnmatch.fnmatch(path, pattern) for pattern in allow_paths)
 
 
-def _dirty_paths(worktree: Path) -> list[str]:
+def _dirty_entries(worktree: Path) -> list[tuple[str, str]]:
+    """Return (xy, path) for each `git status --porcelain` line (blank lines skipped)."""
     out = _run_git(worktree, "status", "--porcelain").stdout
-    return [_parse_porcelain_path(line) for line in out.splitlines() if line.strip()]
+    return [(line[:2], _parse_porcelain_path(line)) for line in out.splitlines() if line.strip()]
+
+
+def _dirty_paths(worktree: Path) -> list[str]:
+    return [path for _, path in _dirty_entries(worktree)]
 
 
 def _report_excluded(excluded: list[str]) -> None:
@@ -145,7 +150,8 @@ def _commit_if_needed(
     issue_number: int,
     allow_paths: list[str] | None = None,
 ) -> None:
-    dirty = _dirty_paths(worktree)
+    entries = _dirty_entries(worktree)
+    dirty = [path for _, path in entries]
     if not dirty:
         return
 
@@ -166,7 +172,13 @@ def _commit_if_needed(
     _report_excluded(excluded)
     if not candidates:
         return
-    _run_git(worktree, "add", "--", *candidates)
+    # A blank Y column means the change is fully staged (e.g. `git rm` -> "D "). The path may
+    # exist in neither the worktree nor the index, so `git add` would fail with rc=128 (#5207);
+    # commit picks it up from the index anyway.
+    xy_of = {path: xy for xy, path in entries}
+    to_add = [path for path in candidates if xy_of[path][1] != " "]
+    if to_add:
+        _run_git(worktree, "add", "--", *to_add)
     _run_git(worktree, "commit", "-m", f"Implement Issue #{issue_number}")
 
 
