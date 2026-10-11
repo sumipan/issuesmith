@@ -115,10 +115,35 @@ def test_engine_show_two_roles_without_design(monkeypatch, capsys) -> None:
     assert "review\t" in out
 
 
-def test_engine_show_subprocess_includes_state_source(tmp_path: Path) -> None:
+def test_engine_show_subprocess_uses_only_explicit_config_roles(tmp_path: Path) -> None:
     cfg_path = tmp_path / "issuesmith-cli.yaml"
+    legacy_path = tmp_path / ".issuesmith-engine"
+    _write_legacy_state(legacy_path)
     cfg_path.write_text(
-        yaml.safe_dump({"repo": "example/cli", "phases": [{"name": "draft", "role": "design", "entry_step": "b1", "handler": "brushup"}]}),
+        yaml.safe_dump(
+            {
+                "repo": "example/cli",
+                "paths": {"engine_state": ".pipeline-state/missing-engine.yml"},
+                "engines": {
+                    "implementation": {
+                        "allowed": ["claude"],
+                        "default_model": {"claude": "claude-sonnet-4-6"},
+                    },
+                    "review": {
+                        "allowed": ["claude"],
+                        "default_model": {"claude": "claude-opus-4-6"},
+                    },
+                },
+                "phases": [
+                    {
+                        "name": "develop",
+                        "role": "implementation",
+                        "entry_step": "p1",
+                        "handler": "develop",
+                    }
+                ],
+            }
+        ),
         encoding="utf-8",
     )
     env = {
@@ -135,4 +160,8 @@ def test_engine_show_subprocess_includes_state_source(tmp_path: Path) -> None:
         check=False,
     )
     assert proc.returncode == 0, proc.stderr
-    assert proc.stdout.startswith("state_source\t")
+    assert proc.stdout.splitlines() == [
+        "state_source\tdefault",
+        "implementation\tclaude\tclaude-sonnet-4-6",
+        "review\tclaude\tclaude-opus-4-6",
+    ]

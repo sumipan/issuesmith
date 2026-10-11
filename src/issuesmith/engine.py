@@ -45,6 +45,41 @@ from issuesmith.config import get_config
 from issuesmith.template_ids import template_identifiers
 
 
+def _active_config_path() -> Path | None:
+    """Resolved issuesmith.yaml path (mirrors ``config.load_config`` discovery)."""
+    env = os.environ.get("ISSUESMITH_CONFIG", "").strip()
+    if env:
+        p = Path(env)
+        return p if p.is_file() else None
+    cur = Path.cwd().resolve()
+    for candidate in (cur, *cur.parents):
+        p = candidate / "issuesmith.yaml"
+        if p.is_file():
+            return p
+    fallback = Path(__file__).resolve().parents[2] / "issuesmith.yaml"
+    return fallback if fallback.is_file() else None
+
+
+def _active_config_data() -> dict[str, Any]:
+    resolved = _active_config_path()
+    if resolved is None:
+        return {}
+    yaml = YAML(typ="safe")
+    with resolved.open(encoding="utf-8") as stream:
+        data = yaml.load(stream)
+    return data if isinstance(data, dict) else {}
+
+
+def _configured_engine_roles() -> frozenset[str] | None:
+    """Return explicitly configured roles, or None for package defaults."""
+    engines = _active_config_data().get("engines")
+    if not isinstance(engines, dict) or not engines:
+        return None
+    return frozenset(
+        str(role) for role, value in engines.items() if isinstance(value, dict)
+    )
+
+
 class RetryReason(str, enum.Enum):
     """Reason carried by RetrySignal to classify the deferred retry cause."""
     QUOTA_PAUSED = "QUOTA_PAUSED"
@@ -79,6 +114,7 @@ class RetrySignal(RuntimeError):
 
 
 _cfg = get_config()
+_configured_roles = _configured_engine_roles()
 REPO_ROOT = _cfg.root
 WORKFLOW_FILE = _cfg.paths.workflow
 STATE_FILE = _cfg.paths.engine_state
@@ -100,11 +136,13 @@ _DEFAULT_CAPABILITIES = LLMCapabilities()
 
 ROLE_ENGINES: dict[str, frozenset[str]] = {
     role: frozenset(role_cfg.allowed) for role, role_cfg in _cfg.engines.items()
+    if _configured_roles is None or role in _configured_roles
 }
 
 DEFAULT_MODELS: dict[tuple[str, str], str] = {
     (role, engine): model
     for role, role_cfg in _cfg.engines.items()
+    if _configured_roles is None or role in _configured_roles
     for engine, model in role_cfg.default_model.items()
 }
 
@@ -114,6 +152,7 @@ DEFAULT_MODELS: dict[tuple[str, str], str] = {
 DEFAULT_LIGHT_MODELS: dict[tuple[str, str], str] = {
     (role, engine): model
     for role, role_cfg in _cfg.engines.items()
+    if _configured_roles is None or role in _configured_roles
     for engine, model in role_cfg.light_model.items()
 }
 
@@ -123,11 +162,15 @@ IMPLEMENTATION_STEP_IDS = frozenset({"p1", "p3", "m2", "mg1", "sub1"})
 
 # Guard against runaway agent sessions: 3-5x the observed wall time (a few hundred seconds).
 DEFAULT_TIMEOUTS: dict[str, float] = {
-    role: float(role_cfg.timeout_sec) for role, role_cfg in _cfg.engines.items()
+    role: float(role_cfg.timeout_sec)
+    for role, role_cfg in _cfg.engines.items()
+    if _configured_roles is None or role in _configured_roles
 }
 # Rate-limit pause lifetime per role; written as resume_at so the pause auto-releases.
 DEFAULT_PAUSE_TTL_SEC: dict[str, int] = {
-    role: role_cfg.pause_ttl_sec for role, role_cfg in _cfg.engines.items()
+    role: role_cfg.pause_ttl_sec
+    for role, role_cfg in _cfg.engines.items()
+    if _configured_roles is None or role in _configured_roles
 }
 TIMEOUT_ENV_VAR = "ISSUESMITH_TIMEOUT_SEC"
 
@@ -223,31 +266,9 @@ def _default_state() -> dict[str, dict[str, str]]:
     return result
 
 
-def _active_config_path() -> Path | None:
-    """Resolved issuesmith.yaml path (mirrors ``config.load_config`` discovery)."""
-    env = os.environ.get("ISSUESMITH_CONFIG", "").strip()
-    if env:
-        p = Path(env)
-        return p if p.is_file() else None
-    cur = Path.cwd().resolve()
-    for candidate in (cur, *cur.parents):
-        p = candidate / "issuesmith.yaml"
-        if p.is_file():
-            return p
-    fallback = Path(__file__).resolve().parents[2] / "issuesmith.yaml"
-    return fallback if fallback.is_file() else None
-
-
 def _engine_state_path_explicit() -> bool:
     """True when the active config file sets paths.engine_state (not the implicit default)."""
-    resolved = _active_config_path()
-    if resolved is None:
-        return False
-    yaml = _yaml_loader()
-    with resolved.open(encoding="utf-8") as stream:
-        data = yaml.load(stream)
-    if not isinstance(data, dict):
-        return False
+    data = _active_config_data()
     paths = data.get("paths")
     if not isinstance(paths, dict):
         return False
