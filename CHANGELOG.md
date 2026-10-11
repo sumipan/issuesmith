@@ -7,6 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Fixed
+
+- `publish` no longer fails with `git add` rc=128 (`pathspec ... did not match any files`) when
+  an allow_paths candidate is already fully staged (e.g. a `git rm` deletion, porcelain `D `).
+  Paths whose porcelain Y column is blank are left out of `git add` and committed from the
+  index as-is (#5207).
+
 ## 0.151.4 - 2026-10-10
 
 ### Added
