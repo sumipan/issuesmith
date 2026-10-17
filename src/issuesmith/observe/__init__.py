@@ -39,6 +39,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_ISSUESMITH_IDEMPOTENCY_PREFIX = "issuesmith:"
 _ISSUE_FIELDS = ["labels", "number", "state"]
 
 
@@ -309,7 +310,10 @@ def _workflow_key_prefixes(config: "IssuesmithConfig") -> set[str]:
 
 
 def _workflow_name_from_key(idempotency_key: str, prefixes: set[str]) -> str | None:
-    head = idempotency_key.split(":", 1)[0]
+    if idempotency_key.startswith(_ISSUESMITH_IDEMPOTENCY_PREFIX):
+        head = _ISSUESMITH_IDEMPOTENCY_PREFIX.rstrip(":")
+    else:
+        head = idempotency_key.split(":", 1)[0]
     return head if head in prefixes else None
 
 
