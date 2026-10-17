@@ -334,6 +334,7 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/gates/worktree.py` | `lint`, `tests`, `external_leak`, `base_freshness` and `importer_import` gates |
 | `issuesmith/github_api.py` | `gh` command: Issue / PR helpers with label and target guards |
 | `issuesmith/lanes.py` | Lane ledger planning: capacity, candidates, enqueue and patrol report |
+| `issuesmith/lang/en.yaml` | English messages for `context_hook` metadata validation |
 | `issuesmith/language.py` | Language packs |
 | `issuesmith/m2_gate.py` | M2 acceptance-criteria gate entry point |
 | `issuesmith/merge.py` | PR merge and verification helpers |
