@@ -502,11 +502,13 @@ def answer_if_open(
         return
 
     cfg_ns = _ns()
-    use_external = namespace is not None and namespace != "" and namespace != cfg_ns
+    external_namespace = (
+        namespace if namespace is not None and namespace != "" and namespace != cfg_ns else None
+    )
 
     target: Andon | None = None
-    if use_external:
-        target = _find_andon_in_namespace(client, andon_id, namespace)
+    if external_namespace is not None:
+        target = _find_andon_in_namespace(client, andon_id, external_namespace)
     else:
         for issue in _iter_open_andon_issues(client):
             for comment in client.get_issue_comments(issue["number"]):
@@ -523,8 +525,11 @@ def answer_if_open(
 
     reply = _answer_comment(andon_id, action)
     client.issue_comment(target.issue, reply)
-    if use_external:
-        client.issue_update(target.issue, labels_remove=[f"{namespace}:andon-{target.kind}"])
+    if external_namespace is not None:
+        client.issue_update(
+            target.issue,
+            labels_remove=[f"{external_namespace}:andon-{target.kind}"],
+        )
     else:
         project_issue(client, target.issue, _without_andon(target.kind))
 
