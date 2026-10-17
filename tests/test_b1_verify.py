@@ -125,6 +125,28 @@ def test_pin_bump_gate_is_registered():
     assert "pin_bump" in _GATES
 
 
+def test_allow_paths_forbidden_gate_is_registered():
+    assert "allow_paths_forbidden" in _GATES
+
+
+def test_allow_paths_forbidden_collected_on_overlap():
+    from unittest import mock
+
+    body = (
+        _VALID_BODY.replace('  - "**"', '  - "Procfile"')
+        .replace("scope_gate:\n  enabled: false\n", "")
+    )
+    cfg = mock.MagicMock()
+    cfg.forbidden_pr_paths = ["Procfile"]
+    cfg.forbidden_pr_paths_except = []
+    with mock.patch(
+        "issuesmith.gate_rules.allow_paths_forbidden.get_config",
+        return_value=cfg,
+    ):
+        violations = collect_violations(body, [])
+    assert any(v.rule_id == "allow_paths_forbidden.overlap" for v in violations)
+
+
 def test_pin_bump_collected_for_feature_pin_change(tmp_path, monkeypatch):
     import yaml
 

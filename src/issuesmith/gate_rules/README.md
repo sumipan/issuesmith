@@ -117,6 +117,17 @@ Every forbidden-word violation is `auto_fixable: true` (fixed automatically in t
 
 Returns an empty list when the section exists and has zero unchecked checkboxes.
 
+### allow_paths_forbidden — allow_paths vs forbidden_pr_paths overlap
+
+Runs before LLM when the host registers this gate on P0. Compares Issue YAML
+`allow_paths` and `host_allow_paths` against host config `forbidden_pr_paths`
+(same normalization and fixture / `forbidden_pr_paths_except` skips as P3
+`pr_scope`). Skipped when `scope_gate:` is present in the Issue YAML.
+
+| rule_id | Condition | severity |
+|---------|-----------|----------|
+| `allow_paths_forbidden.overlap` | A normalized allow path overlaps a forbidden pattern (`fnmatch` either way) | `fail` |
+
 ## gate-preflight CLI
 
 The CLI itself moved to `ghdag.workflow.gates.__main__`. `python -m issuesmith gate-preflight` is a thin entry point that imports issuesmith.gate_rules to register the rules and then delegates to the ghdag CLI; it runs a single gate against any Issue body file.
