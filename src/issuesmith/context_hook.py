@@ -20,6 +20,7 @@ Output (JSON):
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import re
@@ -40,6 +41,33 @@ _PIPELINE_BRANCH_RE = re.compile(
     r"<!--\s*pipeline-branch:\s*feat/issue-(\d+)-([a-f0-9]+)\s*-->",
     re.IGNORECASE,
 )
+
+_BASE_BRANCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")
+_ALLOW_PATH_ELEMENT_RE = re.compile(r"^[A-Za-z0-9_./*\[\]!\-]+$")
+_SOURCE_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
+
+_LANG_EN = Path(__file__).resolve().parent / "lang" / "en.yaml"
+
+
+class ContextHookError(ValueError):
+    """Issue YAML metadata failed security validation before template expansion."""
+
+
+@functools.lru_cache
+def _context_hook_messages() -> dict[str, str]:
+    try:
+        raw = yaml.safe_load(_LANG_EN.read_text(encoding="utf-8")) or {}
+    except OSError as exc:
+        raise ContextHookError(f"cannot read language pack {_LANG_EN}: {exc}") from exc
+    messages = raw.get("messages", raw)
+    if not isinstance(messages, dict):
+        raise ContextHookError(f"invalid language pack {_LANG_EN}: messages must be a mapping")
+    return {str(k): str(v) for k, v in messages.items()}
+
+
+def _hook_message(key: str, /, **kwargs: object) -> str:
+    template = _context_hook_messages()[key]
+    return template.format(**kwargs)
 
 _cfg = get_config()
 SUPPORTED_REPOS: set[str] = set(_cfg.supported_repos)
@@ -75,13 +103,144 @@ class MetadataViolation:
     message: str
 
 
-def validate_issue_metadata(metadata: dict) -> list[MetadataViolation]:
+def _validate_base_branch(value: object) -> MetadataViolation | None:
+    text = str(value) if value is not None else "main"
+    if ".." in text:
+        reason = "must not contain '..'"
+    elif not _BASE_BRANCH_RE.fullmatch(text):
+        reason = (
+            "must start with a letter or digit, be at most 200 characters,"
+            " and contain only letters, digits, and . _ / -"
+        )
+    else:
+        return None
+    return MetadataViolation(
+        field="base_branch",
+        code="invalid_base_branch",
+        message=_hook_message(
+            "context_hook.invalid_base_branch",
+            value=text,
+            reason=reason,
+        ),
+    )
+
+
+def _validate_source(value: object) -> MetadataViolation | None:
+    if value is None or value == "":
+        return None
+    text = str(value)
+    if _SOURCE_RE.fullmatch(text):
+        return None
+    return MetadataViolation(
+        field="source",
+        code="invalid_source",
+        message=_hook_message("context_hook.invalid_source", value=text),
+    )
+
+
+def _validate_allow_path_element(index: int, path: object) -> MetadataViolation | None:
+    text = str(path)
+    if "(" in text and ")" in text:
+        return MetadataViolation(
+            field=f"allow_paths[{index}]",
+            code="annotation_in_path",
+            message=f"allow_paths[{index}] contains a parenthesized annotation: {text!r}",
+        )
+    if text.startswith("/var/tmp/"):
+        return MetadataViolation(
+            field=f"allow_paths[{index}]",
+            code="invalid_path_format",
+            message=(
+                f"allow_paths[{index}] starts with /var/tmp/"
+                " (install directories are not allowed)"
+            ),
+        )
+    if not _ALLOW_PATH_ELEMENT_RE.fullmatch(text):
+        return MetadataViolation(
+            field=f"allow_paths[{index}]",
+            code="invalid_allow_path",
+            message=_hook_message(
+                "context_hook.invalid_allow_path",
+                index=index,
+                value=text,
+                reason=(
+                    "must contain only letters, digits, and _ . / * [ ] ! -"
+                    " (no spaces, quotes, or shell metacharacters)"
+                ),
+            ),
+        )
+    return None
+
+
+def _allow_paths_list(metadata: dict) -> list:
+    allow_paths_raw = metadata.get("allow_paths", [])
+    if isinstance(allow_paths_raw, str):
+        return [allow_paths_raw]
+    if isinstance(allow_paths_raw, list):
+        return allow_paths_raw
+    return []
+
+
+def validate_context_hook_security(
+    metadata: dict,
+    *,
+    enforce_empty_allow_paths: bool = True,
+) -> list[MetadataViolation]:
+    """Regex / injection checks for fields expanded into shell templates (#5369)."""
+    violations: list[MetadataViolation] = []
+
+    bb_v = _validate_base_branch(metadata.get("base_branch", "main"))
+    if bb_v:
+        violations.append(bb_v)
+
+    src_v = _validate_source(metadata.get("source"))
+    if src_v:
+        violations.append(src_v)
+
+    allow_paths_raw = _allow_paths_list(metadata)
+    target_repo = metadata.get("target_repo")
+    from ghdag.github_client import DEFAULT_REPO
+
+    issue_repo = str(metadata.get("issue_repo", DEFAULT_REPO))
+    cross_repo_target = bool(
+        target_repo
+        and target_repo in SUPPORTED_REPOS
+        and target_repo != issue_repo
+    )
+    if (
+        enforce_empty_allow_paths
+        and cross_repo_target
+        and not allow_paths_raw
+        and "scope_gate" not in metadata
+    ):
+        violations.append(MetadataViolation(
+            field="allow_paths",
+            code="empty_allow_paths",
+            message=_hook_message("context_hook.empty_allow_paths"),
+        ))
+
+    for i, path in enumerate(allow_paths_raw):
+        el_v = _validate_allow_path_element(i, path)
+        if el_v:
+            violations.append(el_v)
+
+    return violations
+
+
+def validate_issue_metadata(
+    metadata: dict,
+    *,
+    enforce_empty_allow_paths: bool = True,
+) -> list[MetadataViolation]:
     """Semantic validation of already-parsed YAML metadata.
 
     Kept separate from parse_issue_metadata() and called after the syntax parse,
     so the existing ValueError catch path of build_context() stays intact.
     """
-    violations: list[MetadataViolation] = []
+    violations = validate_context_hook_security(
+        metadata,
+        enforce_empty_allow_paths=enforce_empty_allow_paths,
+    )
 
     target_repo = metadata.get("target_repo", None)
     if not target_repo:
@@ -100,27 +259,16 @@ def validate_issue_metadata(metadata: dict) -> list[MetadataViolation]:
             ),
         ))
 
-    allow_paths_raw = metadata.get("allow_paths", [])
-    if isinstance(allow_paths_raw, str):
-        allow_paths_raw = [allow_paths_raw]
-    for i, path in enumerate(allow_paths_raw):
-        if str(path).startswith("/var/tmp/"):
-            violations.append(MetadataViolation(
-                field=f"allow_paths[{i}]",
-                code="invalid_path_format",
-                message=(
-                    f"allow_paths[{i}] starts with /var/tmp/"
-                    " (install directories are not allowed)"
-                ),
-            ))
-        elif "(" in str(path) and ")" in str(path):
-            violations.append(MetadataViolation(
-                field=f"allow_paths[{i}]",
-                code="annotation_in_path",
-                message=f"allow_paths[{i}] contains a parenthesized annotation: {path!r}",
-            ))
-
     return violations
+
+
+def raise_metadata_violations(
+    violations: list[MetadataViolation],
+    *,
+    error_type: type[Exception] = ContextHookError,
+) -> None:
+    if violations:
+        raise error_type(violations[0].message)
 
 
 def parse_issue_metadata(body: str) -> dict:
@@ -200,10 +348,71 @@ def _fetch_issue_body_from_api(issue_number: int) -> str | None:
 _fetch_issue_body_from_gh = _fetch_issue_body_from_api
 
 
-def _pipeline_id_from_comments(issue_number: int, comments: list[dict]) -> str | None:
+def _comment_author_login(comment: dict) -> str:
+    author = comment.get("author") if isinstance(comment, dict) else None
+    if isinstance(author, str):
+        # ghdag GitHubClient.get_issue_comments() flattens author to a login string
+        return author
+    if isinstance(author, dict):
+        login = author.get("login")
+        return str(login) if login else ""
+    user = comment.get("user") if isinstance(comment, dict) else None
+    if isinstance(user, dict):
+        login = user.get("login")
+        return str(login) if login else ""
+    return ""
+
+
+def _fetch_issue_author_login(issue_number: int, issue_repo: str) -> str | None:
+    try:
+        from ghdag.forge import get_forge
+
+        data = get_forge(repo=issue_repo).issue_get(issue_number, fields=["user"])
+        user = data.get("user")
+        if isinstance(user, dict):
+            login = user.get("login")
+            return str(login) if login else None
+    except Exception:
+        return None
+    return None
+
+
+def _github_token_login() -> str | None:
+    try:
+        from ghdag.forge import get_forge
+
+        from issuesmith.forge_api import api_request
+
+        data = api_request(get_forge(), "/user")
+        if isinstance(data, dict):
+            login = data.get("login")
+            return str(login) if login else None
+    except Exception:
+        return None
+    return None
+
+
+def _pipeline_id_from_comments(
+    issue_number: int,
+    comments: list[dict],
+    *,
+    issue_author_login: str | None,
+    token_login: str | None,
+    enforce_author: bool,
+) -> str | None:
     """Restore pipeline_id from pipeline-branch comments. The last match wins."""
+    trusted: set[str] = set()
+    if issue_author_login:
+        trusted.add(issue_author_login)
+    if token_login:
+        trusted.add(token_login)
+
     found: str | None = None
     for comment in comments:
+        if enforce_author and trusted:
+            login = _comment_author_login(comment)
+            if login not in trusted:
+                continue
         body = comment.get("body", "") if isinstance(comment, dict) else ""
         for match in _PIPELINE_BRANCH_RE.finditer(body):
             num = int(match.group(1))
@@ -247,6 +456,8 @@ def build_context(
     Returns:
         context dict injected into ghdag (all values are str)
     """
+    caller_supplied_body = body is not None
+
     if body is None and queue_dir is not None:
         import pathlib
         design_file = pathlib.Path(queue_dir) / f"issue-{issue_number}-design.md"
@@ -266,14 +477,24 @@ def build_context(
 
     # Extract the YAML metadata
     metadata: dict = {}
+    metadata_parsed = False
     if body:
         try:
             metadata = parse_issue_metadata(body)
+            metadata_parsed = True
         except (ValueError, Exception) as exc:
             logging.warning("Issue #%s: YAML metadata parse failed: %s", issue_number, exc)
             metadata = {}
 
     from ghdag.github_client import DEFAULT_REPO
+
+    if metadata_parsed:
+        raise_metadata_violations(
+            validate_context_hook_security(
+                metadata,
+                enforce_empty_allow_paths=not caller_supplied_body,
+            )
+        )
 
     issue_repo = str(metadata.get("issue_repo", DEFAULT_REPO))
     base_branch = str(metadata.get("base_branch", "main"))
@@ -306,7 +527,17 @@ def build_context(
 
     # pipeline_id: 1) restore from pipeline-branch comment 2) reuse a branch 3) new uuid
     comments = _fetch_issue_comments_from_api(issue_number, issue_repo)
-    restored_pipeline_id = _pipeline_id_from_comments(issue_number, comments)
+    issue_author_login = (
+        None if caller_supplied_body else _fetch_issue_author_login(issue_number, issue_repo)
+    )
+    token_login = None if caller_supplied_body else _github_token_login()
+    restored_pipeline_id = _pipeline_id_from_comments(
+        issue_number,
+        comments,
+        issue_author_login=issue_author_login,
+        token_login=token_login,
+        enforce_author=not caller_supplied_body,
+    )
     if restored_pipeline_id:
         pipeline_id = restored_pipeline_id
         previous_commits_str = ""
@@ -434,7 +665,12 @@ def main() -> None:
         )
         sys.exit(1)
 
-    context = build_context(issue_number)
+    try:
+        context = build_context(issue_number)
+    except ContextHookError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
     print(json.dumps(context, ensure_ascii=False))
 
 
