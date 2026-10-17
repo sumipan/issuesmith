@@ -350,6 +350,9 @@ _fetch_issue_body_from_gh = _fetch_issue_body_from_api
 
 def _comment_author_login(comment: dict) -> str:
     author = comment.get("author") if isinstance(comment, dict) else None
+    if isinstance(author, str):
+        # ghdag GitHubClient.get_issue_comments() flattens author to a login string
+        return author
     if isinstance(author, dict):
         login = author.get("login")
         return str(login) if login else ""

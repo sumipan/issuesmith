@@ -91,6 +91,8 @@ def test_base_branch_shell_injection_rejected():
     ):
         with pytest.raises(ContextHookError):
             build_context(1)
+
+
 def test_allow_paths_command_substitution_rejected():
     meta = _metadata(allow_paths=["src/$(id)/**"])
     violations = validate_issue_metadata(meta)
@@ -185,6 +187,30 @@ def test_pipeline_branch_accepted_for_issue_author():
     ):
         ctx = build_context(42)
     assert ctx["pipeline_id"] == "issue-42-deadbeef"
+
+
+def test_pipeline_branch_author_as_login_string():
+    """get_issue_comments() returns author as a plain login string."""
+    trusted = [
+        {"body": "<!-- pipeline-branch: feat/issue-42-deadbeef -->", "author": "token-bot"}
+    ]
+    untrusted = [
+        {"body": "<!-- pipeline-branch: feat/issue-42-deadbeef -->", "author": "random-user"}
+    ]
+    with patch(
+        "issuesmith.context_hook._fetch_issue_body_from_gh", return_value="# Title\n"
+    ), patch(
+        "issuesmith.context_hook._fetch_issue_author_login",
+        return_value="issue-owner",
+    ), patch(
+        "issuesmith.context_hook._github_token_login",
+        return_value="token-bot",
+    ), patch(
+        "issuesmith.context_hook._fetch_issue_comments_from_api",
+        side_effect=[trusted, untrusted],
+    ):
+        assert build_context(42)["pipeline_id"] == "issue-42-deadbeef"
+        assert build_context(42)["pipeline_id"] != "issue-42-deadbeef"
 
 
 @pytest.mark.parametrize(
