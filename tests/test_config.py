@@ -400,6 +400,7 @@ def test_scope_size_defaults_when_section_absent(tmp_path, monkeypatch):
     assert cfg.scope_size.max_concerns == 4
     assert cfg.scope_size.max_slices == 3
     assert cfg.scope_size.delete_with_new is False
+    assert cfg.scope_size.atomic_phrases == ()
     assert cfg.scope_size.exclude_prefixes == (
         "tests/", "docs/", "README.md", "CHANGELOG.md", "pyproject.toml",
     )
@@ -483,6 +484,59 @@ def test_scope_size_overrides(tmp_path, monkeypatch):
 def test_scope_size_invalid_values_raise(tmp_path, monkeypatch, section):
     with pytest.raises(ConfigError, match="scope_size"):
         _load_with(tmp_path, monkeypatch, {"scope_size": section})
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"atomic_phrases": "one"},
+        {"atomic_phrases": [""]},
+        {"atomic_phrases": ["   "]},
+        {"atomic_phrases": [1]},
+    ],
+)
+def test_scope_size_atomic_phrases_rejects_invalid(tmp_path, monkeypatch, bad):
+    from issuesmith.config import ConfigError
+
+    with pytest.raises(ConfigError, match="atomic_phrases"):
+        _load_with(tmp_path, monkeypatch, {"scope_size": bad})
+
+
+def test_scope_size_atomic_phrases_loaded(tmp_path, monkeypatch):
+    cfg = _load_with(
+        tmp_path,
+        monkeypatch,
+        {"scope_size": {"atomic_phrases": ["a", "b"]}},
+    )
+    assert cfg.scope_size.atomic_phrases == ("a", "b")
+
+
+def test_config_show_includes_scope_size_atomic_phrases(tmp_path, monkeypatch, capsys):
+    import json
+
+    from issuesmith.cli import main
+
+    _load_with(
+        tmp_path,
+        monkeypatch,
+        {
+            "repo": "example/app",
+            "phases": [
+                {
+                    "name": "draft",
+                    "role": "design",
+                    "entry_step": "b1",
+                    "handler": "brushup",
+                }
+            ],
+            "scope_size": {"atomic_phrases": ["land as one PR"]},
+        },
+    )
+    with pytest.raises(SystemExit) as exc:
+        main(["config", "show"])
+    assert exc.value.code == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["scope_size"]["atomic_phrases"] == ["land as one PR"]
 
 
 def test_scope_coupling_data_file_tests_loaded_from_yaml(tmp_path, monkeypatch):

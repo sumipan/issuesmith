@@ -10,6 +10,7 @@ never rewrites the body itself. Recovery promotes oversized Issues via
 
 from __future__ import annotations
 
+import logging
 import posixpath
 import re
 from dataclasses import dataclass
@@ -29,6 +30,8 @@ from issuesmith.gate_rules.b1_milestone_subdesign import (
     infer_sub_dependencies,
 )
 
+logger = logging.getLogger(__name__)
+
 _MILESTONE_LABEL = "scope:milestone"
 _REFERENCE_SUFFIXES = frozenset({".yaml", ".yml", ".toml", ".json", ".ini", ".cfg"})
 _DECLINED_HINT = (
@@ -43,13 +46,35 @@ _ATOMIC_HINT = (
 _Row = tuple[str, str, str, str]
 
 
-def is_atomic(body: str) -> bool:
-    """True when the leading Issue YAML declares ``split: atomic`` (exact string)."""
+def atomic_phrase(body: str, cfg: ScopeSizeConfig | None = None) -> str | None:
+    """First configured phrase found in the design section, or ``None``."""
+    scope_cfg = cfg or get_config().scope_size
+    if not scope_cfg.atomic_phrases:
+        return None
+    from issuesmith.body_editor import get_section
+
+    design = get_section(body, get_config().sections["design"])
+    if not design:
+        return None
+    for phrase in scope_cfg.atomic_phrases:
+        if phrase in design:
+            return phrase
+    return None
+
+
+def is_atomic(body: str, cfg: ScopeSizeConfig | None = None) -> bool:
+    """True for ``split: atomic`` or a design-section ``atomic_phrases`` match."""
     try:
         metadata = parse_issue_metadata(body)
     except (ValueError, yaml.YAMLError):
-        return False
-    return metadata.get("split") == "atomic"
+        metadata = {}
+    if metadata.get("split") == "atomic":
+        return True
+    phrase = atomic_phrase(body, cfg)
+    if phrase is not None:
+        logger.info("scope_size: design declares atomic (%r); not promoting", phrase)
+        return True
+    return False
 
 
 def _sub_header_prefix() -> str:
@@ -617,7 +642,8 @@ def promote_oversized_issue_body(body: str, cfg: ScopeSizeConfig | None = None) 
     must run :func:`issuesmith.gate_rules.milestone_consistency.fix_label_missing`
     (or use :func:`issuesmith.b1_verify.apply_deterministic_recovery`).
     """
-    if is_atomic(body):
+    cfg = cfg or get_config().scope_size
+    if is_atomic(body, cfg):
         return body
     from issuesmith.body_editor import (
         get_section,
@@ -625,8 +651,6 @@ def promote_oversized_issue_body(body: str, cfg: ScopeSizeConfig | None = None) 
         relocate_sub_plan,
     )
     from issuesmith.contract import SUB_HEADER_RE
-
-    cfg = cfg or get_config().scope_size
     sections = get_config().sections
     design_name = sections["design"]
     milestone_name = sections["milestone"]
@@ -712,7 +736,7 @@ class ScopeSizeRules:
         cfg = get_config().scope_size
         if not cfg.enabled:
             return []
-        if is_atomic(body):
+        if is_atomic(body, cfg):
             return []
         if not extract_change_table_rows(body):
             return []

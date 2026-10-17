@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Added
+
+- `scope_size.atomic_phrases`: when a configured phrase appears in the design
+  section, B1 scope-size promotion is skipped (same effect as `split: atomic` for
+  promotion; sumipan/nexus#5398).
+
 ## 0.155.0 - 2026-10-18
 
 ### Added

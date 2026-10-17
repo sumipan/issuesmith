@@ -830,3 +830,98 @@ def test_max_slices_override_allows_four_slices(tmp_path, monkeypatch):
     assert promotion_declined(body)
     _write_config(tmp_path, monkeypatch, {"scope_size": {"max_slices": 4}})
     assert not promotion_declined(body)
+
+
+# nexus #5398: design-section atomic_phrases skip promotion without split: atomic.
+
+_ATOMIC_PHRASE_JP = _decode("1 PR c3067_c540C_c6642")
+_MIGRATION_ORDER_JP = _decode(
+    "c79FB_c884C_c9806_c5E8F_: 1 PR "
+    "c3067_c540C_c6642_c306B_c5165_c308C_c308B_"
+)
+# 21 files across two concerns so promotion is not declined (max_slices is 3).
+_OVERSIZED_ROWS = [(f"src/a/f{i}.py", _MODIFY) for i in range(11)] + [
+    (f"src/b/f{i}.py", _MODIFY) for i in range(10)
+]
+
+
+def _oversized_body_with_design(design_text: str, *, background_text: str = "") -> str:
+    table = "".join(
+        f"| `sumipan/issuesmith` | `{p}` | {k} | x |\n" for p, k in _OVERSIZED_ROWS
+    )
+    parts = [
+        "```yaml\ntarget_repo: sumipan/issuesmith\nbase_branch: main\n```\n\n",
+    ]
+    if background_text:
+        parts.append(f"## Background\n\n{background_text}\n\n")
+    parts.append(f"## Design\n\n{design_text}\n\n")
+    parts.append("## Changed Files\n\n" + _HEADER + table)
+    return _decode("".join(parts))
+
+
+def test_atomic_phrase_stops_promotion_and_check(tmp_path, monkeypatch):
+    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
+
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {"scope_size": {"atomic_phrases": [_ATOMIC_PHRASE_JP]}},
+    )
+    body = _oversized_body_with_design(_MIGRATION_ORDER_JP)
+    assert promote_oversized_issue_body(body) == body
+    assert ScopeSizeRules().check(body, []) == []
+
+
+def test_atomic_phrase_empty_config_still_promotes_and_checks():
+    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
+
+    body = _oversized_body_with_design(_MIGRATION_ORDER_JP)
+    promoted = promote_oversized_issue_body(body)
+    assert promoted != body
+    assert "scope_size.too_many_files" in _ids(ScopeSizeRules().check(body, []))
+
+
+def test_atomic_phrase_only_in_background_does_not_stop_promotion(tmp_path, monkeypatch):
+    from issuesmith.gate_rules.scope_size import atomic_phrase, promote_oversized_issue_body
+
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {"scope_size": {"atomic_phrases": [_ATOMIC_PHRASE_JP]}},
+    )
+    body = _oversized_body_with_design(
+        "no matching phrase",
+        background_text=_MIGRATION_ORDER_JP,
+    )
+    assert atomic_phrase(body) is None
+    assert promote_oversized_issue_body(body) != body
+
+
+def test_atomic_phrase_english_stops_promotion(tmp_path, monkeypatch):
+    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
+
+    phrase = "land as one PR"
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {"scope_size": {"atomic_phrases": [phrase]}},
+    )
+    body = _oversized_body_with_design(f"Migration: changes should {phrase} together.")
+    assert promote_oversized_issue_body(body) == body
+    assert ScopeSizeRules().check(body, []) == []
+
+
+def test_atomic_phrase_logs_matched_phrase(tmp_path, monkeypatch, caplog):
+    import logging
+
+    from issuesmith.gate_rules.scope_size import is_atomic
+
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {"scope_size": {"atomic_phrases": [_ATOMIC_PHRASE_JP]}},
+    )
+    body = _oversized_body_with_design(_MIGRATION_ORDER_JP)
+    with caplog.at_level(logging.INFO, logger="issuesmith.gate_rules.scope_size"):
+        assert is_atomic(body)
+    assert _ATOMIC_PHRASE_JP in caplog.text
