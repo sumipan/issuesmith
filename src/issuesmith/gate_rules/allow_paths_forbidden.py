@@ -3,13 +3,32 @@
 from __future__ import annotations
 
 import fnmatch
+import posixpath
 
 from ghdag.workflow.gates import GATE_REGISTRY, Violation
 
 from issuesmith.config import get_config
 from issuesmith.context_hook import parse_issue_metadata
-from issuesmith.pr_scope import _is_fixture_path, _strip_path
 from issuesmith.scope_gate import parse_allow_paths_from_ctx
+
+# Match pr_scope path normalization / fixture skips (public API is normalize_allow_path only).
+_FIXTURE_EXCLUDES = (
+    "tests/fixtures/**",
+    "tests/*/fixtures/**",
+    "tests/*/*/fixtures/**",
+    "tests/*/*/*/fixtures/**",
+)
+
+
+def _strip_path(path: str) -> str:
+    stripped = path.strip()
+    while stripped.startswith("./"):
+        stripped = stripped[2:]
+    return posixpath.normpath(stripped) if stripped else stripped
+
+
+def _is_fixture_path(filename: str) -> bool:
+    return any(fnmatch.fnmatch(filename, pat) for pat in _FIXTURE_EXCLUDES)
 
 
 def _paths_from_metadata(metadata: dict, key: str) -> list[str]:
