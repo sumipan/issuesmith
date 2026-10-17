@@ -28,6 +28,8 @@ def load_dag_states(
     exec_jsonl: Path,
     done_dir: Path,
     running_dir: Path,
+    *,
+    workflow: str | None = None,
 ) -> dict[int, DagState]:
     """Return a mapping of issue number to DagState.
 
@@ -42,7 +44,10 @@ def load_dag_states(
     issue_rows: dict[int, list[dict]] = {}
 
     from issuesmith.config import get_config as _get_config
-    workflow_prefix = _get_config().label_namespace + ":"
+    if workflow is None:
+        workflow_prefix = _get_config().label_namespace + ":"
+    else:
+        workflow_prefix = workflow + ":"
 
     try:
         raw_text = exec_jsonl.read_text(encoding="utf-8")

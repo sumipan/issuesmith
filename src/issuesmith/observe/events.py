@@ -91,6 +91,7 @@ class DagTerminatedEvent(ObserveEvent):
     failed_step: str = ""
     failed_uuid: str = ""
     result_path: str = ""
+    namespace: str = ""
 
 
 @dataclass(frozen=True)

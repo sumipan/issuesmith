@@ -9,7 +9,9 @@ import pytest
 from issuesmith.andon import (
     Andon,
     AndonSink,
+    andon_namespace,
     answer,
+    answer_if_open,
     from_comment,
     list_open,
     raise_andon,
@@ -122,6 +124,44 @@ def test_round_trip():
     assert parsed.options == a.options
     assert parsed.default == a.default
     assert parsed.mention == a.mention
+    assert parsed.namespace == ""
+
+
+def test_to_comment_omits_empty_namespace():
+    a = _make_andon()
+    assert "namespace:" not in to_comment(a)
+
+
+def test_namespace_round_trip():
+    a = _make_andon()
+    a.namespace = "bump"
+    body = to_comment(a)
+    assert "namespace: bump" in body
+    parsed = from_comment(body)
+    assert parsed is not None
+    assert parsed.namespace == "bump"
+
+
+def test_from_comment_without_namespace_defaults_empty():
+    legacy = to_comment(_make_andon())
+    parsed = from_comment(legacy)
+    assert parsed is not None
+    assert parsed.namespace == ""
+
+
+def test_andon_namespace_uses_config_when_empty(monkeypatch, tmp_path):
+    import yaml
+
+    from issuesmith.config import reset_config_cache
+
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(yaml.safe_dump({"repo": "example/repo"}), encoding="utf-8")
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    a = _make_andon()
+    assert andon_namespace(a) == "issuesmith"
+    a.namespace = "bump"
+    assert andon_namespace(a) == "bump"
 
 
 def test_from_comment_no_andon_block():
@@ -181,6 +221,54 @@ def test_raise_andon_adds_label():
     kwargs = client.issue_update.call_args[1]
     ns = _ns()
     assert f"{ns}:andon-decision" in kwargs.get("labels_add", [])
+
+
+def test_raise_andon_external_namespace_uses_direct_label():
+    client = _fake_client()
+    a = _make_andon(issue=10, kind="blocked")
+    a.namespace = "bump"
+    with patch("issuesmith.andon._write_metrics"), patch(
+        "issuesmith.andon.project_issue"
+    ) as project:
+        raise_andon(client, a)
+    project.assert_not_called()
+    kwargs = client.issue_update.call_args[1]
+    assert "bump:andon-blocked" in kwargs.get("labels_add", [])
+
+
+def test_answer_if_open_external_namespace(tmp_path, monkeypatch):
+    import yaml
+
+    from issuesmith.config import reset_config_cache
+
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(yaml.safe_dump({"repo": "example/repo"}), encoding="utf-8")
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    monkeypatch.setenv("GHDAG_FORGE", "local")
+    monkeypatch.setenv("GHDAG_FORGE_ROOT", str(tmp_path / "forge"))
+    reset_config_cache()
+
+    from ghdag.forge import get_forge
+
+    client = get_forge()
+    issue_num = client.issue_create("ext andon", "body")
+    andon_id = "observe:99:dag_terminated:bump:bump:99:0"
+    ext = Andon(
+        id=andon_id,
+        kind="blocked",
+        issue=issue_num,
+        step="observe",
+        summary="DAG failed",
+        namespace="bump",
+    )
+    with patch("issuesmith.andon._write_metrics"):
+        raise_andon(client, ext)
+    answer_if_open(client, andon_id, "cleared", namespace="bump")
+    labels = {
+        lbl["name"] if isinstance(lbl, dict) else str(lbl)
+        for lbl in client.issue_get(issue_num, fields=["labels"]).get("labels", [])
+    }
+    assert "bump:andon-blocked" not in labels
 
 
 def test_raise_andon_label_uses_config_namespace(monkeypatch):

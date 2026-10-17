@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Added
+
+- `observe.workflows` lists non-issuesmith ghdag workflows (e.g. `bump`, `wsl`) for
+  `dag_terminated` detection and namespaced andons without touching running labels or
+  in_flight (sumipan/nexus#5393).
+
 ## 0.152.0 - 2026-10-11
 
 ### Removed

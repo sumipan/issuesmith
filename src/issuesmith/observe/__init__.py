@@ -162,6 +162,7 @@ def observe(
     events.extend(_detect_orphan_exec(snapshot, config, dag_states))
     obs_snapshot = _prefetch(snapshot, client, obs.max_api_calls)
     events.extend(_detect_dag_terminated(snapshot, client, config, obs_snapshot, dag_states))
+    events.extend(_detect_dag_terminated_workflows(client, config, obs_snapshot))
     events.extend(_detect_dag_deferred(dag_states))
     events.extend(_detect_label_drift(snapshot, client, config, obs_snapshot))
     events.extend(_detect_chain_halted(snapshot))
@@ -300,15 +301,28 @@ def _detect_task_timeout(
     return events
 
 
+def _workflow_key_prefixes(config: "IssuesmithConfig") -> set[str]:
+    prefixes = {config.label_namespace}
+    for wf in config.observe.workflows:
+        prefixes.add(wf.name)
+    return prefixes
+
+
+def _workflow_name_from_key(idempotency_key: str, prefixes: set[str]) -> str | None:
+    head = idempotency_key.split(":", 1)[0]
+    return head if head in prefixes else None
+
+
 def _detect_orphan_exec(
     snapshot: "QueueSnapshot",
     config: "IssuesmithConfig",
     dag_states: "dict | None" = None,
 ) -> list[ObserveEvent]:
-    from issuesmith.observe.dag_state import DagState
+    from issuesmith.observe.dag_state import DagState, load_dag_states
 
     exec_path = config.paths.exec_jsonl
     done_dir = config.paths.done_dir
+    running_dir = config.paths.done_dir.parent / "running"
     if not exec_path.exists():
         return []
 
@@ -317,6 +331,9 @@ def _detect_orphan_exec(
         for entry in snapshot.in_flight
         if isinstance(entry, dict) and isinstance(entry.get("issue"), int)
     }
+
+    prefixes = _workflow_key_prefixes(config)
+    external_dag_states: dict[str, dict[int, DagState]] = {}
 
     events: list[ObserveEvent] = []
     for raw in exec_path.read_text(encoding="utf-8").splitlines():
@@ -330,7 +347,8 @@ def _detect_orphan_exec(
         if not isinstance(row, dict):
             continue
         idempotency_key = str(row.get("idempotency_key", ""))
-        if not idempotency_key.startswith("issuesmith:"):
+        workflow_name = _workflow_name_from_key(idempotency_key, prefixes)
+        if workflow_name is None:
             continue
         uuid_val = row.get("uuid")
         if not isinstance(uuid_val, str) or not uuid_val:
@@ -338,13 +356,27 @@ def _detect_orphan_exec(
         if (done_dir / uuid_val).exists():
             continue
         issue = _issue_from_key(idempotency_key)
-        if issue not in in_flight_issues:
-            # If the DAG is still running, do not flag this as an orphan.
+        if workflow_name == config.label_namespace:
+            if issue in in_flight_issues:
+                continue
             if dag_states is not None and issue is not None:
                 state = dag_states.get(issue)
                 if isinstance(state, DagState) and state.status == "running":
                     continue
-            events.append(OrphanExecEvent(uuid=uuid_val, issue=issue))
+        else:
+            if workflow_name not in external_dag_states:
+                external_dag_states[workflow_name] = load_dag_states(
+                    exec_path,
+                    done_dir,
+                    running_dir,
+                    workflow=workflow_name,
+                )
+            ext_states = external_dag_states[workflow_name]
+            if issue is not None:
+                state = ext_states.get(issue)
+                if isinstance(state, DagState) and state.status == "running":
+                    continue
+        events.append(OrphanExecEvent(uuid=uuid_val, issue=issue))
 
     return events
 
@@ -426,6 +458,75 @@ def _detect_dag_terminated(
             failed_uuid=state.failed_uuid,
             result_path=state.failed_result_path,
         ))
+
+    return events
+
+
+def _phase_from_running_labels(labels: set[str], ns: str) -> str:
+    prefix = f"{ns}:"
+    for lbl in labels:
+        if lbl == f"{ns}:running":
+            return ""
+        if lbl.startswith(prefix) and lbl.endswith("-running"):
+            return lbl[len(prefix): -len("-running")]
+    return ""
+
+
+def _has_running_label(labels: set[str], ns: str) -> bool:
+    if f"{ns}:running" in labels:
+        return True
+    prefix = f"{ns}:"
+    return any(
+        lbl.startswith(prefix) and lbl.endswith("-running") for lbl in labels
+    )
+
+
+def _detect_dag_terminated_workflows(
+    client: "ForgePort",
+    config: "IssuesmithConfig",
+    obs_snapshot: "ObserveSnapshot | int",
+) -> list[ObserveEvent]:
+    from issuesmith.observe.dag_state import DagState, load_dag_states
+
+    if not config.observe.workflows:
+        return []
+
+    obs_snapshot = _as_obs_snapshot(obs_snapshot)
+    running_dir = config.paths.done_dir.parent / "running"
+    events: list[ObserveEvent] = []
+
+    for wf in config.observe.workflows:
+        wf_states = load_dag_states(
+            config.paths.exec_jsonl,
+            config.paths.done_dir,
+            running_dir,
+            workflow=wf.name,
+        )
+        for issue_num in sorted(wf_states):
+            state = wf_states.get(issue_num)
+            if not isinstance(state, DagState) or state.status != "failed":
+                continue
+            issue_data = obs_snapshot.get_issue(client, issue_num)
+            if issue_data is None:
+                continue
+            if str(issue_data.get("state", "")).upper() != "OPEN":
+                continue
+            current_labels = {
+                lbl["name"] if isinstance(lbl, dict) else str(lbl)
+                for lbl in issue_data.get("labels", [])
+            }
+            if not _has_running_label(current_labels, wf.label_namespace):
+                continue
+            phase = _phase_from_running_labels(current_labels, wf.label_namespace)
+            events.append(DagTerminatedEvent(
+                issue=issue_num,
+                key=state.key,
+                phase=phase,
+                failed_step=state.failed_step,
+                failed_uuid=state.failed_uuid,
+                result_path=state.failed_result_path,
+                namespace=wf.label_namespace,
+            ))
 
     return events
 
