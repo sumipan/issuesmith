@@ -16,7 +16,7 @@ src/issuesmith/github_api.py 2
 src/issuesmith/language.py 8
 src/issuesmith/merge.py 2
 src/issuesmith/milestone.py 32
-src/issuesmith/observe/__init__.py 2
+src/issuesmith/observe/__init__.py 1
 src/issuesmith/recovery.py 2
 src/issuesmith/scope_gate.py 1
 src/issuesmith/verbs/merge.py 1
