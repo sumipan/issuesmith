@@ -450,7 +450,7 @@ A file that is not found is treated as empty, which fails validation because `re
 | `terminal_without_merge` | `[]` | Labels that mark an Issue finished without a merge (names without `:` get the `label_namespace` prefix) |
 | `scope_gate` | `enabled: true` | P0 allow_paths size: `max_files` (`80`), `max_lines` (`20000`), `hard_max_files` (`200`) |
 | `scope_coupling` | `enabled: true` | `search_dirs` (`[tests, src]`), `data_file_tests` (`true`) |
-| `scope_size` | `enabled: true` | B1 Issue size: `max_files` (`8`), `max_concerns` (`4`), `max_slices` (`3`), `delete_with_new` (`false`), `exclude_prefixes` |
+| `scope_size` | `enabled: true` | B1 Issue size: `max_files` (`8`), `max_concerns` (`4`), `max_slices` (`3`), `delete_with_new` (`false`), `exclude_prefixes`, `atomic_phrases` (`[]`) |
 | `tests` | `flaky_reruns: 2` | Reruns of newly failing tests (`0` turns flaky detection off) |
 | `metrics` | `done_step: m2` | Rework metrics: `done_step`, `repair_templates`, `cause_targets` |
 | `derived_allow` | `enabled: true`, `ledger_globs: [tests/conventions/known_*.txt]` | Let repair edit newly failing tests outside allow_paths; ledgers matching `ledger_globs` may only shrink (`[]` turns ledger derivation off) |

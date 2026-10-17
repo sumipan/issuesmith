@@ -263,6 +263,7 @@ class ScopeSizeConfig:
     new_words: tuple[str, ...] = EN.new_words
     sub_plan_header: str = EN.sub_plan_header
     no_deps_word: str = EN.no_deps_word
+    atomic_phrases: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1058,6 +1059,21 @@ def _build_scope_size(
         if not isinstance(ex_raw, list) or not all(isinstance(x, str) for x in ex_raw):
             raise ConfigError("scope_size.exclude_prefixes must be a list of strings")
         exclude_prefixes = tuple(ex_raw)
+    atomic_phrases = defaults.atomic_phrases
+    if "atomic_phrases" in raw:
+        ap_raw = raw["atomic_phrases"]
+        if not isinstance(ap_raw, list):
+            raise ConfigError(
+                "scope_size.atomic_phrases must be a list of non-empty strings"
+            )
+        validated: list[str] = []
+        for item in ap_raw:
+            if not isinstance(item, str) or not item.strip():
+                raise ConfigError(
+                    "scope_size.atomic_phrases must be a list of non-empty strings"
+                )
+            validated.append(item)
+        atomic_phrases = tuple(validated)
     return ScopeSizeConfig(
         enabled=bool(raw.get("enabled", defaults.enabled)),
         max_files=limits["max_files"],
@@ -1065,6 +1081,7 @@ def _build_scope_size(
         max_slices=limits["max_slices"],
         delete_with_new=bool(raw.get("delete_with_new", defaults.delete_with_new)),
         exclude_prefixes=exclude_prefixes,
+        atomic_phrases=atomic_phrases,
         **vocab,
     )
 
