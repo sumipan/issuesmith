@@ -7,23 +7,23 @@ issuesmith is a toolkit for GitHub Issue workflows driven by labels, built on [g
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.153.0-blue)
+![version](https://img.shields.io/badge/version-v0.156.0-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.153.0** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.156.0** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.153.0"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.156.0"
 ```
 
 The gates, forge access, `observe`, `andon`, `lanes` and `metrics` import ghdag, so install the `ghdag` extra unless another package already provides ghdag. The base package alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.153.0"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.156.0"
 ```
 
 | Item | Value |
@@ -230,6 +230,14 @@ Gate ids usable in `steps.*.requires`: `ac_contract`, `b1_ac_format`, `b1_migrat
 
 Built-in phase predicates: `deps_terminal`, `closing_pr_exists` (`issuesmith.preconditions`) and `pins_landed` (registered by `issuesmith.pins`, which the config loader imports).
 
+### Context hook (ghdag)
+
+| Module | Symbols |
+|---|---|
+| `issuesmith.context_hook` | `ContextHookError`, `MetadataViolation`, `validate_context_hook_security`, `validate_issue_metadata`, `raise_metadata_violations`, `parse_issue_metadata`, `parse_issue_metadata_blocks`, `build_context`, `main` |
+
+`ContextHookError` is raised (via `raise_metadata_violations`) when Issue YAML metadata fails security validation before template expansion in `build_context`.
+
 ### Operations
 
 | Module | Symbols |
@@ -326,6 +334,7 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/gates/worktree.py` | `lint`, `tests`, `external_leak`, `base_freshness` and `importer_import` gates |
 | `issuesmith/github_api.py` | `gh` command: Issue / PR helpers with label and target guards |
 | `issuesmith/lanes.py` | Lane ledger planning: capacity, candidates, enqueue and patrol report |
+| `issuesmith/lang/en.yaml` | English messages for `context_hook` metadata validation |
 | `issuesmith/language.py` | Language packs |
 | `issuesmith/m2_gate.py` | M2 acceptance-criteria gate entry point |
 | `issuesmith/merge.py` | PR merge and verification helpers |
@@ -393,7 +402,7 @@ Gate ids in `GATE_REGISTRY` (usable in `steps.*.requires`). `input_kind` is the 
 | `scope` | worktree | no | yes | Changed files stay within allow_paths |
 | `scope_breadth` | issue | yes | no | P0 allow_paths breadth; oversized scope must split (no repair loop) |
 | `scope_coupling` | issue | no | yes | Caller / test coupling and deletion-reference rules |
-| `scope_size` | issue | no | yes | B1 Issue size limits and sub-plan promotion |
+| `scope_size` | issue | no | yes | B1 Issue size limits and sub-plan promotion (`split: atomic` or a design-section `atomic_phrases` match skips promotion) |
 | `tests` | worktree | no | yes | `pytest` on derived test paths (flaky reruns per config) |
 
 `review` is bound to `steps.<id>.review` (`STEP_BOUND_GATES`) and is not a `GATE_REGISTRY` key. Hosts may also reference `module.path:attr` gates.
@@ -450,7 +459,7 @@ A file that is not found is treated as empty, which fails validation because `re
 | `terminal_without_merge` | `[]` | Labels that mark an Issue finished without a merge (names without `:` get the `label_namespace` prefix) |
 | `scope_gate` | `enabled: true` | P0 allow_paths size: `max_files` (`80`), `max_lines` (`20000`), `hard_max_files` (`200`) |
 | `scope_coupling` | `enabled: true` | `search_dirs` (`[tests, src]`), `data_file_tests` (`true`) |
-| `scope_size` | `enabled: true` | B1 Issue size: `max_files` (`8`), `max_concerns` (`4`), `max_slices` (`3`), `delete_with_new` (`false`), `exclude_prefixes`, `atomic_phrases` (`[]`) |
+| `scope_size` | `enabled: true` | B1 Issue size: `max_files` (`8`), `max_concerns` (`4`), `max_slices` (`3`), `delete_with_new` (`false`), `exclude_prefixes`, `atomic_phrases` (`[]`, phrases matched in the design section skip sub-plan promotion, same as `split: atomic`) |
 | `tests` | `flaky_reruns: 2` | Reruns of newly failing tests (`0` turns flaky detection off) |
 | `metrics` | `done_step: m2` | Rework metrics: `done_step`, `repair_templates`, `cause_targets` |
 | `derived_allow` | `enabled: true`, `ledger_globs: [tests/conventions/known_*.txt]` | Let repair edit newly failing tests outside allow_paths; ledgers matching `ledger_globs` may only shrink (`[]` turns ledger derivation off) |
@@ -508,7 +517,7 @@ Relative to the config file directory: `queue` `jobs/issuesmith-queue.jsonl`, `q
 
 #### `observe` keys
 
-`stall_minutes` `120`, `task_timeout_minutes` `90`, `systemic_min_issues` `2`, `systemic_window_minutes` `60`, `forge_max_consecutive_errors` `3`, `max_api_calls` `8`. `observe.main_health` is off when unset; it takes `worktree` and `command` (both required), `base_branch` (`main`) and `timeout_seconds` (`1800`).
+`stall_minutes` `120`, `task_timeout_minutes` `90`, `systemic_min_issues` `2`, `systemic_window_minutes` `60`, `forge_max_consecutive_errors` `3`, `max_api_calls` `8`, `workflows` (`[]`). `workflows` lists non-issuesmith ghdag workflows to watch for `dag_terminated`: each entry needs `name` (workflow id) and optional `label_namespace` (defaults to `name`; used for running-label and andon namespacing). Entries whose `name` equals the host `label_namespace` are ignored; duplicate names raise `ConfigError`. `observe.main_health` is off when unset; it takes `worktree` and `command` (both required), `base_branch` (`main`) and `timeout_seconds` (`1800`).
 
 ### Language packs
 
@@ -547,6 +556,7 @@ Logs, exception messages, CLI help and violation text stay English and are not p
 | Type | Module | Base | Raised when |
 |---|---|---|---|
 | `ConfigError` | `issuesmith.config` | `ValueError` | Invalid `issuesmith.yaml` section, language pack, gate or predicate reference; missing `phases:` or `phases[].handler`; a step in two phases; `review` gate without `steps.<id>.review` |
+| `ContextHookError` | `issuesmith.context_hook` | `ValueError` | Issue YAML metadata failed security validation before ghdag context-hook template expansion |
 | `QueueValidationError` | `issuesmith.queue_store` | `ValueError` | Invalid queue request input (CLI exits 2) |
 | `GateBuildError` | `issuesmith.gates` | `ValueError` | A gate cannot be built from its `GateBuildContext` |
 | `DerivedAllowPathsError` | `issuesmith.pr_scope` | `ValueError` | `derived_allow_paths_from_result` finds malformed entries |
