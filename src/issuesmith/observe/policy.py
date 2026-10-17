@@ -52,6 +52,7 @@ class AndonAction:
     # Stable identity of the condition (independent of counters in ``summary``), used to
     # raise the andon once per occurrence. Empty means "one andon per issue".
     key: str = ""
+    namespace: str = ""
 
     @property
     def andon_id(self) -> str:
@@ -127,6 +128,17 @@ def _evaluate_one(event: ObserveEvent, config: "ObserveConfig") -> list[Action]:
 
     if isinstance(event, DagTerminatedEvent):
         reason = f"DAG {event.key} terminated at step {event.failed_step}"
+        if event.namespace:
+            return [
+                AndonAction(
+                    kind="blocked",
+                    issue=event.issue,
+                    summary=reason,
+                    evidence=f"uuid={event.failed_uuid} result={event.result_path}",
+                    key=f"dag_terminated:{_strip_generation(event.key)}",
+                    namespace=event.namespace,
+                ),
+            ]
         return [
             RemoveRunningLabelAction(issue=event.issue, phase=event.phase),
             AndonAction(
@@ -408,9 +420,26 @@ def execute(
             for entry in snap.in_flight
             if isinstance(entry, dict) and isinstance(entry.get("issue"), int)
         }
+        from issuesmith.config import get_config as _get_config
+
+        cfg = _get_config()
+        enumerated_workflows = {wf.name: wf for wf in cfg.observe.workflows}
         for resolved_id in resolved_ids:
             if ":dag_terminated:" in resolved_id:
                 parts = resolved_id.split(":")
+                workflow_name = parts[3] if len(parts) > 3 else ""
+                wf = enumerated_workflows.get(workflow_name)
+                if wf is not None:
+                    try:
+                        answer_if_open(
+                            client,
+                            resolved_id,
+                            "auto-resolved: condition cleared",
+                            namespace=wf.label_namespace,
+                        )
+                    except Exception:
+                        logger.exception("answer_if_open failed for %s", resolved_id)
+                    continue
                 try:
                     issue_num: int | None = int(parts[1]) if len(parts) >= 2 else None
                 except (ValueError, IndexError):
@@ -458,6 +487,7 @@ def execute(
                 step="observe",
                 summary=action.summary,
                 evidence=action.evidence,
+                namespace=action.namespace,
             )
             if client is not None and action.issue:
                 try:

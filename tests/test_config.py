@@ -587,3 +587,64 @@ def test_path_env_prefixes_invalid_type_raises(tmp_path, monkeypatch):
     reset_config_cache()
     with pytest.raises(ValueError, match="path_env_prefixes must be a list"):
         load_config()
+
+
+def test_observe_workflows_default_empty(tmp_path, monkeypatch):
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(yaml.safe_dump({"repo": "example/repo"}), encoding="utf-8")
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    assert load_config().observe.workflows == ()
+
+
+def test_observe_workflows_loads_label_namespace(tmp_path, monkeypatch):
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump(
+            {"repo": "example/repo", "observe": {"workflows": [{"name": "bump"}]}},
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    wfs = load_config().observe.workflows
+    assert len(wfs) == 1
+    assert wfs[0].name == "bump"
+    assert wfs[0].label_namespace == "bump"
+
+
+def test_observe_workflows_skips_issuesmith_name(tmp_path, monkeypatch):
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump(
+            {
+                "repo": "example/repo",
+                "label_namespace": "issuesmith",
+                "observe": {"workflows": [{"name": "issuesmith"}, {"name": "bump"}]},
+            },
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    assert [wf.name for wf in load_config().observe.workflows] == ["bump"]
+
+
+@pytest.mark.parametrize(
+    "observe_raw,match",
+    [
+        ({"workflows": "nope"}, "observe.workflows must be a list"),
+        ({"workflows": [{}]}, "name is required"),
+        ({"workflows": [{"name": "a"}, {"name": "a"}]}, "duplicate name"),
+    ],
+)
+def test_observe_workflows_invalid_raises(tmp_path, monkeypatch, observe_raw, match):
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "example/repo", "observe": observe_raw}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    with pytest.raises(ConfigError, match=match):
+        load_config()

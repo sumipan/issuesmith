@@ -36,6 +36,7 @@ class Andon:
     default: str = ""
     mention: str = ""
     rule_id: str = ""
+    namespace: str = ""
 
 
 @dataclass
@@ -57,8 +58,15 @@ _FENCE_OPEN = "```andon"
 _FENCE_CLOSE = "```"
 
 
+def andon_namespace(andon: Andon) -> str:
+    """Effective label namespace for an andon (empty means configured issuesmith namespace)."""
+    return andon.namespace or _ns()
+
+
 def to_comment(andon: Andon) -> str:
     data = asdict(andon)
+    if not data.get("namespace"):
+        data.pop("namespace", None)
     body = yaml.dump(data, allow_unicode=True, sort_keys=False, default_flow_style=False)
     return f"{_FENCE_OPEN}\n{body}{_FENCE_CLOSE}\n"
 
@@ -94,6 +102,7 @@ def from_comment(text: str) -> Andon | None:
             default=str(data.get("default") or ""),
             mention=str(data.get("mention") or ""),
             rule_id=str(data.get("rule_id") or ""),
+            namespace=str(data.get("namespace") or ""),
         )
     except (KeyError, TypeError, ValueError):
         return None
@@ -355,6 +364,17 @@ def _default_metrics_path() -> Path:
 # Public API
 # ---------------------------------------------------------------------------
 
+def _find_andon_in_namespace(client: Any, andon_id: str, namespace: str) -> Andon | None:
+    for kind in _andon_label_kinds():
+        label = f"{namespace}:andon-{kind}"
+        for issue in client.list_issues(label=label, state="open"):
+            for comment in client.get_issue_comments(issue["number"]):
+                parsed = from_comment(str(comment.get("body") or ""))
+                if parsed is not None and parsed.id == andon_id:
+                    return parsed
+    return None
+
+
 def raise_andon(
     client: Any,
     andon: Andon,
@@ -370,6 +390,15 @@ def raise_andon(
     from issuesmith.projection import phase_for_step
 
     client.issue_comment(andon.issue, to_comment(andon))
+    ns = andon_namespace(andon)
+    if ns != _ns():
+        client.issue_update(andon.issue, labels_add=[f"{ns}:andon-{andon.kind}"])
+        for sink in sinks or []:
+            sink.emit(andon)
+        path = metrics_path if metrics_path is not None else _default_metrics_path()
+        _write_metrics(path, "andon_raised", andon)
+        return
+
     phase = phase_for_step(andon.step, get_config())
     running = "running"
 
@@ -462,6 +491,7 @@ def answer_if_open(
     action: str,
     *,
     metrics_path: Path | None = None,
+    namespace: str | None = None,
 ) -> None:
     """Post answer comment and remove label if the andon is open; silently skip if not found.
 
@@ -471,15 +501,23 @@ def answer_if_open(
     if client is None:
         return
 
+    cfg_ns = _ns()
+    external_namespace = (
+        namespace if namespace is not None and namespace != "" and namespace != cfg_ns else None
+    )
+
     target: Andon | None = None
-    for issue in _iter_open_andon_issues(client):
-        for comment in client.get_issue_comments(issue["number"]):
-            parsed = from_comment(comment.get("body", ""))
-            if parsed is not None and parsed.id == andon_id:
-                target = parsed
+    if external_namespace is not None:
+        target = _find_andon_in_namespace(client, andon_id, external_namespace)
+    else:
+        for issue in _iter_open_andon_issues(client):
+            for comment in client.get_issue_comments(issue["number"]):
+                parsed = from_comment(comment.get("body", ""))
+                if parsed is not None and parsed.id == andon_id:
+                    target = parsed
+                    break
+            if target is not None:
                 break
-        if target is not None:
-            break
 
     if target is None:
         logger.debug("answer_if_open: andon not found (already closed?): %s", andon_id)
@@ -487,7 +525,13 @@ def answer_if_open(
 
     reply = _answer_comment(andon_id, action)
     client.issue_comment(target.issue, reply)
-    project_issue(client, target.issue, _without_andon(target.kind))
+    if external_namespace is not None:
+        client.issue_update(
+            target.issue,
+            labels_remove=[f"{external_namespace}:andon-{target.kind}"],
+        )
+    else:
+        project_issue(client, target.issue, _without_andon(target.kind))
 
     path = metrics_path if metrics_path is not None else _default_metrics_path()
     _write_metrics(path, "andon_answered", target)

@@ -319,6 +319,14 @@ class MainHealthConfig:
 
 
 @dataclass(frozen=True)
+class ObserveWorkflowConfig:
+    """Non-issuesmith workflow to monitor for dag_terminated (observe.workflows)."""
+
+    name: str
+    label_namespace: str
+
+
+@dataclass(frozen=True)
 class ObserveConfig:
     """Configuration for the observe layer (issuesmith.yaml observe: section)."""
 
@@ -329,6 +337,7 @@ class ObserveConfig:
     forge_max_consecutive_errors: int = 3
     max_api_calls: int = 8
     main_health: MainHealthConfig | None = None
+    workflows: tuple[ObserveWorkflowConfig, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1161,8 +1170,45 @@ def _build_main_health(raw: Any, root: Path) -> MainHealthConfig | None:
     )
 
 
+def _build_observe_workflows(
+    raw: Any,
+    *,
+    label_namespace: str,
+) -> tuple[ObserveWorkflowConfig, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ConfigError("observe.workflows must be a list")
+    seen: set[str] = set()
+    out: list[ObserveWorkflowConfig] = []
+    for idx, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ConfigError(f"observe.workflows[{idx}] must be a mapping")
+        name_raw = item.get("name")
+        if not isinstance(name_raw, str) or not name_raw.strip():
+            raise ConfigError(f"observe.workflows[{idx}].name is required")
+        name = name_raw.strip()
+        if name in seen:
+            raise ConfigError(f"observe.workflows: duplicate name {name!r}")
+        seen.add(name)
+        if name == label_namespace:
+            continue
+        ns_raw = item.get("label_namespace")
+        if ns_raw is None or ns_raw == "":
+            label_ns = name
+        elif isinstance(ns_raw, str) and ns_raw.strip():
+            label_ns = ns_raw.strip()
+        else:
+            raise ConfigError(f"observe.workflows[{idx}].label_namespace must be a string")
+        out.append(ObserveWorkflowConfig(name=name, label_namespace=label_ns))
+    return tuple(out)
+
+
 def _build_observe(
-    raw: Mapping[str, Any] | None, root: Path | None = None,
+    raw: Mapping[str, Any] | None,
+    root: Path | None = None,
+    *,
+    label_namespace: str = "issuesmith",
 ) -> ObserveConfig:
     defaults = ObserveConfig()
     if not raw:
@@ -1177,6 +1223,7 @@ def _build_observe(
         ),
         max_api_calls=int(raw.get("max_api_calls", defaults.max_api_calls)),
         main_health=_build_main_health(raw.get("main_health"), root or Path.cwd()),
+        workflows=_build_observe_workflows(raw.get("workflows"), label_namespace=label_namespace),
     )
 
 
@@ -1323,7 +1370,9 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         terminal_without_merge=_build_terminal_without_merge(
             data.get("terminal_without_merge"),
         ),
-        observe=_build_observe(observe_raw, root.resolve()),
+        observe=_build_observe(
+            observe_raw, root.resolve(), label_namespace=label_namespace
+        ),
         api_brake=_build_api_brake(api_brake_raw),
         language=language,
         label_write_guard=_build_label_write_guard(data.get("label_write_guard")),
