@@ -1,0 +1,10 @@
+messages:
+  context_hook.invalid_base_branch: >-
+    base_branch {value!r} is invalid: {reason}
+  context_hook.invalid_allow_path: >-
+    allow_paths[{index}] {value!r} is invalid: {reason}
+  context_hook.invalid_source: >-
+    source {value!r} is invalid: only letters, digits, and . _ / - are allowed
+  context_hook.empty_allow_paths: >-
+    allow_paths is empty or missing; set allow_paths or add a scope_gate override
+    in the Issue YAML metadata
