@@ -160,7 +160,9 @@ def _build_registry() -> dict[str, GateEntry]:
         return _build
 
     # scope_breadth: pre_llm=True (checked before LLM), repairable=False (scope too large → split/reject)
-    _ISSUE_PRE_LLM_NON_REPAIRABLE = frozenset({"scope_breadth"})
+    _ISSUE_PRE_LLM_NON_REPAIRABLE = frozenset(
+        {"scope_breadth", "allow_paths_forbidden"}
+    )
 
     for gate_id, cls in _IMPL_REG.items():
         if gate_id not in registry:

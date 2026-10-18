@@ -618,3 +618,12 @@ def test_publish_exports_bump_helpers() -> None:
     assert "_run_version_bump" in publish.__all__
     assert "_bump_versions_in_range" in publish.__all__
     assert publish.run_version_bump is publish._run_version_bump
+
+
+def test_allow_paths_forbidden_registry_entry() -> None:
+    from issuesmith.gates import GATE_REGISTRY
+
+    entry = GATE_REGISTRY["allow_paths_forbidden"]
+    assert entry.input_kind == "issue"
+    assert entry.pre_llm is True
+    assert entry.repairable is False

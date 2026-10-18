@@ -7,6 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.157.0 - 2026-10-18
+
+### Added
+
+- `allow_paths_forbidden` gate: fail when Issue `allow_paths` / `host_allow_paths`
+  overlap host `forbidden_pr_paths` before LLM (sumipan/nexus#5408).
+
 ## 0.156.0 - 2026-10-18
 
 ### Added
