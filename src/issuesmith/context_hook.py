@@ -25,6 +25,7 @@ import json
 import logging
 import re
 import sys
+import unicodedata
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,7 +44,7 @@ _PIPELINE_BRANCH_RE = re.compile(
 )
 
 _BASE_BRANCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")
-_ALLOW_PATH_ELEMENT_RE = re.compile(r"^[A-Za-z0-9_./*\[\]!\-]+$")
+_ALLOW_PATH_ELEMENT_RE = re.compile(r"^[\w./*\[\]!\-]+$")
 _SOURCE_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
 
 _LANG_EN = Path(__file__).resolve().parent / "lang" / "en.yaml"
@@ -51,6 +52,17 @@ _LANG_EN = Path(__file__).resolve().parent / "lang" / "en.yaml"
 
 class ContextHookError(ValueError):
     """Issue YAML metadata failed security validation before template expansion."""
+
+    violations: tuple[MetadataViolation, ...]
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        violations: tuple[MetadataViolation, ...] = (),
+    ) -> None:
+        super().__init__(message)
+        self.violations = violations
 
 
 @functools.lru_cache
@@ -138,6 +150,23 @@ def _validate_source(value: object) -> MetadataViolation | None:
     )
 
 
+def _invalid_allow_path_violation(index: int, text: str) -> MetadataViolation:
+    return MetadataViolation(
+        field=f"allow_paths[{index}]",
+        code="invalid_allow_path",
+        message=_hook_message(
+            "context_hook.invalid_allow_path",
+            index=index,
+            value=text,
+            reason=(
+                "must contain only letters (any script), digits,"
+                " and _ . / * [ ] ! -"
+                " (no spaces, quotes, or shell metacharacters)"
+            ),
+        ),
+    )
+
+
 def _validate_allow_path_element(index: int, path: object) -> MetadataViolation | None:
     text = str(path)
     if "(" in text and ")" in text:
@@ -155,20 +184,20 @@ def _validate_allow_path_element(index: int, path: object) -> MetadataViolation 
                 " (install directories are not allowed)"
             ),
         )
-    if not _ALLOW_PATH_ELEMENT_RE.fullmatch(text):
-        return MetadataViolation(
-            field=f"allow_paths[{index}]",
-            code="invalid_allow_path",
-            message=_hook_message(
-                "context_hook.invalid_allow_path",
-                index=index,
-                value=text,
-                reason=(
-                    "must contain only letters, digits, and _ . / * [ ] ! -"
-                    " (no spaces, quotes, or shell metacharacters)"
-                ),
-            ),
-        )
+    normalized = unicodedata.normalize("NFC", text)
+    if any(unicodedata.category(ch).startswith("C") for ch in text):
+        return _invalid_allow_path_violation(index, text)
+    if any(
+        unicodedata.category(ch) in ("Zs", "Zl", "Zp") or ch == "\u00a0"
+        for ch in text
+    ):
+        return _invalid_allow_path_violation(index, text)
+    if normalized and all(unicodedata.combining(ch) for ch in normalized):
+        return _invalid_allow_path_violation(index, text)
+    if normalized and unicodedata.combining(normalized[0]):
+        return _invalid_allow_path_violation(index, text)
+    if not _ALLOW_PATH_ELEMENT_RE.fullmatch(normalized):
+        return _invalid_allow_path_violation(index, text)
     return None
 
 
@@ -268,7 +297,51 @@ def raise_metadata_violations(
     error_type: type[Exception] = ContextHookError,
 ) -> None:
     if violations:
-        raise error_type(violations[0].message)
+        message = violations[0].message
+        if error_type is ContextHookError:
+            raise ContextHookError(message, violations=tuple(violations))
+        raise error_type(message)
+
+
+def _metadata_andon_id(issue_number: int, violations: tuple[MetadataViolation, ...]) -> str:
+    codes = "+".join(sorted({v.code for v in violations}))
+    return f"context_hook:{issue_number}:{codes}"
+
+
+def _raise_metadata_andon(
+    issue_number: int,
+    violations: tuple[MetadataViolation, ...],
+) -> None:
+    try:
+        from ghdag.forge import get_forge
+
+        from issuesmith.andon import Andon, list_open, raise_andon
+
+        client = get_forge()
+        andon_id = _metadata_andon_id(issue_number, violations)
+        if any(a.id == andon_id for a in list_open(client)):
+            return
+        summary = "; ".join(v.message for v in violations)
+        evidence = (
+            "Fix the YAML metadata at the top of the Issue body, then resume "
+            "this andon; the next workflow poll will dispatch again."
+        )
+        raise_andon(
+            client,
+            Andon(
+                id=andon_id,
+                kind="blocked",
+                issue=issue_number,
+                step="context_hook",
+                summary=summary,
+                evidence=evidence,
+            ),
+        )
+    except Exception as exc:
+        print(
+            f"Warning: failed to raise context_hook andon for #{issue_number}: {exc}",
+            file=sys.stderr,
+        )
 
 
 def parse_issue_metadata(body: str) -> dict:
@@ -668,6 +741,8 @@ def main() -> None:
     try:
         context = build_context(issue_number)
     except ContextHookError as exc:
+        if exc.violations:
+            _raise_metadata_andon(issue_number, exc.violations)
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 

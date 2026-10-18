@@ -7,6 +7,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.157.1 - 2026-10-18
+
+### Fixed
+
+- `context_hook`: allow Unicode letters in `allow_paths` (NFC-normalized check) so
+  non-ASCII file paths in Issue metadata no longer block dispatch (#5427).
+- `context_hook`: raise a deduplicated `blocked` andon when YAML metadata security
+  validation fails, so silent develop-ready stalls are visible (#5427).
+
 ## 0.157.0 - 2026-10-18
 
 ### Added

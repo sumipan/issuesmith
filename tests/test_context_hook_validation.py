@@ -10,6 +10,7 @@ import pytest
 from issuesmith.context_hook import (
     ContextHookError,
     build_context,
+    raise_metadata_violations,
     validate_context_hook_security,
     validate_issue_metadata,
 )
@@ -223,3 +224,65 @@ def test_legacy_nexus_issue_yaml_still_builds_context(fixture_body: str):
         ctx = build_context(1, body=fixture_body)
     assert ctx["base_branch"] == "main"
     assert ctx["allow_paths"]
+
+
+_UNICODE_ALLOW_PATHS = [
+    "docs/caf\u00e9.md",
+    "agents/\u03a9mega.md",
+    "notes/\u00f1and\u00fa/**",
+]
+
+
+@pytest.mark.parametrize("path", _UNICODE_ALLOW_PATHS)
+def test_unicode_allow_paths_accepted(path: str):
+    meta = _metadata(allow_paths=[path])
+    sec = validate_context_hook_security(meta)
+    assert not any(v.code == "invalid_allow_path" for v in sec)
+    full = validate_issue_metadata(meta)
+    assert not any(v.code == "invalid_allow_path" for v in full)
+
+
+def test_nfd_allow_path_normalized_for_validation_only():
+    nfd = "caf\u0065\u0301.md"
+    meta = _metadata(allow_paths=[nfd])
+    assert not validate_context_hook_security(meta)
+    body = (
+        "```yaml\n"
+        "target_repo: sumipan/issuesmith\n"
+        "base_branch: main\n"
+        f"allow_paths:\n  - {nfd}\n```\n"
+    )
+    with patch("issuesmith.context_hook._fetch_issue_comments_from_api", return_value=[]):
+        ctx = build_context(5427, body=body)
+    assert nfd in ctx["allow_paths"]
+
+
+@pytest.mark.parametrize(
+    "path,expected_code",
+    [
+        ("src/a b/**", "invalid_allow_path"),
+        ("src/a\u00a0b/**", "invalid_allow_path"),
+        ("src/$id/**", "invalid_allow_path"),
+        ("src/;rm/**", "invalid_allow_path"),
+        ("src/|wc/**", "invalid_allow_path"),
+        ("src/&bg/**", "invalid_allow_path"),
+        ("src/`id`/**", "invalid_allow_path"),
+        ('src/"x"/**', "invalid_allow_path"),
+        ("src/<x>/**", "invalid_allow_path"),
+        ("src/\x07/**", "invalid_allow_path"),
+        ("\u0301", "invalid_allow_path"),
+    ],
+)
+def test_allow_path_rejections(path: str, expected_code: str):
+    violations = validate_context_hook_security(_metadata(allow_paths=[path]))
+    assert any(v.code == expected_code for v in violations)
+
+
+def test_raise_metadata_violations_attaches_all_violations():
+    violations = validate_issue_metadata(
+        _metadata(base_branch='main"; id', allow_paths=["src/$(id)/**"])
+    )
+    assert len(violations) >= 2
+    with pytest.raises(ContextHookError) as exc_info:
+        raise_metadata_violations(violations)
+    assert exc_info.value.violations == tuple(violations)

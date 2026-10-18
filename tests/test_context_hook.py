@@ -10,7 +10,14 @@ from unittest.mock import patch
 
 import pytest
 
-from issuesmith.context_hook import build_context, main, validate_issue_metadata
+from issuesmith.andon import Andon
+from issuesmith.context_hook import (
+    ContextHookError,
+    _metadata_andon_id,
+    build_context,
+    main,
+    validate_issue_metadata,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -858,6 +865,136 @@ def test_main_exits_on_api_failure():
             assert exc_info.value.code != 0
         finally:
             sys.argv = original
+
+
+def _metadata_violation_body() -> str:
+    return textwrap.dedent(
+        """\
+        ```yaml
+        target_repo: sumipan/issuesmith
+        base_branch: main
+        allow_paths:
+          - src/;rm/**
+        ```
+
+        ## Purpose
+        test
+        """
+    )
+
+
+def test_metadata_andon_id_dedupes_and_sorts_codes():
+    violations = validate_issue_metadata(
+        {
+            "target_repo": "sumipan/issuesmith",
+            "base_branch": 'main"; id',
+            "allow_paths": ["src/;x/**", "src/$y/**"],
+        }
+    )
+    assert _metadata_andon_id(99, tuple(violations)) == (
+        "context_hook:99:invalid_allow_path+invalid_base_branch"
+    )
+
+
+def test_main_raises_andon_on_metadata_violation(capsys):
+    import sys
+
+    body = _metadata_violation_body()
+    mock_client = object()
+    with patch(
+        "issuesmith.context_hook._fetch_issue_body_from_gh", return_value=body
+    ), patch(
+        "issuesmith.context_hook._fetch_issue_comments_from_api", return_value=[]
+    ), patch("ghdag.forge.get_forge", return_value=mock_client), patch(
+        "issuesmith.andon.list_open", return_value=[]
+    ) as list_open, patch("issuesmith.andon.raise_andon") as raise_andon:
+        original = sys.argv
+        sys.argv = ["context_hook", "77"]
+        try:
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+            assert exc_info.value.code == 1
+        finally:
+            sys.argv = original
+    assert capsys.readouterr().out == ""
+    list_open.assert_called_once_with(mock_client)
+    raise_andon.assert_called_once()
+    andon = raise_andon.call_args[0][1]
+    assert isinstance(andon, Andon)
+    assert andon.kind == "blocked"
+    assert andon.step == "context_hook"
+    assert andon.issue == 77
+    assert andon.id == "context_hook:77:invalid_allow_path"
+
+
+def test_main_skips_andon_when_open_duplicate_exists(capsys):
+    import sys
+
+    body = _metadata_violation_body()
+    existing = Andon(
+        id="context_hook:77:invalid_allow_path",
+        kind="blocked",
+        issue=77,
+        step="context_hook",
+        summary="existing",
+    )
+    with patch(
+        "issuesmith.context_hook._fetch_issue_body_from_gh", return_value=body
+    ), patch(
+        "issuesmith.context_hook._fetch_issue_comments_from_api", return_value=[]
+    ), patch("ghdag.forge.get_forge", return_value=object()), patch(
+        "issuesmith.andon.list_open", return_value=[existing]
+    ), patch("issuesmith.andon.raise_andon") as raise_andon:
+        original = sys.argv
+        sys.argv = ["context_hook", "77"]
+        try:
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+            assert exc_info.value.code == 1
+        finally:
+            sys.argv = original
+    raise_andon.assert_not_called()
+    assert capsys.readouterr().out == ""
+
+
+def test_main_andon_failure_adds_warning(capsys):
+    import sys
+
+    body = _metadata_violation_body()
+    with patch(
+        "issuesmith.context_hook._fetch_issue_body_from_gh", return_value=body
+    ), patch(
+        "issuesmith.context_hook._fetch_issue_comments_from_api", return_value=[]
+    ), patch("ghdag.forge.get_forge", side_effect=RuntimeError("no forge")):
+        original = sys.argv
+        sys.argv = ["context_hook", "77"]
+        try:
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+            assert exc_info.value.code == 1
+        finally:
+            sys.argv = original
+    err = capsys.readouterr().err
+    assert "Warning: failed to raise context_hook andon for #77:" in err
+    assert "Error:" in err
+
+
+def test_main_no_andon_for_string_only_context_hook_error():
+    import sys
+
+    with patch("issuesmith.context_hook._raise_metadata_andon") as mock_andon, patch(
+        "issuesmith.context_hook.build_context",
+        side_effect=ContextHookError("language pack missing"),
+    ):
+        original = sys.argv
+        sys.argv = ["context_hook", "1"]
+        try:
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+            assert exc_info.value.code == 1
+        finally:
+            sys.argv = original
+    mock_andon.assert_not_called()
 
 
 def _comments(*bodies: str) -> list[dict]:
