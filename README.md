@@ -213,7 +213,7 @@ Ledger keys: `lanes` (lane name to Issue numbers), `hold`, `backlog`, `auto_lane
 | `issuesmith.ac_contract` | `GateMaterializationError`, `materialize_gate_root`, `cleanup_gate_root`, `dual_gate_roots`, `extract_contract_from_body`, `run_checks`, `contract_failures`, `pending_manual_checks`, `is_invalid_contract_path`, `normalize_reference_entry`, `extract_key_path_values`, `manual_check_description`, `KNOWN_POST_MERGE_KINDS`, `POST_MERGE_REQUIRED_FIELDS` |
 | `issuesmith.gate_rules.b1_milestone_subdesign` | `B1MilestoneSubdesignRules`, `extract_sub_blocks`, `infer_sub_dependencies`, `find_dependency_cycles`, `apply_inferred_dependency_fixes`, `apply_sub_plan_dep_format_fixes`, `change_rows_with_content` |
 
-Gate ids usable in `steps.*.requires`: `ac_contract`, `b1_ac_format`, `b1_migration`, `b1_milestone_subdesign`, `base_freshness`, `cp1`, `deps`, `deps_format`, `external_leak`, `importer_import`, `lint`, `m2`, `milestone_consistency`, `pin_bump`, `pr_scope`, `scope`, `scope_breadth`, `scope_coupling`, `scope_size`, `tests` (`GATE_REGISTRY`), plus `review` (`STEP_BOUND_GATES`; needs `steps.<id>.review`). A `module.path:attr` reference loads an external gate.
+Gate ids usable in `steps.*.requires`: `ac_contract`, `allow_paths_forbidden`, `b1_ac_format`, `b1_migration`, `b1_milestone_subdesign`, `base_freshness`, `cp1`, `deps`, `deps_format`, `external_leak`, `importer_import`, `lint`, `m2`, `milestone_consistency`, `pin_bump`, `pr_scope`, `scope`, `scope_breadth`, `scope_coupling`, `scope_size`, `tests` (`GATE_REGISTRY`), plus `review` (`STEP_BOUND_GATES`; needs `steps.<id>.review`). A `module.path:attr` reference loads an external gate.
 
 ### Contract, projection and labels
 
@@ -311,6 +311,7 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/forge_api.py` | Typed raw REST calls on forge clients |
 | `issuesmith/forge_guard.py` | Label-write guard for step dispatch |
 | `issuesmith/gate_rules/__init__.py` | Imports every rule module to fill ghdag's gate registry |
+| `issuesmith/gate_rules/allow_paths_forbidden.py` | allow_paths vs forbidden_pr_paths overlap (pre-LLM) |
 | `issuesmith/gate_rules/b1_ac_format.py` | Acceptance-criteria YAML format rules |
 | `issuesmith/gate_rules/b1_migration.py` | Migration plan rules |
 | `issuesmith/gate_rules/b1_milestone_subdesign.py` | Milestone sub-design rules and dependency inference |
@@ -385,6 +386,7 @@ Gate ids in `GATE_REGISTRY` (usable in `steps.*.requires`). `input_kind` is the 
 | id | input_kind | pre_llm | repairable | Responsibility |
 |---|---|---|---|---|
 | `ac_contract` | worktree | no | yes | Enforce acceptance-contract `paths_must_exist` / `paths_must_not_exist` on the worktree diff |
+| `allow_paths_forbidden` | issue | yes | no | allow_paths / host_allow_paths overlap with `forbidden_pr_paths` (no repair loop) |
 | `b1_ac_format` | issue | no | yes | Acceptance-criteria YAML format in the Issue body |
 | `b1_migration` | issue | no | yes | Migration plan rules for B1 |
 | `b1_milestone_subdesign` | issue | no | yes | Milestone sub-design blocks, dependency inference and fixes |
