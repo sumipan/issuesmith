@@ -7,25 +7,34 @@ issuesmith is a toolkit for GitHub Issue workflows driven by labels, built on [g
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.157.2-blue)
+![version](https://img.shields.io/badge/version-v0.157.1-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.157.2** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.157.1** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
-On a release branch, `publish` runs `version-bump` so `[project].version` in `pyproject.toml` matches the version badge, release line above, and Installation pins below. Until that release is tagged on `main`, `git describe --tags --abbrev=0 origin/main` may still name the previous tag (for example **v0.157.1** while this tree ships **v0.157.2**). This patch release updates those version pins only; the CLI Reference, Public API, Architecture, Configuration, Error Reference, and Gates sections are unchanged from the OSS README on `main` at **v0.157.1**.
+### OSS README verification
+
+Release pins in this document match `git describe --tags --abbrev=0 origin/main` and `[project].version` in `pyproject.toml` (**v0.157.1**). The nine OSS sections below (CLI Reference, Public API, Architecture, Configuration, Error Reference, Gates, plus Quick Start and License) were aligned with the implementation on `main` in prior documentation merges; this change updates Status and Installation version strings from **v0.156.0** to **v0.157.1** only. Verify CLI registration, gate registry coverage, and `LanguagePack` field listing with:
+
+```bash
+pytest -q \
+  tests/conventions/test_cli_commands_registered.py \
+  tests/conventions/test_gate_registry_complete.py \
+  tests/test_language.py::test_readme_lists_every_pack_field
+```
 
 ## Installation
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.157.2"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.157.1"
 ```
 
 The gates, forge access, `observe`, `andon`, `lanes` and `metrics` import ghdag, so install the `ghdag` extra unless another package already provides ghdag. The base package alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.157.2"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.157.1"
 ```
 
 | Item | Value |
