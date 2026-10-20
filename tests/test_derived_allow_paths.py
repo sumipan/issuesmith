@@ -859,3 +859,192 @@ def test_5134_syntax_error_keeps_existing_keys(tmp_path: Path) -> None:
         ["src/pkg/mod.py"],
     )
     assert derived == ["tests/test_uses_mod.py"]
+
+
+# ---------------------------------------------------------------------------
+# #5351: one-hop direct src importers extend condition (C) reference keys
+# ---------------------------------------------------------------------------
+
+_ENGINE_SPEC_BASE = "ENGINE_SPECS = {'cursor': 'agent'}\n"
+_ENGINE_SPEC_CHANGED = "ENGINE_SPECS = {'cursor': 'cursor-agent'}\n"
+_CONSUMER = (
+    "from pkg.core.engine_spec import ENGINE_SPECS\n\n\n"
+    "def classify(x):\n"
+    "    return ENGINE_SPECS.get(x)\n"
+)
+_TEST_VIA_CONSUMER = (
+    "from pkg.llm import failure_classification\n\n\n"
+    "def test_specs():\n"
+    "    assert failure_classification.classify('cursor') == 'agent'\n"
+)
+
+
+def _engine_spec_repo(tmp_path: Path, extra_base: dict[str, str] | None = None) -> Path:
+    base: dict[str, str] = {
+        "src/pkg/__init__.py": "",
+        "src/pkg/core/__init__.py": "",
+        "src/pkg/core/engine_spec.py": _ENGINE_SPEC_BASE,
+        "src/pkg/llm/__init__.py": "",
+        "src/pkg/llm/failure_classification.py": _CONSUMER,
+        "tests/test_failure_classification.py": _TEST_VIA_CONSUMER,
+    }
+    if extra_base:
+        base.update(extra_base)
+    clone = _make_repo(tmp_path, base)
+    _write(clone, {"src/pkg/core/engine_spec.py": _ENGINE_SPEC_CHANGED})
+    _commit_all(clone, "change engine_spec")
+    return clone
+
+
+def test_5351_direct_importer_derives_consumer_test(tmp_path: Path) -> None:
+    clone = _engine_spec_repo(tmp_path)
+    derived = derive_test_allow_paths(
+        clone, "main",
+        ["tests/test_failure_classification.py::test_specs"],
+        ["src/pkg/core/engine_spec.py"],
+        ["src/pkg/core/engine_spec.py"],
+    )
+    assert derived == ["tests/test_failure_classification.py"]
+
+
+def test_5351_import_as_form_counts_as_direct_importer(tmp_path: Path) -> None:
+    consumer = (
+        "import pkg.core.engine_spec as engine_spec\n\n\n"
+        "def classify(x):\n"
+        "    return engine_spec.ENGINE_SPECS.get(x)\n"
+    )
+    clone = _engine_spec_repo(tmp_path, {
+        "src/pkg/llm/failure_classification.py": consumer,
+    })
+    derived = derive_test_allow_paths(
+        clone, "main",
+        ["tests/test_failure_classification.py::test_specs"],
+        ["src/pkg/core/engine_spec.py"],
+        ["src/pkg/core/engine_spec.py"],
+    )
+    assert derived == ["tests/test_failure_classification.py"]
+
+
+def test_5351_no_importer_key_match_returns_empty(tmp_path: Path) -> None:
+    clone = _engine_spec_repo(tmp_path, {
+        "tests/test_failure_classification.py": "def test_specs():\n    assert 1 == 2\n",
+    })
+    derived = derive_test_allow_paths(
+        clone, "main",
+        ["tests/test_failure_classification.py::test_specs"],
+        ["src/pkg/core/engine_spec.py"],
+        ["src/pkg/core/engine_spec.py"],
+    )
+    assert derived == []
+
+
+def test_5351_two_hop_importer_not_derived(tmp_path: Path) -> None:
+    clone = _make_repo(tmp_path, {
+        "src/pkg/__init__.py": "",
+        "src/pkg/core/__init__.py": "",
+        "src/pkg/core/engine_spec.py": _ENGINE_SPEC_BASE,
+        "src/pkg/llm/__init__.py": "",
+        "src/pkg/llm/failure_classification.py": _CONSUMER,
+        "src/pkg/metrics/__init__.py": "",
+        "src/pkg/metrics/parsers.py": (
+            "from pkg.llm.failure_classification import classify\n\n\n"
+            "def parse_metrics():\n"
+            "    return classify('cursor')\n"
+        ),
+        "tests/test_metrics_parsers.py": (
+            "from pkg.metrics import parsers\n\n\n"
+            "def test_parse():\n"
+            "    assert parsers.parse_metrics() == 'agent'\n"
+        ),
+    })
+    _write(clone, {"src/pkg/core/engine_spec.py": _ENGINE_SPEC_CHANGED})
+    _commit_all(clone)
+    derived = derive_test_allow_paths(
+        clone, "main",
+        ["tests/test_metrics_parsers.py::test_parse"],
+        ["src/pkg/core/engine_spec.py"],
+        ["src/pkg/core/engine_spec.py"],
+    )
+    assert derived == []
+
+
+def _many_importers(count: int) -> dict[str, str]:
+    files: dict[str, str] = {
+        "src/pkg/__init__.py": "",
+        "src/pkg/core/__init__.py": "",
+        "src/pkg/core/engine_spec.py": _ENGINE_SPEC_BASE,
+    }
+    for i in range(count):
+        pkg = f"src/pkg/importers/i{i}"
+        files[f"{pkg}/__init__.py"] = ""
+        files[f"{pkg}/mod.py"] = "from pkg.core.engine_spec import ENGINE_SPECS\n"
+    return files
+
+
+def test_5351_at_importer_limit_adds_keys(tmp_path: Path) -> None:
+    n = 50
+    files = _many_importers(n)
+    stem = "i0"
+    files["tests/test_importer_ref.py"] = (
+        f"import pkg.importers.{stem}.mod as consumer\n\n\n"
+        "def test_ref():\n"
+        "    assert consumer is not None\n"
+    )
+    clone = _make_repo(tmp_path, files)
+    _write(clone, {"src/pkg/core/engine_spec.py": _ENGINE_SPEC_CHANGED})
+    _commit_all(clone)
+    derived = derive_test_allow_paths(
+        clone, "main",
+        ["tests/test_importer_ref.py::test_ref"],
+        ["src/pkg/core/engine_spec.py"],
+        ["src/pkg/core/engine_spec.py"],
+    )
+    assert derived == ["tests/test_importer_ref.py"]
+
+
+def test_5351_over_importer_limit_skips_importer_keys(tmp_path: Path) -> None:
+    n = 51
+    files = _many_importers(n)
+    files["tests/test_importer_ref.py"] = (
+        "import pkg.importers.i0.mod as consumer\n\n\n"
+        "def test_ref():\n"
+        "    assert consumer is not None\n"
+    )
+    clone = _make_repo(tmp_path, files)
+    _write(clone, {"src/pkg/core/engine_spec.py": _ENGINE_SPEC_CHANGED})
+    _commit_all(clone)
+    derived = derive_test_allow_paths(
+        clone, "main",
+        ["tests/test_importer_ref.py::test_ref"],
+        ["src/pkg/core/engine_spec.py"],
+        ["src/pkg/core/engine_spec.py"],
+    )
+    assert derived == []
+
+
+def test_5351_tests_dir_import_not_counted_as_importer(tmp_path: Path) -> None:
+    clone = _engine_spec_repo(tmp_path, {
+        "src/pkg/llm/failure_classification.py": "VALUE = 1\n",
+        "tests/test_only_importer.py": "from pkg.core.engine_spec import ENGINE_SPECS\n",
+    })
+    derived = derive_test_allow_paths(
+        clone, "main",
+        ["tests/test_failure_classification.py::test_specs"],
+        ["src/pkg/core/engine_spec.py"],
+        ["src/pkg/core/engine_spec.py"],
+    )
+    assert derived == []
+
+
+def test_5351_grep_failure_falls_back_to_direct_keys_only(tmp_path: Path) -> None:
+    clone = _engine_spec_repo(tmp_path)
+    import issuesmith.gates.worktree as wt
+
+    with patch.object(wt, "_direct_src_importers", return_value=set()):
+        derived = derive_test_allow_paths(
+            clone, "main",
+            ["tests/test_failure_classification.py::test_specs"],
+            ["src/pkg/core/engine_spec.py"],
+            ["src/pkg/core/engine_spec.py"],
+        )
+    assert derived == []

@@ -7,6 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Changed
+
+- `derive_test_allow_paths`: include tests that reference one-hop direct src importers
+  of changed modules in derived allow_paths (#5351).
+
 ## 0.157.1 - 2026-10-18
 
 ### Fixed

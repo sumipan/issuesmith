@@ -417,6 +417,35 @@ def _hunk_enclosing_names(root: Path, base_branch: str, path: str) -> set[str]:
     return names
 
 
+_DIRECT_IMPORTER_LIMIT = 50
+
+
+def _direct_src_importers(
+    root: Path, base_branch: str, module: str, *, limit: int = _DIRECT_IMPORTER_LIMIT
+) -> set[str]:
+    """Return ``src/**/*.py`` paths on ``origin/<base_branch>`` that directly import ``module``."""
+    mod = re.escape(module)
+    pattern = rf"^[[:space:]]*(from {mod} import|import {mod}([[:space:]]|$|\.|,))"
+    proc = subprocess.run(
+        ["git", "grep", "-l", "-E", pattern, f"origin/{base_branch}", "--", "src/**/*.py"],
+        capture_output=True, text=True, check=False, cwd=str(root),
+    )
+    if proc.returncode != 0:
+        return set()
+    rev_prefix = f"origin/{base_branch}:"
+    paths: set[str] = set()
+    for line in proc.stdout.splitlines():
+        p = line.strip()
+        if not p:
+            continue
+        if p.startswith(rev_prefix):
+            p = p[len(rev_prefix):]
+        paths.add(p)
+    if len(paths) > limit:
+        return set()
+    return paths
+
+
 def _reference_keys(
     root: Path, base_branch: str, changed: list[str]
 ) -> tuple[set[str], set[str]]:
@@ -443,6 +472,20 @@ def _reference_keys(
             word_keys.update(_hunk_enclosing_names(root, base_branch, path))
     # Directory enumeration tests (glob over a dir) reference the parent dir only (#5134).
     substr_keys.update(_parent_dir_keys(_structural_change_paths(root, base_branch, changed)))
+    seen_src_modules: set[str] = set()
+    for path in changed:
+        module = _src_module_name(path)
+        if not module or module in seen_src_modules:
+            continue
+        seen_src_modules.add(module)
+        for imp_path in _direct_src_importers(root, base_branch, module):
+            substr_keys.add(imp_path)
+            imp_module = _src_module_name(imp_path)
+            if imp_module:
+                substr_keys.add(imp_module)
+            stem = Path(imp_path).stem
+            if _is_valid_key(stem):
+                word_keys.add(stem)
     return substr_keys, word_keys
 
 
