@@ -12,18 +12,7 @@ issuesmith is a toolkit for GitHub Issue workflows driven by labels, built on [g
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.157.1** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
-
-### OSS README verification
-
-Release pins in this document match `git describe --tags --abbrev=0 origin/main` and `[project].version` in `pyproject.toml` (**v0.157.1**). The nine OSS sections below (CLI Reference, Public API, Architecture, Configuration, Error Reference, Gates, plus Quick Start and License) were aligned with the implementation on `main` in prior documentation merges; this change updates Status and Installation version strings from **v0.156.0** to **v0.157.1** only. Verify CLI registration, gate registry coverage, and `LanguagePack` field listing with:
-
-```bash
-pytest -q \
-  tests/conventions/test_cli_commands_registered.py \
-  tests/conventions/test_gate_registry_complete.py \
-  tests/test_language.py::test_readme_lists_every_pack_field
-```
+The current release is **v0.157.1** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md). Release pins match `git describe --tags --abbrev=0 origin/main` and `[project].version` in `pyproject.toml`. Run the [Verifying this README](#verifying-this-readme) checks on the branch tip to validate every acceptance criterion, including sections whose text already matches `main`.
 
 ## Installation
 
@@ -36,6 +25,8 @@ The gates, forge access, `observe`, `andon`, `lanes` and `metrics` import ghdag,
 ```bash
 pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.157.1"
 ```
+
+Validate pins with the [release pin check](#release-pin-and-scope-checks) in [Verifying this README](#verifying-this-readme).
 
 | Item | Value |
 |---|---|
@@ -98,7 +89,7 @@ python3 -m issuesmith queue tick
 python3 -m issuesmith resume 123 --from p1
 ```
 
-Day-to-day operation uses `python3 -m issuesmith andon list`, `python3 -m issuesmith observe --json`, `python3 -m issuesmith lanes check --json` and `python3 -m issuesmith metrics rework --since 2026-10-01`.
+Day-to-day operation uses `python3 -m issuesmith andon list`, `python3 -m issuesmith observe --json`, `python3 -m issuesmith lanes check --json` and `python3 -m issuesmith metrics rework --since 2026-10-01`. Commands below are checked by `tests/conventions/test_cli_commands_registered.py` ([verification](#structure-tests)).
 
 ## CLI Reference
 
@@ -201,6 +192,8 @@ Ledger keys: `lanes` (lane name to Issue numbers), `hold`, `backlog`, `auto_lane
 
 ## Public API
 
+Tables in this section mirror each module's `__all__`, re-exports and public definitions at **v0.157.1** ([verification](#structure-tests)).
+
 `issuesmith.__all__` is empty; import the submodules. Modules with `__all__` are listed by that list; other modules list their public definitions. Names that start with `_` are internal.
 
 ### Gates
@@ -298,6 +291,8 @@ issuesmith is pre-1.0 and follows `0.Y.Z`: a `Y` bump may change or remove publi
 
 ## Architecture
 
+Every Python module under `src/issuesmith/` is listed below with a one-line role ([verification](#structure-tests)).
+
 ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, label transitions and idempotency. issuesmith provides the gates, steps and tools that the workflow templates call. A phase may advance when its `preconditions` labels are present, its `excludes` labels are absent and every `advance_when` predicate passes. After a step finishes, its `requires` gates run; auto-fixable violations are fixed in place, other blocking violations start a repair run (`steps.*.repair`) or raise an andon (`steps.*.andon_when`). Label writes from steps go through `forge_guard`; managed labels are derived by `projection` and written only by `ops/labels.project_issue`.
 
 | Module | Role |
@@ -392,6 +387,8 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 
 ## Gates
 
+Gate IDs match `issuesmith.gates.GATE_REGISTRY` ([verification](#structure-tests)).
+
 Gate ids in `GATE_REGISTRY` (usable in `steps.*.requires`). `input_kind` is the step `input_kind` the gate expects. `pre_llm` gates run before the LLM in `engine run-guarded --requires-step`. Non-repairable violations raise an andon or block without a repair loop.
 
 | id | input_kind | pre_llm | repairable | Responsibility |
@@ -421,6 +418,8 @@ Gate ids in `GATE_REGISTRY` (usable in `steps.*.requires`). `input_kind` is the 
 `review` is bound to `steps.<id>.review` (`STEP_BOUND_GATES`) and is not a `GATE_REGISTRY` key. Hosts may also reference `module.path:attr` gates.
 
 ## Configuration
+
+Keys, environment variables and `LanguagePack` fields follow `issuesmith.config` and `lang/en.yaml` ([verification](#structure-tests)).
 
 ### Config file resolution
 
@@ -566,6 +565,8 @@ Logs, exception messages, CLI help and violation text stay English and are not p
 
 ## Error Reference
 
+Custom exception types are drawn from `src/issuesmith/` (no standalone `issuesmith.exceptions` module) ([verification](#structure-tests)).
+
 | Type | Module | Base | Raised when |
 |---|---|---|---|
 | `ConfigError` | `issuesmith.config` | `ValueError` | Invalid `issuesmith.yaml` section, language pack, gate or predicate reference; missing `phases:` or `phases[].handler`; a step in two phases; `review` gate without `steps.<id>.review` |
@@ -581,6 +582,35 @@ Logs, exception messages, CLI help and violation text stay English and are not p
 | `MergeStateTimeoutError` | `issuesmith.merge` | `Exception` | The PR merge state did not settle before the timeout |
 
 Some shape errors raise plain `ValueError` instead of `ConfigError`: a missing `repo`, a non-mapping config file, an empty or malformed `phases` list, a non-positive or non-integer `engines.<role>.pause_ttl_sec`, a non-list `forbidden_pr_paths`, `forbidden_pr_paths_except`, `terminal_labels` or `terminal_without_merge`, and an incomplete `observe.main_health`. `TemplateVariableError` (`ghdag.pipeline.order`) can propagate from `issuesmith.engine` when a template variable is missing.
+
+## Verifying this README
+
+The nine OSS sections in this file match the implementation at **v0.157.1**. Structural alignment with CLI handlers, `GATE_REGISTRY` and `LanguagePack` is enforced by convention tests; release pins and README-only PR scope use the shell checks below. Reviewers should run these on the branch tip so acceptance criteria are self-contained even when the PR diff only updates release strings.
+
+| Acceptance area | Verification |
+|---|---|
+| Status badge, release line and Installation pins vs tag / `pyproject.toml` | [Release pin and scope checks](#release-pin-and-scope-checks) |
+| CLI Reference, Gates, `LanguagePack` fields | [Structure tests](#structure-tests) |
+| Public API, Architecture, Configuration, Error Reference | This file plus [Structure tests](#structure-tests) |
+| README-only change set | `git diff --name-only origin/main...HEAD` in scope checks |
+
+### Structure tests
+
+```bash
+pytest -q \
+  tests/conventions/test_cli_commands_registered.py \
+  tests/conventions/test_gate_registry_complete.py \
+  tests/test_language.py::test_readme_lists_every_pack_field
+```
+
+### Release pin and scope checks
+
+```bash
+PYPROJECT_VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+test "$(git describe --tags --abbrev=0 origin/main)" = "v${PYPROJECT_VERSION}"
+python3 -m issuesmith --help
+test -z "$(git diff --name-only origin/main...HEAD | grep -vx 'README.md')"
+```
 
 ## License
 
