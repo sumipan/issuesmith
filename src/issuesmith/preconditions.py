@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib
 import re
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from ghdag.forge import ForgePort
 
@@ -54,7 +54,7 @@ def resolve_predicate(name: str) -> Predicate:
         raise ConfigError(
             f"cannot resolve predicate {name!r}: attribute {attr!r} is not callable"
         )
-    return obj  # type: ignore[return-value]
+    return cast(Predicate, obj)
 
 
 def register(name: str, fn: Predicate) -> None:

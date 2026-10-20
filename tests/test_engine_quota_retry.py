@@ -43,6 +43,7 @@ def _snapshot(engines: dict[str, EngineQuotaState]) -> QuotaSnapshot:
         deferred_tasks={},
         draining_engines={},
         running_tasks={},
+        limits={},
     )
 
 

@@ -9,9 +9,9 @@ from pathlib import Path
 import yaml
 
 try:
-    import tomllib
+    import tomllib  # type: ignore[import-untyped]
 except ModuleNotFoundError:  # pragma: no cover
-    tomllib = None  # type: ignore[misc, assignment]
+    tomllib = None
 from ghdag.workflow.gates import GATE_REGISTRY, Violation
 from ghdag.workflow.gates.common import strip_code_regions
 

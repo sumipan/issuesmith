@@ -55,6 +55,7 @@ def _snap(engines):
         deferred_tasks={},
         draining_engines={},
         running_tasks={},
+        limits={},
     )
 
 
