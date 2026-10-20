@@ -286,7 +286,9 @@ def plan(
             info = _issue_view(number)
             if info is None:
                 continue
-            status, phase = classify(info.labels, config, closed=info.state.lower() == "closed")
+            status, issue_phase = classify(
+                info.labels, config, closed=info.state.lower() == "closed"
+            )
             if status == "done":
                 continue
             if status == "blocked":
@@ -302,11 +304,20 @@ def plan(
                 break
             if status == "busy":
                 break
-            if status == "candidate" and phase:
+            if status == "candidate" and issue_phase is not None:
                 if number in occupied:
                     break
-                lane_plan.candidates.append({"lane": lane_name, "issue": number, "phase": phase})
-                round_robin.append((lane_name, number, phase, _engine_for_phase(phase, config, role_engine_map)))
+                lane_plan.candidates.append(
+                    {"lane": lane_name, "issue": number, "phase": issue_phase}
+                )
+                round_robin.append(
+                    (
+                        lane_name,
+                        number,
+                        issue_phase,
+                        _engine_for_phase(issue_phase, config, role_engine_map),
+                    )
+                )
                 break
         if blocked_lane:
             continue
@@ -317,10 +328,12 @@ def plan(
         info = _issue_view(number)
         if info is None:
             continue
-        status, phase = classify(info.labels, config, closed=info.state.lower() == "closed")
-        if status == "candidate" and phase:
-            eng = _engine_for_phase(phase, config, role_engine_map)
-            round_robin.append(("backlog", number, phase, eng))
+        status, issue_phase = classify(
+            info.labels, config, closed=info.state.lower() == "closed"
+        )
+        if status == "candidate" and issue_phase is not None:
+            eng = _engine_for_phase(issue_phase, config, role_engine_map)
+            round_robin.append(("backlog", number, issue_phase, eng))
 
     free_total = sum(s["free"] for s in slots.values())
     for lane_name, number, phase, engine in round_robin:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import fnmatch
 import re
 from pathlib import Path
+from typing import cast
 
 from ghdag.workflow.gates import GATE_REGISTRY, Violation
 
@@ -321,9 +322,10 @@ def change_rows_with_content(text: str) -> list[tuple[str, str, str, str]]:
         idx = [next((i for i, c in enumerate(header) if col in c), None) for col in columns]
         if any(i is None for i in idx):
             continue
-        repo_i, path_i, _, content_i = idx
+        resolved = cast(tuple[int, int, int, int], tuple(idx))
+        repo_i, path_i, _, content_i = resolved
         for row in rows[1:]:
-            if len(row) <= max(idx):
+            if len(row) <= max(resolved):
                 continue
             key = (row[repo_i].strip().strip("`"), _normalize_path(row[path_i]))
             content.setdefault(key, row[content_i].strip())

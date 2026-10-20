@@ -516,8 +516,11 @@ def _cmd_lanes(argv: list[str]) -> int:
         for raw in open_raw or []:
             if not isinstance(raw, dict) or raw.get("pull_request"):
                 continue
+            number_raw = raw.get("number")
+            if number_raw is None:
+                continue
             try:
-                num = int(raw.get("number"))
+                num = int(number_raw)
             except (TypeError, ValueError):
                 continue
             if num not in issues:

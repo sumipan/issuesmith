@@ -37,6 +37,7 @@ def _snapshot() -> QuotaSnapshot:
         deferred_tasks={},
         draining_engines={},
         running_tasks={},
+        limits={},
     )
 
 

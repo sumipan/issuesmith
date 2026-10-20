@@ -4,14 +4,15 @@ import posixpath
 import re
 import shlex
 import subprocess
+import sys
 from pathlib import Path
 
 import yaml
 
-try:
+if sys.version_info >= (3, 11):
     import tomllib
-except ModuleNotFoundError:  # pragma: no cover
-    tomllib = None  # type: ignore[misc, assignment]
+else:  # pragma: no cover - Python 3.10 compatibility
+    tomllib = None
 from ghdag.workflow.gates import GATE_REGISTRY, Violation
 from ghdag.workflow.gates.common import strip_code_regions
 

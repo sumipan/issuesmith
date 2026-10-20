@@ -226,6 +226,8 @@ def _project_step_done(step_id: str, context: dict[str, str]) -> None:
     if issue_number is None or not is_final_step(step_id, get_config()):
         return
     phase = phase_for_step(step_id, get_config())
+    if phase is None:
+        return
     project_issue(
         get_forge(),
         issue_number,
@@ -584,14 +586,11 @@ def _safe_record_metrics(
     try:
         from issuesmith.repair import record_metrics
 
-        kwargs: dict[str, object] = {}
-        if rule_ids is not None:
-            kwargs["rule_ids"] = rule_ids
+        path = get_config().paths.metrics
         if "origin" in inspect.signature(record_metrics).parameters:
-            kwargs["origin"] = origin
-        record_metrics(
-            get_config().paths.metrics, event, step_id, issue_num, **kwargs
-        )
+            record_metrics(path, event, step_id, issue_num, rule_ids, origin=origin)
+        else:
+            record_metrics(path, event, step_id, issue_num, rule_ids)
     except Exception:
         pass
 
