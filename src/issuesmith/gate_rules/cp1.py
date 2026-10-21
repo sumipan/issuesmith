@@ -15,7 +15,7 @@ else:  # pragma: no cover - Python 3.10 compatibility
     try:
         import tomli as tomllib
     except ImportError:
-        tomllib = None
+        tomllib = None  # type: ignore[assignment]
 from ghdag.workflow.gates import GATE_REGISTRY, Violation
 from ghdag.workflow.gates.common import strip_code_regions
 
