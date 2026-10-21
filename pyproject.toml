@@ -67,7 +67,7 @@ warn_unused_ignores = true
 files = ["src/issuesmith"]
 
 [[tool.mypy.overrides]]
-module = ["ghdag", "ghdag.*", "yaml", "yaml.*"]
+module = ["ghdag", "ghdag.*", "tomli", "yaml", "yaml.*"]
 ignore_missing_imports = true
 
 # TODO(#3612): cli.py imports the removed ops.label_hygiene; the error code differs between a

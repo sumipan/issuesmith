@@ -6,16 +6,9 @@ import shlex
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import yaml
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:  # pragma: no cover - Python 3.10 compatibility
-    try:
-        import tomli as tomllib
-    except ImportError:
-        tomllib = None  # type: ignore[assignment]
 from ghdag.workflow.gates import GATE_REGISTRY, Violation
 from ghdag.workflow.gates.common import strip_code_regions
 
@@ -28,6 +21,19 @@ from issuesmith.gate_rules.b1_milestone_subdesign import (
     extract_sub_blocks,
 )
 from issuesmith.scope_gate import resolve_scope_root
+
+tomllib: Any
+if sys.version_info >= (3, 11):
+    import tomllib as _stdlib_tomllib
+
+    tomllib = _stdlib_tomllib
+else:  # pragma: no cover - Python 3.10 compatibility
+    try:
+        import tomli as _backport_tomllib
+
+        tomllib = _backport_tomllib
+    except ImportError:
+        tomllib = None
 
 _YAML_CONTRACT_FIXES: dict[str, tuple[bool, str]] = {
     "missing_required": (
