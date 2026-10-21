@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import importlib
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
@@ -15,7 +15,10 @@ from issuesmith.ops import dispatch as dispatch_mod
 @pytest.fixture(autouse=True)
 def _clear_config_cache():
     reset_config_cache()
-    yield
+    fake_forge = MagicMock()
+    fake_forge.issue_get.return_value = {"labels": []}
+    with patch.object(dispatch_mod, "get_forge", return_value=fake_forge):
+        yield
     reset_config_cache()
     # restore dispatch override used by legacy tests / this module
     dispatch_mod._STEP_MODULES = None
