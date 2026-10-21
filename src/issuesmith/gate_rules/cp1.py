@@ -12,7 +12,10 @@ import yaml
 if sys.version_info >= (3, 11):
     import tomllib
 else:  # pragma: no cover - Python 3.10 compatibility
-    tomllib = None
+    try:
+        import tomli as tomllib
+    except ImportError:
+        tomllib = None
 from ghdag.workflow.gates import GATE_REGISTRY, Violation
 from ghdag.workflow.gates.common import strip_code_regions
 
