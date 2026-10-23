@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.157.7 - 2026-10-23
+
 ### Fixed
 
 - Andon `answer()` / `answer_if_open()` now release queue `held` marks owned by the
