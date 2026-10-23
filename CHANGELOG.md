@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Fixed
+
+- Rate-limit detection for quota-gate pause now inspects LLM stderr line-by-line
+  with stricter patterns (no substring `429` / body-only matches) and records the
+  matching line in `reason` as `rate_limit_detected: <evidence>` (#5472).
+
 ## 0.157.7 - 2026-10-23
 
 ### Fixed

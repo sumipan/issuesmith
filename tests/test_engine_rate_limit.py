@@ -10,7 +10,14 @@ from ghdag.llm import ManagedResult
 from ghdag.quota import EngineQuotaState, QuotaSnapshot
 
 from issuesmith.config import _build_engines
-from issuesmith.engine import RetryReason, RetrySignal, RoleSelection, _execute
+from issuesmith.engine import (
+    _LAST_LLM_STDERR,
+    RetryReason,
+    RetrySignal,
+    RoleSelection,
+    _execute,
+    _rate_limit_evidence,
+)
 
 # ---- config ----
 
@@ -35,6 +42,60 @@ def test_pause_ttl_invalid_raises(bad):
         ValueError, match=r"engines\.design\.pause_ttl_sec must be a positive integer"
     ):
         _build_engines({"design": {"pause_ttl_sec": bad}})
+
+
+# ---- _rate_limit_evidence ----
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        "Error: 429 Too Many Requests",
+        "HTTP status 429",
+        "rate_limit_exceeded",
+        "rate-limited",
+        "ratelimit",
+        "RESOURCE_EXHAUSTED",
+        "quota exceeded",
+    ],
+)
+def test_rate_limit_evidence_matches(stderr: str):
+    evidence = _rate_limit_evidence(stderr)
+    assert evidence is not None
+    assert evidence == _rate_limit_evidence(stderr)
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        "",
+        "issue #5429",
+        "tokens: 14290",
+        "2026-10-20T04:29:00",
+        "order-429a.md",
+        "HTTP status\n429\n",
+    ],
+)
+def test_rate_limit_evidence_non_matches(stderr: str):
+    assert _rate_limit_evidence(stderr) is None
+
+
+def test_rate_limit_evidence_first_matching_line_after_noise():
+    stderr = "issue #5429\nError: 429 Too Many Requests\nrate limit again"
+    assert _rate_limit_evidence(stderr) == "Error: 429 Too Many Requests"
+
+
+def test_rate_limit_evidence_truncates_to_200_chars():
+    long_tail = "x" * 250
+    stderr = f"rate limit exceeded {long_tail}"
+    evidence = _rate_limit_evidence(stderr)
+    assert evidence is not None
+    assert len(evidence) == 200
+
+
+def test_rate_limit_evidence_normalizes_whitespace():
+    stderr = "rate   limit\texceeded"
+    assert _rate_limit_evidence(stderr) == "rate limit exceeded"
 
 
 # ---- engine ----
@@ -81,7 +142,6 @@ def exe_mocks(monkeypatch):
     )
     monkeypatch.setattr("issuesmith.engine._record_task_metrics", lambda **kwargs: None)
     monkeypatch.setattr("issuesmith.engine._resolve_timeout_sec", lambda role: 600.0)
-    monkeypatch.setattr("issuesmith.engine._is_rate_limited", lambda body: True)
     cm = MagicMock(return_value=_result())
     monkeypatch.setattr("issuesmith.engine.call_managed", cm)
     qg = MagicMock()
@@ -89,11 +149,22 @@ def exe_mocks(monkeypatch):
     return {"call_managed": cm, "quota_gate": qg}
 
 
-def _no_fallback(exe_mocks):
+def _call_managed_with_stderr(stderr: str, result: ManagedResult):
+    def _inner(*_args, **_kwargs):
+        _LAST_LLM_STDERR[0] = stderr
+        return result
+
+    return _inner
+
+
+def _no_fallback(exe_mocks, *, stderr: str = "Error: 429 Too Many Requests"):
     available = _snap({"claude": _state("available"), "codex": _state("available")})
     paused = _snap({"claude": _state("paused"), "codex": _state("paused")})
     exe_mocks["quota_gate"].snapshot.side_effect = [available, paused]
-    exe_mocks["call_managed"].return_value = _result("claude", rc=1, body="429")
+    exe_mocks["call_managed"].side_effect = _call_managed_with_stderr(
+        stderr,
+        _result("claude", rc=1, body="issue #5429 only in body"),
+    )
 
 
 def _report_kwargs(exe_mocks):
@@ -107,7 +178,8 @@ def test_report_gets_default_resume_at(exe_mocks):
         _execute("design", "prompt")
     kwargs = _report_kwargs(exe_mocks)
     assert kwargs["status"] == "paused"
-    assert kwargs["reason"] == "rate_limit_detected"
+    assert kwargs["reason"].startswith("rate_limit_detected: ")
+    assert "429 Too Many Requests" in kwargs["reason"]
     assert kwargs["resume_at"] - kwargs["observed_at"] == timedelta(seconds=3600)
     assert kwargs["resume_at"].tzinfo is not None
 
@@ -134,13 +206,44 @@ def test_retry_signal_after_equals_resume_at(exe_mocks):
 def test_fallback_still_used_and_resume_at_reported(exe_mocks):
     available = _snap({"claude": _state("available"), "codex": _state("available")})
     exe_mocks["quota_gate"].snapshot.return_value = available
-    exe_mocks["call_managed"].side_effect = [
-        _result("claude", rc=1, body="rate limit"),
-        _result("codex"),
-    ]
+    stderr = "rate limit exceeded on stderr"
+    calls = {"n": 0}
+
+    def _side_effect(*_args, **_kwargs):
+        if calls["n"] == 0:
+            calls["n"] += 1
+            _LAST_LLM_STDERR[0] = stderr
+            return _result("claude", rc=1, body="rate limit in body only")
+        return _result("codex")
+
+    exe_mocks["call_managed"].side_effect = _side_effect
     result = _execute("design", "prompt")
     assert result.returncode == 0
     assert exe_mocks["call_managed"].call_args.kwargs["engine"] == "codex"
     kwargs = _report_kwargs(exe_mocks)
     assert kwargs["engine"] == "claude"
+    assert kwargs["reason"].startswith("rate_limit_detected: ")
+    assert "rate limit exceeded on stderr" in kwargs["reason"]
     assert kwargs["resume_at"] - kwargs["observed_at"] == timedelta(seconds=3600)
+
+
+def test_body_only_rate_limit_does_not_pause(exe_mocks):
+    available = _snap({"claude": _state("available"), "codex": _state("available")})
+    exe_mocks["quota_gate"].snapshot.return_value = available
+    exe_mocks["call_managed"].side_effect = _call_managed_with_stderr(
+        "",
+        _result("claude", rc=1, body="rate limit and 429 in body only"),
+    )
+    _execute("design", "prompt")
+    exe_mocks["quota_gate"].report.assert_not_called()
+
+
+def test_false_positive_stderr_does_not_pause(exe_mocks):
+    available = _snap({"claude": _state("available"), "codex": _state("available")})
+    exe_mocks["quota_gate"].snapshot.return_value = available
+    exe_mocks["call_managed"].side_effect = _call_managed_with_stderr(
+        "issue #5429",
+        _result("claude", rc=1, body="failed"),
+    )
+    _execute("design", "prompt")
+    exe_mocks["quota_gate"].report.assert_not_called()
