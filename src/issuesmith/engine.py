@@ -849,6 +849,7 @@ def _execute(
     template: str | None = None,
     tier: str | None = None,
     engine: str | None = None,
+    isolation: bool | None = None,
 ) -> subprocess.CompletedProcess[str]:
     selection = resolve(role, tier)
     if engine is not None:
@@ -952,6 +953,7 @@ def _execute(
                 fallback_candidates=fallback_candidates,
                 additional_tags=additional_tags,
                 quota_gate=quota_gate,
+                isolation=isolation,
             )
         except subprocess.TimeoutExpired as exc:
             finished_at = time.time()
@@ -1027,6 +1029,7 @@ def _execute(
                     fallback_candidates=[],
                     additional_tags=additional_tags,
                     quota_gate=quota_gate,
+                    isolation=isolation,
                 )
             else:
                 raise RetrySignal(reason=RetryReason.RATE_LIMITED, after=resume_at)
@@ -1049,6 +1052,7 @@ def _execute(
                     fallback_candidates=[],
                     additional_tags=additional_tags,
                     quota_gate=quota_gate,
+                    isolation=isolation,
                 )
             else:
                 raise RetrySignal(
@@ -1120,6 +1124,8 @@ def exec_file(
     cwd: str | None = None,
     tier: str | None = None,
     engine: str | None = None,
+    *,
+    isolation: bool | None = None,
 ) -> int:
     return _emit(
         _execute(
@@ -1129,6 +1135,7 @@ def exec_file(
             template=Path(input_path).name,
             tier=tier,
             engine=engine,
+            isolation=isolation,
         )
     )
 

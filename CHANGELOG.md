@@ -7,6 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Added
+
+- `exec_file(..., isolation=...)` keyword argument: forwards an explicit isolation
+  request to ghdag `call_managed` on the primary call and all issuesmith-side engine
+  fallbacks. Omitted (`None`) preserves existing behavior via ghdag environment
+  resolution (#5542).
+
 ## 0.157.8 - 2026-10-24
 
 ### Fixed
