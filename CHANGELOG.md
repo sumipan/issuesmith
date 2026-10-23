@@ -7,6 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Fixed
+
+- Andon `answer()` / `answer_if_open()` now release queue `held` marks owned by the
+  answered andon id so lane-check no longer reports stopped issues after the andon closes.
+- Observe auto-resolve for `dag_terminated` requires latest DAG state `running` or
+  `succeeded`; missing execution records alone no longer close the andon.
+
 ## 0.157.6 - 2026-10-23
 
 ### Changed

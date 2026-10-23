@@ -13,6 +13,7 @@ from ghdag.forge import get_forge
 
 from issuesmith.andon import Andon, list_open, raise_andon
 from issuesmith.config import get_config, reset_config_cache
+from issuesmith.observe.dag_state import DagState
 from issuesmith.observe.events import DagTerminatedEvent, OrphanExecEvent
 from issuesmith.observe.policy import evaluate, execute
 from issuesmith.queue_store import QueueStore
@@ -54,8 +55,15 @@ def _orphan_actions(uuid: str, issue: int = 0):
     )
 
 
+def _patch_dag_state(monkeypatch, issue: int, status: str):
+    monkeypatch.setattr(
+        "issuesmith.observe.policy.load_dag_states",
+        lambda *_a, **_k: {issue: DagState(issue=issue, key="k", status=status)},
+    )
+
+
 # AC-1: dag_terminated andon is auto-resolved when DAG recovers (event clears, issue in_flight)
-def test_dag_terminated_auto_resolved_when_dag_recovers(store, client):
+def test_dag_terminated_auto_resolved_when_dag_recovers(store, client, monkeypatch):
     """dag_terminated andon is answered when the DAG recovers (event stops firing).
 
     Fix 1 (nexus #4137): in_flight is retained after DagTerminatedEvent. Auto-resolve
@@ -71,6 +79,7 @@ def test_dag_terminated_auto_resolved_when_dag_recovers(store, client):
     assert any(a.id == dag_id for a in list_open(client)), "andon should be open after first tick"
 
     # Next tick: no dag_terminated events (DAG has recovered / new run started)
+    _patch_dag_state(monkeypatch, number, "running")
     execute([], store, sinks=[], client=client)
 
     open_andons = list_open(client)
@@ -103,7 +112,7 @@ def test_dag_terminated_stays_open_while_dag_still_failing(store, client):
 
 
 # AC-1: after multiple failing ticks, andon resolves when DAG finally recovers
-def test_dag_terminated_auto_resolved_after_multiple_failed_ticks(store, client):
+def test_dag_terminated_auto_resolved_after_multiple_failed_ticks(store, client, monkeypatch):
     """After several failing ticks, andon auto-resolves on the first tick where event clears.
 
     Fix 1 (nexus #4137): event keeps firing while DAG is still failed, then clears when
@@ -121,13 +130,14 @@ def test_dag_terminated_auto_resolved_after_multiple_failed_ticks(store, client)
     assert any(a.id == dag_id for a in list_open(client))
 
     # DAG recovers: event clears → auto-resolve fires (issue still in_flight)
+    _patch_dag_state(monkeypatch, number, "succeeded")
     execute([], store, sinks=[], client=client)
 
     assert not any(a.id == dag_id for a in list_open(client))
 
 
 # AC-1: after DAG recovery + auto-resolve, a new failure raises the andon again
-def test_dag_terminated_recurs_after_auto_resolve(store, client):
+def test_dag_terminated_recurs_after_auto_resolve(store, client, monkeypatch):
     """After auto-resolve (DAG recovered), a new DAG failure raises the andon again.
 
     Fix 1 (nexus #4137): in_flight is retained throughout; no add_in_flight needed
@@ -139,6 +149,7 @@ def test_dag_terminated_recurs_after_auto_resolve(store, client):
     # in_flight retained; andon raised
 
     # DAG recovers: no events → auto-resolve fires (issue still in_flight)
+    _patch_dag_state(monkeypatch, number, "running")
     execute([], store, sinks=[], client=client)
 
     # Issue fails again at same step (e.g. generation 4)
@@ -201,3 +212,70 @@ def test_answer_if_open_no_exception_when_not_found(client):
 def test_answer_if_open_noop_when_client_is_none():
     from issuesmith.andon import answer_if_open
     answer_if_open(None, "observe:999:dag_terminated:999:develop:cp1:0", "auto-resolved: condition cleared")
+
+
+def test_dag_terminated_not_auto_resolved_when_dag_state_missing(store, client, monkeypatch):
+    number = client.issue_create("missing dag state", "body")
+    store.add_in_flight(number, "claude", role="implementation")
+    execute(_dag_terminated_actions(number), store, sinks=[], client=client)
+    dag_id = f"observe:{number}:dag_terminated:{number}:develop:cp1:0"
+    monkeypatch.setattr("issuesmith.observe.policy.load_dag_states", lambda *_a, **_k: {})
+    execute([], store, sinks=[], client=client)
+    assert any(a.id == dag_id for a in list_open(client))
+
+
+def test_dag_terminated_not_auto_resolved_when_still_failed(store, client, monkeypatch):
+    number = client.issue_create("still failed", "body")
+    store.add_in_flight(number, "claude", role="implementation")
+    execute(_dag_terminated_actions(number), store, sinks=[], client=client)
+    dag_id = f"observe:{number}:dag_terminated:{number}:develop:cp1:0"
+    _patch_dag_state(monkeypatch, number, "failed")
+    execute([], store, sinks=[], client=client)
+    assert any(a.id == dag_id for a in list_open(client))
+
+
+def test_dag_terminated_external_workflow_requires_running_dag(
+    tmp_path: Path, monkeypatch,
+):
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump(
+            {
+                "repo": "example/repo",
+                "observe": {"workflows": [{"name": "bump"}]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    monkeypatch.setenv("GHDAG_FORGE", "local")
+    monkeypatch.setenv("GHDAG_FORGE_ROOT", str(tmp_path / "forge"))
+    reset_config_cache()
+    store = QueueStore(
+        queue_path=tmp_path / "q.jsonl",
+        state_path=tmp_path / "state.json",
+        lock_path=tmp_path / "q.lock",
+    )
+    client = get_forge()
+    number = client.issue_create("bump issue", "body")
+    key = f"bump:bump:{number}:1"
+    actions = evaluate(
+        [
+            DagTerminatedEvent(
+                issue=number,
+                key=key,
+                phase="",
+                failed_step="bump",
+                namespace="bump",
+            )
+        ],
+        get_config().observe,
+    )
+    execute(actions, store, sinks=[], client=client)
+    dag_id = f"observe:{number}:dag_terminated:bump:bump:{number}:0"
+    assert dag_id in (store._load_state_unlocked().get("observe_andons") or [])
+    _patch_dag_state(monkeypatch, number, "running")
+    execute([], store, sinks=[], client=client)
+    comments = client.get_issue_comments(number)
+    assert any("auto-resolved" in str(c.get("body") or "") for c in comments)
+    reset_config_cache()
