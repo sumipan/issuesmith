@@ -426,6 +426,16 @@ def _hold_in_flight(andon: Andon) -> None:
         logger.warning("failed to hold in_flight for #%s (%s)", andon.issue, andon.id, exc_info=True)
 
 
+def _release_hold_for_andon(andon: Andon) -> None:
+    """Best-effort: drop the hold owned by this andon id; in_flight entry stays."""
+    try:
+        QueueStore().release_hold(andon.issue, by=andon.id)
+    except Exception:
+        logger.warning(
+            "failed to release hold for #%s (%s)", andon.issue, andon.id, exc_info=True
+        )
+
+
 def list_open(client: Any) -> list[Andon]:
     """Return all unanswered Andons from open Issues' comments."""
     return [e.andon for e in _iter_open_entries(client)]
@@ -482,6 +492,7 @@ def answer(
 
     path = metrics_path if metrics_path is not None else _default_metrics_path()
     _write_metrics(path, "andon_answered", target)
+    _release_hold_for_andon(target)
     _call_resume_hook(client, andon_id, action)
 
 
@@ -535,6 +546,7 @@ def answer_if_open(
 
     path = metrics_path if metrics_path is not None else _default_metrics_path()
     _write_metrics(path, "andon_answered", target)
+    _release_hold_for_andon(target)
 
 
 def _count_auto_answer_notes(client: Any, issue: int, rule_name: str) -> int:

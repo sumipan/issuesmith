@@ -761,3 +761,64 @@ def test_raise_andon_continues_when_queue_store_fails(tmp_path, caplog, fail_on)
     assert f"{_ns()}:andon-blocked" in client.issue_update.call_args[1].get("labels_add", [])
     sink.emit.assert_called_once_with(a)
     assert json.loads(mfile.read_text().strip())["event"] == "andon_raised"
+
+
+def test_answer_releases_hold_owned_by_andon(tmp_path):
+    store = _tmp_store(tmp_path)
+    store.add_in_flight(10, "claude", phase="develop")
+    andon_id = "wf:10:p1:0"
+    store.hold_in_flight(10, by=andon_id)
+    a = _make_andon(issue=10, andon_id=andon_id, kind="blocked", step="p1")
+    client = _fake_client(comments=[{"body": to_comment(a)}])
+    with (
+        patch("issuesmith.andon.QueueStore", return_value=store),
+        patch("issuesmith.andon._iter_open_andon_issues", return_value=iter([{"number": 10}])),
+        patch("issuesmith.andon._write_metrics"),
+        patch("issuesmith.andon._call_resume_hook"),
+    ):
+        answer(client, andon_id, "resume")
+    entry = store.snapshot().in_flight[0]
+    assert "held" not in entry
+    assert entry["issue"] == 10
+
+
+def test_answer_if_open_releases_hold(tmp_path):
+    store = _tmp_store(tmp_path)
+    store.add_in_flight(16, "claude")
+    andon_id = "wf:16:s:0"
+    store.hold_in_flight(16, by=andon_id)
+    a = _make_andon(issue=16, andon_id=andon_id, kind="broken")
+    client = _fake_client(comments=[{"body": to_comment(a), "id": 10}])
+    with (
+        patch("issuesmith.andon.QueueStore", return_value=store),
+        patch("issuesmith.andon._iter_open_andon_issues", return_value=iter([{"number": 16}])),
+        patch("issuesmith.andon._write_metrics"),
+    ):
+        answer_if_open(client, andon_id, "auto")
+    assert "held" not in store.snapshot().in_flight[0]
+
+
+@pytest.mark.parametrize("fail_on", ["init", "release"])
+def test_answer_continues_when_release_hold_fails(tmp_path, caplog, fail_on):
+    store = _tmp_store(tmp_path)
+    store.add_in_flight(10, "claude")
+    store.hold_in_flight(10, by="wf:10:p1:0")
+    a = _make_andon(issue=10, andon_id="wf:10:p1:0", kind="blocked", step="p1")
+    client = _fake_client(comments=[{"body": to_comment(a)}])
+    if fail_on == "init":
+        store_patch = patch("issuesmith.andon.QueueStore", side_effect=OSError("boom"))
+    else:
+        broken = MagicMock()
+        broken.release_hold.side_effect = OSError("boom")
+        store_patch = patch("issuesmith.andon.QueueStore", return_value=broken)
+    with (
+        store_patch,
+        caplog.at_level("WARNING", logger="issuesmith.andon"),
+        patch("issuesmith.andon._iter_open_andon_issues", return_value=iter([{"number": 10}])),
+        patch("issuesmith.andon._write_metrics"),
+        patch("issuesmith.andon._call_resume_hook"),
+    ):
+        answer(client, "wf:10:p1:0", "resume")
+    warnings = [r for r in caplog.records if r.name == "issuesmith.andon"]
+    assert len(warnings) == 1
+    client.issue_comment.assert_called_once()

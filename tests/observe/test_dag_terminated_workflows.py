@@ -15,7 +15,7 @@ from issuesmith.observe import (
     _detect_orphan_exec,
     observe,
 )
-from issuesmith.observe.dag_state import load_dag_states
+from issuesmith.observe.dag_state import DagState, load_dag_states
 from issuesmith.observe.events import DagTerminatedEvent
 from issuesmith.observe.policy import AndonAction, RemoveRunningLabelAction, evaluate, execute
 from issuesmith.queue_store import QueueStore
@@ -182,7 +182,7 @@ def test_distinct_andon_ids_for_issuesmith_and_bump(env):
     assert is_actions[0].andon_id != bump_actions[0].andon_id
 
 
-def test_bump_dag_terminated_auto_resolves_without_in_flight(env):
+def test_bump_dag_terminated_auto_resolves_without_in_flight(env, monkeypatch):
     store, client, tmp_path = env
     issue_num = client.issue_create("bump auto", "body")
     client.issue_update(issue_num, labels_add=["bump:running"])
@@ -201,6 +201,12 @@ def test_bump_dag_terminated_auto_resolves_without_in_flight(env):
     }
     assert "bump:andon-blocked" in labels
 
+    monkeypatch.setattr(
+        "issuesmith.observe.policy.load_dag_states",
+        lambda *_a, **_k: {
+            issue_num: DagState(issue=issue_num, key="k", status="running"),
+        },
+    )
     execute([], store, sinks=[], client=client)
     labels_after = {
         lbl["name"] if isinstance(lbl, dict) else str(lbl)

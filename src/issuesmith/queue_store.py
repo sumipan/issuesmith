@@ -633,6 +633,26 @@ class QueueStore:
             self._save_state_unlocked(state)
             return True
 
+    def release_hold(self, issue: int, by: str) -> bool:
+        """Remove ``held`` from the in_flight entry when ``held.by`` matches ``by``.
+
+        Other entry fields are unchanged; the entry itself is not removed.
+        Returns False without writing state when there is no match.
+        """
+        with self.lock():
+            state = self._load_state_unlocked()
+            in_flight = state.get("in_flight") or []
+            entry = next((e for e in in_flight if e.get("issue") == issue), None)
+            if entry is None:
+                return False
+            held = entry.get("held")
+            if not isinstance(held, dict) or held.get("by") != by:
+                return False
+            del entry["held"]
+            state["in_flight"] = in_flight
+            self._save_state_unlocked(state)
+            return True
+
     def sync_observe_andons(self, active_ids: set[str]) -> tuple[set[str], set[str]]:
         """Remember which observe andons are currently raised; return (new_ids, resolved_ids).
 

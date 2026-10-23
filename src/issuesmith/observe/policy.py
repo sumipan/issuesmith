@@ -5,6 +5,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from issuesmith.observe.dag_state import load_dag_states
 from issuesmith.observe.events import (
     AllEnginesPausedEvent,
     ChainHaltedEvent,
@@ -405,51 +406,56 @@ def execute(
     new_ids, resolved_ids = store.sync_observe_andons({a.andon_id for a in andon_actions})
 
     if resolved_ids and client is not None:
-        # dag_terminated andons are auto-resolved when the event clears (DAG recovered) AND
-        # the issue is still in_flight. While the DAG is still failed, _detect_dag_terminated
-        # keeps firing, so the andon stays in the active set and never reaches resolved_ids.
-        # When the DAG recovers (new run started via dag recover), the event stops and the
-        # andon moves to resolved_ids; since in_flight is retained (Fix 1, nexus #4137),
-        # auto-resolve fires immediately. If in_flight was released by reset/abandon,
-        # the id is deferred and retained until in_flight is restored (or the andon is
-        # manually answered). Deferred ids are retained in the store for re-checking.
+        # dag_terminated andons auto-resolve only when the event clears AND the latest DAG
+        # state for the issue is running or succeeded. Missing state or failed/pending/deferred
+        # means the condition may have disappeared because execution records were cleaned up.
         deferred: set[str] = set()
-        snap = store.snapshot()
-        in_flight_issues: set[int] = {
-            entry.get("issue")  # type: ignore[misc]
-            for entry in snap.in_flight
-            if isinstance(entry, dict) and isinstance(entry.get("issue"), int)
-        }
         from issuesmith.config import get_config as _get_config
 
         cfg = _get_config()
+        exec_jsonl = cfg.paths.exec_jsonl
+        done_dir = cfg.paths.done_dir
+        running_dir = cfg.paths.done_dir.parent / "running"
         enumerated_workflows = {wf.name: wf for wf in cfg.observe.workflows}
         for resolved_id in resolved_ids:
             if ":dag_terminated:" in resolved_id:
                 parts = resolved_id.split(":")
-                workflow_name = parts[3] if len(parts) > 3 else ""
-                wf = enumerated_workflows.get(workflow_name)
-                if wf is not None:
-                    try:
+                try:
+                    issue_num: int | None = int(parts[1]) if len(parts) >= 2 else None
+                except (ValueError, IndexError):
+                    issue_num = None
+                wf = enumerated_workflows.get(parts[3]) if len(parts) > 3 else None
+                workflow_arg: str | None = wf.name if wf is not None else None
+                dag_states = load_dag_states(
+                    exec_jsonl,
+                    done_dir,
+                    running_dir,
+                    workflow=workflow_arg,
+                )
+                ds = dag_states.get(issue_num) if issue_num is not None else None
+                if ds is None or ds.status not in ("running", "succeeded"):
+                    logger.debug(
+                        "defer auto-resolve: dag_terminated %s, dag status=%s",
+                        resolved_id,
+                        ds.status if ds is not None else "missing",
+                    )
+                    deferred.add(resolved_id)
+                    continue
+                try:
+                    if wf is not None:
                         answer_if_open(
                             client,
                             resolved_id,
                             "auto-resolved: condition cleared",
                             namespace=wf.label_namespace,
                         )
-                    except Exception:
-                        logger.exception("answer_if_open failed for %s", resolved_id)
-                    continue
-                try:
-                    issue_num: int | None = int(parts[1]) if len(parts) >= 2 else None
-                except (ValueError, IndexError):
-                    issue_num = None
-                if issue_num is None or issue_num not in in_flight_issues:
-                    logger.debug(
-                        "defer auto-resolve: dag_terminated %s, issue not in_flight", resolved_id
-                    )
-                    deferred.add(resolved_id)
-                    continue
+                    else:
+                        answer_if_open(
+                            client, resolved_id, "auto-resolved: condition cleared"
+                        )
+                except Exception:
+                    logger.exception("answer_if_open failed for %s", resolved_id)
+                continue
             try:
                 answer_if_open(client, resolved_id, "auto-resolved: condition cleared")
             except Exception:

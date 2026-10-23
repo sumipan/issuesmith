@@ -790,6 +790,57 @@ def test_hold_in_flight_missing_issue_returns_false_without_change(tmp_path):
     assert store.state_path.read_text(encoding="utf-8") == before
 
 
+def test_release_hold_removes_held_only_when_owner_matches(tmp_path):
+    store = _store(tmp_path)
+    store.add_in_flight(
+        10,
+        "claude",
+        role="implementation",
+        phase="develop",
+        allow_paths=("src/a/**",),
+        target_repo="sumipan/issuesmith",
+    )
+    assert store.hold_in_flight(10, by="wf:10:p1:0") is True
+    assert store.release_hold(10, by="wf:10:p1:0") is True
+    entry = store.snapshot().in_flight[0]
+    assert "held" not in entry
+    assert entry["engine"] == "claude"
+    assert entry["role"] == "implementation"
+    assert entry["phase"] == "develop"
+    assert entry["target_repo"] == "sumipan/issuesmith"
+    assert entry["allow_paths"] == ["src/a/**"]
+
+
+def test_release_hold_wrong_owner_leaves_state_unchanged(tmp_path):
+    store = _store(tmp_path)
+    store.add_in_flight(10, "claude")
+    assert store.hold_in_flight(10, by="wf:10:p1:0") is True
+    before = store.state_path.read_text(encoding="utf-8")
+    assert store.release_hold(10, by="wf:10:p1:1") is False
+    assert store.state_path.read_text(encoding="utf-8") == before
+
+
+def test_release_hold_no_entry_or_no_held_mark(tmp_path):
+    store = _store(tmp_path)
+    assert store.release_hold(99, by="wf:99:p1:0") is False
+    store.add_in_flight(10, "claude")
+    before_entry = store.state_path.read_text(encoding="utf-8")
+    assert store.release_hold(10, by="wf:10:p1:0") is False
+    assert store.state_path.read_text(encoding="utf-8") == before_entry
+
+
+def test_release_hold_non_dict_held_is_noop(tmp_path):
+    store = _store(tmp_path)
+    store.add_in_flight(10, "claude")
+    with store.lock():
+        state = store._load_state_unlocked()
+        state["in_flight"][0]["held"] = "bad"
+        store._save_state_unlocked(state)
+    before = store.state_path.read_text(encoding="utf-8")
+    assert store.release_hold(10, by="wf:10:p1:0") is False
+    assert store.state_path.read_text(encoding="utf-8") == before
+
+
 def test_hold_in_flight_again_overwrites_held_only(tmp_path):
     store = _store(tmp_path)
     store.add_in_flight(10, "claude", role="implementation", phase="develop")
