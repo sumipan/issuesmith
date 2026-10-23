@@ -259,7 +259,7 @@ def _rate_limit_evidence(text: str) -> str | None:
 
 def _is_rate_limited(text: str) -> bool:
     """Backward-compatible boolean helper; tests may monkeypatch this."""
-    return _rate_limit_evidence(text) is not None
+    return any(_rate_limit_line_matches(line) for line in text.splitlines())
 
 
 def _truncate_failure_stderr(stderr: str) -> str:
@@ -976,16 +976,15 @@ def _execute(
             )
 
         # F2: nexus-side workaround until ghdag classifies RATE_LIMIT.
-        stderr_text = _LAST_LLM_STDERR[0]
-        rate_evidence = _rate_limit_evidence(stderr_text)
-        if rate_evidence is None and _is_rate_limited(stderr_text):
-            normalized = _normalize_rate_limit_evidence(stderr_text)
-            rate_evidence = normalized or "rate limit detected"
-        if (
-            result.returncode != 0
-            and result.failure_class is None
-            and rate_evidence is not None
-        ):
+        rate_evidence = None
+        stderr_text = ""
+        if result.returncode != 0 and result.failure_class is None:
+            stderr_text = _LAST_LLM_STDERR[0]
+            rate_evidence = _rate_limit_evidence(stderr_text)
+            if rate_evidence is None and _is_rate_limited(stderr_text):
+                normalized = _normalize_rate_limit_evidence(stderr_text)
+                rate_evidence = normalized or "rate limit detected"
+        if rate_evidence is not None:
             observed_at = datetime.now(timezone.utc)
             resume_at = observed_at + timedelta(
                 seconds=DEFAULT_PAUSE_TTL_SEC.get(role, 3600)

@@ -247,3 +247,49 @@ def test_false_positive_stderr_does_not_pause(exe_mocks):
     )
     _execute("design", "prompt")
     exe_mocks["quota_gate"].report.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        _result("claude", rc=0),
+        ManagedResult(
+            body="failed",
+            usage=None,
+            returncode=1,
+            failure_class="other",
+            engine_used="claude",
+            model_used="m",
+            attempts=1,
+            quota_reported=False,
+            additional_tags={},
+        ),
+    ],
+)
+def test_rate_limit_evidence_only_checked_for_unclassified_failure(
+    exe_mocks, monkeypatch, result
+):
+    available = _snap({"claude": _state("available"), "codex": _state("available")})
+    exe_mocks["quota_gate"].snapshot.return_value = available
+    exe_mocks["call_managed"].return_value = result
+    evidence = MagicMock(return_value="rate limit exceeded")
+    monkeypatch.setattr("issuesmith.engine._rate_limit_evidence", evidence)
+
+    _execute("design", "prompt")
+
+    evidence.assert_not_called()
+
+
+def test_rate_limit_evidence_checked_once_for_unclassified_failure(
+    exe_mocks, monkeypatch
+):
+    available = _snap({"claude": _state("available"), "codex": _state("available")})
+    exe_mocks["quota_gate"].snapshot.return_value = available
+    exe_mocks["call_managed"].return_value = _result("claude", rc=1)
+    evidence = MagicMock(return_value=None)
+    monkeypatch.setattr("issuesmith.engine._rate_limit_evidence", evidence)
+    monkeypatch.setattr("issuesmith.engine._is_rate_limited", lambda _text: False)
+
+    _execute("design", "prompt")
+
+    evidence.assert_called_once_with("")
