@@ -627,3 +627,10 @@ def test_allow_paths_forbidden_registry_entry() -> None:
     assert entry.input_kind == "issue"
     assert entry.pre_llm is True
     assert entry.repairable is False
+
+
+def test_non_repairable_rule_ids_and_pr_scope_repairable() -> None:
+    from issuesmith.gates import GATE_REGISTRY, NON_REPAIRABLE_RULE_IDS
+
+    assert NON_REPAIRABLE_RULE_IDS == frozenset({"pr_diff_scope.forbidden_path"})
+    assert GATE_REGISTRY["pr_scope"].repairable is True

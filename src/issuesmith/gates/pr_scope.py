@@ -58,20 +58,27 @@ class PrScopeGate:
         violations = []
         guarded: list[str] = []
         for f in files:
-            verdict = check_pr_scope([f], self._allow_paths)
-            if verdict.passed:
+            file_violations = check_pr_diff_scope([f], self._allow_paths)
+            if not file_violations:
                 continue
-            if f in derived:
-                guarded.append(f)
+            v = file_violations[0]
+            if v.rule_id == "pr_diff_scope.forbidden_path":
+                violations.append(v)
                 continue
-            violations.append(Violation(
-                rule_id="pr_scope.out_of_allow",
-                severity="fail",
-                message=f"{f}: outside allow_paths",
-                location=f,
-                auto_fixable=False,
-                fix_hint=f"widen:{f}",
-            ))
+            if v.rule_id == "pr_diff_scope.out_of_scope":
+                if f in derived:
+                    guarded.append(f)
+                    continue
+                violations.append(Violation(
+                    rule_id="pr_scope.out_of_allow",
+                    severity="fail",
+                    message=f"{f}: outside allow_paths",
+                    location=f,
+                    auto_fixable=False,
+                    fix_hint=f"widen:{f}",
+                ))
+                continue
+            violations.append(v)
         if guarded:
             violations.extend(_worktree.check_derived_test_guard(
                 self._worktree_path, self._base_branch, guarded,

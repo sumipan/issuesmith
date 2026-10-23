@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Literal, Mapping, Protocol
 
+NON_REPAIRABLE_RULE_IDS: frozenset[str] = frozenset({"pr_diff_scope.forbidden_path"})
+
 __all__ = [
     "Verdict",
     "GateBuildContext",
@@ -15,6 +17,7 @@ __all__ = [
     "GateEntry",
     "RequiresGate",
     "GATE_REGISTRY",
+    "NON_REPAIRABLE_RULE_IDS",
     "resolve_gate",
     "validate_step_requires",
     "check_scope",
