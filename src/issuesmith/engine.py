@@ -175,7 +175,19 @@ DEFAULT_PAUSE_TTL_SEC: dict[str, int] = {
 TIMEOUT_ENV_VAR = "ISSUESMITH_TIMEOUT_SEC"
 
 # nexus-side workaround until ghdag classify_common_failure has RATE_LIMIT (#2798).
-_RATE_LIMIT_PATTERNS = ("resource_exhausted", "rate limit", "ratelimit", "429")
+_RATE_LIMIT_EVIDENCE_MAX_LEN = 200
+_RATE_LIMIT_LINE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"too many requests", re.IGNORECASE),
+    re.compile(r"resource_exhausted", re.IGNORECASE),
+    re.compile(r"quota exceeded", re.IGNORECASE),
+    re.compile(r"ratelimit", re.IGNORECASE),
+    re.compile(r"rate[\s_\-]+limit", re.IGNORECASE),
+)
+_RATE_LIMIT_429 = re.compile(r"\b429\b")
+_RATE_LIMIT_429_CONTEXT = re.compile(
+    r"\b(?:http|status|error)\b|too many requests",
+    re.IGNORECASE,
+)
 
 # Failure stderr diagnostic limits (#4239); tail-truncate by line count and bytes.
 _FAILURE_STDERR_MAX_LINES = 40
@@ -219,9 +231,35 @@ def _wait_poll_sec() -> int:
     return value
 
 
+def _rate_limit_line_matches(line: str) -> bool:
+    for pattern in _RATE_LIMIT_LINE_PATTERNS:
+        if pattern.search(line):
+            return True
+    if _RATE_LIMIT_429.search(line) and _RATE_LIMIT_429_CONTEXT.search(line):
+        return True
+    return False
+
+
+def _normalize_rate_limit_evidence(line: str) -> str:
+    return re.sub(r"\s+", " ", line.strip())[:_RATE_LIMIT_EVIDENCE_MAX_LEN]
+
+
+def _rate_limit_evidence(text: str) -> str | None:
+    """Return normalized evidence from the first matching stderr line, or None."""
+    if not text:
+        return None
+    for line in text.splitlines():
+        if not _rate_limit_line_matches(line):
+            continue
+        normalized = _normalize_rate_limit_evidence(line)
+        if normalized:
+            return normalized
+    return None
+
+
 def _is_rate_limited(text: str) -> bool:
-    lower = text.lower()
-    return any(p in lower for p in _RATE_LIMIT_PATTERNS)
+    """Backward-compatible boolean helper; tests may monkeypatch this."""
+    return any(_rate_limit_line_matches(line) for line in text.splitlines())
 
 
 def _truncate_failure_stderr(stderr: str) -> str:
@@ -938,24 +976,30 @@ def _execute(
             )
 
         # F2: nexus-side workaround until ghdag classifies RATE_LIMIT.
-        if (
-            result.returncode != 0
-            and result.failure_class is None
-            and (
-                _is_rate_limited(result.body)
-                or _is_rate_limited(_LAST_LLM_STDERR[0])
-            )
-        ):
+        rate_evidence = None
+        stderr_text = ""
+        if result.returncode != 0 and result.failure_class is None:
+            stderr_text = _LAST_LLM_STDERR[0]
+            rate_evidence = _rate_limit_evidence(stderr_text)
+            if rate_evidence is None and _is_rate_limited(stderr_text):
+                normalized = _normalize_rate_limit_evidence(stderr_text)
+                rate_evidence = normalized or "rate limit detected"
+        if rate_evidence is not None:
             observed_at = datetime.now(timezone.utc)
             resume_at = observed_at + timedelta(
                 seconds=DEFAULT_PAUSE_TTL_SEC.get(role, 3600)
+            )
+            report_reason = (
+                "rate_limit_detected"
+                if rate_evidence == "rate limit detected" and not stderr_text.strip()
+                else f"rate_limit_detected: {rate_evidence}"
             )
             quota_gate.report(
                 engine=result.engine_used,
                 status="paused",
                 observed_at=observed_at,
                 resume_at=resume_at,
-                reason="rate_limit_detected",
+                reason=report_reason,
             )
             alt = None
             if fallback_candidates:
