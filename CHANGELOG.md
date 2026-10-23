@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.157.8 - 2026-10-24
+
 ### Fixed
 
 - Rate-limit detection for quota-gate pause now inspects LLM stderr line-by-line
