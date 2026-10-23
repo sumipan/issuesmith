@@ -81,6 +81,28 @@ def test_context_to_step_without_execution_constraints() -> None:
     assert ctx.execution_constraints == ""
 
 
+def test_context_to_step_passes_repair_structured_fields() -> None:
+    ctx = _context_to_step(
+        {
+            "issue_number": "1",
+            "base_branch": "main",
+            "handler_name": "sub",
+            "is_cross_repo": "false",
+            "target_clone_path": "",
+            "source": "",
+            "workflow_name": "w",
+            "m1_result_filename": "",
+            "m1r_result_filename": "",
+            "repair_violation_summary": "- lint: fail",
+            "repair_widen_candidates": "tools/x.py",
+            "derived_allow_paths": "tests/**",
+        }
+    )
+    assert ctx.repair_violation_summary == "- lint: fail"
+    assert ctx.repair_widen_candidates == "tools/x.py"
+    assert ctx.derived_allow_paths == "tests/**"
+
+
 def test_context_to_step_maps_host_companion_fields() -> None:
     ctx = _context_to_step(
         {

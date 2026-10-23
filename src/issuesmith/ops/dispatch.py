@@ -107,6 +107,14 @@ def render(step_id: str, context: dict[str, str], template_dir: Path | None = No
     return tmpl.substitute(context), digest
 
 
+def _workflow_name(context: dict[str, str]) -> str:
+    """Resolve workflow name for andon ids; default to configured label_namespace."""
+    name = context.get("workflow_name", "")
+    if name:
+        return name
+    return get_config().label_namespace
+
+
 def _context_to_step(context: dict[str, str]) -> StepContext:
     return StepContext(
         issue_number=context.get("issue_number", ""),
@@ -134,6 +142,9 @@ def _context_to_step(context: dict[str, str]) -> StepContext:
         execution_constraints=context.get("execution_constraints", ""),
         repair_violations=context.get("repair_violations", ""),
         repair_step_origin=context.get("repair_step_origin", ""),
+        repair_violation_summary=context.get("repair_violation_summary", ""),
+        repair_widen_candidates=context.get("repair_widen_candidates", ""),
+        derived_allow_paths=context.get("derived_allow_paths", ""),
     )
 
 
@@ -278,7 +289,7 @@ def map_step_result(
     if status == "andon":
         if andon is not None:
             issue_num = int(context.get("issue_number") or "0")
-            workflow = context.get("workflow_name", "unknown")
+            workflow = _workflow_name(context)
             summary = getattr(andon, "summary", "") or f"step {step_id} raised andon {andon.kind}"
             full_andon = _FullAndon(
                 id=f"{workflow}:{issue_num}:{step_id}:0",
@@ -540,6 +551,16 @@ def _run_repair_step(
     """
     repair_ctx = dict(context)
     violation_lines = "\n".join(f"- {v.rule_id}: {v.message}" for v in violations)
+    repair_ctx["repair_violation_summary"] = violation_lines
+    widen_locs = sorted(
+        {
+            v.location
+            for v in violations
+            if v.rule_id == "pr_scope.out_of_allow" and v.location
+        }
+    )
+    repair_ctx["repair_widen_candidates"] = "\n".join(widen_locs)
+    repair_ctx["derived_allow_paths"] = context.get("derived_allow_paths", "")
     derived = _derived_allow_paths(context)
     if derived:
         scope_line = (
@@ -722,7 +743,7 @@ def run_requires_loop(
     except GateBuildError as exc:
         summary = f"gate could not be built in step {step_id}: {exc}"
         full_andon = _FullAndon(
-            id=f"{eval_context.get('workflow_name', 'unknown')}:{eval_context.get('issue_number', 0)}:{step_id}:0",
+            id=f"{_workflow_name(eval_context)}:{eval_context.get('issue_number', 0)}:{step_id}:0",
             kind="broken",
             issue=int(eval_context.get("issue_number") or "0"),
             step=step_id,
@@ -742,7 +763,7 @@ def run_requires_loop(
     _merge_derived_allow_paths(context, gates)
 
     issue_num = int(eval_context.get("issue_number") or "0")
-    workflow = eval_context.get("workflow_name", "unknown")
+    workflow = _workflow_name(eval_context)
 
     # Gate exception → andon(broken), no repair attempted.
     if result.gate_error is not None:

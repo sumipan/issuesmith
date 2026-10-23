@@ -359,6 +359,9 @@ class StepContext:
     execution_constraints: str = ""
     repair_violations: str = ""
     repair_step_origin: str = ""
+    repair_violation_summary: str = ""
+    repair_widen_candidates: str = ""
+    derived_allow_paths: str = ""
 
 
 @dataclass
