@@ -1091,6 +1091,106 @@ class TestTargetUnknownNotRepairable:
         assert mock_andon.call_args[0][1].kind == "decision"
 
 
+class TestForbiddenPathPrScopeRequires:
+    def test_is_violation_repairable_forbidden_vs_out_of_allow(self):
+        from issuesmith.gates import GATE_REGISTRY
+        from issuesmith.ops.dispatch import _is_violation_repairable
+
+        gates = {"pr_scope": object()}
+        assert (
+            _is_violation_repairable("pr_diff_scope.forbidden_path", gates, "p1")
+            is False
+        )
+        assert (
+            _is_violation_repairable("pr_scope.out_of_allow", gates, "p1")
+            is True
+        )
+        assert GATE_REGISTRY["pr_scope"].repairable is True
+
+    def test_forbidden_only_decision_andon_without_repair_or_metrics(self):
+        from issuesmith.config import StepConfig
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        path = "docs/lessons/issuesmith.jsonl"
+        v = Violation(
+            rule_id="pr_diff_scope.forbidden_path",
+            severity="fail",
+            message=f"forbidden path: {path} (matched '[!s]*.jsonl')",
+            location=path,
+            auto_fixable=False,
+            fix_hint=f"git checkout main -- {path}",
+        )
+        gate = MagicMock()
+        gate.check.return_value = [v]
+        recorded: list[str] = []
+
+        def _record(metric: str, *args, **kwargs) -> None:
+            recorded.append(metric)
+
+        cfg = StepConfig(module="", requires=("pr_scope",))
+        with (
+            patch(
+                "issuesmith.ops.dispatch._build_requires_gates",
+                return_value={"pr_scope": gate},
+            ),
+            patch("issuesmith.ops.dispatch.get_forge"),
+            patch("issuesmith.ops.dispatch._raise_andon") as mock_andon,
+            patch("issuesmith.ops.dispatch._run_repair_step") as mock_repair,
+            patch("issuesmith.ops.dispatch._safe_record_metrics", side_effect=_record),
+        ):
+            rc = run_requires_loop(cfg, "p1", _make_ctx())
+        assert rc == 1
+        mock_repair.assert_not_called()
+        assert "requires_repair" not in recorded
+        andon_arg = mock_andon.call_args[0][1]
+        assert andon_arg.kind == "decision"
+        assert andon_arg.options == ["split", "reject"]
+        assert "forbidden path:" in andon_arg.summary
+        assert path in andon_arg.summary
+
+    def test_mixed_forbidden_and_out_of_allow_widen_only_out_of_allow(self):
+        from issuesmith.config import StepConfig
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        forbidden_path = "docs/lessons/issuesmith.jsonl"
+        out_path = "scripts/x.py"
+        gate = MagicMock()
+        gate.check.return_value = [
+            Violation(
+                rule_id="pr_diff_scope.forbidden_path",
+                severity="fail",
+                message=f"forbidden path: {forbidden_path}",
+                location=forbidden_path,
+                auto_fixable=False,
+                fix_hint=f"git checkout main -- {forbidden_path}",
+            ),
+            Violation(
+                rule_id="pr_scope.out_of_allow",
+                severity="fail",
+                message=f"{out_path}: outside allow_paths",
+                location=out_path,
+                auto_fixable=False,
+                fix_hint=f"widen:{out_path}",
+            ),
+        ]
+        cfg = StepConfig(module="", requires=("pr_scope",))
+        with (
+            patch(
+                "issuesmith.ops.dispatch._build_requires_gates",
+                return_value={"pr_scope": gate},
+            ),
+            patch("issuesmith.ops.dispatch.get_forge"),
+            patch("issuesmith.ops.dispatch._raise_andon") as mock_andon,
+            patch("issuesmith.ops.dispatch._run_repair_step") as mock_repair,
+        ):
+            run_requires_loop(cfg, "p1", _make_ctx())
+        mock_repair.assert_not_called()
+        andon_arg = mock_andon.call_args[0][1]
+        widen_opts = [o for o in andon_arg.options if o.startswith("widen:")]
+        assert widen_opts == [f"widen:{out_path}"]
+        assert forbidden_path not in widen_opts[0]
+
+
 class TestFetchFreshIssueBodyLogging:
     def test_forge_failure_without_context_body_logs(self, capsys):
         from issuesmith.ops.dispatch import _fetch_fresh_issue_body

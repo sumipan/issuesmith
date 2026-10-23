@@ -601,6 +601,73 @@ def test_ledger_pr_scope_added_line_grew(ledger_repo: Path, _derived_config) -> 
 
 
 # ---------------------------------------------------------------------------
+# #5421: PrScopeGate keeps forbidden_path; out-of-scope → pr_scope.out_of_allow
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def forbidden_jsonl_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    clone = _make_repo(tmp_path, {
+        "docs/lessons/issuesmith.jsonl": '{"a": 1}\n',
+    })
+    _write(clone, {"docs/lessons/issuesmith.jsonl": '{"a": 2}\n'})
+    _commit_all(clone, "change ledger")
+    cfg = tmp_path / "issuesmith.yaml"
+    cfg.write_text(
+        yaml.safe_dump({
+            "repo": "example/repo",
+            "forbidden_pr_paths": ["[!s]*.jsonl"],
+            "derived_allow": {"enabled": True},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg))
+    reset_config_cache()
+    return clone
+
+
+def test_pr_scope_gate_preserves_forbidden_path(forbidden_jsonl_repo: Path) -> None:
+    gate = PrScopeGate(
+        forbidden_jsonl_repo,
+        ["docs/lessons/issuesmith.jsonl"],
+        "main",
+    )
+    violations = gate.check("", [])
+    assert len(violations) == 1
+    v = violations[0]
+    assert v.rule_id == "pr_diff_scope.forbidden_path"
+    assert v.location == "docs/lessons/issuesmith.jsonl"
+    assert "forbidden path:" in v.message
+    assert "[!s]*.jsonl" in v.message
+    assert v.fix_hint == "git checkout main -- docs/lessons/issuesmith.jsonl"
+
+
+def test_pr_scope_gate_out_of_allow_compat(tmp_path: Path) -> None:
+    clone = _make_repo(tmp_path, {"scripts/x.py": "x = 1\n"})
+    _write(clone, {"scripts/x.py": "x = 2\n"})
+    _commit_all(clone, "change script")
+    gate = PrScopeGate(clone, ["src/**"], "main")
+    violations = gate.check("", [])
+    assert len(violations) == 1
+    v = violations[0]
+    assert v.rule_id == "pr_scope.out_of_allow"
+    assert v.location == "scripts/x.py"
+    assert v.fix_hint == "widen:scripts/x.py"
+
+
+def test_pr_scope_forbidden_skips_derived_guard(forbidden_jsonl_repo: Path) -> None:
+    gate = PrScopeGate(
+        forbidden_jsonl_repo,
+        ["docs/lessons/issuesmith.jsonl"],
+        "main",
+        derived_allow_paths=["docs/lessons/issuesmith.jsonl"],
+    )
+    violations = gate.check("", [])
+    assert len(violations) == 1
+    assert violations[0].rule_id == "pr_diff_scope.forbidden_path"
+
+
+# ---------------------------------------------------------------------------
 # #5134: structural-change parent dirs and hunk-enclosing def/class names as keys
 # ---------------------------------------------------------------------------
 

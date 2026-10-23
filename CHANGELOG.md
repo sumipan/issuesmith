@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Changed
+
+- `PrScopeGate`: preserve `pr_diff_scope.forbidden_path` violations instead of
+  converting them to `pr_scope.out_of_allow`; dispatch treats that rule as
+  non-repairable and raises a `decision` andon without `widen:` options (#5421).
+
 ## 0.157.5 - 2026-10-23
 
 ### Changed
