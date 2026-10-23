@@ -158,6 +158,34 @@ class TestAndonMapping:
         _, full_andon = mock_raise.call_args[0]
         assert full_andon.kind == "broken"
 
+    def test_andon_id_uses_label_namespace_when_workflow_name_missing(self):
+        with patch("issuesmith.ops.dispatch.get_forge") as mock_forge, patch(
+            "issuesmith.ops.dispatch.get_config"
+        ) as mock_cfg, patch("issuesmith.ops.dispatch._raise_andon") as mock_raise:
+            mock_forge.return_value = MagicMock()
+            mock_cfg.return_value.label_namespace = "issuesmith"
+            map_step_result(
+                StepResult(status="andon", andon=Andon(kind="broken")),
+                step_id="p1",
+                context={"issue_number": "42"},
+            )
+        _, full_andon = mock_raise.call_args[0]
+        assert full_andon.id.startswith("issuesmith:42:p1:")
+
+    def test_andon_id_uses_label_namespace_when_workflow_name_empty(self):
+        with patch("issuesmith.ops.dispatch.get_forge") as mock_forge, patch(
+            "issuesmith.ops.dispatch.get_config"
+        ) as mock_cfg, patch("issuesmith.ops.dispatch._raise_andon") as mock_raise:
+            mock_forge.return_value = MagicMock()
+            mock_cfg.return_value.label_namespace = "issuesmith"
+            map_step_result(
+                StepResult(status="andon", andon=Andon(kind="broken")),
+                step_id="p1",
+                context={"issue_number": "42", "workflow_name": ""},
+            )
+        _, full_andon = mock_raise.call_args[0]
+        assert not full_andon.id.startswith("unknown:")
+
     def test_andon_options_propagated_to_full_andon(self):
         options = ["manual_rebase_then_resume_p1", "discard_branch_then_restart_p0"]
         with patch("issuesmith.ops.dispatch.get_forge") as mock_forge, \

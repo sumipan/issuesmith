@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Changed
+
+- Repair: when the repair LLM emits `REPAIR_FAILED`, dispatch raises a
+  `decision` andon (`repair.gave_up`) with `widen:` / `split` / `reject`
+  options instead of a generic process error (#5444).
+- Dispatch: full andon ids use `label_namespace` when `workflow_name` is
+  missing or empty (#5444).
+
 ## 0.157.5 - 2026-10-23
 
 ### Changed

@@ -680,6 +680,80 @@ class TestContextToStep:
         assert ctx.repair_violations == ""
         assert ctx.repair_step_origin == ""
 
+    def test_run_repair_step_populates_structured_repair_context(self):
+        from issuesmith.ops.dispatch import _run_repair_step
+
+        captured: dict = {}
+
+        def fake_try(step_id, ctx):
+            captured.update(ctx)
+            return 0
+
+        v = Violation(
+            rule_id="pr_scope.out_of_allow",
+            severity="fail",
+            message="out of scope",
+            location="tools/extra.py",
+            auto_fixable=False,
+            fix_hint=None,
+        )
+        base = _make_ctx()
+        base["derived_allow_paths"] = "tests/**"
+        with patch("issuesmith.ops.dispatch._try_python_step", side_effect=fake_try):
+            _run_repair_step([v], "p1", base)
+
+        assert captured["repair_violation_summary"] == (
+            "- pr_scope.out_of_allow: out of scope"
+        )
+        assert captured["repair_widen_candidates"] == "tools/extra.py"
+        assert captured["derived_allow_paths"] == "tests/**"
+
+
+class TestRepairGaveUp:
+    """Repair REPAIR_FAILED → decision andon; requires loop stops without extra andon."""
+
+    def test_repair_gave_up_returns_exit_one_without_re_eval(self):
+        from issuesmith.config import StepConfig
+        from issuesmith.contract import Andon, StepResult
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        gave_up = StepResult(
+            status="andon",
+            andon=Andon(
+                kind="decision",
+                rule_id="repair.gave_up",
+                summary="repair gave up",
+                options=["split", "reject"],
+            ),
+        )
+
+        cfg = StepConfig(
+            module="",
+            requires=("tests",),
+            input_kind="worktree",
+            requires_declared=True,
+        )
+        context = _make_ctx()
+        gates = {"tests": _fail_gate("tests.pytest_failure")}
+        def fake_try(step_id, ctx):
+            from issuesmith.ops.dispatch import map_step_result
+
+            return map_step_result(gave_up, step_id=step_id, context=ctx)
+
+        with (
+            patch("issuesmith.ops.dispatch._build_requires_gates", return_value=gates),
+            patch("issuesmith.ops.dispatch._fetch_fresh_issue_body", return_value=""),
+            patch("issuesmith.ops.dispatch._get_issue_labels", return_value=[]),
+            patch("issuesmith.ops.dispatch._try_python_step", side_effect=fake_try),
+            patch("issuesmith.ops.dispatch._raise_andon") as mock_raise,
+            patch("issuesmith.ops.dispatch.get_forge"),
+        ):
+            rc = run_requires_loop(cfg, "p1", context)
+
+        assert rc == 1
+        assert mock_raise.call_count == 1
+        assert mock_raise.call_args[0][1].rule_id == "repair.gave_up"
+
 
 # ---------------------------------------------------------------------------
 # #3756 AC-3b: derived_allow_paths kept across repairs; repair instruction text
