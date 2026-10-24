@@ -65,10 +65,10 @@ def test_detects_missing_quota_gate_read_state():
     assert missing == ["ghdag.quota.QuotaGate.read_state"]
 
 
-def test_pyproject_ghdag_pins_v0_104_4():
+def test_pyproject_ghdag_pins_v0_104_5():
     pyproject = Path(get_config().root) / "pyproject.toml"
     pins = _GHDAG_PIN_RE.findall(pyproject.read_text(encoding="utf-8"))
-    assert pins == ["0.104.4", "0.104.4"]
+    assert pins == ["0.104.5", "0.104.5"]
 
 
 def test_detects_pinned_ghdag_without_defer():
