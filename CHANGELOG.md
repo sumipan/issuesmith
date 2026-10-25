@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.157.10 - 2026-10-25
+
 ### Fixed
 
 - `pin_bump` gate: exclude target_repo self version bumps from dependency-pin
