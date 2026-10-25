@@ -9,6 +9,13 @@ import issuesmith.gate_rules.pin_bump  # noqa: F401 — registers on import
 from issuesmith.b1_verify import collect_violations
 from issuesmith.config import reset_config_cache
 from issuesmith.gate_rules import GATE_REGISTRY
+from issuesmith.gate_rules.pin_bump import _self_package
+
+_INSTALLS = {
+    "issuesmith": "/var/tmp/issuesmith",
+    "ghdag": "/var/tmp/ghdag",
+    "mltgnt": "/var/tmp/mltgnt",
+}
 
 
 @pytest.fixture(autouse=True)
@@ -18,7 +25,7 @@ def _installs_config(tmp_path, monkeypatch):
         yaml.safe_dump(
             {
                 "repo": "sumipan/nexus",
-                "installs": {"issuesmith": "/var/tmp/issuesmith"},
+                "installs": _INSTALLS,
             }
         ),
         encoding="utf-8",
@@ -120,7 +127,7 @@ def test_pin_bump_registered_and_collected_by_b1_verify(tmp_path, monkeypatch):
             {
                 "repo": "sumipan/nexus",
                 "scope_gate": {"enabled": False},
-                "installs": {"issuesmith": "/var/tmp/issuesmith"},
+                "installs": _INSTALLS,
             }
         ),
         encoding="utf-8",
@@ -130,3 +137,130 @@ def test_pin_bump_registered_and_collected_by_b1_verify(tmp_path, monkeypatch):
     assert "pin_bump" in GATE_REGISTRY
     violations = collect_violations(_FEATURE_BODY_PIN, [])
     assert any(v.rule_id == "pin_bump.in_feature_issue" for v in violations)
+
+
+def test_self_package_from_target_repo():
+    assert _self_package({"target_repo": "sumipan/ghdag"}) == "ghdag"
+    assert _self_package({"target_repo": "sumipan/issuesmith"}) == "issuesmith"
+    assert _self_package({"target_repo": "sumipan/nexus"}) is None
+    assert _self_package({}) is None
+
+
+def test_pin_bump_allows_self_version_bump_in_design():
+    body = """\
+```yaml
+target_repo: sumipan/ghdag
+base_branch: main
+allow_paths:
+  - pyproject.toml
+```
+
+## Design
+
+bump ghdag version to 0.104.4
+"""
+    assert _check(body, []) == []
+
+
+def test_pin_bump_fails_on_other_package_pin_in_self_repo():
+    body = """\
+```yaml
+target_repo: sumipan/ghdag
+base_branch: main
+allow_paths:
+  - pyproject.toml
+```
+
+## Design
+
+raise mltgnt pin to v0.130.0
+"""
+    violations = _check(body, [])
+    assert len(violations) == 1
+    assert violations[0].rule_id == "pin_bump.in_feature_issue"
+    assert "mltgnt" in violations[0].message
+
+
+def test_pin_bump_fails_on_dependency_pin_for_non_install_repo():
+    body = """\
+```yaml
+target_repo: sumipan/nexus
+base_branch: main
+allow_paths:
+  - pyproject.toml
+```
+
+## Design
+
+raise ghdag pin to v0.104.4
+"""
+    violations = _check(body, [])
+    assert len(violations) == 1
+    assert violations[0].rule_id == "pin_bump.in_feature_issue"
+
+
+def test_pin_bump_self_requires_pin():
+    body = """\
+```yaml
+target_repo: sumipan/issuesmith
+base_branch: main
+allow_paths:
+  - src/foo.py
+requires_pins:
+  issuesmith: v0.157.2
+```
+
+## Design
+
+Feature work only.
+"""
+    violations = _check(body, [])
+    assert len(violations) == 1
+    v = violations[0]
+    assert v.rule_id == "pin_bump.self_requires_pin"
+    assert v.severity == "fail"
+    assert v.auto_fixable is False
+    assert "requires_pins" in (v.fix_hint or "")
+    assert "issuesmith" in (v.fix_hint or "")
+
+
+def test_pin_bump_allows_requires_pins_for_other_package_on_nexus():
+    body = """\
+```yaml
+target_repo: sumipan/nexus
+base_branch: main
+allow_paths:
+  - src/foo.py
+requires_pins:
+  issuesmith: v0.157.2
+```
+
+## Design
+
+Waits for issuesmith pin.
+"""
+    assert _check(body, []) == []
+
+
+def test_pin_bump_skips_self_requires_pin_with_bump_label():
+    body = """\
+```yaml
+target_repo: sumipan/issuesmith
+base_branch: main
+requires_pins:
+  issuesmith: v0.157.2
+```
+
+## Design
+
+Bump path.
+"""
+    assert _check(body, ["bump:issuesmith"]) == []
+
+
+def test_in_feature_issue_fix_hint_discourages_self_requires_pin():
+    violations = _check(_FEATURE_BODY_PIN, [])
+    assert len(violations) == 1
+    hint = violations[0].fix_hint or ""
+    assert "requires_pins" in hint
+    assert "target_repo" in hint.lower() or "own" in hint.lower() or "self" in hint.lower()
