@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.157.10 - 2026-10-25
+
+### Fixed
+
+- `pin_bump` gate: exclude target_repo self version bumps from dependency-pin
+  detection; reject self-referential `requires_pins` (`pin_bump.self_requires_pin`)
+  so B1 repair cannot strand develop queue on unlandable self pins (#5566).
+
 ## 0.157.9 - 2026-10-24
 
 ### Added
