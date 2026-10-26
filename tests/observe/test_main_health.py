@@ -564,7 +564,7 @@ def test_log_truncates_utf8_payload_at_byte_boundary(mh_cfg, tmp_path):
     path = tmp_path / "mh.json"
     # Payload includes trailing "\n\n" before stderr; exceed limit by one UTF-8 byte.
     pad = "a" * (LOG_MAX_BYTES - 2)
-    stdout = pad + "\u3042"
+    stdout = pad + "\u20ac"
     assert len((stdout + "\n\n").encode("utf-8")) > LOG_MAX_BYTES
     check(mh_cfg, path, run=FakeRunner(rc=1, stdout=stdout, stderr=""))
     log = _log_file(path)
@@ -572,12 +572,12 @@ def test_log_truncates_utf8_payload_at_byte_boundary(mh_cfg, tmp_path):
     assert "# (truncated: kept last 1048576 bytes)" in text
     body = _read_log_body(log)
     assert len(body.encode("utf-8")) <= LOG_MAX_BYTES
-    assert "\u3042" in body or "\ufffd" in body
+    assert "\u20ac" in body or chr(0xFFFD) in body
 
 
 def test_log_under_limit_keeps_full_multibyte_payload(mh_cfg, tmp_path):
     path = tmp_path / "mh.json"
-    payload = "\u3042" * ((LOG_MAX_BYTES - 2) // 3)
+    payload = "\u20ac" * ((LOG_MAX_BYTES - 2) // 3)
     assert len((payload + "\n\n").encode("utf-8")) <= LOG_MAX_BYTES
     check(mh_cfg, path, run=FakeRunner(rc=1, stdout=payload, stderr=""))
     log = _log_file(path)
