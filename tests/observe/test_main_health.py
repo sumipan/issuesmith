@@ -20,6 +20,7 @@ from issuesmith.observe.main_health import (
     LOG_MAX_BYTES,
     MainHealthError,
     MainHealthState,
+    _output_tail,
     check,
     load_log_tail,
     load_state,
@@ -184,6 +185,7 @@ def test_check_red_writes_state_with_failing_ids(mh_cfg, tmp_path):
     assert state.sha == _SHA_A
     assert state.reason == "exit 1"
     assert state.failing == ("tests/test_a.py::test_x",)
+    assert "FAILED tests/test_a.py::test_x" in state.output_tail
     assert load_state(path) == state
     assert ["git", "-C", str(mh_cfg.worktree), "fetch", "origin", "main"] in run.calls
     assert ["git", "-C", str(mh_cfg.worktree), "checkout", "--detach", "--force", _SHA_A] in run.calls
@@ -193,9 +195,86 @@ def test_check_red_writes_state_with_failing_ids(mh_cfg, tmp_path):
 
 def test_check_green(mh_cfg, tmp_path):
     path = tmp_path / "mh.json"
-    state = check(mh_cfg, path, run=FakeRunner(rc=0))
-    assert (state.status, state.reason, state.failing) == ("green", "", ())
+    state = check(
+        mh_cfg, path, run=FakeRunner(rc=0, stdout="noise", stderr="warn"),
+    )
+    assert (state.status, state.reason, state.failing, state.output_tail) == (
+        "green", "", (), "",
+    )
     assert json.loads(path.read_text(encoding="utf-8"))["status"] == "green"
+
+
+def test_check_red_no_failed_lines_keeps_output_tail(mh_cfg, tmp_path):
+    path = tmp_path / "mh.json"
+    stderr = "Repository pollution detected: dirty tree\n"
+    state = check(mh_cfg, path, run=FakeRunner(rc=1, stdout="", stderr=stderr))
+    assert state.failing == ()
+    assert state.reason == "exit 1 (no FAILED/ERROR lines)"
+    assert "Repository pollution detected:" in state.output_tail
+
+
+def test_output_tail_keeps_last_eighty_lines_and_truncates_long_lines():
+    lines = [f"line-{i}" for i in range(200)]
+    long_line = "x" * 1000
+    lines.append(long_line)
+    tail = _output_tail("\n".join(lines))
+    tail_lines = tail.splitlines()
+    assert len(tail_lines) == 80
+    assert tail_lines[0] == "line-121"
+    assert tail_lines[-1] == "x" * 500
+    assert tail_lines[-2] == "line-199"
+
+
+@pytest.mark.parametrize("output_tail", [None, 1, []])
+def test_load_state_normalizes_invalid_output_tail(tmp_path, output_tail):
+    path = tmp_path / "mh.json"
+    data = {
+        "sha": _SHA_A,
+        "status": "red",
+        "reason": "exit 1",
+        "failing": [],
+        "checked_at": "t",
+    }
+    if output_tail is not None:
+        data["output_tail"] = output_tail
+    path.write_text(json.dumps(data), encoding="utf-8")
+    loaded = load_state(path)
+    assert loaded is not None
+    assert loaded.output_tail == ""
+
+
+def test_load_state_without_output_tail_key(tmp_path):
+    path = tmp_path / "mh.json"
+    path.write_text(
+        json.dumps({
+            "sha": _SHA_A,
+            "status": "green",
+            "reason": "",
+            "failing": [],
+            "checked_at": "t",
+        }),
+        encoding="utf-8",
+    )
+    loaded = load_state(path)
+    assert loaded is not None
+    assert loaded.output_tail == ""
+
+
+def test_check_same_sha_preserves_output_tail(mh_cfg, tmp_path):
+    path = tmp_path / "mh.json"
+    first = check(
+        mh_cfg,
+        path,
+        run=FakeRunner(rc=1, stderr="Repository pollution detected:\n"),
+    )
+    assert first.output_tail
+
+    run = FakeRunner(rc=0)
+    again = check(mh_cfg, path, run=run)
+
+    assert run.command_calls == []
+    assert again == first
+    assert again.output_tail == first.output_tail
 
 
 def test_check_same_sha_skips_command(mh_cfg, tmp_path):
@@ -707,25 +786,19 @@ def test_log_path_next_to_state(enabled):
     assert log_path(enabled) == state_path(enabled).parent / LOG_FILENAME
 
 
-def test_cli_red_empty_failing_shows_log_tail(enabled, monkeypatch, capsys, tmp_path):
+def test_cli_red_empty_failing_shows_output_tail(enabled, monkeypatch, capsys):
     checked = "2026-10-26T00:00:00+00:00"
     state = MainHealthState(
         sha=_SHA_A,
         status="red",
-        reason="exit 1",
+        reason="exit 1 (no FAILED/ERROR lines)",
         failing=(),
         checked_at=checked,
+        output_tail="alpha\n\nbeta\nRepository pollution detected:",
     )
     monkeypatch.setattr(
         "issuesmith.observe.main_health.check",
         lambda cfg, path, repo_root=None: state,
-    )
-    log = log_path(enabled)
-    log.parent.mkdir(parents=True, exist_ok=True)
-    header = f"# main_health sha={_SHA_A} exit=1 checked_at={checked}"
-    log.write_text(
-        header + "\n" + "alpha\n\nbeta\nRepository pollution detected:",
-        encoding="utf-8",
     )
     with pytest.raises(SystemExit) as exc:
         cli.main(["main-health"])
@@ -774,32 +847,23 @@ def test_cli_green_does_not_show_log(enabled, monkeypatch, capsys):
     assert "  | " not in capsys.readouterr().out
 
 
-def test_cli_log_missing_or_bad_header_shows_status_only(enabled, monkeypatch, capsys):
+def test_cli_red_empty_output_tail_shows_status_only(enabled, monkeypatch, capsys):
     state = MainHealthState(
         sha=_SHA_A,
         status="red",
-        reason="exit 1",
+        reason="exit 1 (no FAILED/ERROR lines)",
         failing=(),
         checked_at="t",
+        output_tail="",
     )
     monkeypatch.setattr(
         "issuesmith.observe.main_health.check",
         lambda cfg, path, repo_root=None: state,
     )
-    log = log_path(enabled)
-    log.parent.mkdir(parents=True, exist_ok=True)
-    if log.exists():
-        log.unlink()
     with pytest.raises(SystemExit) as exc:
         cli.main(["main-health"])
     assert exc.value.code == 0
     assert "  | " not in capsys.readouterr().out
-
-    log.write_text("# bad header\nbody\n", encoding="utf-8")
-    with pytest.raises(SystemExit) as exc:
-        cli.main(["main-health"])
-    assert exc.value.code == 0
-    assert "body" not in capsys.readouterr().out
 
 
 def test_load_log_tail_read_oserror_returns_empty(tmp_path):

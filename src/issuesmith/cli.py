@@ -401,8 +401,6 @@ def _cmd_main_health(_argv: list[str]) -> int:
     from issuesmith.observe.main_health import (
         MainHealthError,
         check,
-        load_log_tail,
-        log_path,
         state_path,
     )
 
@@ -423,8 +421,9 @@ def _cmd_main_health(_argv: list[str]) -> int:
     if state.failing:
         for test_id in state.failing:
             print(f"  {test_id}")
-    elif state.status == "red":
-        for line in load_log_tail(log_path(cfg), state, max_lines=20):
+    elif state.status == "red" and state.output_tail:
+        tail_lines = state.output_tail.splitlines()[-20:]
+        for line in tail_lines:
             print(f"  | {line}")
     return 0
 

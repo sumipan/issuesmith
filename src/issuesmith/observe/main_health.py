@@ -27,6 +27,8 @@ LOG_MAX_BYTES = 1_048_576
 
 _LOG_HEADER_PREFIX = "# main_health sha="
 _TRUNCATION_LINE = "# (truncated: kept last 1048576 bytes)"
+_OUTPUT_TAIL_LINES = 80
+_OUTPUT_TAIL_LINE_CHARS = 500
 
 
 class MainHealthError(RuntimeError):
@@ -40,6 +42,7 @@ class MainHealthState:
     reason: str
     failing: tuple[str, ...]
     checked_at: str
+    output_tail: str = ""
 
 
 def state_path(config: "IssuesmithConfig") -> Path:
@@ -150,12 +153,16 @@ def load_state(path: Path) -> MainHealthState | None:
         return None
     if not isinstance(failing, list) or not all(isinstance(x, str) for x in failing):
         return None
+    output_tail = data.get("output_tail", "")
+    if not isinstance(output_tail, str):
+        output_tail = ""
     return MainHealthState(
         sha=sha,
         status=status,
         reason=reason,
         failing=tuple(failing),
         checked_at=checked_at,
+        output_tail=output_tail,
     )
 
 
@@ -171,6 +178,15 @@ def _write_state(path: Path, state: MainHealthState) -> None:
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
         raise
+
+
+def _output_tail(output: str) -> str:
+    if not output:
+        return ""
+    lines = output.splitlines()
+    tail_lines = lines[-_OUTPUT_TAIL_LINES:]
+    trimmed = [line[:_OUTPUT_TAIL_LINE_CHARS] for line in tail_lines]
+    return "\n".join(trimmed)
 
 
 def _failed_ids(output: str) -> tuple[str, ...]:
@@ -271,16 +287,26 @@ def check(
     checked_at = datetime.now(timezone.utc).isoformat()
     if proc.returncode == 0:
         state = MainHealthState(
-            sha=sha, status="green", reason="", failing=(), checked_at=checked_at,
+            sha=sha,
+            status="green",
+            reason="",
+            failing=(),
+            checked_at=checked_at,
+            output_tail="",
         )
     else:
         output = (proc.stdout or "") + "\n" + (proc.stderr or "")
+        failing = _failed_ids(output)
+        reason = f"exit {proc.returncode}"
+        if not failing:
+            reason = f"exit {proc.returncode} (no FAILED/ERROR lines)"
         state = MainHealthState(
             sha=sha,
             status="red",
-            reason=f"exit {proc.returncode}",
-            failing=_failed_ids(output),
+            reason=reason,
+            failing=failing,
             checked_at=checked_at,
+            output_tail=_output_tail(output),
         )
     _write_state(path, state)
     log_file = path.parent / LOG_FILENAME

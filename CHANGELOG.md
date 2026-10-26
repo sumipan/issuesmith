@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Added
+
+- `main-health`: persist truncated command output in state as `output_tail` when red,
+  with a clearer `reason` when exit is non-zero but no `FAILED`/`ERROR` lines were
+  parsed; CLI prints the last 20 lines of `output_tail` for that case.
+
 ## 0.158.0 - 2026-10-26
 
 ### Added
