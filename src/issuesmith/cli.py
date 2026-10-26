@@ -398,7 +398,13 @@ def _cmd_metrics(argv: list[str]) -> int:
 
 def _cmd_main_health(_argv: list[str]) -> int:
     from issuesmith.config import get_config
-    from issuesmith.observe.main_health import MainHealthError, check, state_path
+    from issuesmith.observe.main_health import (
+        MainHealthError,
+        check,
+        load_log_tail,
+        log_path,
+        state_path,
+    )
 
     cfg = get_config()
     mh = cfg.observe.main_health
@@ -414,8 +420,12 @@ def _cmd_main_health(_argv: list[str]) -> int:
     if not had_worktree and mh.worktree.is_dir():
         print(f"main_health: created worktree {mh.worktree}")
     print(f"main_health: {state.status} {state.sha[:12]}")
-    for test_id in state.failing:
-        print(f"  {test_id}")
+    if state.failing:
+        for test_id in state.failing:
+            print(f"  {test_id}")
+    elif state.status == "red":
+        for line in load_log_tail(log_path(cfg), state, max_lines=20):
+            print(f"  | {line}")
     return 0
 
 
