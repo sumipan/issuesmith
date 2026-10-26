@@ -34,6 +34,8 @@ class FakeRunner:
         self.rc = rc
         self.stdout = stdout
         self.fail_git: str | None = None
+        self.fail_git_at: str | None = None
+        self.fail_git_op: str | None = None
         self.timeout = False
         self.calls: list[list[str]] = []
         self.command_calls: list[dict] = []
@@ -42,9 +44,15 @@ class FakeRunner:
         cmd = list(cmd)
         self.calls.append(cmd)
         if cmd[0] == "git":
+            git_cwd = cmd[2] if len(cmd) > 2 else ""
             sub = cmd[3]
-            if sub == self.fail_git:
+            git_op = cmd[4] if len(cmd) > 4 else ""
+            if sub == self.fail_git and (
+                self.fail_git_at is None or self.fail_git_at == git_cwd
+            ) and (self.fail_git_op is None or self.fail_git_op == git_op):
                 return subprocess.CompletedProcess(cmd, 128, "", "fatal: boom")
+            if sub == "worktree" and len(cmd) > 4 and cmd[4] == "add":
+                Path(cmd[6]).mkdir(parents=True, exist_ok=True)
             out = self.sha + "\n" if sub == "rev-parse" else ""
             return subprocess.CompletedProcess(cmd, 0, out, "")
         self.command_calls.append(kwargs)
@@ -228,6 +236,101 @@ def test_check_missing_worktree_keeps_state(mh_cfg, tmp_path):
     assert run.calls == []
 
 
+def test_check_creates_worktree_then_runs_health(mh_cfg, tmp_path):
+    repo_root = tmp_path / "clone"
+    repo_root.mkdir()
+    worktree = tmp_path / "wt" / "main-health"
+    cfg = dataclasses.replace(mh_cfg, worktree=worktree)
+    path = tmp_path / "mh.json"
+    run = FakeRunner(rc=0)
+
+    state = check(cfg, path, repo_root=repo_root, run=run)
+
+    assert state.status == "green"
+    assert worktree.is_dir()
+    prune_idx = next(
+        i for i, c in enumerate(run.calls) if c[3:] == ["worktree", "prune"]
+    )
+    fetch_repo_idx = next(
+        i
+        for i, c in enumerate(run.calls)
+        if c[2] == str(repo_root) and c[3:] == ["fetch", "origin", "main"]
+    )
+    add_idx = next(
+        i
+        for i, c in enumerate(run.calls)
+        if c[3:] == ["worktree", "add", "--detach", str(worktree), "FETCH_HEAD"]
+    )
+    fetch_wt_idx = next(
+        i
+        for i, c in enumerate(run.calls)
+        if c[2] == str(worktree) and c[3:] == ["fetch", "origin", "main"]
+    )
+    assert prune_idx < fetch_repo_idx < add_idx < fetch_wt_idx
+    assert run.command_calls
+
+
+def test_check_worktree_path_is_file_raises(mh_cfg, tmp_path):
+    path = tmp_path / "mh.json"
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("x", encoding="utf-8")
+    cfg = dataclasses.replace(mh_cfg, worktree=blocker)
+    repo_root = tmp_path / "clone"
+    repo_root.mkdir()
+    run = FakeRunner()
+    with pytest.raises(MainHealthError, match="not a directory"):
+        check(cfg, path, repo_root=repo_root, run=run)
+    assert run.calls == []
+    assert run.command_calls == []
+
+
+@pytest.mark.parametrize("fail_sub", ["prune", "fetch", "add"])
+def test_check_worktree_create_git_failure_keeps_state(mh_cfg, tmp_path, fail_sub):
+    path = tmp_path / "mh.json"
+    check(mh_cfg, path, run=FakeRunner(rc=1))
+    before = path.read_bytes()
+
+    repo_root = tmp_path / "clone"
+    repo_root.mkdir()
+    worktree = tmp_path / "new-wt"
+    cfg = dataclasses.replace(mh_cfg, worktree=worktree)
+    run = FakeRunner(sha=_SHA_B)
+    if fail_sub == "prune":
+        run.fail_git = "worktree"
+        run.fail_git_at = str(repo_root)
+        run.fail_git_op = "prune"
+    elif fail_sub == "add":
+        run.fail_git = "worktree"
+        run.fail_git_at = str(repo_root)
+        run.fail_git_op = "add"
+    else:
+        run.fail_git = "fetch"
+        run.fail_git_at = str(repo_root)
+
+    with pytest.raises(MainHealthError, match="fatal: boom"):
+        check(cfg, path, repo_root=repo_root, run=run)
+
+    assert path.read_bytes() == before
+    assert run.command_calls == []
+
+
+def test_check_existing_worktree_skips_create_commands(mh_cfg, tmp_path):
+    path = tmp_path / "mh.json"
+    repo_root = tmp_path / "clone"
+    repo_root.mkdir()
+    run = FakeRunner(rc=0)
+    check(mh_cfg, path, repo_root=repo_root, run=run)
+
+    create_cmds = [
+        c for c in run.calls if c[3:] == ["worktree", "prune"] or (
+            len(c) > 4 and c[3] == "worktree" and c[4] == "add"
+        )
+    ]
+    repo_fetches = [c for c in run.calls if c[2] == str(repo_root)]
+    assert create_cmds == []
+    assert repo_fetches == []
+
+
 def test_check_timeout_keeps_state(mh_cfg, tmp_path):
     path = tmp_path / "mh.json"
     check(mh_cfg, path, run=FakeRunner(rc=0))
@@ -358,7 +461,10 @@ def test_cli_red_prints_failing_and_exits_zero(enabled, monkeypatch, capsys):
         sha=_SHA_A, status="red", reason="exit 1",
         failing=("tests/test_a.py::test_x",), checked_at="",
     )
-    monkeypatch.setattr("issuesmith.observe.main_health.check", lambda cfg, path: state)
+    monkeypatch.setattr(
+        "issuesmith.observe.main_health.check",
+        lambda cfg, path, repo_root=None: state,
+    )
     with pytest.raises(SystemExit) as exc:
         cli.main(["main-health"])
     assert exc.value.code == 0
@@ -368,7 +474,7 @@ def test_cli_red_prints_failing_and_exits_zero(enabled, monkeypatch, capsys):
 
 
 def test_cli_error_exits_two(enabled, monkeypatch, capsys):
-    def boom(cfg, path):
+    def boom(cfg, path, repo_root=None):
         raise MainHealthError("git fetch failed")
 
     monkeypatch.setattr("issuesmith.observe.main_health.check", boom)
@@ -376,3 +482,62 @@ def test_cli_error_exits_two(enabled, monkeypatch, capsys):
         cli.main(["main-health"])
     assert exc.value.code == 2
     assert "git fetch failed" in capsys.readouterr().err
+
+
+def test_cli_prints_created_worktree_line(enabled, monkeypatch, capsys, tmp_path):
+    state = MainHealthState(
+        sha=_SHA_A, status="green", reason="", failing=(), checked_at="",
+    )
+    wt = enabled.observe.main_health.worktree
+
+    def fake_check(cfg, path, repo_root=None):
+        cfg.worktree.mkdir(parents=True, exist_ok=True)
+        return state
+
+    monkeypatch.setattr("issuesmith.observe.main_health.check", fake_check)
+    enabled.observe.main_health.worktree.rmdir()
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["main-health"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert f"main_health: created worktree {wt}" in out
+    assert f"main_health: green {_SHA_A[:12]}" in out
+    assert out.index("created worktree") < out.index("green")
+
+
+def test_check_integration_creates_worktree_and_green(tmp_path):
+    origin = tmp_path / "origin.git"
+    subprocess.run(
+        ["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True,
+    )
+    seed = tmp_path / "seed"
+    subprocess.run(["git", "clone", "-q", str(origin), str(seed)], check=True)
+    subprocess.run(["git", "-C", str(seed), "checkout", "-q", "-b", "main"], check=True)
+    subprocess.run(
+        ["git", "-C", str(seed), "commit", "--allow-empty", "-q", "-m", "init"],
+        check=True,
+        env={**__import__("os").environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@e",
+             "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@e"},
+    )
+    subprocess.run(
+        ["git", "-C", str(seed), "push", "-q", "origin", "main"], check=True,
+    )
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", "-q", str(origin), str(clone)], check=True)
+    subprocess.run(
+        ["git", "-C", str(clone), "remote", "set-url", "origin", str(origin)],
+        check=True,
+    )
+    worktree = tmp_path / "health-wt"
+    cfg = MainHealthConfig(
+        worktree=worktree,
+        command=("true",),
+        base_branch="main",
+        timeout_seconds=60,
+    )
+    path = tmp_path / "state" / "issuesmith-main-health.json"
+    state = check(cfg, path, repo_root=clone)
+
+    assert worktree.is_dir()
+    assert state.status == "green"
+    assert load_state(path) == state
