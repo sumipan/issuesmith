@@ -809,6 +809,31 @@ def test_cli_red_empty_failing_shows_output_tail(enabled, monkeypatch, capsys):
     assert "  | Repository pollution detected:" in out
 
 
+def test_cli_red_empty_failing_limits_output_tail_to_last_twenty_lines(
+    enabled, monkeypatch, capsys,
+):
+    state = MainHealthState(
+        sha=_SHA_A,
+        status="red",
+        reason="exit 1 (no FAILED/ERROR lines)",
+        failing=(),
+        checked_at="t",
+        output_tail="\n".join(f"line-{i}" for i in range(21)),
+    )
+    monkeypatch.setattr(
+        "issuesmith.observe.main_health.check",
+        lambda cfg, path, repo_root=None: state,
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["main-health"])
+
+    assert exc.value.code == 0
+    lines = capsys.readouterr().out.splitlines()
+    tail_lines = [line for line in lines if line.startswith("  | ")]
+    assert tail_lines == [f"  | line-{i}" for i in range(1, 21)]
+
+
 def test_cli_red_with_failing_does_not_show_log(enabled, monkeypatch, capsys):
     state = MainHealthState(
         sha=_SHA_A,
