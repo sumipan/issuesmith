@@ -113,9 +113,11 @@ def load_log_tail(
     *,
     max_lines: int = 20,
 ) -> tuple[str, ...]:
+    if max_lines <= 0:
+        return ()
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeError):
         return ()
     lines = text.splitlines()
     if not lines:

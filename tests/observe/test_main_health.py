@@ -819,6 +819,29 @@ def test_load_log_tail_read_oserror_returns_empty(tmp_path):
         log.chmod(0o600)
 
 
+def test_load_log_tail_invalid_utf8_returns_empty(tmp_path):
+    log = tmp_path / LOG_FILENAME
+    log.write_bytes(
+        f"# main_health sha={_SHA_A} exit=1 checked_at=t\n".encode() + b"\xff",
+    )
+    state = MainHealthState(
+        sha=_SHA_A,
+        status="red",
+        reason="exit 1",
+        failing=(),
+        checked_at="t",
+    )
+    assert load_log_tail(log, state) == ()
+
+
+def test_load_log_tail_nonpositive_max_lines_returns_empty(mh_cfg, tmp_path):
+    path = tmp_path / "mh.json"
+    state = check(mh_cfg, path, run=FakeRunner(rc=1, stdout="line", stderr=""))
+    log = _log_file(path)
+    assert load_log_tail(log, state, max_lines=0) == ()
+    assert load_log_tail(log, state, max_lines=-1) == ()
+
+
 def test_cli_prints_created_worktree_line(enabled, monkeypatch, capsys, tmp_path):
     state = MainHealthState(
         sha=_SHA_A, status="green", reason="", failing=(), checked_at="",
