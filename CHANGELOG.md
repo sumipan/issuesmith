@@ -7,6 +7,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.157.11 - 2026-10-26
+
+### Fixed
+
+- `main-health`: when the configured worktree path is missing, create a detached
+  worktree from `repo_root` (`worktree prune`, `fetch origin <base_branch>`,
+  `worktree add --detach`). Callers that omit `repo_root` still get
+  `MainHealthError` with `worktree not found` (backward compatible).
+
 ## 0.157.10 - 2026-10-25
 
 ### Fixed

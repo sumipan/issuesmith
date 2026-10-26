@@ -405,11 +405,14 @@ def _cmd_main_health(_argv: list[str]) -> int:
     if mh is None:
         print("main_health: disabled")
         return 0
+    had_worktree = mh.worktree.is_dir()
     try:
-        state = check(mh, state_path(cfg))
+        state = check(mh, state_path(cfg), repo_root=cfg.root)
     except MainHealthError as exc:
         print(f"main_health: {exc}", file=sys.stderr)
         return 2
+    if not had_worktree and mh.worktree.is_dir():
+        print(f"main_health: created worktree {mh.worktree}")
     print(f"main_health: {state.status} {state.sha[:12]}")
     for test_id in state.failing:
         print(f"  {test_id}")

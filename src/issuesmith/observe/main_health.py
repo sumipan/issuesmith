@@ -92,8 +92,8 @@ def _failed_ids(output: str) -> tuple[str, ...]:
     return tuple(ids)
 
 
-def _git(run: Runner, worktree: Path, *args: str) -> str:
-    cmd = ["git", "-C", str(worktree), *args]
+def _git_cwd(run: Runner, cwd: Path, *args: str) -> str:
+    cmd = ["git", "-C", str(cwd), *args]
     try:
         proc = run(cmd, capture_output=True, text=True, check=False)
     except OSError as exc:
@@ -104,16 +104,53 @@ def _git(run: Runner, worktree: Path, *args: str) -> str:
     return (proc.stdout or "").strip()
 
 
+def _git(run: Runner, worktree: Path, *args: str) -> str:
+    return _git_cwd(run, worktree, *args)
+
+
+def _ensure_worktree(
+    cfg: "MainHealthConfig", *, repo_root: Path | None, run: Runner,
+) -> None:
+    worktree = cfg.worktree
+    if worktree.is_dir():
+        return
+    if worktree.exists():
+        raise MainHealthError(f"main_health worktree is not a directory: {worktree}")
+    if repo_root is None:
+        raise MainHealthError(f"main_health worktree not found: {worktree}")
+
+    try:
+        worktree.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise MainHealthError(
+            f"main_health worktree parent creation failed: {worktree.parent}: {exc}"
+        ) from exc
+    _git_cwd(run, repo_root, "worktree", "prune")
+    _git_cwd(run, repo_root, "fetch", "origin", cfg.base_branch)
+    _git_cwd(
+        run,
+        repo_root,
+        "worktree",
+        "add",
+        "--detach",
+        str(worktree),
+        "FETCH_HEAD",
+    )
+
+
 def check(
-    cfg: "MainHealthConfig", path: Path, *, run: Runner = subprocess.run,
+    cfg: "MainHealthConfig",
+    path: Path,
+    *,
+    repo_root: Path | None = None,
+    run: Runner = subprocess.run,
 ) -> MainHealthState:
     """Run the health command on the latest ``origin/<base_branch>`` and persist the result.
 
     The command is skipped when the fetched SHA equals the persisted one (SHA cache).
     """
     worktree = cfg.worktree
-    if not worktree.is_dir():
-        raise MainHealthError(f"main_health worktree not found: {worktree}")
+    _ensure_worktree(cfg, repo_root=repo_root, run=run)
 
     _git(run, worktree, "fetch", "origin", cfg.base_branch)
     sha = _git(run, worktree, "rev-parse", "FETCH_HEAD")
