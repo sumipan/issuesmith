@@ -22,6 +22,11 @@ if TYPE_CHECKING:
 Runner = Callable[..., "subprocess.CompletedProcess[str]"]
 
 STATE_FILENAME = "issuesmith-main-health.json"
+LOG_FILENAME = "issuesmith-main-health.log"
+LOG_MAX_BYTES = 1_048_576
+
+_LOG_HEADER_PREFIX = "# main_health sha="
+_TRUNCATION_LINE = "# (truncated: kept last 1048576 bytes)"
 
 
 class MainHealthError(RuntimeError):
@@ -39,6 +44,89 @@ class MainHealthState:
 
 def state_path(config: "IssuesmithConfig") -> Path:
     return config.paths.queue_state.parent / STATE_FILENAME
+
+
+def log_path(config: "IssuesmithConfig") -> Path:
+    return state_path(config).parent / LOG_FILENAME
+
+
+def _parse_log_header(line: str) -> tuple[str, str] | None:
+    if not line.startswith(_LOG_HEADER_PREFIX):
+        return None
+    rest = line[len(_LOG_HEADER_PREFIX) :]
+    exit_marker = " exit="
+    exit_at = rest.find(exit_marker)
+    if exit_at < 0:
+        return None
+    sha = rest[:exit_at]
+    if not sha:
+        return None
+    after_exit = rest[exit_at + len(exit_marker) :]
+    checked_marker = " checked_at="
+    checked_at = after_exit.find(checked_marker)
+    if checked_at < 0:
+        return None
+    return sha, after_exit[checked_at + len(checked_marker) :]
+
+
+def _truncate_payload(payload: str) -> tuple[str, bool]:
+    data = payload.encode("utf-8")
+    if len(data) <= LOG_MAX_BYTES:
+        return payload, False
+    tail = data[-LOG_MAX_BYTES:]
+    return tail.decode("utf-8", errors="replace"), True
+
+
+def _write_log(
+    path: Path,
+    *,
+    state: MainHealthState,
+    returncode: int,
+    stdout: str,
+    stderr: str,
+) -> None:
+    payload, truncated = _truncate_payload((stdout or "") + "\n\n" + (stderr or ""))
+    header = (
+        f"{_LOG_HEADER_PREFIX}{state.sha} exit={returncode} "
+        f"checked_at={state.checked_at}"
+    )
+    parts = [header]
+    if truncated:
+        parts.append(_TRUNCATION_LINE)
+    parts.append(payload)
+    content = "\n".join(parts)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(content)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+def load_log_tail(
+    path: Path,
+    state: MainHealthState,
+    *,
+    max_lines: int = 20,
+) -> tuple[str, ...]:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return ()
+    lines = text.splitlines()
+    if not lines:
+        return ()
+    parsed = _parse_log_header(lines[0])
+    if parsed is None:
+        return ()
+    log_sha, log_checked_at = parsed
+    if log_sha != state.sha or log_checked_at != state.checked_at:
+        return ()
+    return tuple(lines[-max_lines:])
 
 
 def load_state(path: Path) -> MainHealthState | None:
@@ -193,4 +281,15 @@ def check(
             checked_at=checked_at,
         )
     _write_state(path, state)
+    log_file = path.parent / LOG_FILENAME
+    try:
+        _write_log(
+            log_file,
+            state=state,
+            returncode=proc.returncode,
+            stdout=proc.stdout or "",
+            stderr=proc.stderr or "",
+        )
+    except OSError:
+        pass
     return state

@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import subprocess
 from pathlib import Path
+from unittest import mock
 
 import pytest
 import yaml
@@ -14,10 +16,14 @@ from issuesmith.config import MainHealthConfig, get_config, reset_config_cache
 from issuesmith.observe import _detect_main_health, observe
 from issuesmith.observe.events import MainGreenEvent, MainRedEvent
 from issuesmith.observe.main_health import (
+    LOG_FILENAME,
+    LOG_MAX_BYTES,
     MainHealthError,
     MainHealthState,
     check,
+    load_log_tail,
     load_state,
+    log_path,
     state_path,
 )
 from issuesmith.queue_store import QueueStore
@@ -29,10 +35,17 @@ _SHA_B = "b" * 40
 class FakeRunner:
     """Stands in for subprocess.run: answers git calls and records command runs."""
 
-    def __init__(self, sha: str = _SHA_A, rc: int = 0, stdout: str = "") -> None:
+    def __init__(
+        self,
+        sha: str = _SHA_A,
+        rc: int = 0,
+        stdout: str = "",
+        stderr: str = "",
+    ) -> None:
         self.sha = sha
         self.rc = rc
         self.stdout = stdout
+        self.stderr = stderr
         self.fail_git: str | None = None
         self.fail_git_at: str | None = None
         self.fail_git_op: str | None = None
@@ -58,7 +71,7 @@ class FakeRunner:
         self.command_calls.append(kwargs)
         if self.timeout:
             raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
-        return subprocess.CompletedProcess(cmd, self.rc, self.stdout, "")
+        return subprocess.CompletedProcess(cmd, self.rc, self.stdout, self.stderr)
 
 
 class StubClient:
@@ -502,6 +515,308 @@ def test_cli_error_exits_two(enabled, monkeypatch, capsys):
         cli.main(["main-health"])
     assert exc.value.code == 2
     assert "git fetch failed" in capsys.readouterr().err
+
+
+def _log_file(path: Path) -> Path:
+    return path.parent / LOG_FILENAME
+
+
+def _read_log_body(path: Path) -> str:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    start = 1
+    if len(lines) > 1 and lines[1].startswith("# (truncated:"):
+        start = 2
+    return "\n".join(lines[start:])
+
+
+def test_check_green_and_red_write_log_with_stdout_stderr(mh_cfg, tmp_path):
+    path = tmp_path / "mh.json"
+    checked = "2026-10-26T12:00:00+00:00"
+
+    class RunnerWithTime(FakeRunner):
+        def __call__(self, cmd, **kwargs):
+            if list(cmd)[0] != "git":
+                return subprocess.CompletedProcess(cmd, self.rc, self.stdout, self.stderr)
+            return super().__call__(cmd, **kwargs)
+
+    run_green = RunnerWithTime(rc=0, stdout="ok", stderr="warn")
+    with mock.patch(
+        "issuesmith.observe.main_health.datetime",
+    ) as dt_mock:
+        dt_mock.now.return_value.isoformat.return_value = checked
+        state_g = check(mh_cfg, path, run=run_green)
+    log = _log_file(path)
+    assert log.is_file()
+    assert f"sha={state_g.sha}" in log.read_text(encoding="utf-8")
+    assert _read_log_body(log) == "ok\n\nwarn"
+
+    path2 = tmp_path / "mh2.json"
+    run_red = RunnerWithTime(rc=1, stdout="out", stderr="err")
+    with mock.patch("issuesmith.observe.main_health.datetime") as dt_mock:
+        dt_mock.now.return_value.isoformat.return_value = checked
+        state_r = check(mh_cfg, path2, run=run_red)
+    assert state_r.status == "red"
+    assert state_r.failing == ()
+    assert _read_log_body(_log_file(path2)) == "out\n\nerr"
+
+
+def test_log_truncates_utf8_payload_at_byte_boundary(mh_cfg, tmp_path):
+    path = tmp_path / "mh.json"
+    # Payload includes trailing "\n\n" before stderr; exceed limit by one UTF-8 byte.
+    pad = "a" * (LOG_MAX_BYTES - 2)
+    stdout = pad + "\u3042"
+    assert len((stdout + "\n\n").encode("utf-8")) > LOG_MAX_BYTES
+    check(mh_cfg, path, run=FakeRunner(rc=1, stdout=stdout, stderr=""))
+    log = _log_file(path)
+    text = log.read_text(encoding="utf-8")
+    assert "# (truncated: kept last 1048576 bytes)" in text
+    body = _read_log_body(log)
+    assert len(body.encode("utf-8")) <= LOG_MAX_BYTES
+    assert "\u3042" in body or "\ufffd" in body
+
+
+def test_log_under_limit_keeps_full_multibyte_payload(mh_cfg, tmp_path):
+    path = tmp_path / "mh.json"
+    payload = "\u3042" * ((LOG_MAX_BYTES - 2) // 3)
+    assert len((payload + "\n\n").encode("utf-8")) <= LOG_MAX_BYTES
+    check(mh_cfg, path, run=FakeRunner(rc=1, stdout=payload, stderr=""))
+    log = _log_file(path)
+    text = log.read_text(encoding="utf-8")
+    assert "# (truncated:" not in text
+    assert text.endswith(f"{payload}\n\n")
+
+
+def test_check_same_sha_skips_command_and_log_unchanged(mh_cfg, tmp_path):
+    path = tmp_path / "mh.json"
+    check(mh_cfg, path, run=FakeRunner(rc=1, stdout="x", stderr="y"))
+    log = _log_file(path)
+    before = log.read_bytes()
+    mtime = log.stat().st_mtime
+
+    run = FakeRunner(rc=0, stdout="z", stderr="w")
+    again = check(mh_cfg, path, run=run)
+
+    assert run.command_calls == []
+    assert log.read_bytes() == before
+    assert log.stat().st_mtime == mtime
+    assert again == load_state(path)
+
+
+def test_check_state_write_failure_does_not_update_log(mh_cfg, tmp_path):
+    path = tmp_path / "mh.json"
+    check(mh_cfg, path, run=FakeRunner(rc=1, stdout="old", stderr=""))
+    log = _log_file(path)
+    before_log = log.read_bytes()
+
+    with mock.patch(
+        "issuesmith.observe.main_health._write_state",
+        side_effect=OSError("disk full"),
+    ):
+        with pytest.raises(OSError):
+            check(mh_cfg, path, run=FakeRunner(sha=_SHA_B, rc=1, stdout="new", stderr=""))
+    assert log.read_bytes() == before_log
+
+
+def test_check_log_write_failure_still_persists_state(mh_cfg, tmp_path):
+    path = tmp_path / "mh.json"
+    real_replace = os.replace
+
+    def fail_log_replace(src, dst, *args, **kwargs):
+        if str(dst).endswith(LOG_FILENAME):
+            raise OSError("replace failed")
+        return real_replace(src, dst, *args, **kwargs)
+
+    with mock.patch("issuesmith.observe.main_health.os.replace", side_effect=fail_log_replace):
+        state = check(mh_cfg, path, run=FakeRunner(rc=1, stdout="diag", stderr=""))
+    assert state.status == "red"
+    assert load_state(path) == state
+
+
+@pytest.mark.parametrize("fail_git", ["fetch", "rev-parse", "checkout"])
+def test_check_git_failure_keeps_log(mh_cfg, tmp_path, fail_git):
+    path = tmp_path / "mh.json"
+    check(mh_cfg, path, run=FakeRunner(rc=1, stdout="x", stderr=""))
+    log = _log_file(path)
+    before = log.read_bytes()
+
+    run = FakeRunner(sha=_SHA_B, rc=0)
+    run.fail_git = fail_git
+    with pytest.raises(MainHealthError):
+        check(mh_cfg, path, run=run)
+
+    assert log.read_bytes() == before
+
+
+def test_check_timeout_keeps_log(mh_cfg, tmp_path):
+    path = tmp_path / "mh.json"
+    check(mh_cfg, path, run=FakeRunner(rc=0, stdout="x", stderr=""))
+    log = _log_file(path)
+    before = log.read_bytes()
+
+    run = FakeRunner(sha=_SHA_B)
+    run.timeout = True
+    with pytest.raises(MainHealthError):
+        check(mh_cfg, path, run=run)
+
+    assert log.read_bytes() == before
+
+
+def test_check_command_start_failure_keeps_log(mh_cfg, tmp_path):
+    path = tmp_path / "mh.json"
+    check(mh_cfg, path, run=FakeRunner(rc=0, stdout="x", stderr=""))
+    log = _log_file(path)
+    before = log.read_bytes()
+
+    def boom(cmd, **kwargs):
+        if cmd[0] == "git":
+            return FakeRunner(sha=_SHA_B)(cmd, **kwargs)
+        raise OSError("no such file")
+
+    with pytest.raises(MainHealthError):
+        check(mh_cfg, path, run=boom)
+
+    assert log.read_bytes() == before
+
+
+def test_load_log_tail_returns_last_twenty_lines(mh_cfg, tmp_path):
+    path = tmp_path / "mh.json"
+    state = check(mh_cfg, path, run=FakeRunner(rc=1, stdout="only", stderr=""))
+    log = _log_file(path)
+    payload_lines = [f"line-{i}" for i in range(21)]
+    header = (
+        f"# main_health sha={state.sha} exit=1 checked_at={state.checked_at}"
+    )
+    log.write_text(header + "\n" + "\n".join(payload_lines), encoding="utf-8")
+    tail = load_log_tail(log, state, max_lines=20)
+    assert tail == tuple(payload_lines[1:])
+    assert "line-0" not in tail
+    assert "line-20" in tail
+
+
+def test_load_log_tail_mismatch_returns_empty(mh_cfg, tmp_path):
+    path = tmp_path / "mh.json"
+    state = check(mh_cfg, path, run=FakeRunner(rc=1, stdout="x", stderr=""))
+    log = _log_file(path)
+    other = dataclasses.replace(state, sha=_SHA_B)
+    assert load_log_tail(log, other) == ()
+    other2 = dataclasses.replace(state, checked_at="2020-01-01T00:00:00+00:00")
+    assert load_log_tail(log, other2) == ()
+
+
+def test_log_path_next_to_state(enabled):
+    assert log_path(enabled) == state_path(enabled).parent / LOG_FILENAME
+
+
+def test_cli_red_empty_failing_shows_log_tail(enabled, monkeypatch, capsys, tmp_path):
+    checked = "2026-10-26T00:00:00+00:00"
+    state = MainHealthState(
+        sha=_SHA_A,
+        status="red",
+        reason="exit 1",
+        failing=(),
+        checked_at=checked,
+    )
+    monkeypatch.setattr(
+        "issuesmith.observe.main_health.check",
+        lambda cfg, path, repo_root=None: state,
+    )
+    log = log_path(enabled)
+    log.parent.mkdir(parents=True, exist_ok=True)
+    header = f"# main_health sha={_SHA_A} exit=1 checked_at={checked}"
+    log.write_text(
+        header + "\n" + "alpha\n\nbeta\nRepository pollution detected:",
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["main-health"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "  | alpha" in out
+    assert "  | " in out  # blank line between stdout and stderr sections
+    assert "  | Repository pollution detected:" in out
+
+
+def test_cli_red_with_failing_does_not_show_log(enabled, monkeypatch, capsys):
+    state = MainHealthState(
+        sha=_SHA_A,
+        status="red",
+        reason="exit 1",
+        failing=("tests/test_a.py::test_x",),
+        checked_at="",
+    )
+    monkeypatch.setattr(
+        "issuesmith.observe.main_health.check",
+        lambda cfg, path, repo_root=None: state,
+    )
+    log = log_path(enabled)
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text("# main_health sha=x exit=1 checked_at=\nsecret\n", encoding="utf-8")
+    with pytest.raises(SystemExit):
+        cli.main(["main-health"])
+    out = capsys.readouterr().out
+    assert "tests/test_a.py::test_x" in out
+    assert "  | " not in out
+
+
+def test_cli_green_does_not_show_log(enabled, monkeypatch, capsys):
+    state = MainHealthState(
+        sha=_SHA_A, status="green", reason="", failing=(), checked_at="",
+    )
+    monkeypatch.setattr(
+        "issuesmith.observe.main_health.check",
+        lambda cfg, path, repo_root=None: state,
+    )
+    log = log_path(enabled)
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text("noise\n", encoding="utf-8")
+    with pytest.raises(SystemExit):
+        cli.main(["main-health"])
+    assert "  | " not in capsys.readouterr().out
+
+
+def test_cli_log_missing_or_bad_header_shows_status_only(enabled, monkeypatch, capsys):
+    state = MainHealthState(
+        sha=_SHA_A,
+        status="red",
+        reason="exit 1",
+        failing=(),
+        checked_at="t",
+    )
+    monkeypatch.setattr(
+        "issuesmith.observe.main_health.check",
+        lambda cfg, path, repo_root=None: state,
+    )
+    log = log_path(enabled)
+    log.parent.mkdir(parents=True, exist_ok=True)
+    if log.exists():
+        log.unlink()
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["main-health"])
+    assert exc.value.code == 0
+    assert "  | " not in capsys.readouterr().out
+
+    log.write_text("# bad header\nbody\n", encoding="utf-8")
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["main-health"])
+    assert exc.value.code == 0
+    assert "body" not in capsys.readouterr().out
+
+
+def test_load_log_tail_read_oserror_returns_empty(tmp_path):
+    log = tmp_path / LOG_FILENAME
+    log.write_text("unreadable\n", encoding="utf-8")
+    log.chmod(0)
+    state = MainHealthState(
+        sha=_SHA_A,
+        status="red",
+        reason="exit 1",
+        failing=(),
+        checked_at="t",
+    )
+    try:
+        assert load_log_tail(log, state) == ()
+    finally:
+        log.chmod(0o600)
 
 
 def test_cli_prints_created_worktree_line(enabled, monkeypatch, capsys, tmp_path):
