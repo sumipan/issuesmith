@@ -119,7 +119,12 @@ def _ensure_worktree(
     if repo_root is None:
         raise MainHealthError(f"main_health worktree not found: {worktree}")
 
-    worktree.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        worktree.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise MainHealthError(
+            f"main_health worktree parent creation failed: {worktree.parent}: {exc}"
+        ) from exc
     _git_cwd(run, repo_root, "worktree", "prune")
     _git_cwd(run, repo_root, "fetch", "origin", cfg.base_branch)
     _git_cwd(

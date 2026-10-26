@@ -284,6 +284,26 @@ def test_check_worktree_path_is_file_raises(mh_cfg, tmp_path):
     assert run.command_calls == []
 
 
+def test_check_worktree_parent_create_failure_keeps_state(mh_cfg, tmp_path):
+    path = tmp_path / "mh.json"
+    check(mh_cfg, path, run=FakeRunner(rc=1))
+    before = path.read_bytes()
+
+    blocker = tmp_path / "parent-file"
+    blocker.write_text("x", encoding="utf-8")
+    cfg = dataclasses.replace(mh_cfg, worktree=blocker / "main-health")
+    repo_root = tmp_path / "clone"
+    repo_root.mkdir()
+    run = FakeRunner()
+
+    with pytest.raises(MainHealthError, match="parent creation failed"):
+        check(cfg, path, repo_root=repo_root, run=run)
+
+    assert path.read_bytes() == before
+    assert run.calls == []
+    assert run.command_calls == []
+
+
 @pytest.mark.parametrize("fail_sub", ["prune", "fetch", "add"])
 def test_check_worktree_create_git_failure_keeps_state(mh_cfg, tmp_path, fail_sub):
     path = tmp_path / "mh.json"
