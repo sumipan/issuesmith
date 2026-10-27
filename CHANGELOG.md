@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.159.1 - 2026-10-27
+
 ### Added
 
 - `observe.main_health.halt_on_red` (default `true`): when `false`, main red raises the
