@@ -1543,40 +1543,54 @@ def _plan_wait_entry(
     )
 
 
-def plan(
+def _global_wait_plan(
+    store: QueueStore,
+    snap: QueueSnapshot,
+    reason: PlanReason,
+    detail: str,
+) -> QueuePlan:
+    entries: list[PlanEntry] = []
+    for rid in list(snap.active_order):
+        req = store.effective_request(snap, rid)
+        if req is None:
+            continue
+        try:
+            engine = _resolve_engine(req.phase)
+        except Exception:
+            engine = None
+        entries.append(_plan_wait_entry(req, reason, detail, engine))
+    return QueuePlan(
+        revision=snap.revision,
+        entries=tuple(entries),
+        halt=reason == "halt",
+    )
+
+
+def _plan_with_window(
     store: QueueStore,
     client: ForgePort,
     *,
     now: datetime,
+    window: tuple[str, str, int],
 ) -> QueuePlan:
     snap = store.snapshot()
-    revision = snap.revision
-    start, end, idle_minutes = seed_window(None)
-    open_issues = _list_open_issues(client)
-    if not open_issues:
-        open_issues = []
-    conflict_inputs, open_pr_occupancy = _allow_paths_conflict_inputs(client, snap)
-    virtual_conflict = list(conflict_inputs)
+    start, end, idle_minutes = window
+
+    brake = _github_api_brake_reason(now)
+    if brake:
+        return _global_wait_plan(store, snap, "api_brake", brake)
 
     global_reason, global_detail = _evaluate_global_plan_wait(
         snap, client, idle_minutes, now
     )
     if global_reason is not None:
-        entries: list[PlanEntry] = []
-        for rid in list(snap.active_order):
-            req = store.effective_request(snap, rid)
-            if req is None:
-                continue
-            try:
-                engine = _resolve_engine(req.phase)
-            except Exception:
-                engine = None
-            entries.append(_plan_wait_entry(req, global_reason, global_detail, engine))
-        return QueuePlan(
-            revision=revision,
-            entries=tuple(entries),
-            halt=global_reason == "halt",
-        )
+        return _global_wait_plan(store, snap, global_reason, global_detail)
+
+    open_issues = _list_open_issues(client)
+    if not open_issues:
+        open_issues = []
+    conflict_inputs, open_pr_occupancy = _allow_paths_conflict_inputs(client, snap)
+    virtual_conflict = list(conflict_inputs)
 
     concurrency = get_config().concurrency
     role_map = _required_engines()
@@ -1742,7 +1756,16 @@ def plan(
             }
         )
 
-    return QueuePlan(revision=revision, entries=tuple(entries), halt=snap.halt)
+    return QueuePlan(revision=snap.revision, entries=tuple(entries), halt=snap.halt)
+
+
+def plan(
+    store: QueueStore,
+    client: ForgePort,
+    *,
+    now: datetime,
+) -> QueuePlan:
+    return _plan_with_window(store, client, now=now, window=seed_window(None))
 
 
 def _apply_plan_dispatch(
@@ -2151,7 +2174,12 @@ def dispatch_one(
         if not _dispatch_pipeline_ready(snap, idle_minutes, now):
             return DispatchResult(False, reason="pipeline not idle")
 
-        queue_plan = plan(store, client, now=now)
+        queue_plan = _plan_with_window(
+            store,
+            client,
+            now=now,
+            window=(start, end, idle_minutes),
+        )
         _sync_deletion_refs_comments(store, client, queue_plan)
         started = apply(store, client, queue_plan)
         if started:

@@ -125,6 +125,76 @@ def test_plan_is_read_only(tmp_path, monkeypatch):
     assert len(queue_plan.entries) == 1
 
 
+def test_plan_api_brake_returns_all_entries_without_forge_reads(tmp_path, monkeypatch):
+    from issuesmith import queue as qmod
+
+    store = _store(tmp_path)
+    for issue in (10, 20):
+        store.enqueue(
+            issue=issue,
+            phase="draft",
+            source="skill",
+            actor_kind="human",
+            priority="normal",
+            requested_by=["alice"],
+            requested_at=_NOW,
+        )
+
+    class NoReadClient:
+        def __getattr__(self, name):
+            raise AssertionError(f"unexpected Forge read: {name}")
+
+    monkeypatch.setattr(
+        qmod,
+        "_github_api_brake_reason",
+        lambda now: "github_api_low (remaining=10, reset=13:00)",
+    )
+    queue_plan = plan(
+        store,
+        NoReadClient(),
+        now=datetime(2026, 9, 3, 12, 0, tzinfo=_JST),
+    )
+
+    assert [entry.issue for entry in queue_plan.entries] == [10, 20]
+    assert all(entry.decision == "wait" for entry in queue_plan.entries)
+    assert all(entry.reason == "api_brake" for entry in queue_plan.entries)
+
+
+def test_dispatch_uses_custom_seed_window(tmp_path, monkeypatch):
+    from issuesmith import queue as qmod
+
+    store = _store(tmp_path)
+    store.enqueue(
+        issue=10,
+        phase="draft",
+        source="release-watcher",
+        actor_kind="automation",
+        priority="normal",
+        requested_by=["release-watcher"],
+        requested_at=_NOW,
+    )
+    custom_seed = tmp_path / "custom-seed.yml"
+    monkeypatch.setattr(
+        qmod,
+        "seed_window",
+        lambda path: ("00:00", "23:59", 5)
+        if path == custom_seed
+        else ("01:00", "07:00", 5),
+    )
+    _patch_dispatch_gates(monkeypatch, qmod)
+
+    result = qmod.dispatch_one(
+        now=datetime(2026, 9, 3, 12, 0, tzinfo=_JST),
+        client=_ready_client(10),
+        store=store,
+        seed_path=custom_seed,
+        skip_seed=True,
+        call_llm=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")),
+    )
+
+    assert result.dispatched is True
+
+
 def test_plan_three_mixed_reasons(tmp_path, monkeypatch):
     from dataclasses import replace
 
