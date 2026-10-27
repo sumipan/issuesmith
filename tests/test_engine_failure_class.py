@@ -77,6 +77,7 @@ def execute_mocks(monkeypatch):
     monkeypatch.setattr("issuesmith.engine._resolve_timeout_sec", lambda role: 600.0)
     quota_gate = MagicMock()
     quota_gate.snapshot.return_value = _snapshot()
+    quota_gate.increment_auth_strike.return_value = 1
     monkeypatch.setattr("issuesmith.engine.QuotaGate", lambda state_path: quota_gate)
     return {"recorded": recorded}
 
