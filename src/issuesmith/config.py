@@ -317,6 +317,7 @@ class MainHealthConfig:
     command: tuple[str, ...]
     base_branch: str = "main"
     timeout_seconds: int = 1800
+    halt_on_red: bool = True
 
 
 @dataclass(frozen=True)
@@ -1176,6 +1177,9 @@ def _build_main_health(raw: Any, root: Path) -> MainHealthConfig | None:
         command = ()
     if not command:
         raise ValueError("observe.main_health.command is required")
+    halt_on_red_raw = raw.get("halt_on_red", True)
+    if not isinstance(halt_on_red_raw, bool):
+        raise ValueError("observe.main_health.halt_on_red must be a bool")
     worktree = Path(worktree_raw).expanduser()
     if not worktree.is_absolute():
         worktree = root / worktree
@@ -1184,6 +1188,7 @@ def _build_main_health(raw: Any, root: Path) -> MainHealthConfig | None:
         command=command,
         base_branch=str(raw.get("base_branch") or "main"),
         timeout_seconds=int(raw.get("timeout_seconds", 1800)),
+        halt_on_red=halt_on_red_raw,
     )
 
 
