@@ -13,7 +13,7 @@ import sys
 from dataclasses import dataclass, replace
 from datetime import datetime, time, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 import yaml
@@ -156,6 +156,56 @@ class DispatchStarted:
     label: str
     request_id: str
     engine: str
+
+
+PlanReason = Literal[
+    "ok",
+    "api_brake",
+    "window",
+    "halt",
+    "engine_paused",
+    "slot_full",
+    "issue_fetch_failed",
+    "decision_pending",
+    "precondition",
+    "after_deps",
+    "deletion_refs",
+    "allow_paths_conflict",
+    "last_issue_not_terminal",
+    "last_issue_fetch_failed",
+    "pipeline_not_idle",
+    "max_dispatch_reached",
+]
+
+
+@dataclass(frozen=True)
+class PlanEntry:
+    request_id: str
+    issue: int
+    phase: str
+    engine: str | None
+    decision: Literal["dispatch", "wait"]
+    reason: PlanReason
+    detail: str
+
+
+@dataclass(frozen=True)
+class QueuePlan:
+    revision: int
+    entries: tuple[PlanEntry, ...]
+    halt: bool
+
+
+def _plan_entry_to_dict(entry: PlanEntry) -> dict[str, Any]:
+    return {
+        "request_id": entry.request_id,
+        "issue": entry.issue,
+        "phase": entry.phase,
+        "engine": entry.engine,
+        "decision": entry.decision,
+        "reason": entry.reason,
+        "detail": entry.detail,
+    }
 
 
 def _now_jst() -> datetime:
@@ -1447,6 +1497,387 @@ def _github_api_brake_reason(now: datetime) -> str:
     return f"github_api_low (remaining={state.remaining}, reset={reset_str})"
 
 
+def _evaluate_global_plan_wait(
+    snap: QueueSnapshot,
+    client: ForgePort,
+    idle_minutes: int,
+    now: datetime,
+) -> tuple[PlanReason | None, str]:
+    if snap.halt:
+        halt_scope = snap.halt_scope or "all"
+        if halt_scope == "all":
+            reason = snap.halt_reason or ""
+            return "halt", f"halted: {reason}" if reason else "halted"
+    if snap.last_issue is not None:
+        try:
+            last = client.issue_get(snap.last_issue, fields=["state", "labels"])
+        except Exception as exc:
+            return "last_issue_fetch_failed", f"last_issue fetch failed: {exc}"
+        last_labels = label_names(last)
+        last_state = str(last.get("state", "")).upper()
+        terminal_ok = _issue_state_is_terminal(last)
+        if not terminal_ok and milestone_last_issue_terminal_ok(last_labels):
+            terminal_ok = True
+        if not terminal_ok:
+            if last_state == "CLOSED" or _serial_concurrency():
+                return "last_issue_not_terminal", "previous issue not terminal"
+    if not _dispatch_pipeline_ready(snap, idle_minutes, now):
+        return "pipeline_not_idle", "pipeline not idle"
+    return None, ""
+
+
+def _plan_wait_entry(
+    req: QueueRequest,
+    reason: PlanReason,
+    detail: str,
+    engine: str | None = None,
+) -> PlanEntry:
+    return PlanEntry(
+        request_id=req.request_id,
+        issue=req.issue,
+        phase=req.phase,
+        engine=engine,
+        decision="wait",
+        reason=reason,
+        detail=detail,
+    )
+
+
+def plan(
+    store: QueueStore,
+    client: ForgePort,
+    *,
+    now: datetime,
+) -> QueuePlan:
+    snap = store.snapshot()
+    revision = snap.revision
+    start, end, idle_minutes = seed_window(None)
+    open_issues = _list_open_issues(client)
+    if not open_issues:
+        open_issues = []
+    conflict_inputs, open_pr_occupancy = _allow_paths_conflict_inputs(client, snap)
+    virtual_conflict = list(conflict_inputs)
+
+    global_reason, global_detail = _evaluate_global_plan_wait(
+        snap, client, idle_minutes, now
+    )
+    if global_reason is not None:
+        entries: list[PlanEntry] = []
+        for rid in list(snap.active_order):
+            req = store.effective_request(snap, rid)
+            if req is None:
+                continue
+            try:
+                engine = _resolve_engine(req.phase)
+            except Exception:
+                engine = None
+            entries.append(_plan_wait_entry(req, global_reason, global_detail, engine))
+        return QueuePlan(
+            revision=revision,
+            entries=tuple(entries),
+            halt=global_reason == "halt",
+        )
+
+    concurrency = get_config().concurrency
+    role_map = _required_engines()
+    counts = in_flight_by_engine(snap.in_flight, role_engine_map=role_map)
+    max_per_tick = 1 if _serial_concurrency() else concurrency.max_dispatch_per_tick
+    dispatched_this_tick = 0
+    strict_stop: PlanReason | None = None
+    strict_detail = ""
+    entries: list[PlanEntry] = []
+
+    for rid in list(snap.active_order):
+        req = store.effective_request(snap, rid)
+        if req is None:
+            continue
+        try:
+            engine = _resolve_engine(req.phase)
+        except Exception:
+            engine = None
+
+        if strict_stop is not None:
+            entries.append(_plan_wait_entry(req, strict_stop, strict_detail, engine))
+            continue
+
+        if not _source_in_window(req.source, req.actor_kind, now, start, end):
+            entries.append(_plan_wait_entry(req, "window", "outside source window", engine))
+            continue
+
+        if snap.halt:
+            halt_scope = snap.halt_scope or "all"
+            if halt_scope.startswith("phase:") and req.phase == halt_scope[len("phase:"):]:
+                entries.append(
+                    _plan_wait_entry(req, "halt", snap.halt_reason or "halted", engine)
+                )
+                continue
+            if halt_scope.startswith("repo:"):
+                meta = snap.request_meta.get(rid) or {}
+                if meta.get("target_repo", "") == halt_scope[len("repo:"):]:
+                    entries.append(
+                        _plan_wait_entry(req, "halt", snap.halt_reason or "halted", engine)
+                    )
+                    continue
+
+        role = _phase_role_map()[req.phase]
+        paused_for_role = _required_engines_paused(role=role)
+        if paused_for_role:
+            detail = (
+                f"required engine paused: {', '.join(paused_for_role)} (role={role})"
+            )
+            entries.append(_plan_wait_entry(req, "engine_paused", detail, engine))
+            continue
+
+        if engine is not None and counts.get(engine, 0) >= concurrency.limit(engine):
+            detail = f"engine slot full ({engine})"
+            entries.append(_plan_wait_entry(req, "slot_full", detail, engine))
+            if concurrency.strict_order:
+                strict_stop = "slot_full"
+                strict_detail = detail
+            continue
+
+        try:
+            issue = client.issue_get(
+                req.issue, fields=["state", "labels", "title", "body", "number"]
+            )
+        except Exception as exc:
+            detail = f"issue_get #{req.issue} failed: {exc}"
+            entries.append(_plan_wait_entry(req, "issue_fetch_failed", detail, engine))
+            continue
+
+        decision = deterministic_decision(
+            req,
+            issue,
+            open_issues=open_issues,
+            force=store.is_force(snap, rid),
+        )
+        if decision.kind == "repair" or decision.kind != "keep":
+            detail = decision.reason or decision.kind
+            entries.append(_plan_wait_entry(req, "decision_pending", detail, engine))
+            continue
+
+        ok, why = phase_preconditions(req.phase, issue, client, req.issue)
+        if not ok:
+            entries.append(
+                _plan_wait_entry(req, "precondition", why or "precondition failed", engine)
+            )
+            continue
+
+        after_issues = list((snap.request_meta.get(rid) or {}).get("after") or [])
+        if after_issues:
+            after_result = check_dependencies(after_issues, client=client)
+            if after_result.decision == "BLOCK":
+                nums = ", ".join(f"#{n}" for n in after_issues)
+                entries.append(
+                    _plan_wait_entry(req, "after_deps", f"blocked_on: [{nums}]", engine)
+                )
+                continue
+
+        impl_phase = _primary_impl_phase_name()
+        if impl_phase and req.phase == impl_phase:
+            refs = deletion_references_for_body(str(issue.get("body") or ""))
+            if refs:
+                lang = get_config().language
+                references = format_deletion_references(
+                    refs, lang.message("queue.deletion_refs_lead_dispatch")
+                )
+                detail = lang.message(
+                    "queue.deletion_refs_before_dispatch", references=references
+                )
+                entries.append(_plan_wait_entry(req, "deletion_refs", detail, engine))
+                continue
+
+        candidate_repo, candidate_paths = _issue_target_meta(issue)
+        conflict = _allow_paths_conflict(
+            candidate_repo,
+            candidate_paths,
+            virtual_conflict,
+            candidate_phase=req.phase,
+            candidate_issue=req.issue,
+        )
+        if conflict is not None:
+            conflict_entry = _conflict_entry_for_issue(
+                conflict, list(snap.in_flight), open_pr_occupancy
+            )
+            overlap = _conflict_overlap_path(candidate_paths, conflict_entry)
+            detail = _format_allow_paths_wait_line(
+                req.issue, conflict, conflict_entry, overlap
+            ).strip()
+            entries.append(
+                _plan_wait_entry(req, "allow_paths_conflict", detail, engine)
+            )
+            if concurrency.strict_order:
+                strict_stop = "allow_paths_conflict"
+                strict_detail = detail
+            continue
+
+        if dispatched_this_tick >= max_per_tick:
+            entries.append(
+                _plan_wait_entry(req, "max_dispatch_reached", "max dispatch per tick", engine)
+            )
+            continue
+
+        entries.append(
+            PlanEntry(
+                request_id=req.request_id,
+                issue=req.issue,
+                phase=req.phase,
+                engine=engine,
+                decision="dispatch",
+                reason="ok",
+                detail="dispatched",
+            )
+        )
+        dispatched_this_tick += 1
+        if engine is not None:
+            counts[engine] = counts.get(engine, 0) + 1
+        virtual_conflict.append(
+            {
+                "issue": req.issue,
+                "engine": engine,
+                "role": role,
+                "phase": req.phase,
+                "allow_paths": list(candidate_paths),
+                "target_repo": candidate_repo or None,
+            }
+        )
+
+    return QueuePlan(revision=revision, entries=tuple(entries), halt=snap.halt)
+
+
+def _apply_plan_dispatch(
+    store: QueueStore,
+    client: ForgePort,
+    entry: PlanEntry,
+) -> DispatchStarted:
+    snap = store.snapshot()
+    req = store.effective_request(snap, entry.request_id)
+    if req is None:
+        raise RuntimeError(f"missing request {entry.request_id}")
+    issue = client.issue_get(
+        req.issue, fields=["state", "labels", "title", "body", "number"]
+    )
+    candidate_repo, candidate_paths = _issue_target_meta(issue)
+    role = _phase_role_map()[req.phase]
+    engine = entry.engine or _resolve_engine(req.phase)
+    label = READY_LABEL[req.phase]
+    labels = label_names(issue)
+    if label not in labels:
+        client.issue_update(req.issue, labels_add=[label], labels_remove=[])
+    handler = _phase_handler_map().get(req.phase)
+    redispatch_note = ""
+    if handler and _handler_key_consumed(handler, req.issue):
+        rc = _trigger_ghdag_redispatch(
+            req.issue, handler, reason=f"queue request {entry.request_id} ({req.source})"
+        )
+        redispatch_note = (
+            get_config().language.message("queue.redispatch_ok")
+            if rc == 0
+            else get_config().language.message(
+                "queue.redispatch_failed", rc=rc, issue=req.issue, handler=handler
+            )
+        )
+    _ensure_comment(
+        client,
+        req.issue,
+        entry.request_id,
+        "dispatched",
+        get_config().language.message(
+            "queue.dispatched", label=label, request_id=entry.request_id, note=redispatch_note
+        ),
+    )
+    store.add_in_flight(
+        req.issue,
+        engine,
+        role=role,
+        phase=req.phase,
+        allow_paths=candidate_paths,
+        target_repo=candidate_repo or None,
+    )
+    store.complete(entry.request_id, "dispatched", extra_meta={"label": label})
+    store.set_last_issue(req.issue)
+    return DispatchStarted(
+        issue=req.issue, label=label, request_id=entry.request_id, engine=engine
+    )
+
+
+def _sync_deletion_refs_comments(
+    store: QueueStore,
+    client: ForgePort,
+    queue_plan: QueuePlan,
+) -> None:
+    for entry in queue_plan.entries:
+        if entry.reason != "deletion_refs":
+            continue
+        try:
+            issue = client.issue_get(entry.issue, fields=["body"])
+        except Exception:
+            continue
+        refs = deletion_references_for_body(str(issue.get("body") or ""))
+        if not refs:
+            continue
+        lang = get_config().language
+        references = format_deletion_references(
+            refs, lang.message("queue.deletion_refs_lead_dispatch")
+        )
+        _ensure_comment(
+            client,
+            entry.issue,
+            entry.request_id,
+            "scope_coupling_blocked",
+            lang.message("queue.deletion_refs_before_dispatch", references=references),
+        )
+
+
+def apply(
+    store: QueueStore,
+    client: ForgePort,
+    queue_plan: QueuePlan,
+) -> list[DispatchStarted]:
+    if store.snapshot().revision != queue_plan.revision:
+        return []
+    started: list[DispatchStarted] = []
+    for entry in queue_plan.entries:
+        if entry.decision != "dispatch":
+            continue
+        started.append(_apply_plan_dispatch(store, client, entry))
+    return started
+
+
+def _dispatch_result_reason_from_plan(
+    queue_plan: QueuePlan,
+    started: list[DispatchStarted],
+) -> str:
+    if started:
+        return "dispatched"
+    last_paused: str | None = None
+    for entry in queue_plan.entries:
+        if entry.reason == "engine_paused":
+            last_paused = entry.detail
+    if last_paused:
+        return last_paused
+    global_reason, global_detail = None, ""
+    for entry in queue_plan.entries:
+        if entry.reason in (
+            "halt",
+            "last_issue_fetch_failed",
+            "last_issue_not_terminal",
+            "pipeline_not_idle",
+        ):
+            global_reason = entry.reason
+            global_detail = entry.detail
+            break
+    if global_reason == "halt":
+        return global_detail if global_detail.startswith("halted") else f"halted: {global_detail}"
+    if global_reason == "last_issue_fetch_failed":
+        return global_detail
+    if global_reason == "last_issue_not_terminal":
+        return global_detail
+    if global_reason == "pipeline_not_idle":
+        return global_detail
+    return "no dispatchable request"
+
+
 def dispatch_one(
     now: datetime | None = None,
     client: ForgePort | None = None,
@@ -1720,155 +2151,9 @@ def dispatch_one(
         if not _dispatch_pipeline_ready(snap, idle_minutes, now):
             return DispatchResult(False, reason="pipeline not idle")
 
-        concurrency = get_config().concurrency
-        role_map = _required_engines()
-        counts = in_flight_by_engine(snap.in_flight, role_engine_map=role_map)
-        last_paused_reason: str | None = None
-        max_per_tick = 1 if _serial_concurrency() else concurrency.max_dispatch_per_tick
-        started: list[DispatchStarted] = []
-        open_pr_occupancy = _open_pr_occupancy(client, snap)
-
-        for rid in list(snap.active_order):
-            req = store.effective_request(snap, rid)
-            if req is None:
-                continue
-            if not _source_in_window(req.source, req.actor_kind, now, start, end):
-                continue
-            if snap.halt:
-                halt_scope = snap.halt_scope
-                if halt_scope.startswith("phase:") and req.phase == halt_scope[len("phase:"):]:
-                    continue
-                elif halt_scope.startswith("repo:"):
-                    meta = snap.request_meta.get(rid) or {}
-                    if meta.get("target_repo", "") == halt_scope[len("repo:"):]:
-                        continue
-            engine = _resolve_engine(req.phase)
-            role = _phase_role_map()[req.phase]
-            paused_for_role = _required_engines_paused(role=role)
-            if paused_for_role:
-                last_paused_reason = (
-                    f"required engine paused: {', '.join(paused_for_role)} (role={role})"
-                )
-                continue
-            if counts.get(engine, 0) >= concurrency.limit(engine):
-                if concurrency.strict_order:
-                    break
-                continue
-            try:
-                issue = client.issue_get(
-                    req.issue, fields=["state", "labels", "title", "body", "number"]
-                )
-            except Exception:
-                continue
-            decision = deterministic_decision(
-                req,
-                issue,
-                open_issues=open_issues,
-                force=store.is_force(snap, rid),
-            )
-            if decision.kind == "repair":
-                _apply_repair(store, client, rid, req, issue, decision.reason)
-                continue
-            if decision.kind != "keep":
-                _apply_terminal(
-                    store,
-                    client,
-                    rid,
-                    req.issue,
-                    decision.kind,
-                    decision.reason,
-                    close_issue=decision.close_issue,
-                    add_rejected_label=decision.add_rejected_label,
-                    comment=decision.comment,
-                )
-                continue
-            ok, _why = phase_preconditions(req.phase, issue, client, req.issue)
-            if not ok:
-                continue
-
-            after_issues = list((snap.request_meta.get(rid) or {}).get("after") or [])
-            if after_issues:
-                after_result = check_dependencies(after_issues, client=client)
-                if after_result.decision == "BLOCK":
-                    continue
-
-            impl_phase = _primary_impl_phase_name()
-            if impl_phase and req.phase == impl_phase:
-                # P0 requires: re-check deletion referrers on the dispatch-time base (#3953).
-                refs = deletion_references_for_body(str(issue.get("body") or ""))
-                if refs:
-                    lang = get_config().language
-                    references = format_deletion_references(
-                        refs, lang.message("queue.deletion_refs_lead_dispatch")
-                    )
-                    _ensure_comment(
-                        client,
-                        req.issue,
-                        rid,
-                        "scope_coupling_blocked",
-                        lang.message("queue.deletion_refs_before_dispatch", references=references),
-                    )
-                    continue
-
-            candidate_repo, candidate_paths = _issue_target_meta(issue)
-            conflict = _allow_paths_conflict(
-                candidate_repo,
-                candidate_paths,
-                list(snap.in_flight) + open_pr_occupancy,
-                candidate_phase=req.phase,
-                candidate_issue=req.issue,
-            )
-            if conflict is not None:
-                if concurrency.strict_order:
-                    break
-                continue
-
-            label = READY_LABEL[req.phase]
-            labels = label_names(issue)
-            if label not in labels:
-                client.issue_update(req.issue, labels_add=[label], labels_remove=[])
-            handler = _phase_handler_map().get(req.phase)
-            redispatch_note = ""
-            if handler and _handler_key_consumed(handler, req.issue):
-                # A label alone makes the watcher skip on the idempotency key; bump the generation.
-                rc = _trigger_ghdag_redispatch(
-                    req.issue, handler, reason=f"queue request {rid} ({req.source})"
-                )
-                redispatch_note = (
-                    get_config().language.message("queue.redispatch_ok")
-                    if rc == 0
-                    else get_config().language.message(
-                        "queue.redispatch_failed", rc=rc, issue=req.issue, handler=handler
-                    )
-                )
-            _ensure_comment(
-                client,
-                req.issue,
-                rid,
-                "dispatched",
-                get_config().language.message(
-                    "queue.dispatched", label=label, request_id=rid, note=redispatch_note
-                ),
-            )
-            store.add_in_flight(
-                req.issue,
-                engine,
-                role=role,
-                phase=req.phase,
-                allow_paths=candidate_paths,
-                target_repo=candidate_repo or None,
-            )
-            store.complete(rid, "dispatched", extra_meta={"label": label})
-            store.set_last_issue(req.issue)
-            started.append(
-                DispatchStarted(issue=req.issue, label=label, request_id=rid, engine=engine)
-            )
-            if len(started) >= max_per_tick:
-                break
-            # Later candidates in this tick see the new in_flight entry (slots and allow_paths).
-            counts[engine] = counts.get(engine, 0) + 1
-            snap = store.snapshot()
-
+        queue_plan = plan(store, client, now=now)
+        _sync_deletion_refs_comments(store, client, queue_plan)
+        started = apply(store, client, queue_plan)
         if started:
             first = started[0]
             return DispatchResult(
@@ -1879,8 +2164,10 @@ def dispatch_one(
                 reason="dispatched",
                 started=tuple(started),
             )
-        if last_paused_reason:
-            return DispatchResult(False, reason=last_paused_reason)
+        return DispatchResult(
+            False,
+            reason=_dispatch_result_reason_from_plan(queue_plan, started),
+        )
 
     return DispatchResult(False, reason="no dispatchable request")
 
@@ -1943,6 +2230,30 @@ def _cmd_status(args: argparse.Namespace) -> int:
         lock_path=Path(args.lock_path) if getattr(args, "lock_path", None) else None,
     )
     snap = store.snapshot()
+    if getattr(args, "json", False):
+        try:
+            status_client: ForgePort | None = get_forge(repo=REPO)
+        except Exception:
+            status_client = None
+        if status_client is None:
+            queue_plan = QueuePlan(revision=snap.revision, entries=(), halt=snap.halt)
+        else:
+            queue_plan = plan(store, status_client, now=_now_jst())
+        print(
+            json.dumps(
+                {
+                    "revision": snap.revision,
+                    "active": len(snap.active_order),
+                    "halt": snap.halt,
+                    "halt_reason": snap.halt_reason,
+                    "last_issue": snap.last_issue,
+                    "in_flight": list(snap.in_flight),
+                    "plan": [_plan_entry_to_dict(e) for e in queue_plan.entries],
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0
     print(
         "issuesmith-queue status: "
         f"revision={snap.revision} "
@@ -2444,6 +2755,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_tick.set_defaults(func=_cmd_tick)
 
     p_status = sub.add_parser("status")
+    p_status.add_argument("--json", action="store_true")
     p_status.set_defaults(func=_cmd_status)
 
     p_doctor = sub.add_parser(
