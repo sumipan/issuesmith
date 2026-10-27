@@ -7,6 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.159.0 - 2026-10-27
+
+### Added
+
+- `queue plan()` / `apply()`: read-only dispatch planning with revision-checked
+  `apply()`, and `queue status --json` exposing the plan snapshot for observers.
+
 ## 0.158.1 - 2026-10-26
 
 ### Added
