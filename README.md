@@ -519,7 +519,7 @@ Relative to the config file directory: `queue` `jobs/issuesmith-queue.jsonl`, `q
 
 #### `observe` keys
 
-`stall_minutes` `120`, `task_timeout_minutes` `90`, `systemic_min_issues` `2`, `systemic_window_minutes` `60`, `forge_max_consecutive_errors` `3`, `max_api_calls` `8`, `workflows` (`[]`). `workflows` lists non-issuesmith ghdag workflows to watch for `dag_terminated`: each entry needs `name` (workflow id) and optional `label_namespace` (defaults to `name`; used for running-label and andon namespacing). Entries whose `name` equals the host `label_namespace` are ignored; duplicate names raise `ConfigError`. `observe.main_health` is off when unset; it takes `worktree` and `command` (both required), `base_branch` (`main`) and `timeout_seconds` (`1800`).
+`stall_minutes` `120`, `task_timeout_minutes` `90`, `systemic_min_issues` `2`, `systemic_window_minutes` `60`, `forge_max_consecutive_errors` `3`, `max_api_calls` `8`, `workflows` (`[]`). `workflows` lists non-issuesmith ghdag workflows to watch for `dag_terminated`: each entry needs `name` (workflow id) and optional `label_namespace` (defaults to `name`; used for running-label and andon namespacing). Entries whose `name` equals the host `label_namespace` are ignored; duplicate names raise `ConfigError`. `observe.main_health` is off when unset; it takes `worktree` and `command` (both required), `base_branch` (`main`), `timeout_seconds` (`1800`), and `halt_on_red` (`true`). When `halt_on_red` is `false`, main red still raises the `main_red` andon but does not halt `phase:develop`, and clears an existing halt raised by `main_red`.
 
 ### Language packs
 

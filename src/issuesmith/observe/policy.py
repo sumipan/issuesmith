@@ -256,20 +256,30 @@ def _evaluate_one(event: ObserveEvent, config: "ObserveConfig") -> list[Action]:
 
     if isinstance(event, MainRedEvent):
         sha12 = event.sha[:12]
+        andon = AndonAction(
+            kind="broken",
+            issue=0,
+            summary=f"main is red at {sha12}: {event.reason}",
+            evidence=f"failing: {', '.join(event.failing)}",
+            key="main_red",
+        )
+        mh = config.main_health
+        if mh is None or mh.halt_on_red:
+            return [
+                HaltAction(
+                    scope="phase:develop",
+                    reason=f"main red at {sha12}: {event.reason}",
+                    event_kind="main_red",
+                    keep_existing=True,
+                ),
+                andon,
+            ]
         return [
-            HaltAction(
-                scope="phase:develop",
-                reason=f"main red at {sha12}: {event.reason}",
+            ResumeAction(
+                reason=f"main red at {sha12}: halt_on_red disabled",
                 event_kind="main_red",
-                keep_existing=True,
             ),
-            AndonAction(
-                kind="broken",
-                issue=0,
-                summary=f"main is red at {sha12}: {event.reason}",
-                evidence=f"failing: {', '.join(event.failing)}",
-                key="main_red",
-            ),
+            andon,
         ]
 
     if isinstance(event, MainGreenEvent):

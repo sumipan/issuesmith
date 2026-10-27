@@ -702,3 +702,65 @@ def test_observe_workflows_invalid_raises(tmp_path, monkeypatch, observe_raw, ma
     reset_config_cache()
     with pytest.raises(ConfigError, match=match):
         load_config()
+
+
+def _main_health_yaml(tmp_path: Path, main_health: dict) -> Path:
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({
+            "repo": "example/repo",
+            "observe": {"main_health": main_health},
+        }),
+        encoding="utf-8",
+    )
+    return cfg_path
+
+
+def test_main_health_halt_on_red_defaults_true(tmp_path, monkeypatch):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    cfg_path = _main_health_yaml(
+        tmp_path,
+        {"worktree": str(wt), "command": "python -m pytest -q"},
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    mh = load_config().observe.main_health
+    assert mh is not None
+    assert mh.halt_on_red is True
+
+
+def test_main_health_halt_on_red_false_from_yaml(tmp_path, monkeypatch):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    cfg_path = _main_health_yaml(
+        tmp_path,
+        {
+            "worktree": str(wt),
+            "command": "python -m pytest -q",
+            "halt_on_red": False,
+        },
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    mh = load_config().observe.main_health
+    assert mh is not None
+    assert mh.halt_on_red is False
+
+
+@pytest.mark.parametrize("bad", ["false", 0, 1, None])
+def test_main_health_halt_on_red_non_bool_raises(tmp_path, monkeypatch, bad):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    cfg_path = _main_health_yaml(
+        tmp_path,
+        {
+            "worktree": str(wt),
+            "command": "python -m pytest -q",
+            "halt_on_red": bad,
+        },
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    with pytest.raises(ValueError, match="halt_on_red"):
+        load_config()
