@@ -28,7 +28,6 @@ class TestV1StateMigration:
         snap = store.snapshot()
         assert snap.active_order == []
         assert snap.halt is False
-        assert snap.last_issue is None
 
     def test_v1_state_preserves_halt(self, tmp_path):
         v1 = {"cursor": 2, "last_issue": 999, "halt": True, "halt_reason": "stopped"}
@@ -134,7 +133,6 @@ class TestDefaultState:
         assert state["revision"] == 0
         assert state["active_order"] == []
         assert state["halt"] is False
-        assert state["last_issue"] is None
         assert state["milestone_chains"] == {}
 
 

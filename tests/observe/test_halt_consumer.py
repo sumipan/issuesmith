@@ -50,7 +50,6 @@ class TestLastIssueHaltRuleRemoved:
         from issuesmith import queue as qmod
 
         store = _store(tmp_path)
-        store.set_last_issue(40)
         _enqueue(store, 50, "draft")
 
         client = _fake_client({
