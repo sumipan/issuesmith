@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
 
+import pytest
 from ghdag.dag._util import WaitQuotaSignal, parse_wait_quota_signal
 from ghdag.llm import list_engines
 
@@ -22,7 +24,7 @@ def test_retry_signal_prints_wait_quota_that_ghdag_parses(capsys):
     after = datetime.now(timezone.utc) + timedelta(minutes=30)
     sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=after, role="design")
 
-    dispatch_mod._handle_retry_signal(sig, "p1", None, task_uuid="task-123")
+    assert dispatch_mod._handle_retry_signal(sig, "p1", None, task_uuid="task-123") == 0
 
     out = capsys.readouterr().out
     assert "PIPELINE_STATUS: DEFERRED" not in out
@@ -34,7 +36,7 @@ def test_retry_signal_prints_wait_quota_that_ghdag_parses(capsys):
 def test_retry_signal_without_after_leaves_after_empty(capsys):
     sig = RetrySignal(reason=RetryReason.RATE_LIMITED, after=None, role="implementation")
 
-    dispatch_mod._handle_retry_signal(sig, "impl", None, task_uuid="t")
+    assert dispatch_mod._handle_retry_signal(sig, "impl", None, task_uuid="t") == 0
 
     parsed = _parse(capsys.readouterr().out)
     assert parsed.after is None
@@ -45,18 +47,21 @@ def test_naive_after_is_taken_as_utc(capsys):
     naive = datetime(2026, 10, 28, 3, 0, 0)
     sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=naive, role="design")
 
-    dispatch_mod._handle_retry_signal(sig, "p1", None, task_uuid="t")
+    assert dispatch_mod._handle_retry_signal(sig, "p1", None, task_uuid="t") == 0
 
     assert _parse(capsys.readouterr().out).after == naive.replace(tzinfo=timezone.utc)
 
 
-def test_unknown_role_pauses_every_configured_engine(capsys):
-    sig = RetrySignal(reason=RetryReason.BRAKE_PAUSED, after=None, role="")
+@pytest.mark.parametrize("role", ["", "unknown-role"])
+def test_empty_or_unknown_role_exits_without_wait_quota(role, capsys):
+    sig = RetrySignal(reason=RetryReason.BRAKE_PAUSED, after=None, role=role)
 
-    dispatch_mod._handle_retry_signal(sig, "cp2", None, task_uuid="t")
+    rc = dispatch_mod._handle_retry_signal(sig, "cp2", None, task_uuid="t")
 
-    expected = {engine for engines in ROLE_ENGINES.values() for engine in engines}
-    assert set(_parse(capsys.readouterr().out).engines) == expected
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "PIPELINE_STATUS: WAIT_QUOTA" not in captured.out
+    assert "ERROR" in captured.err
 
 
 def test_task_uuid_read_from_ghdag_env(monkeypatch, capsys):
@@ -75,6 +80,22 @@ def test_retry_signal_keeps_role():
     assert sig.role == "design"
 
 
+def test_handle_retry_signal_does_not_construct_quota_gate(monkeypatch, capsys):
+    constructed: list[object] = []
+
+    class _ExplodingGate:
+        def __init__(self, *args, **kwargs):
+            constructed.append(self)
+            raise AssertionError("QuotaGate must not be constructed in dispatch retry handling")
+
+    monkeypatch.setattr("ghdag.quota.QuotaGate", _ExplodingGate)
+    sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=None, role="design")
+
+    assert dispatch_mod._handle_retry_signal(sig, "p1", None, task_uuid="t") == 0
+    assert constructed == []
+    assert "PIPELINE_STATUS: WAIT_QUOTA" in capsys.readouterr().out
+
+
 class _LabelForge:
     """In-memory forge holding one Issue's labels."""
 
@@ -91,15 +112,13 @@ class _LabelForge:
 
 def test_retry_projects_waiting_and_next_start_clears_it(monkeypatch, capsys):
     """retry adds <ns>:waiting through the projection; the next step start removes it (#4807)."""
-    from unittest.mock import patch
-
     from issuesmith.config import get_config
 
     ns = get_config().label_namespace
     forge = _LabelForge({f"{ns}:develop-running"})
     sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=None, role="implementation")
     with patch("issuesmith.ops.dispatch.get_forge", return_value=forge):
-        dispatch_mod._handle_retry_signal(sig, "cp2", 42, task_uuid="t-1")
+        assert dispatch_mod._handle_retry_signal(sig, "cp2", 42, task_uuid="t-1") == 0
         assert forge.labels == {f"{ns}:develop-running", f"{ns}:waiting"}
 
         with patch("issuesmith.ops.dispatch._try_python_step", return_value=0):
@@ -108,12 +127,22 @@ def test_retry_projects_waiting_and_next_start_clears_it(monkeypatch, capsys):
     assert "PIPELINE_STATUS: WAIT_QUOTA" in capsys.readouterr().out
 
 
-def test_retry_without_issue_number_writes_no_label(monkeypatch, capsys):
-    from unittest.mock import MagicMock, patch
-
+def test_retry_without_issue_number_writes_no_label(capsys):
     forge = MagicMock()
     sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=None, role="design")
     with patch("issuesmith.ops.dispatch.get_forge", return_value=forge):
-        dispatch_mod._handle_retry_signal(sig, "p1", None, task_uuid="t-2")
+        assert dispatch_mod._handle_retry_signal(sig, "p1", None, task_uuid="t-2") == 0
     forge.issue_get.assert_not_called()
     forge.issue_update.assert_not_called()
+
+
+def test_main_returns_nonzero_for_invalid_role(monkeypatch, capsys):
+    sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=None, role="")
+    monkeypatch.setattr(dispatch_mod, "_project_step_start", MagicMock())
+    monkeypatch.setattr(dispatch_mod, "_try_python_step", MagicMock(side_effect=sig))
+
+    rc = dispatch_mod.main(["cp2", "issue_number=42"])
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "PIPELINE_STATUS: WAIT_QUOTA" not in captured.out
