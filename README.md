@@ -160,7 +160,7 @@ Global options: `--queue-path`, `--state-path`, `--lock-path`.
 | `queue tick [--seed PATH]` | Triage and dispatch queued requests |
 | `queue status [--json]` | Show queue state; `--json` adds a read-only dispatch `plan` snapshot (revision, halt, in_flight, planned entries) |
 | `queue doctor` | Report untracked in-flight Issues |
-| `queue reset` | Clear halt flag in queue state |
+| `queue reset` | Clear the halt flag and set the legacy `last_issue` field to `None` |
 | `queue dequeue --request-id ID [--reason R]` | Remove a request |
 | `queue audit [--offline]` | Check queue integrity (`--offline` skips the GitHub checks) |
 | `queue triage-log [--last N] [--path P]` | Show recent triage log entries (default 20) |
