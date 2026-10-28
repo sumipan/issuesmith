@@ -17,7 +17,6 @@ from issuesmith.milestone import (
     build_child_body,
     ensure_sub1_binding,
     link_sub_issue,
-    milestone_last_issue_terminal_ok,
     milestone_status,
     parse_split_plan,
     plan_section,
@@ -229,16 +228,6 @@ def _reset_cfg():
     reset_config_cache()
     yield
     reset_config_cache()
-
-
-class TestMilestoneHelpers:
-    def test_last_issue_terminal_ok_for_milestone_parent(self):
-        labels = {"scope:milestone", "issuesmith:draft-done"}
-        assert milestone_last_issue_terminal_ok(labels) is True
-
-    def test_last_issue_terminal_ok_false_without_milestone(self):
-        labels = {"issuesmith:draft-done"}
-        assert milestone_last_issue_terminal_ok(labels) is False
 
 
 class TestValidateChildren:

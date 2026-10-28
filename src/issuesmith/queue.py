@@ -29,7 +29,7 @@ from issuesmith.gate_rules.scope_coupling import (
     format_deletion_references,
 )
 from issuesmith.gates.dep import dependents_of, on_dep_merge_done
-from issuesmith.milestone import advance_milestone_chains, milestone_last_issue_terminal_ok
+from issuesmith.milestone import advance_milestone_chains
 from issuesmith.queue_store import (
     DEFAULT_NIGHT_STATE_PATH,
     DEFAULT_SEED_PATH,
@@ -172,8 +172,6 @@ PlanReason = Literal[
     "after_deps",
     "deletion_refs",
     "allow_paths_conflict",
-    "last_issue_not_terminal",
-    "last_issue_fetch_failed",
     "pipeline_not_idle",
     "max_dispatch_reached",
 ]
@@ -1697,19 +1695,6 @@ def _evaluate_global_plan_wait(
         if halt_scope == "all":
             reason = snap.halt_reason or ""
             return "halt", f"halted: {reason}" if reason else "halted"
-    if snap.last_issue is not None:
-        try:
-            last = client.issue_get(snap.last_issue, fields=["state", "labels"])
-        except Exception as exc:
-            return "last_issue_fetch_failed", f"last_issue fetch failed: {exc}"
-        last_labels = label_names(last)
-        last_state = str(last.get("state", "")).upper()
-        terminal_ok = _issue_state_is_terminal(last)
-        if not terminal_ok and milestone_last_issue_terminal_ok(last_labels):
-            terminal_ok = True
-        if not terminal_ok:
-            if last_state == "CLOSED" or _serial_concurrency():
-                return "last_issue_not_terminal", "previous issue not terminal"
     if not _dispatch_pipeline_ready(snap, idle_minutes, now):
         return "pipeline_not_idle", "pipeline not idle"
     return None, ""
@@ -2007,7 +1992,6 @@ def _apply_plan_dispatch(
         target_repo=candidate_repo or None,
     )
     store.complete(entry.request_id, "dispatched", extra_meta={"label": label})
-    store.set_last_issue(req.issue)
     return DispatchStarted(
         issue=req.issue, label=label, request_id=entry.request_id, engine=engine
     )
@@ -2072,8 +2056,6 @@ def _dispatch_result_reason_from_plan(
     for entry in queue_plan.entries:
         if entry.reason in (
             "halt",
-            "last_issue_fetch_failed",
-            "last_issue_not_terminal",
             "pipeline_not_idle",
         ):
             global_reason = entry.reason
@@ -2081,10 +2063,6 @@ def _dispatch_result_reason_from_plan(
             break
     if global_reason == "halt":
         return global_detail if global_detail.startswith("halted") else f"halted: {global_detail}"
-    if global_reason == "last_issue_fetch_failed":
-        return global_detail
-    if global_reason == "last_issue_not_terminal":
-        return global_detail
     if global_reason == "pipeline_not_idle":
         return global_detail
     return "no dispatchable request"
@@ -2338,22 +2316,6 @@ def dispatch_one(
                     return DispatchResult(False, reason=f"halted: {snap.halt_reason}")
                 # Non-"all" scopes are checked per-request in the dispatch loop below.
 
-        if snap.last_issue is not None:
-            try:
-                last = client.issue_get(snap.last_issue, fields=["state", "labels"])
-            except Exception as exc:
-                return DispatchResult(False, reason=f"last_issue fetch failed: {exc}")
-            last_labels = label_names(last)
-            last_state = str(last.get("state", "")).upper()
-            terminal_ok = _issue_state_is_terminal(last)
-            if not terminal_ok and milestone_last_issue_terminal_ok(last_labels):
-                terminal_ok = True
-            if not terminal_ok:
-                if last_state == "CLOSED":
-                    return DispatchResult(False, reason="previous issue not terminal")
-                if _serial_concurrency():
-                    return DispatchResult(False, reason="previous issue not terminal")
-
         # AC-2: re-register impl-phase running Issues missing from in_flight before
         # orphan detection in _dispatch_pipeline_ready can halt the whole queue.
         recovered = _recover_untracked_in_flight(client, store, snap)
@@ -2463,7 +2425,6 @@ def _cmd_status(args: argparse.Namespace) -> int:
                     "active": len(snap.active_order),
                     "halt": snap.halt,
                     "halt_reason": snap.halt_reason,
-                    "last_issue": snap.last_issue,
                     "in_flight": list(snap.in_flight),
                     "plan": [_plan_entry_to_dict(e) for e in queue_plan.entries],
                 },
@@ -2475,8 +2436,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
         "issuesmith-queue status: "
         f"revision={snap.revision} "
         f"active={len(snap.active_order)} "
-        f"halt={snap.halt} "
-        f"last_issue={snap.last_issue}"
+        f"halt={snap.halt}"
     )
     print(f"  in_flight: {_format_in_flight_status(snap)}")
     for entry in snap.in_flight:
@@ -2498,25 +2458,6 @@ def _cmd_status(args: argparse.Namespace) -> int:
     conflict_inputs: list[dict[str, Any]] = list(snap.in_flight)
     if client is not None:
         conflict_inputs, open_pr_occupancy = _allow_paths_conflict_inputs(client, snap)
-    if snap.last_issue is not None and client is not None:
-        try:
-            last = client.issue_get(snap.last_issue, fields=["state", "labels"])
-            last_labels = label_names(last)
-            last_state = str(last.get("state", "")).upper()
-            terminal = set(get_config().terminal_labels)
-            terminal_ok = last_state == "CLOSED" and (
-                bool(last_labels & terminal)
-                or bool(last_labels & get_terminal_without_merge())
-            )
-            if not terminal_ok and milestone_last_issue_terminal_ok(last_labels):
-                terminal_ok = True
-            if last_state == "CLOSED" and not terminal_ok:
-                print(
-                    f"  warning: last_issue #{snap.last_issue} is CLOSED without terminal label "
-                    f"(labels: {sorted(last_labels)})"
-                )
-        except Exception as exc:
-            print(f"  warning: last_issue #{snap.last_issue} fetch failed: {exc}", file=sys.stderr)
     for rid in snap.active_order:
         req = store.effective_request(snap, rid)
         if not req:
@@ -2654,67 +2595,9 @@ def _cmd_reset(args: argparse.Namespace) -> int:
         state_path=Path(args.state_path) if getattr(args, "state_path", None) else None,
         lock_path=Path(args.lock_path) if getattr(args, "lock_path", None) else None,
     )
-    keep_last = bool(getattr(args, "keep_last_issue", False))
     store.clear_halt()
-    if keep_last:
-        snap = store.snapshot()
-        print(f"issuesmith-queue reset: halt=false last_issue={snap.last_issue} (kept)")
-    else:
-        store.set_last_issue(None)
-        print("issuesmith-queue reset: halt=false last_issue=None")
-    return 0
-
-
-def _cmd_skip(args: argparse.Namespace) -> int:
-    store = QueueStore(
-        queue_path=Path(args.queue_path) if getattr(args, "queue_path", None) else None,
-        state_path=Path(args.state_path) if getattr(args, "state_path", None) else None,
-        lock_path=Path(args.lock_path) if getattr(args, "lock_path", None) else None,
-    )
-    issue = int(args.issue)
-    reason = str(args.reason) if args.reason else ""
-    snap = store.snapshot()
-    if snap.last_issue is None:
-        print("error: no last_issue to skip", file=sys.stderr)
-        return 1
-    if snap.last_issue != issue:
-        print(
-            f"error: last_issue is #{snap.last_issue}, not #{issue}",
-            file=sys.stderr,
-        )
-        return 1
-
     store.set_last_issue(None)
-    if snap.halt:
-        store.clear_halt()
-
-    client = get_forge(repo=REPO)
-    try:
-        client.issue_get(issue, fields=["number", "state"])
-    except GitHubApiError as exc:
-        if exc.status_code == 404:
-            print(
-                f"skip: skipped comment for #{issue} (404 not found)",
-                file=sys.stderr,
-            )
-        else:
-            print(
-                f"warning: issue_get #{issue} failed during skip: {exc}",
-                file=sys.stderr,
-            )
-    except Exception as exc:
-        print(
-            f"warning: issue_get #{issue} failed during skip: {exc}",
-            file=sys.stderr,
-        )
-    else:
-        body = get_config().language.message("queue.skipped", issue=issue, reason=reason)
-        try:
-            client.issue_comment(issue, body)
-        except Exception as exc:
-            print(f"warning: failed to comment on #{issue}: {exc}", file=sys.stderr)
-
-    print(json.dumps({"issue": issue, "outcome": "skipped", "reason": reason}, ensure_ascii=False))
+    print("issuesmith-queue reset: halt=false last_issue=None")
     return 0
 
 
@@ -2867,7 +2750,6 @@ def _cmd_migrate(args: argparse.Namespace) -> int:
             planned.append(
                 {
                     "action": "import_night_state",
-                    "last_issue": night.get("last_issue"),
                     "halt": night.get("halt"),
                     "halt_reason": night.get("halt_reason"),
                 }
@@ -2886,8 +2768,6 @@ def _cmd_migrate(args: argparse.Namespace) -> int:
         except (OSError, json.JSONDecodeError):
             night = {}
         if isinstance(night, dict):
-            if night.get("last_issue") is not None:
-                store.set_last_issue(night.get("last_issue"))
             if night.get("halt") is True:
                 store.set_halt(True, night.get("halt_reason"), event="night_seed")
 
@@ -2898,7 +2778,6 @@ def _cmd_migrate(args: argparse.Namespace) -> int:
             {
                 "created": created,
                 "active": len(snap.active_order),
-                "last_issue": snap.last_issue,
                 "halt": snap.halt,
             },
             ensure_ascii=False,
@@ -2982,17 +2861,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_doctor.set_defaults(func=_cmd_doctor)
 
     p_reset = sub.add_parser("reset")
-    p_reset.add_argument(
-        "--keep-last-issue",
-        action="store_true",
-        help="Clear halt only; keep last_issue (legacy behavior)",
-    )
     p_reset.set_defaults(func=_cmd_reset)
-
-    p_skip = sub.add_parser("skip")
-    p_skip.add_argument("--issue", type=int, required=True)
-    p_skip.add_argument("--reason", default="")
-    p_skip.set_defaults(func=_cmd_skip)
 
     p_deq = sub.add_parser("dequeue")
     p_deq.add_argument("--request-id", required=True)

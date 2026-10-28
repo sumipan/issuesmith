@@ -123,11 +123,6 @@ class ValidateChildrenResult:
     results: list[ChildValidation]
 
 
-def milestone_last_issue_terminal_ok(labels: set[str]) -> bool:
-    """Return True when an OPEN milestone parent should not trigger last_issue halt."""
-    return _MILESTONE_LABEL in labels and bool(labels & _MILESTONE_IDLE_OK_LABELS)
-
-
 def has_sub_labels(labels: set[str]) -> bool:
     return bool(labels & _SUB_LABELS)
 

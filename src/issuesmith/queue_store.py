@@ -83,6 +83,8 @@ class QueueSnapshot:
     active_order: list[str]
     completed_request_ids: list[str]
     last_triaged_revision: int
+    # Legacy compatibility shim: the dispatch gate does not read this field.
+    # Remove it in the next breaking release after nexus callers have migrated.
     last_issue: int | None
     halt: bool
     halt_reason: str | None
@@ -567,6 +569,10 @@ class QueueStore:
         self.set_halt(False, None)
 
     def set_last_issue(self, issue: int | None) -> None:
+        """Persist legacy last_issue without affecting queue dispatch.
+
+        Remove this shim in the next breaking release after nexus callers migrate.
+        """
         with self.lock():
             state = self._load_state_unlocked()
             state["last_issue"] = issue

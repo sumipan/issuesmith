@@ -70,8 +70,6 @@ def _patch_dispatch_gates(monkeypatch, qmod):
         "after_deps",
         "deletion_refs",
         "allow_paths_conflict",
-        "last_issue_not_terminal",
-        "last_issue_fetch_failed",
         "pipeline_not_idle",
         "max_dispatch_reached",
     ],
@@ -90,8 +88,6 @@ def test_plan_reason_is_declared_member(reason):
         "after_deps",
         "deletion_refs",
         "allow_paths_conflict",
-        "last_issue_not_terminal",
-        "last_issue_fetch_failed",
         "pipeline_not_idle",
         "max_dispatch_reached",
     }
@@ -507,7 +503,6 @@ def test_status_json_output(tmp_path, monkeypatch):
         "active",
         "halt",
         "halt_reason",
-        "last_issue",
         "in_flight",
         "plan",
     }
