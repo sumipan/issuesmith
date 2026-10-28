@@ -961,7 +961,7 @@ def _handle_retry_signal(
     issue_number: int | None,
     *,
     task_uuid: str | None = None,
-) -> None:
+) -> int:
     """Hand the running task back to ghdag as a quota wait (sumipan/nexus#3515, #5757).
 
     1. Project the waiting marker onto the Issue.
@@ -969,32 +969,42 @@ def _handle_retry_signal(
        companion line. ghdag >= 0.106.0 pauses those engines until ``after``, deletes the
        attempt result and leaves the task pending (no ``done/`` marker), so downstream depends
        do not start and no failure hook / circuit breaker fires.
+
+    Returns 0 on success. Empty or unknown roles exit without the protocol (exit 1).
     """
     from issuesmith.engine import ROLE_ENGINES
 
     uuid = (task_uuid if task_uuid is not None else os.environ.get("GHDAG_TASK_UUID", "")).strip()
     role = getattr(sig, "role", "") or ""
     engines = _wait_quota_engines(role, ROLE_ENGINES)
+    if not engines:
+        print(
+            f"[issuesmith-dispatch] ERROR: cannot emit WAIT_QUOTA for step={step_id}: "
+            f"role {role!r} has no configured engines",
+            file=sys.stderr,
+        )
+        return 1
     after = _wait_quota_after(sig.after)
     if issue_number:
         project_issue(get_forge(), issue_number, lambda st: replace(st, waiting=True))
     print(
         f"[issuesmith-dispatch] waiting step={step_id} uuid={uuid or '-'} "
-        f"reason={sig.reason.value} after={after or '-'} role={role or '-'} engines={engines}",
+        f"reason={sig.reason.value} after={after or '-'} role={role} engines={engines}",
         file=sys.stderr,
     )
     print(f"PIPELINE_STATUS: {PIPELINE_WAIT_QUOTA}")
     print(f"WAIT_QUOTA: after={after} engines={','.join(engines)}")
+    return 0
 
 
 def _wait_quota_engines(role: str, role_engines: dict[str, frozenset[str]]) -> list[str]:
-    """Engines to pause: the role's engines, or every configured engine when the role is unknown.
-
-    ghdag rejects an empty engine list as ``WAIT_QUOTA_INVALID``.
-    """
-    if role and role_engines.get(role):
-        return sorted(role_engines[role])
-    return sorted({engine for engines in role_engines.values() for engine in engines})
+    """Engines to pause for a known role with a non-empty engine set."""
+    if not role or role not in role_engines:
+        return []
+    resolved = role_engines.get(role)
+    if not resolved:
+        return []
+    return sorted(resolved)
 
 
 def _wait_quota_after(after: datetime | None) -> str:
@@ -1012,9 +1022,9 @@ def handle_retry_signal(
     issue_number: "int | None",
     *,
     task_uuid: "str | None" = None,
-) -> None:
+) -> int:
     """Public wrapper for _handle_retry_signal (sumipan/nexus#3663)."""
-    _handle_retry_signal(sig, step_id, issue_number, task_uuid=task_uuid)
+    return _handle_retry_signal(sig, step_id, issue_number, task_uuid=task_uuid)
 
 
 def main(argv: list[str]) -> int:
@@ -1084,8 +1094,7 @@ def main(argv: list[str]) -> int:
             broken = StepResult(status="andon", andon=Andon(kind="broken", summary=summary))
             return map_step_result(broken, step_id=step_id, context=context)
     except RetrySignal as sig:
-        _handle_retry_signal(sig, step_id, issue_number)
-        return 0
+        return _handle_retry_signal(sig, step_id, issue_number)
 
 
 if __name__ == "__main__":

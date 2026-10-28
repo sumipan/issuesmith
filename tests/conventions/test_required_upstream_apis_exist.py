@@ -52,6 +52,7 @@ def test_doctor_no_longer_lists_removed_defer_apis():
 def test_doctor_lists_quota_gate_public_state_apis():
     assert ("ghdag.quota", "QuotaGate", "read_state") in REQUIRED_UPSTREAM_APIS
     assert ("ghdag.quota", "QuotaGate", "modify") in REQUIRED_UPSTREAM_APIS
+    assert ("ghdag.quota", "QuotaGate", "refresh") in REQUIRED_UPSTREAM_APIS
 
 
 def test_doctor_lists_github_client_graphql():
