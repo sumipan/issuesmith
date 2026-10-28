@@ -1622,7 +1622,16 @@ class _ProdShapeClient:
                     }
             return {}
         if path.startswith("pulls"):
-            return list(self.open_prs)
+            # Raw REST list: filtered by state, keeps body and merged_at.
+            source = self.closed_prs if "state=closed" in path else self.open_prs
+            return [
+                {
+                    **pr,
+                    "state": (pr.get("state") or "open").lower(),
+                    "merged_at": pr.get("merged_at") or pr.get("mergedAt"),
+                }
+                for pr in source
+            ]
         return []
 
 
@@ -1652,7 +1661,8 @@ class TestCp2MergePrDetection:
         }
         ok, why = qmod.phase_preconditions("merge", issue, client, 2773)
         assert ok is True, why
-        assert client.pr_get_calls == [2789]
+        # The raw PR list carries body; no per-PR fetch.
+        assert client.pr_get_calls == []
 
     def test_phase_preconditions_merge_finds_refs_in_body(self):
         """publish.py no longer emits Closes (2026-09-06); Refs #N must still be found."""

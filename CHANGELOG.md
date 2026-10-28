@@ -7,6 +7,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.160.2 - 2026-10-28
+
+### Fixed
+
+- `closing_pr_exists` lookups (`_find_open_prs_closing_issue` /
+  `_find_merged_prs_closing_issue`) read the raw `pulls?state=...` list once
+  (it carries `body` and `merged_at`) instead of `pulls/{n}` and `pr_get` per
+  PR. One `queue.plan` dropped from 352 to 36 GitHub calls (177 s to 24 s); the
+  per-minute tick ran plan twice and exhausted the 5000/hour PAT budget.
+  Clients without `api_request` keep the per-PR fallback.
+
 ## 0.160.1 - 2026-10-28
 
 ### Changed
