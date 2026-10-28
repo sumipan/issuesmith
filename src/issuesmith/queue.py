@@ -1209,14 +1209,38 @@ def _closes_issue_marker(issue_number: int) -> re.Pattern[str]:
     return re.compile(rf"(?i)\b(?:closes|refs)\s+#{issue_number}(?!\d)")
 
 
+def _raw_pr_list(client: ForgePort, state: str) -> list[dict[str, Any]] | None:
+    """Raw REST ``pulls?state=...`` (newest 100), or ``None`` when unavailable.
+
+    Unlike the normalized ``pr_list``, raw PRs carry ``body`` and ``merged_at``,
+    so matching needs no per-PR request. The per-PR fallback cost up to ~300
+    calls per Issue and drained the PAT budget on every tick.
+    """
+    try:
+        raw = api_request(client, f"pulls?state={state}&per_page=100")
+    except Exception:
+        return None
+    if not isinstance(raw, list):
+        return None
+    return [pr for pr in raw if isinstance(pr, dict)]
+
+
 def _find_open_prs_closing_issue(client: ForgePort, issue_number: int) -> list[dict[str, Any]]:
     """Find open PRs whose title/body contain ``Closes #N``.
 
-    Production ``pr_list(search=...)`` only filters title/head, and
-    ``_normalize_prs`` strips ``body``. Mirror loops_host: list open PRs, then
-    ``pr_get`` for each candidate to read the body.
+    Uses the raw PR list when the client supports ``api_request``. Otherwise
+    ``pr_list`` (whose ``_normalize_prs`` strips ``body``) plus ``pr_get`` per
+    candidate to read the body.
     """
     marker = _closes_issue_marker(issue_number)
+    raw_prs = _raw_pr_list(client, "open")
+    if raw_prs is not None:
+        return [
+            pr
+            for pr in raw_prs
+            if marker.search(str(pr.get("title") or ""))
+            or marker.search(str(pr.get("body") or ""))
+        ]
     try:
         prs = client.pr_list(state="open", limit=100)
     except Exception:
@@ -1262,11 +1286,23 @@ def _pr_is_merged(pr: dict[str, Any]) -> bool:
 def _find_merged_prs_closing_issue(client: ForgePort, issue_number: int) -> list[dict[str, Any]]:
     """Find merged PRs whose title/body contain ``Closes #N``.
 
-    ``pr_list(state="closed")`` strips ``body`` and often omits merge metadata.
-    Use ``pr_get`` for body and ``api_request("pulls/{n}")`` when merge status
-    is missing from the normalized list (production GitHubClient via get_forge).
+    Uses the raw closed-PR list (``merged_at`` and ``body`` included) when the
+    client supports ``api_request``. Otherwise ``pr_list(state="closed")``, which
+    strips ``body`` and merge metadata, plus ``api_request("pulls/{n}")`` /
+    ``pr_get`` per PR.
     """
     marker = _closes_issue_marker(issue_number)
+    raw_prs = _raw_pr_list(client, "closed")
+    if raw_prs is not None:
+        return [
+            pr
+            for pr in raw_prs
+            if _pr_is_merged(pr)
+            and (
+                marker.search(str(pr.get("title") or ""))
+                or marker.search(str(pr.get("body") or ""))
+            )
+        ]
     try:
         prs = client.pr_list(state="closed", limit=100)
     except Exception:
