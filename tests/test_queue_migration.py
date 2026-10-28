@@ -135,6 +135,7 @@ class TestDefaultState:
         assert state["active_order"] == []
         assert state["halt"] is False
         assert state["last_issue"] is None
+        assert state["milestone_chains"] == {}
 
 
 class TestQueueMigrateLastIssue:
