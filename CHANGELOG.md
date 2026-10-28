@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Changed
+
+- Queue owns phase progression through terminal labels: after an in-flight phase
+  completes, the queue enqueues the next applicable phase with stable
+  `queue-chain` seed keys (lane backlog not required). Milestone parents still
+  defer to milestone chain on draft completion; `advance_when` gates dispatch
+  only, not enqueue.
+
 ## 0.160.0 - 2026-10-28
 
 ### Breaking

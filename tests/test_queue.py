@@ -1910,6 +1910,59 @@ class TestCp2LlmRelativeOrder:
 
 
 class TestCp2DevelopDispatch:
+    def test_draft_done_release_enqueues_queue_chain_develop(
+        self, tmp_path, monkeypatch
+    ):
+        """Design in_flight release on draft-done also enqueues develop (#5746)."""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from issuesmith import queue as qmod
+
+        store = _store(tmp_path)
+        draft = store.enqueue(
+            issue=50,
+            phase="draft",
+            source="skill",
+            actor_kind="human",
+            priority="high",
+            requested_by=["alice"],
+            requested_at=_NOW,
+        )
+        store.complete(draft.request_id, "dispatched")
+        store.add_in_flight(50, "claude", role="design", phase="draft")
+        client = _ProdShapeClient(
+            issues={
+                50: {
+                    "state": "OPEN",
+                    "title": "t",
+                    "body": _VALID_BODY,
+                    "labels": [{"name": "issuesmith:draft-done"}],
+                }
+            },
+            open_issue_rows=[],
+        )
+        monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
+        now = datetime(2026, 9, 3, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+        result = qmod.dispatch_one(
+            now=now,
+            client=client,
+            store=store,
+            skip_seed=True,
+            call_llm=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")),
+        )
+        snap = store.snapshot()
+        develop = [
+            req
+            for req in snap.requests.values()
+            if req.issue == 50 and req.phase == "develop" and req.source == "queue-chain"
+        ]
+        assert len(develop) == 1
+        assert develop[0].priority == "high"
+        assert not any(e.get("role") == "design" for e in snap.in_flight)
+        if result.dispatched:
+            assert result.label == "issuesmith:develop-ready"
+
     def test_dispatch_develop_when_draft_done(self, tmp_path, monkeypatch):
         from datetime import datetime
         from zoneinfo import ZoneInfo

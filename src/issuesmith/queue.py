@@ -34,6 +34,7 @@ from issuesmith.queue_store import (
     DEFAULT_NIGHT_STATE_PATH,
     DEFAULT_SEED_PATH,
     DEFAULT_TRIAGE_LOG_PATH,
+    EnqueueResult,
     QueueRequest,
     QueueSnapshot,
     QueueStore,
@@ -852,6 +853,148 @@ def _in_flight_should_release(client: ForgePort, entry: dict[str, Any]) -> bool:
     return True
 
 
+_QUEUE_CHAIN_SOURCE = "queue-chain"
+_QUEUE_CHAIN_NEGATIVE_OUTCOMES = frozenset(
+    {"rejected", "dequeued", "skipped", "superseded"}
+)
+
+
+def _phase_applies_to_labels(phase_name: str, labels: set[str]) -> bool:
+    cfg = get_config()
+    required = cfg.required_labels(phase_name)
+    excluded = cfg.excluded_labels(phase_name)
+    if required and not required <= labels:
+        return False
+    if excluded and (labels & excluded):
+        return False
+    return True
+
+
+def _resolve_applicable_next_phase(
+    current_phase: str, labels: set[str]
+) -> str | None:
+    """Next config phase after ``current_phase`` whose label rules match ``labels``."""
+    phases = get_config().phases
+    names = [p.name for p in phases]
+    try:
+        idx = names.index(current_phase)
+    except ValueError:
+        return None
+    for ph in phases[idx + 1 :]:
+        if _phase_applies_to_labels(ph.name, labels):
+            return ph.name
+    return None
+
+
+def _in_flight_entry_phase(entry: dict[str, Any]) -> str | None:
+    phase = entry.get("phase")
+    if isinstance(phase, str) and phase:
+        return phase
+    if entry.get("role") == "design":
+        return _design_phase_name()
+    return None
+
+
+def _queue_chain_seed_key(issue: int, phase: str) -> str:
+    return f"queue-chain:{issue}:{phase}"
+
+
+def _phase_labels_present(labels: set[str], phase: str) -> bool:
+    ready, running, done = get_config().phase_labels(phase)
+    return bool(labels & {ready, running, done} - {""})
+
+
+def _issue_has_phase_request(snap: QueueSnapshot, issue: int, phase: str) -> bool:
+    positive_completed = {
+        rid
+        for rid in snap.completed_request_ids
+        if (snap.request_meta.get(rid) or {}).get("outcome")
+        not in _QUEUE_CHAIN_NEGATIVE_OUTCOMES
+    }
+    seen: set[str] = set(snap.active_order) | positive_completed
+    for rid in seen:
+        req = snap.requests.get(rid)
+        if req is not None and req.issue == issue and req.phase == phase:
+            return True
+    return False
+
+
+def _completed_phase_request(
+    snap: QueueSnapshot, issue: int, phase: str
+) -> QueueRequest | None:
+    for rid in reversed(snap.completed_request_ids):
+        req = snap.requests.get(rid)
+        if req is None or req.issue != issue or req.phase != phase:
+            continue
+        outcome = (snap.request_meta.get(rid) or {}).get("outcome")
+        if outcome in _QUEUE_CHAIN_NEGATIVE_OUTCOMES:
+            continue
+        return req
+    for rid in snap.active_order:
+        req = snap.requests.get(rid)
+        if req is not None and req.issue == issue and req.phase == phase:
+            return req
+    return None
+
+
+def _queue_chain_blocked(labels: set[str], completed_phase: str) -> bool:
+    cfg = get_config()
+    terminal = set(cfg.terminal_labels) | set(cfg.terminal_without_merge)
+    if labels & terminal:
+        return True
+    design = _design_phase_name()
+    if design and completed_phase == design and "scope:milestone" in labels:
+        return True
+    return False
+
+
+def _try_enqueue_queue_chain(
+    store: QueueStore,
+    client: ForgePort,
+    entry: dict[str, Any],
+    snap: QueueSnapshot,
+) -> EnqueueResult | None:
+    issue_num = entry.get("issue")
+    if not isinstance(issue_num, int):
+        return None
+    completed_phase = _in_flight_entry_phase(entry)
+    if not completed_phase:
+        return None
+    try:
+        issue = client.issue_get(issue_num, fields=["state", "labels"])
+    except Exception:
+        return None
+    labels = label_names(issue)
+    _, _, done_label = get_config().phase_labels(completed_phase)
+    if done_label not in labels:
+        return None
+    if _queue_chain_blocked(labels, completed_phase):
+        return None
+    next_phase = _resolve_applicable_next_phase(completed_phase, labels)
+    if next_phase is None:
+        return None
+    if _phase_labels_present(labels, next_phase) or _issue_has_phase_request(
+        snap, issue_num, next_phase
+    ):
+        return None
+    prior = _completed_phase_request(snap, issue_num, completed_phase)
+    priority = prior.priority if prior is not None else "normal"
+    requested_by = (
+        [f"queue-chain:{prior.request_id}"]
+        if prior is not None
+        else ["queue-chain"]
+    )
+    return store.enqueue(
+        issue=issue_num,
+        phase=next_phase,
+        source=_QUEUE_CHAIN_SOURCE,
+        actor_kind="automation",
+        priority=priority,
+        requested_by=requested_by,
+        seed_key=_queue_chain_seed_key(issue_num, next_phase),
+    )
+
+
 def _recheck_dependents_after_merge(
     client: ForgePort, issue_number: int, open_issues: list[dict[str, Any]]
 ) -> None:
@@ -876,6 +1019,8 @@ def _release_finished_in_flight(
     store: QueueStore, client: ForgePort, open_issues: list[dict[str, Any]]
 ) -> None:
     for entry in list(store.snapshot().in_flight):
+        snap = store.snapshot()
+        _try_enqueue_queue_chain(store, client, entry, snap)
         if _in_flight_should_release(client, entry):
             issue_num = entry.get("issue")
             if isinstance(issue_num, int):
