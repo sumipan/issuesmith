@@ -160,22 +160,6 @@ def test_repair_limit_reason_uses_pack(tmp_path, monkeypatch, custom_pack):
     assert body.startswith(custom_pack.message("queue.repair_limit", reason="bad yaml"))
 
 
-def test_skip_comment_uses_pack(tmp_path, monkeypatch, custom_pack):
-    from issuesmith import queue as qmod
-
-    store = _store(tmp_path)
-    store.set_last_issue(2297)
-    client = MagicMock()
-    client.issue_get.return_value = {"number": 2297, "state": "OPEN"}
-    monkeypatch.setattr(qmod, "get_forge", lambda **kwargs: client)
-
-    code = qmod.main([*_cli_paths(tmp_path), "skip", "--issue", "2297", "--reason", "gone"])
-
-    assert code == 0
-    body = client.issue_comment.call_args.args[1]
-    assert body == custom_pack.message("queue.skipped", issue=2297, reason="gone")
-
-
 def test_dequeue_comment_uses_pack(tmp_path, monkeypatch, custom_pack):
     from issuesmith import queue as qmod
 
@@ -196,22 +180,6 @@ def test_dequeue_comment_uses_pack(tmp_path, monkeypatch, custom_pack):
     assert body == custom_pack.message(
         "queue.dequeued", request_id=r.request_id, reason="cleanup"
     )
-
-
-def test_en_default_comments_unchanged(tmp_path, monkeypatch):
-    """Without a custom pack the EN wording is posted (default behaviour)."""
-    from issuesmith import queue as qmod
-
-    store = _store(tmp_path)
-    store.set_last_issue(2297)
-    client = MagicMock()
-    client.issue_get.return_value = {"number": 2297, "state": "OPEN"}
-    monkeypatch.setattr(qmod, "get_forge", lambda **kwargs: client)
-
-    qmod.main([*_cli_paths(tmp_path), "skip", "--issue", "2297", "--reason", "gone"])
-
-    body = client.issue_comment.call_args.args[1]
-    assert body == "issuesmith queue: skipped issue #2297 from last_issue. reason: gone"
 
 
 # --- triage decision reasons ----------------------------------------------------

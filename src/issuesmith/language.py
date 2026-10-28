@@ -168,7 +168,6 @@ _EN_MESSAGES: dict[str, str] = {
     "queue.dispatched": (
         "issuesmith queue dispatched `{label}` for request `{request_id}`.{note}"
     ),
-    "queue.skipped": "issuesmith queue: skipped issue #{issue} from last_issue. reason: {reason}",
     "queue.dequeued": "issuesmith queue: dequeued request {request_id}. reason: {reason}",
     # queue_triage (decision reasons posted as comments)
     "queue_triage.closed": "issue #{issue} is CLOSED",

@@ -1096,33 +1096,30 @@ class TestCLI:
         assert "halt=false" in out
         assert "last_issue=None" in out
 
-    def test_reset_keep_last_issue(self, tmp_path, capsys):
-        """--keep-last-issue clears only halt and keeps last_issue (#2808)."""
+    def test_reset_rejects_keep_last_issue_flag(self, tmp_path, capsys):
         from issuesmith import queue as qmod
 
         store = _store(tmp_path)
         store.set_last_issue(2297)
-        store.set_halt(True, "previous issue not merge-done")
+        store.set_halt(True, "halted")
 
-        code = qmod.main(
-            [
-                "--queue-path",
-                str(tmp_path / "queue.jsonl"),
-                "--state-path",
-                str(tmp_path / "state.json"),
-                "--lock-path",
-                str(tmp_path / "lock"),
-                "reset",
-                "--keep-last-issue",
-            ]
-        )
-        assert code == 0
+        with pytest.raises(SystemExit) as exc:
+            qmod.main(
+                [
+                    "--queue-path",
+                    str(tmp_path / "queue.jsonl"),
+                    "--state-path",
+                    str(tmp_path / "state.json"),
+                    "--lock-path",
+                    str(tmp_path / "lock"),
+                    "reset",
+                    "--keep-last-issue",
+                ]
+            )
+        assert exc.value.code == 2
         snap = store.snapshot()
-        assert snap.halt is False
+        assert snap.halt is True
         assert snap.last_issue == 2297
-        out = capsys.readouterr().out
-        assert "halt=false" in out
-        assert "last_issue=2297 (kept)" in out
 
     def test_status_shows_halt_reason(self, tmp_path, capsys):
         """When halt=true, status shows halt_reason (#2808)."""
@@ -1150,47 +1147,9 @@ class TestCLI:
         assert code == 0
         out = capsys.readouterr().out
         assert "halt=True" in out or "halt=true" in out
-        assert "last_issue=2297" in out
         assert "halt_reason:" in out
         assert "last_issue #2297 is still OPEN" in out
         assert "issue=#2808" in out
-
-    def test_status_warns_when_last_issue_closed_without_terminal(self, tmp_path, capsys, monkeypatch):
-        """status warns when last_issue is CLOSED without a terminal label (#2825)."""
-        from issuesmith import queue as qmod
-
-        store = _store(tmp_path)
-        store.set_last_issue(2820)
-
-        class FakeClient:
-            def __init__(self, *a, **k):
-                pass
-
-            def issue_get(self, number, fields=None):
-                return {
-                    "number": number,
-                    "state": "CLOSED",
-                    "labels": [{"name": "scope:milestone"}],
-                }
-
-        monkeypatch.setattr(qmod, "get_forge", FakeClient)
-        code = qmod.main(
-            [
-                "--queue-path",
-                str(tmp_path / "queue.jsonl"),
-                "--state-path",
-                str(tmp_path / "state.json"),
-                "--lock-path",
-                str(tmp_path / "lock"),
-                "status",
-            ]
-        )
-        assert code == 0
-        out = capsys.readouterr().out
-        assert "last_issue=2820" in out
-        assert "warning:" in out
-        assert "#2820" in out
-        assert "CLOSED without terminal" in out or "terminal label" in out
 
 
 class TestDispatch:
@@ -1251,7 +1210,7 @@ class TestDispatch:
         assert client.updates == [(50, ["issuesmith:draft-ready"])]
         snap = store.snapshot()
         assert snap.active_order == []
-        assert snap.last_issue == 50
+        assert snap.last_issue is None
 
     def test_dispatch_blocked_when_running_elsewhere(self, tmp_path, monkeypatch):
         from datetime import datetime
@@ -2052,7 +2011,8 @@ class TestCp2DevelopDispatch:
         assert "idle" in result.reason
         assert store.snapshot().active_order
 
-    def test_dispatch_blocked_when_previous_issue_not_done(self, tmp_path, monkeypatch):
+    def test_dispatch_not_blocked_by_open_last_issue(self, tmp_path, monkeypatch):
+        """Legacy last_issue no longer blocks dispatch when pipeline is ready (#5763)."""
         from datetime import datetime
         from zoneinfo import ZoneInfo
 
@@ -2081,94 +2041,8 @@ class TestCp2DevelopDispatch:
             },
             open_issue_rows=[],
         )
-        monkeypatch.setattr(qmod, "_pipeline_idle_enough", lambda idle, now: True)
-        monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
-        now = datetime(2026, 9, 3, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
-        result = qmod.dispatch_one(
-            now=now,
-            client=client,
-            store=store,
-            skip_seed=True,
-            call_llm=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")),
-        )
-        assert result.dispatched is False
-        assert "halted" in result.reason or "previous" in result.reason or "merge-done" in result.reason
-
-    def test_last_issue_guard_skipped_when_per_engine(self, tmp_path, monkeypatch):
-        """With per_engine, do not apply the serial last_issue guard even if unterminated (#2980).
-
-        Ordering is enforced by the allow_paths conflict gate. last_issue only
-        records the last dispatched issue across lanes and is not used for serial waits.
-        """
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
-
-        from issuesmith import queue as qmod
-        from issuesmith.config import ConcurrencyConfig
-
-        store = _store(tmp_path)
-        store.set_last_issue(40)
-        store.enqueue(
-            issue=50, phase="draft", source="skill", actor_kind="human",
-            priority="normal", requested_by=["alice"], requested_at=_NOW,
-        )
-        body_a = (
-            "```yaml\n"
-            "target_repo: sumipan/nexus\n"
-            "base_branch: main\n"
-            "allow_paths:\n"
-            '  - "tools/a/**"\n'
-            "```\n"
-        )
-        body_b = (
-            "```yaml\n"
-            "target_repo: sumipan/nexus\n"
-            "base_branch: main\n"
-            "allow_paths:\n"
-            '  - "tools/b/**"\n'
-            "```\n"
-        )
-        client = _ProdShapeClient(
-            issues={
-                40: {
-                    "state": "OPEN",
-                    "title": "prev",
-                    "body": body_a,
-                    "labels": [{"name": "issuesmith:develop-running"}],
-                },
-                50: {
-                    "state": "OPEN",
-                    "title": "t",
-                    "body": body_b,
-                    "labels": [],
-                },
-            },
-            open_issue_rows=[],
-        )
-        monkeypatch.setattr(qmod, "_serial_concurrency", lambda: False)
-        monkeypatch.setattr(qmod, "_pipeline_idle_enough_v2", lambda *a, **k: False)
         monkeypatch.setattr(qmod, "_dispatch_pipeline_ready", lambda *a, **k: True)
         monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
-        monkeypatch.setattr(qmod, "advance_milestone_chains", lambda *a, **k: None)
-        from dataclasses import replace
-
-        from issuesmith.config import MilestoneChainConfig, get_config
-        from issuesmith.language import EN
-
-        base = get_config()
-        monkeypatch.setattr(
-            qmod,
-            "get_config",
-            lambda: replace(
-                base,
-                concurrency=ConcurrencyConfig(
-                    default=1, per_engine={"claude": 2, "cursor": 2}
-                ),
-                milestone_chain=MilestoneChainConfig(enabled=False),
-                language=EN,
-            ),
-        )
-        store.mark_triaged(store.snapshot().revision)
         now = datetime(2026, 9, 3, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
         result = qmod.dispatch_one(
             now=now,
@@ -2359,8 +2233,10 @@ def test_dispatch_allows_when_previous_issue_terminal_without_merge(
     assert store.snapshot().halt is False
 
 
-def test_dispatch_halts_when_previous_closed_without_terminal(tmp_path, monkeypatch):
-    """CLOSED last_issue without a terminal label halts and records a reason (#2825)."""
+def test_dispatch_allows_when_previous_closed_without_terminal_label(
+    tmp_path, monkeypatch,
+):
+    """Non-terminal CLOSED last_issue no longer blocks the next dispatch (#5763)."""
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
@@ -2399,10 +2275,9 @@ def test_dispatch_halts_when_previous_closed_without_terminal(tmp_path, monkeypa
         skip_seed=True,
         call_llm=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")),
     )
-    assert result.dispatched is False
-    assert "previous" in result.reason or "terminal" in result.reason
-    snap = store.snapshot()
-    assert snap.halt is False
+    assert result.dispatched is True
+    assert result.issue == 50
+    assert store.snapshot().halt is False
 
 
 def test_apply_terminal_superseded_adds_label(tmp_path):

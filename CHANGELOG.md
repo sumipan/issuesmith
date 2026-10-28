@@ -7,6 +7,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Breaking
+
+- Remove the queue `last_issue` dispatch gate: `plan` and `dispatch_one` no longer
+  wait for the previous dispatch to reach a terminal label. Parallel lanes and
+  `in_flight` / `pipeline_not_idle` remain the dispatch limits.
+- Remove `queue skip` and `queue reset --keep-last-issue`. `queue reset` always
+  clears halt and sets legacy `last_issue` to `None`.
+- `queue status` and `queue migrate` no longer read, display, or import
+  `last_issue` from night-queue state.
+
 ## 0.160.2 - 2026-10-28
 
 ### Fixed
