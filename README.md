@@ -7,31 +7,31 @@ issuesmith is a toolkit for GitHub Issue workflows driven by labels, built on [g
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.156.0-blue)
+![version](https://img.shields.io/badge/version-v0.161.0-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.156.0** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.161.0** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.156.0"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.161.0"
 ```
 
 The gates, forge access, `observe`, `andon`, `lanes` and `metrics` import ghdag, so install the `ghdag` extra unless another package already provides ghdag. The base package alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.156.0"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.161.0"
 ```
 
 | Item | Value |
 |---|---|
 | Python | `>=3.10` (tested on 3.10, 3.11, 3.12) |
 | Runtime dependencies | `pyyaml`, `ruamel.yaml`, `packaging`, `python-dotenv` |
-| `[ghdag]` extra | `ghdag @ git+https://github.com/sumipan/ghdag.git@v0.101.2` |
-| `[dev]` extra | `pytest`, `pytest-cov`, `mypy`, `ruff`, ghdag `v0.101.2` |
+| `[ghdag]` extra | `ghdag @ git+https://github.com/sumipan/ghdag.git@v0.106.0` |
+| `[dev]` extra | `pytest`, `pytest-cov`, `mypy`, `ruff`, ghdag `v0.106.0` |
 | Console script | `issuesmith` (`issuesmith.cli:main`) |
 
 ## Quick Start
@@ -122,7 +122,7 @@ Run a command as `python3 -m issuesmith <command>` or through the `issuesmith` c
 | `observe [--apply] [--json]` | Collect observe events; `--apply` also runs the policy actions |
 | `lanes <subcommand>` | Lane ledger planning (see [`lanes`](#lanes-subcommands)) |
 | `metrics rework [--since YYYY-MM-DD] [--issue N] [--audit PATH] [--json]` | Rework report from `paths.metrics` and an optional ghdag audit JSONL; `--since` uses `timezone` |
-| `main-health` | Run `observe.main_health.command` on the base branch and write the state file (exit 2 on `MainHealthError`) |
+| `main-health` | Run `observe.main_health.command` on the base branch; writes `issuesmith-main-health.json` and command log `issuesmith-main-health.log` next to queue state (exit 2 on `MainHealthError`) |
 | `apply` / `ingest-review` | Moved to the host's `tools/stash/`; print a notice and exit 2 |
 
 `version-bump` prints `VERSION_BUMP_TYPE` and `VERSION_BUMP_REASON`, then commits `chore: bump version to <new>`. It bumps Y (minor) when the diff adds or removes a public `def` / `class`, an `__all__` entry or a `[project.scripts]` / entry-point key, or when a commit carries a Conventional Commits breaking marker (`type!:` or `BREAKING CHANGE:`); otherwise it bumps Z (patch). It never changes X (major). When `CHANGELOG.md` has a non-empty `## Unreleased` section, the bump inserts the new release heading under it, so the Unreleased entries become the release notes of the bumped version (`ops.version_bump.fold_unreleased`).
@@ -158,14 +158,16 @@ Global options: `--queue-path`, `--state-path`, `--lock-path`.
 |---|---|
 | `queue enqueue --issue N --phase P --source S --actor-kind {human,automation} --priority {high,normal,low} --requested-by X [--force] [--after N]` | Queue an Issue for a configured phase (`--after` is repeatable) |
 | `queue tick [--seed PATH]` | Triage and dispatch queued requests |
-| `queue status` | Show the queue state |
+| `queue status [--json]` | Show queue state; `--json` adds a read-only dispatch `plan` snapshot (revision, halt, in_flight, planned entries) |
 | `queue doctor` | Report untracked in-flight Issues |
-| `queue reset` | Clear halt and legacy `last_issue` in queue state |
+| `queue reset` | Clear halt flag in queue state |
 | `queue dequeue --request-id ID [--reason R]` | Remove a request |
 | `queue audit [--offline]` | Check queue integrity (`--offline` skips the GitHub checks) |
 | `queue triage-log [--last N] [--path P]` | Show recent triage log entries (default 20) |
 | `queue migrate [--from-night-queue-state P] [--seed P] [--dry-run]` | Migrate from the legacy night-queue state |
 | `queue release --issue N` | Release a design-slot in-flight entry (recovery only) |
+
+During `queue tick`, dispatch respects configured `concurrency`, lane `in_flight` caps, and `pipeline_not_idle`; it does not block the next dispatch until a prior Issue reaches a terminal label.
 
 ### `lanes` subcommands
 
@@ -518,7 +520,7 @@ Relative to the config file directory: `queue` `jobs/issuesmith-queue.jsonl`, `q
 
 #### `observe` keys
 
-`stall_minutes` `120`, `task_timeout_minutes` `90`, `systemic_min_issues` `2`, `systemic_window_minutes` `60`, `forge_max_consecutive_errors` `3`, `max_api_calls` `8`, `workflows` (`[]`). `workflows` lists non-issuesmith ghdag workflows to watch for `dag_terminated`: each entry needs `name` (workflow id) and optional `label_namespace` (defaults to `name`; used for running-label and andon namespacing). Entries whose `name` equals the host `label_namespace` are ignored; duplicate names raise `ConfigError`. `observe.main_health` is off when unset; it takes `worktree` and `command` (both required), `base_branch` (`main`), `timeout_seconds` (`1800`), and `halt_on_red` (`true`). When `halt_on_red` is `false`, main red still raises the `main_red` andon but does not halt `phase:develop`, and clears an existing halt raised by `main_red`.
+`stall_minutes` `120`, `task_timeout_minutes` `90`, `systemic_min_issues` `2`, `systemic_window_minutes` `60`, `forge_max_consecutive_errors` `3`, `max_api_calls` `8`, `workflows` (`[]`). `workflows` lists non-issuesmith ghdag workflows to watch for `dag_terminated`: each entry needs `name` (workflow id) and optional `label_namespace` (defaults to `name`; used for running-label and andon namespacing). Entries whose `name` equals the host `label_namespace` are ignored; duplicate names raise `ConfigError`. `observe.main_health` is off when unset; it takes `worktree` and `command` (both required), `base_branch` (`main`), `timeout_seconds` (`1800`), and `halt_on_red` (`true`). When the worktree path is missing, issuesmith creates a detached worktree from `repo_root` before running the command. The check writes full command output to `issuesmith-main-health.log` and persists `output_tail` in state when status is red. When `halt_on_red` is `false`, main red still raises the `main_red` andon but does not halt `phase:develop`, and clears an existing halt raised by `main_red`.
 
 ### Language packs
 
@@ -563,7 +565,7 @@ Logs, exception messages, CLI help and violation text stay English and are not p
 | `DerivedAllowPathsError` | `issuesmith.pr_scope` | `ValueError` | `derived_allow_paths_from_result` finds malformed entries |
 | `MainHealthError` | `issuesmith.observe.main_health` | `RuntimeError` | The base-branch health check could not run (git, worktree, timeout); state is not updated |
 | `GateMaterializationError` | `issuesmith.ac_contract` | `RuntimeError` | The temporary `origin/<base>` worktree for gate checks could not be created |
-| `RetrySignal` | `issuesmith.engine` | `RuntimeError` | A step is deferred for retry (engine paused or rate-limited); not a failure |
+| `RetrySignal` | `issuesmith.engine` | `RuntimeError` | Rate limit or quota pause: dispatch prints `PIPELINE_STATUS: WAIT_QUOTA` and ghdag keeps the task pending (requires ghdag >= 0.106.0); not a step failure |
 | `LabelWriteForbidden` | `issuesmith.contract` | `RuntimeError` | A step wrote labels while `label_write_guard` is `enforce` |
 | `WorktreeError` | `issuesmith.worktree` | `Exception` | Worktree preparation failed |
 | `MergeStateTimeoutError` | `issuesmith.merge` | `Exception` | The PR merge state did not settle before the timeout |
