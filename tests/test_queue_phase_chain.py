@@ -173,6 +173,18 @@ class _Client:
         return row
 
 
+class _FailOnceClient(_Client):
+    def __init__(self, issues: dict[int, dict]):
+        super().__init__(issues)
+        self.calls = 0
+
+    def issue_get(self, number, fields=None):
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("temporary fetch failure")
+        return super().issue_get(number, fields=fields)
+
+
 def _body() -> str:
     return (
         "```yaml\n"
@@ -283,6 +295,46 @@ class TestQueueChainEnqueue:
             if req.issue == 42 and req.phase == "develop"
         ]
         assert len(develop) == 1
+
+    def test_fetch_failure_keeps_design_slot_until_successor_is_enqueued(
+        self, tmp_path, monkeypatch, issuesmith_config
+    ):
+        _patch_paths(tmp_path, monkeypatch, issuesmith_config)
+        from issuesmith import queue as qmod
+
+        store = _store(tmp_path)
+        store.complete(
+            store.enqueue(
+                issue=42,
+                phase="draft",
+                source="skill",
+                actor_kind="human",
+                priority="high",
+                requested_by=["alice"],
+                requested_at=_NOW,
+            ).request_id,
+            "dispatched",
+        )
+        store.add_in_flight(42, "claude", role="design", phase="draft")
+        client = _FailOnceClient(
+            {
+                42: {
+                    "state": "OPEN",
+                    "labels": [{"name": "issuesmith:draft-done"}],
+                    "body": _body(),
+                }
+            }
+        )
+
+        qmod._release_finished_in_flight(store, client, [])
+        snap = store.snapshot()
+        assert snap.in_flight
+        assert not [req for req in snap.requests.values() if req.phase == "develop"]
+
+        qmod._release_finished_in_flight(store, client, [])
+        snap = store.snapshot()
+        assert not snap.in_flight
+        assert len([req for req in snap.requests.values() if req.phase == "develop"]) == 1
 
     def test_skips_when_develop_already_ready(self, tmp_path, monkeypatch, issuesmith_config):
         _patch_paths(tmp_path, monkeypatch, issuesmith_config)

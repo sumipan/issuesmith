@@ -799,7 +799,12 @@ def _issue_dag_live(issue_number: int) -> bool:
     return True
 
 
-def _in_flight_should_release(client: ForgePort, entry: dict[str, Any]) -> bool:
+def _in_flight_should_release(
+    client: ForgePort,
+    entry: dict[str, Any],
+    *,
+    issue: dict[str, Any] | None = None,
+) -> bool:
     """True when an in_flight entry should be dropped.
 
     Terminal issues always release. Design-slot entries also release after
@@ -810,10 +815,11 @@ def _in_flight_should_release(client: ForgePort, entry: dict[str, Any]) -> bool:
     issue_num = entry.get("issue")
     if not isinstance(issue_num, int):
         return False
-    try:
-        issue = client.issue_get(issue_num, fields=["state", "labels"])
-    except Exception:
-        return False
+    if issue is None:
+        try:
+            issue = client.issue_get(issue_num, fields=["state", "labels"])
+        except Exception:
+            return False
     if _issue_state_is_terminal(issue):
         return True
     if str(issue.get("state", "")).upper() == "CLOSED" and not _issue_dag_live(issue_num):
@@ -950,19 +956,15 @@ def _queue_chain_blocked(labels: set[str], completed_phase: str) -> bool:
 
 def _try_enqueue_queue_chain(
     store: QueueStore,
-    client: ForgePort,
     entry: dict[str, Any],
     snap: QueueSnapshot,
+    issue: dict[str, Any],
 ) -> EnqueueResult | None:
     issue_num = entry.get("issue")
     if not isinstance(issue_num, int):
         return None
     completed_phase = _in_flight_entry_phase(entry)
     if not completed_phase:
-        return None
-    try:
-        issue = client.issue_get(issue_num, fields=["state", "labels"])
-    except Exception:
         return None
     labels = label_names(issue)
     _, _, done_label = get_config().phase_labels(completed_phase)
@@ -1019,13 +1021,19 @@ def _release_finished_in_flight(
     store: QueueStore, client: ForgePort, open_issues: list[dict[str, Any]]
 ) -> None:
     for entry in list(store.snapshot().in_flight):
+        issue_num = entry.get("issue")
+        if not isinstance(issue_num, int):
+            continue
+        try:
+            issue = client.issue_get(issue_num, fields=["state", "labels"])
+        except Exception:
+            # Do not release a design slot until successor enqueue has been decided.
+            continue
         snap = store.snapshot()
-        _try_enqueue_queue_chain(store, client, entry, snap)
-        if _in_flight_should_release(client, entry):
-            issue_num = entry.get("issue")
-            if isinstance(issue_num, int):
-                store.remove_in_flight(issue_num)
-                _recheck_dependents_after_merge(client, issue_num, open_issues)
+        _try_enqueue_queue_chain(store, entry, snap, issue)
+        if _in_flight_should_release(client, entry, issue=issue):
+            store.remove_in_flight(issue_num)
+            _recheck_dependents_after_merge(client, issue_num, open_issues)
 
 
 def _find_untracked_running(client: ForgePort, snap: QueueSnapshot) -> list[int]:
