@@ -7,6 +7,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.160.0 - 2026-10-28
+
+### Breaking
+
+- Requires ghdag >= 0.106.0 (both ghdag pins move from v0.105.0 to v0.106.0). A `RetrySignal` no longer calls `QuotaGate.defer` or prints `PIPELINE_STATUS: DEFERRED`, which ghdag 0.106.0 fails as `LEGACY_DEFERRED_UNSUPPORTED`. dispatch now prints `PIPELINE_STATUS: WAIT_QUOTA` and `WAIT_QUOTA: after=<iso8601 or empty> engines=<a,b>` (the role's engines, or every configured engine when the role is unknown); ghdag pauses those engines and leaves the task pending. `handle_retry_signal` no longer accepts `quota_gate` (sumipan/nexus#5757).
+
+### Changed
+
+- The upstream API doctor (`REQUIRED_UPSTREAM_APIS`) drops `QuotaGate.defer`, `QuotaGate.release_ready` and `DONE_DEFERRED`, and requires `LEGACY_DONE_DEFERRED`, `PIPELINE_WAIT_QUOTA` and `WAIT_QUOTA_COMPANION_RE`.
+- `observe` reads a leftover `done/` marker `DEFERRED` through `LEGACY_DONE_DEFERRED`.
+
 ## 0.159.1 - 2026-10-27
 
 ### Added

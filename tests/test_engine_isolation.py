@@ -30,7 +30,6 @@ def _available():
 def _snap(engines):
     return QuotaSnapshot(
         engines=engines,
-        deferred_tasks={},
         draining_engines={},
         running_tasks={},
         limits={},

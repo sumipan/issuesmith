@@ -61,12 +61,12 @@ def _check_pyproject_no_direct_pin() -> tuple[bool, str]:
 # missing name would not fail at import time. Kept in sync with
 # tests/conventions/test_required_upstream_apis_exist.py (sumipan/nexus#3571).
 REQUIRED_UPSTREAM_APIS: tuple[tuple[str, str, str | None], ...] = (
-    ("ghdag.quota", "QuotaGate", "defer"),
-    ("ghdag.quota", "QuotaGate", "release_ready"),
     ("ghdag.quota", "QuotaGate", "read_state"),
     ("ghdag.quota", "QuotaGate", "modify"),
     ("ghdag.github_client", "GitHubClient", "graphql"),
-    ("ghdag.core.vocabulary", "DONE_DEFERRED", None),
+    ("ghdag.core.vocabulary", "LEGACY_DONE_DEFERRED", None),
+    ("ghdag.core.vocabulary", "PIPELINE_WAIT_QUOTA", None),
+    ("ghdag.core.vocabulary", "WAIT_QUOTA_COMPANION_RE", None),
     ("ghdag.forge", "get_forge", None),
 )
 

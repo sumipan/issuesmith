@@ -1,108 +1,78 @@
-"""dispatch: RetrySignal -> QuotaGate.defer + PIPELINE_STATUS: DEFERRED (sumipan/nexus#3515)."""
+"""dispatch: RetrySignal -> PIPELINE_STATUS: WAIT_QUOTA (sumipan/nexus#3515, #5757)."""
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
-import pytest
-from ghdag.quota import QuotaGate
+from ghdag.dag._util import WaitQuotaSignal, parse_wait_quota_signal
+from ghdag.llm import list_engines
 
 from issuesmith.engine import ROLE_ENGINES, RetryReason, RetrySignal
 from issuesmith.ops import dispatch as dispatch_mod
 
-
-@pytest.fixture
-def gate(tmp_path: Path) -> QuotaGate:
-    return QuotaGate(state_path=tmp_path / "quota-gate.json")
+_KNOWN = frozenset(list_engines())
 
 
-def _deferred(gate: QuotaGate) -> dict:
-    return json.loads(gate._state_path.read_text(encoding="utf-8"))["deferred_tasks"]
+def _parse(out: str) -> WaitQuotaSignal:
+    parsed = parse_wait_quota_signal(out, known_engines=_KNOWN)
+    assert isinstance(parsed, WaitQuotaSignal), parsed
+    return parsed
 
 
-def test_retry_signal_registers_deferred_task_and_prints_status(gate, capsys):
+def test_retry_signal_prints_wait_quota_that_ghdag_parses(capsys):
     after = datetime.now(timezone.utc) + timedelta(minutes=30)
     sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=after, role="design")
 
-    dispatch_mod._handle_retry_signal(sig, "p1", None, quota_gate=gate, task_uuid="task-123")
+    dispatch_mod._handle_retry_signal(sig, "p1", None, task_uuid="task-123")
 
     out = capsys.readouterr().out
-    assert "PIPELINE_STATUS: DEFERRED" in out
-    deferred = _deferred(gate)
-    assert set(deferred) == {"task-123"}
-    entry = deferred["task-123"]
-    assert entry["engine"] in ROLE_ENGINES["design"]
-    assert set(entry["role_engines"]) == set(ROLE_ENGINES["design"])
-    assert entry["reason"] == "p1: QUOTA_PAUSED"
+    assert "PIPELINE_STATUS: DEFERRED" not in out
+    parsed = _parse(out)
+    assert parsed.after == after
+    assert set(parsed.engines) == set(ROLE_ENGINES["design"])
 
 
-def test_task_uuid_read_from_ghdag_env(gate, monkeypatch, capsys):
+def test_retry_signal_without_after_leaves_after_empty(capsys):
+    sig = RetrySignal(reason=RetryReason.RATE_LIMITED, after=None, role="implementation")
+
+    dispatch_mod._handle_retry_signal(sig, "impl", None, task_uuid="t")
+
+    parsed = _parse(capsys.readouterr().out)
+    assert parsed.after is None
+    assert set(parsed.engines) == set(ROLE_ENGINES["implementation"])
+
+
+def test_naive_after_is_taken_as_utc(capsys):
+    naive = datetime(2026, 10, 28, 3, 0, 0)
+    sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=naive, role="design")
+
+    dispatch_mod._handle_retry_signal(sig, "p1", None, task_uuid="t")
+
+    assert _parse(capsys.readouterr().out).after == naive.replace(tzinfo=timezone.utc)
+
+
+def test_unknown_role_pauses_every_configured_engine(capsys):
+    sig = RetrySignal(reason=RetryReason.BRAKE_PAUSED, after=None, role="")
+
+    dispatch_mod._handle_retry_signal(sig, "cp2", None, task_uuid="t")
+
+    expected = {engine for engines in ROLE_ENGINES.values() for engine in engines}
+    assert set(_parse(capsys.readouterr().out).engines) == expected
+
+
+def test_task_uuid_read_from_ghdag_env(monkeypatch, capsys):
     monkeypatch.setenv("GHDAG_TASK_UUID", "env-uuid")
     sig = RetrySignal(reason=RetryReason.RATE_LIMITED, after=None, role="implementation")
 
-    dispatch_mod._handle_retry_signal(sig, "impl", None, quota_gate=gate)
-
-    assert "PIPELINE_STATUS: DEFERRED" in capsys.readouterr().out
-    assert set(_deferred(gate)) == {"env-uuid"}
-
-
-def test_missing_task_uuid_still_reports_deferred_without_registration(gate, monkeypatch, capsys):
-    monkeypatch.delenv("GHDAG_TASK_UUID", raising=False)
-    sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=None, role="design")
-
-    dispatch_mod._handle_retry_signal(sig, "p1", None, quota_gate=gate)
+    dispatch_mod._handle_retry_signal(sig, "impl", None)
 
     captured = capsys.readouterr()
-    assert "PIPELINE_STATUS: DEFERRED" in captured.out
-    assert "GHDAG_TASK_UUID" in captured.err
-    assert not gate._state_path.exists() or _deferred(gate) == {}
-
-
-def test_deferred_task_is_released_by_release_ready(gate, capsys):
-    sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=None, role="design")
-    dispatch_mod._handle_retry_signal(sig, "p1", None, quota_gate=gate, task_uuid="task-9")
-    capsys.readouterr()
-
-    released = gate.release_ready(now=datetime.now(timezone.utc) + timedelta(hours=1))
-
-    assert released == ["task-9"]
+    assert "uuid=env-uuid" in captured.err
+    _parse(captured.out)
 
 
 def test_retry_signal_keeps_role():
     sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=None, role="design")
     assert sig.role == "design"
-
-
-def test_default_gate_respects_the_brake_state(tmp_path, monkeypatch, capsys):
-    """Without brake_state_path release_ready re-queued a brake-paused task immediately (loop)."""
-    import json
-
-    import yaml
-
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(
-        yaml.safe_dump({"repo": "example/repo", "paths": {"quota_state": "jobs/quota-gate.json",
-                                                           "brake_state": "jobs/issuesmith-brake.json"}}),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    from issuesmith.config import reset_config_cache
-    reset_config_cache()
-    brake = tmp_path / "jobs" / "issuesmith-brake.json"
-    brake.parent.mkdir()
-    brake.write_text(json.dumps({"engines": {e: {"status": "paused"} for e in ("claude", "codex", "cursor")}}))
-
-    sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=None, role="design")
-    dispatch_mod._handle_retry_signal(sig, "cp2", None, task_uuid="task-cp2")
-    assert "PIPELINE_STATUS: DEFERRED" in capsys.readouterr().out
-
-    gate = QuotaGate(state_path=tmp_path / "jobs" / "quota-gate.json", brake_state_path=brake)
-    assert set(_deferred(gate)) == {"task-cp2"}
-    assert gate.release_ready(now=datetime.now(timezone.utc) + timedelta(hours=1)) == []
-    brake.write_text(json.dumps({"engines": {}}))  # brake lifted
-    assert gate.release_ready(now=datetime.now(timezone.utc) + timedelta(hours=1)) == ["task-cp2"]
-    reset_config_cache()
 
 
 class _LabelForge:
@@ -119,7 +89,7 @@ class _LabelForge:
         self.labels -= set(kwargs.get("labels_remove") or [])
 
 
-def test_retry_projects_waiting_and_next_start_clears_it(gate, monkeypatch, capsys):
+def test_retry_projects_waiting_and_next_start_clears_it(monkeypatch, capsys):
     """retry adds <ns>:waiting through the projection; the next step start removes it (#4807)."""
     from unittest.mock import patch
 
@@ -129,21 +99,21 @@ def test_retry_projects_waiting_and_next_start_clears_it(gate, monkeypatch, caps
     forge = _LabelForge({f"{ns}:develop-running"})
     sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=None, role="implementation")
     with patch("issuesmith.ops.dispatch.get_forge", return_value=forge):
-        dispatch_mod._handle_retry_signal(sig, "cp2", 42, quota_gate=gate, task_uuid="t-1")
+        dispatch_mod._handle_retry_signal(sig, "cp2", 42, task_uuid="t-1")
         assert forge.labels == {f"{ns}:develop-running", f"{ns}:waiting"}
 
         with patch("issuesmith.ops.dispatch._try_python_step", return_value=0):
             assert dispatch_mod.main(["cp2", "issue_number=42"]) == 0
     assert forge.labels == {f"{ns}:develop-running"}
-    assert "PIPELINE_STATUS: DEFERRED" in capsys.readouterr().out
+    assert "PIPELINE_STATUS: WAIT_QUOTA" in capsys.readouterr().out
 
 
-def test_retry_without_issue_number_writes_no_label(gate, monkeypatch, capsys):
+def test_retry_without_issue_number_writes_no_label(monkeypatch, capsys):
     from unittest.mock import MagicMock, patch
 
     forge = MagicMock()
     sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=None, role="design")
     with patch("issuesmith.ops.dispatch.get_forge", return_value=forge):
-        dispatch_mod._handle_retry_signal(sig, "p1", None, quota_gate=gate, task_uuid="t-2")
+        dispatch_mod._handle_retry_signal(sig, "p1", None, task_uuid="t-2")
     forge.issue_get.assert_not_called()
     forge.issue_update.assert_not_called()

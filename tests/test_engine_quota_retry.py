@@ -40,7 +40,6 @@ def _available() -> EngineQuotaState:
 def _snapshot(engines: dict[str, EngineQuotaState]) -> QuotaSnapshot:
     return QuotaSnapshot(
         engines=engines,
-        deferred_tasks={},
         draining_engines={},
         running_tasks={},
         limits={},

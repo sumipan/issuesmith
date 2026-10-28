@@ -58,7 +58,6 @@ def _available() -> EngineQuotaState:
 def _snapshot() -> QuotaSnapshot:
     return QuotaSnapshot(
         engines={"claude": _available(), "cursor": _available(), "codex": _available()},
-        deferred_tasks={},
         draining_engines={},
         running_tasks={},
         limits={},
