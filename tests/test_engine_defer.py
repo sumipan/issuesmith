@@ -2,7 +2,7 @@
 
 Verifies that _execute() raises RetrySignal immediately when engines are
 paused (removing the 6h wait loop), and that dispatch.main() catches it
-to register a defer via QuotaGate.defer, project the <ns>:waiting label (asserted
+to hand the task back to ghdag as WAIT_QUOTA, project the <ns>:waiting label (asserted
 as the net add / remove label diff, not forge call counts), and return exit
 code 0 (no DEP_FAILED).
 
@@ -43,7 +43,6 @@ def _available():
 def _snap(engines):
     return QuotaSnapshot(
         engines=engines,
-        deferred_tasks={},
         draining_engines={},
         running_tasks={},
         limits={},
@@ -330,17 +329,12 @@ class _FakeForge:
 def dispatch_mocks(monkeypatch, tmp_path):
     from issuesmith.ops import dispatch
 
-    quota_gate_mock = MagicMock()
     forge = _FakeForge()
     cfg_mock = MagicMock()
     cfg_mock.label_namespace = _NS
     cfg_mock.paths.quota_state = tmp_path / "quota.json"
 
     monkeypatch.setattr(dispatch, "_STEP_MODULES", {})
-    monkeypatch.setattr(
-        "issuesmith.ops.dispatch.QuotaGate",
-        MagicMock(return_value=quota_gate_mock),
-    )
     monkeypatch.setattr(
         "issuesmith.ops.dispatch.get_forge",
         MagicMock(return_value=forge),
@@ -351,7 +345,6 @@ def dispatch_mocks(monkeypatch, tmp_path):
     )
     return {
         "dispatch": dispatch,
-        "quota_gate": quota_gate_mock,
         "forge": forge,
         "cfg": cfg_mock,
     }
@@ -372,7 +365,7 @@ class TestDispatchHandlesRetrySignal:
 
         assert rc == 0
 
-    def test_calls_quota_gate_defer(self, dispatch_mocks, monkeypatch, capsys):
+    def test_prints_wait_quota_for_role_engines(self, dispatch_mocks, monkeypatch, capsys):
         dispatch = dispatch_mocks["dispatch"]
         after = datetime.now(timezone.utc) + timedelta(hours=2)
         sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=after, role="design")
@@ -383,14 +376,11 @@ class TestDispatchHandlesRetrySignal:
 
         from issuesmith.engine import ROLE_ENGINES
 
-        dispatch_mocks["quota_gate"].defer.assert_called_once_with(
-            "uuid-42",
-            engine=sorted(ROLE_ENGINES["design"])[0],
-            after=after,
-            role_engines=sorted(ROLE_ENGINES["design"]),
-            reason="test-step: QUOTA_PAUSED",
-        )
-        assert "PIPELINE_STATUS: DEFERRED" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "PIPELINE_STATUS: WAIT_QUOTA" in out
+        assert "PIPELINE_STATUS: DEFERRED" not in out
+        engines = ",".join(sorted(ROLE_ENGINES["design"]))
+        assert f"WAIT_QUOTA: after={after.isoformat()} engines={engines}" in out
 
     def test_retry_projects_waiting_add(self, dispatch_mocks, monkeypatch):
         """retry / defer input → projected diff adds <ns>:waiting."""

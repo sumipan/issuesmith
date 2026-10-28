@@ -30,12 +30,12 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
-from ghdag.core.vocabulary import DONE_DEFERRED
+from ghdag.core.vocabulary import PIPELINE_WAIT_QUOTA
 from ghdag.forge import get_forge
-from ghdag.quota import QuotaGate
 
 from issuesmith.andon import Andon as _FullAndon
 from issuesmith.andon import raise_andon as _raise_andon
@@ -960,52 +960,50 @@ def _handle_retry_signal(
     step_id: str,
     issue_number: int | None,
     *,
-    quota_gate: QuotaGate | None = None,
     task_uuid: str | None = None,
 ) -> None:
-    """Defer the running task instead of failing it (sumipan/nexus#3515).
+    """Hand the running task back to ghdag as a quota wait (sumipan/nexus#3515, #5757).
 
-    1. Register the task with ``QuotaGate.defer`` so ``release_ready`` re-queues it once one
-       of the role's engines is available again. The task uuid comes from ``GHDAG_TASK_UUID``
-       (ghdag >= 0.68.0 exports it to launched tasks).
-    2. Project the waiting marker onto the Issue.
-    3. Emit ``PIPELINE_STATUS: DEFERRED`` so ghdag marks the task DONE_DEFERRED: not a success
-       (downstream depends do not start) and not a failure (no failure hook / circuit breaker).
+    1. Project the waiting marker onto the Issue.
+    2. Emit ``PIPELINE_STATUS: WAIT_QUOTA`` plus the ``WAIT_QUOTA: after=<iso> engines=<a,b>``
+       companion line. ghdag >= 0.106.0 pauses those engines until ``after``, deletes the
+       attempt result and leaves the task pending (no ``done/`` marker), so downstream depends
+       do not start and no failure hook / circuit breaker fires.
     """
     from issuesmith.engine import ROLE_ENGINES
 
     uuid = (task_uuid if task_uuid is not None else os.environ.get("GHDAG_TASK_UUID", "")).strip()
     role = getattr(sig, "role", "") or ""
-    role_engines = sorted(ROLE_ENGINES.get(role, frozenset())) if role else []
-    engine = role_engines[0] if role_engines else "unknown"
-    if quota_gate is None:
-        # The brake (budget pause) lives in its own state file; without it release_ready sees
-        # every engine as available and re-queues the task on the next tick (defer / run loop).
-        paths = get_config().paths
-        quota_gate = QuotaGate(state_path=paths.quota_state, brake_state_path=paths.brake_state)
-    gate = quota_gate
-    if uuid:
-        gate.defer(
-            uuid,
-            engine=engine,
-            after=sig.after,
-            role_engines=role_engines or None,
-            reason=f"{step_id}: {sig.reason.value}",
-        )
-    else:
-        print(
-            "[issuesmith-dispatch] WARNING: GHDAG_TASK_UUID is not set (ghdag >= 0.68.0 exports "
-            "it); the task is marked DEFERRED but nothing will release it automatically",
-            file=sys.stderr,
-        )
+    engines = _wait_quota_engines(role, ROLE_ENGINES)
+    after = _wait_quota_after(sig.after)
     if issue_number:
         project_issue(get_forge(), issue_number, lambda st: replace(st, waiting=True))
     print(
-        f"[issuesmith-dispatch] deferred step={step_id} uuid={uuid or '-'} "
-        f"reason={sig.reason.value} after={sig.after} role={role or '-'} engines={role_engines}",
+        f"[issuesmith-dispatch] waiting step={step_id} uuid={uuid or '-'} "
+        f"reason={sig.reason.value} after={after or '-'} role={role or '-'} engines={engines}",
         file=sys.stderr,
     )
-    print(f"PIPELINE_STATUS: {DONE_DEFERRED}")
+    print(f"PIPELINE_STATUS: {PIPELINE_WAIT_QUOTA}")
+    print(f"WAIT_QUOTA: after={after} engines={','.join(engines)}")
+
+
+def _wait_quota_engines(role: str, role_engines: dict[str, frozenset[str]]) -> list[str]:
+    """Engines to pause: the role's engines, or every configured engine when the role is unknown.
+
+    ghdag rejects an empty engine list as ``WAIT_QUOTA_INVALID``.
+    """
+    if role and role_engines.get(role):
+        return sorted(role_engines[role])
+    return sorted({engine for engines in role_engines.values() for engine in engines})
+
+
+def _wait_quota_after(after: datetime | None) -> str:
+    """ISO-8601 ``after`` for the companion line; naive datetimes are taken as UTC."""
+    if after is None:
+        return ""
+    if after.tzinfo is None or after.tzinfo.utcoffset(after) is None:
+        after = after.replace(tzinfo=timezone.utc)
+    return after.isoformat()
 
 
 def handle_retry_signal(
@@ -1013,11 +1011,10 @@ def handle_retry_signal(
     step_id: str,
     issue_number: "int | None",
     *,
-    quota_gate: "QuotaGate | None" = None,
     task_uuid: "str | None" = None,
 ) -> None:
     """Public wrapper for _handle_retry_signal (sumipan/nexus#3663)."""
-    _handle_retry_signal(sig, step_id, issue_number, quota_gate=quota_gate, task_uuid=task_uuid)
+    _handle_retry_signal(sig, step_id, issue_number, task_uuid=task_uuid)
 
 
 def main(argv: list[str]) -> int:

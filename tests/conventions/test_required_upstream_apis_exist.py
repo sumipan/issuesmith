@@ -37,8 +37,16 @@ def test_runtime_reached_apis_exist():
     assert missing_upstream_apis() == []
 
 
-def test_doctor_lists_quota_gate_defer():
-    assert ("ghdag.quota", "QuotaGate", "defer") in REQUIRED_UPSTREAM_APIS
+def test_doctor_lists_wait_quota_protocol():
+    assert ("ghdag.core.vocabulary", "PIPELINE_WAIT_QUOTA", None) in REQUIRED_UPSTREAM_APIS
+    assert ("ghdag.core.vocabulary", "WAIT_QUOTA_COMPANION_RE", None) in REQUIRED_UPSTREAM_APIS
+
+
+def test_doctor_no_longer_lists_removed_defer_apis():
+    """ghdag 0.106.0 removed QuotaGate.defer / release_ready and DONE_DEFERRED (sumipan/nexus#5757)."""
+    assert ("ghdag.quota", "QuotaGate", "defer") not in REQUIRED_UPSTREAM_APIS
+    assert ("ghdag.quota", "QuotaGate", "release_ready") not in REQUIRED_UPSTREAM_APIS
+    assert ("ghdag.core.vocabulary", "DONE_DEFERRED", None) not in REQUIRED_UPSTREAM_APIS
 
 
 def test_doctor_lists_quota_gate_public_state_apis():
@@ -55,7 +63,7 @@ def test_detects_missing_quota_gate_read_state():
         QuotaGate=type(
             "QuotaGate",
             (),
-            {"defer": lambda self: None, "release_ready": lambda self: [], "modify": lambda self, fn: {}},
+            {"modify": lambda self, fn: {}},
         ),
     )
     missing = missing_upstream_apis(
@@ -65,10 +73,10 @@ def test_detects_missing_quota_gate_read_state():
     assert missing == ["ghdag.quota.QuotaGate.read_state"]
 
 
-def test_pyproject_ghdag_pins_v0_105_0():
+def test_pyproject_ghdag_pins_v0_106_0():
     pyproject = Path(get_config().root) / "pyproject.toml"
     pins = _GHDAG_PIN_RE.findall(pyproject.read_text(encoding="utf-8"))
-    assert pins == ["0.105.0", "0.105.0"]
+    assert pins == ["0.106.0", "0.106.0"]
 
 
 def test_detects_pinned_ghdag_without_defer():

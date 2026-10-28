@@ -113,7 +113,6 @@ def _state(status, resume_at=None):
 def _snap(engines):
     return QuotaSnapshot(
         engines=engines,
-        deferred_tasks={},
         draining_engines={},
         running_tasks={},
         limits={},

@@ -110,7 +110,7 @@ def _compute_dag_state(
     done_dir: Path,
     running_dir: Path,
 ) -> DagState:
-    from ghdag.core.vocabulary import DONE_DEFERRED
+    from ghdag.core.vocabulary import LEGACY_DONE_DEFERRED
     from ghdag.io.done import interpret_done, read_done_content
 
     if not rows:
@@ -127,7 +127,9 @@ def _compute_dag_state(
             step_results[uuid] = "running"
             continue
         raw = read_done_content(done_dir, uuid)
-        if raw is not None and raw.strip() == DONE_DEFERRED:
+        # ghdag >= 0.106.0 no longer writes DEFERRED and migrates old markers on exec load;
+        # a marker left from before that load still reads as deferred.
+        if raw is not None and raw.strip() == LEGACY_DONE_DEFERRED:
             step_results[uuid] = "deferred"
             continue
         outcome = interpret_done(raw)
