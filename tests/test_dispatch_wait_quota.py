@@ -138,6 +138,7 @@ def test_retry_without_issue_number_writes_no_label(capsys):
 
 def test_main_returns_nonzero_for_invalid_role(monkeypatch, capsys):
     sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=None, role="")
+    monkeypatch.setattr(dispatch_mod, "_project_step_start", MagicMock())
     monkeypatch.setattr(dispatch_mod, "_try_python_step", MagicMock(side_effect=sig))
 
     rc = dispatch_mod.main(["cp2", "issue_number=42"])
