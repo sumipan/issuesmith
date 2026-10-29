@@ -1107,6 +1107,43 @@ class TestForbiddenPathPrScopeRequires:
         )
         assert GATE_REGISTRY["pr_scope"].repairable is True
 
+    def test_review_engine_error_decision_andon_without_repair(self):
+        from issuesmith.config import RepairConfig, StepConfig
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        v = Violation(
+            rule_id="review.cp2.engine_error",
+            severity="fail",
+            message="review engine exited 1: quota",
+            location=None,
+            auto_fixable=False,
+            fix_hint="review engine exited 1: quota",
+        )
+        gate = MagicMock()
+        gate.check.return_value = [v]
+        recorded: list[str] = []
+
+        def _record(metric: str, *args, **kwargs) -> None:
+            recorded.append(metric)
+
+        cfg = StepConfig(module="", requires=("review",), repair=RepairConfig(max=2))
+        with (
+            patch(
+                "issuesmith.ops.dispatch._build_requires_gates",
+                return_value={"review": gate},
+            ),
+            patch("issuesmith.ops.dispatch.get_forge"),
+            patch("issuesmith.ops.dispatch._raise_andon") as mock_andon,
+            patch("issuesmith.ops.dispatch._run_repair_step") as mock_repair,
+            patch("issuesmith.ops.dispatch._safe_record_metrics", side_effect=_record),
+        ):
+            rc = run_requires_loop(cfg, "cp2", _make_ctx())
+        assert rc == 1
+        mock_repair.assert_not_called()
+        assert "requires_repair" not in recorded
+        andon_arg = mock_andon.call_args[0][1]
+        assert andon_arg.kind == "decision"
+
     def test_forbidden_only_decision_andon_without_repair_or_metrics(self):
         from issuesmith.config import StepConfig
         from issuesmith.ops.dispatch import run_requires_loop

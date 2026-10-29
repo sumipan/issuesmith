@@ -372,3 +372,156 @@ def test_brake_paused_engine_excluded_from_managed_fallbacks(
 
     assert execute_mocks["call_managed"].call_args.kwargs["engine"] == "claude"
     assert execute_mocks["call_managed"].call_args.kwargs["fallback_candidates"] == []
+
+
+def test_quota_exhausted_raises_retry_signal(execute_mocks, monkeypatch):
+    from ghdag.metrics.models import FailureClass
+
+    from issuesmith.engine import RetryReason, RetrySignal
+
+    exhausted = ManagedResult(
+        body='{"type":"thread.started"}',
+        usage=None,
+        returncode=1,
+        failure_class=FailureClass.QUOTA_EXHAUSTED.value,
+        engine_used="codex",
+        model_used="m",
+        attempts=2,
+        quota_reported=True,
+        additional_tags={},
+    )
+    execute_mocks["call_managed"].return_value = exhausted
+
+    available = _snapshot({"claude": _available(), "codex": _available()})
+    resume_early = datetime.now(timezone.utc) + timedelta(minutes=30)
+    resume_late = datetime.now(timezone.utc) + timedelta(hours=1)
+    paused = _snapshot(
+        {
+            "claude": _paused(resume_late),
+            "codex": _paused(resume_early),
+        }
+    )
+    snap_calls = [0]
+
+    def snapshot_side_effect():
+        snap_calls[0] += 1
+        return available if snap_calls[0] == 1 else paused
+
+    execute_mocks["quota_gate"].snapshot.side_effect = snapshot_side_effect
+
+    with pytest.raises(RetrySignal) as exc_info:
+        _execute("design", "prompt")
+
+    sig = exc_info.value
+    assert sig.reason == RetryReason.QUOTA_PAUSED
+    assert sig.role == "design"
+    assert sig.after == resume_early
+
+
+def test_quota_exhausted_records_metrics_before_retry(execute_mocks, monkeypatch):
+    from ghdag.metrics.models import FailureClass
+
+    from issuesmith.engine import RetrySignal
+
+    recorded: list[dict] = []
+    finish_calls: list[str] = []
+
+    monkeypatch.setattr(
+        "issuesmith.engine._record_task_metrics",
+        lambda **kwargs: recorded.append(kwargs),
+    )
+
+    def track_finish(gate, task_uuid):
+        finish_calls.append(task_uuid)
+
+    monkeypatch.setattr("issuesmith.engine._declare_finish", track_finish)
+
+    execute_mocks["call_managed"].return_value = ManagedResult(
+        body="",
+        usage=None,
+        returncode=1,
+        failure_class=FailureClass.QUOTA_EXHAUSTED.value,
+        engine_used="codex",
+        model_used="m",
+        attempts=1,
+        quota_reported=True,
+        additional_tags={},
+    )
+    snap = _snapshot({"claude": _available(), "codex": _available()})
+    execute_mocks["quota_gate"].snapshot.return_value = snap
+
+    with pytest.raises(RetrySignal):
+        _execute("design", "prompt")
+
+    assert len(recorded) == 1
+    assert recorded[0]["status"] == "failed"
+    assert recorded[0]["failure_class"] == FailureClass.QUOTA_EXHAUSTED.value
+    assert len(finish_calls) == 1
+
+
+def test_quota_exhausted_after_none_raises_retry_with_none_after(
+    execute_mocks, monkeypatch
+):
+    from ghdag.metrics.models import FailureClass
+
+    from issuesmith.engine import RetrySignal
+
+    execute_mocks["call_managed"].return_value = ManagedResult(
+        body="",
+        usage=None,
+        returncode=1,
+        failure_class=FailureClass.QUOTA_EXHAUSTED.value,
+        engine_used="claude",
+        model_used="m",
+        attempts=1,
+        quota_reported=True,
+        additional_tags={},
+    )
+    snap = _snapshot(
+        {
+            "claude": _paused(None),
+            "codex": _paused(None),
+        }
+    )
+    execute_mocks["quota_gate"].snapshot.return_value = snap
+
+    with pytest.raises(RetrySignal) as exc_info:
+        _execute("design", "prompt")
+
+    assert exc_info.value.after is None
+
+
+def test_run_verified_emit_propagates_quota_retry(execute_mocks, monkeypatch, tmp_path):
+    from ghdag.metrics.models import FailureClass
+
+    from issuesmith.engine import RetrySignal, run_verified
+
+    execute_mocks["call_managed"].return_value = ManagedResult(
+        body="",
+        usage=None,
+        returncode=1,
+        failure_class=FailureClass.QUOTA_EXHAUSTED.value,
+        engine_used="codex",
+        model_used="m",
+        attempts=1,
+        quota_reported=True,
+        additional_tags={},
+    )
+    snap = _snapshot({"claude": _available(), "codex": _available()})
+    execute_mocks["quota_gate"].snapshot.return_value = snap
+
+    template = tmp_path / "order.md"
+    template.write_text("prompt", encoding="utf-8")
+
+    with pytest.raises(RetrySignal):
+        run_verified(
+            "design",
+            str(template),
+            [],
+            ["PASS"],
+            "FAIL",
+            "true",
+            str(template),
+            cwd=str(tmp_path),
+            emit_status="PASS",
+        )

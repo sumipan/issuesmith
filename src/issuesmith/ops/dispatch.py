@@ -640,9 +640,9 @@ def _is_violation_repairable(
 ) -> bool:
     """Return True if the gate that produced this violation allows LLM repair."""
     from issuesmith.config import ConfigError, get_config
-    from issuesmith.gates import NON_REPAIRABLE_RULE_IDS, resolve_gate
+    from issuesmith.gates import is_non_repairable_rule_id, resolve_gate
 
-    if rule_id in NON_REPAIRABLE_RULE_IDS:
+    if is_non_repairable_rule_id(rule_id):
         return False
     if rule_id == "deps.unmerged":
         if step_id and _deps_gated_by_admission(step_id):
