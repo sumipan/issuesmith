@@ -60,20 +60,7 @@ def _build_sub_labels() -> frozenset[str]:
     )
 
 
-def _build_milestone_idle_ok_labels() -> frozenset[str]:
-    return frozenset(
-        lab
-        for lab in (
-            DONE_LABEL.get("draft"),
-            DONE_LABEL.get("sub"),
-            RUNNING_LABEL.get("sub"),
-        )
-        if lab
-    )
-
-
 _SUB_LABELS: frozenset[str] = _build_sub_labels()
-_MILESTONE_IDLE_OK_LABELS: frozenset[str] = _build_milestone_idle_ok_labels()
 
 
 @functools.lru_cache(maxsize=8)

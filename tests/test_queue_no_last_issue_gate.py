@@ -18,6 +18,14 @@ _NOW = datetime.now(timezone.utc).isoformat()
 _JST = ZoneInfo("Asia/Tokyo")
 
 
+def _write_legacy_last_issue(tmp_path, issue):
+    """Leave a serial-era ``last_issue`` key in state.json (the store no longer writes it)."""
+    path = tmp_path / "state.json"
+    state = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"schema_version": 1, "revision": 0}
+    state["last_issue"] = issue
+    path.write_text(json.dumps(state), encoding="utf-8")
+
+
 def _patch_dispatch_gates(monkeypatch):
     monkeypatch.setattr(qmod, "_dispatch_pipeline_ready", lambda *a, **k: True)
     monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
@@ -47,7 +55,7 @@ def test_plan_dispatches_despite_legacy_last_issue(
     tmp_path, monkeypatch, last_issue, last_state, last_labels
 ):
     store = _store(tmp_path)
-    store.set_last_issue(last_issue)
+    _write_legacy_last_issue(tmp_path, last_issue)
     _enqueue_draft(store, 50)
     issues = {
         last_issue: {
@@ -85,7 +93,7 @@ def test_plan_dispatches_despite_legacy_last_issue(
 
 def test_dispatch_one_ignores_last_issue_fetch_errors(tmp_path, monkeypatch):
     store = _store(tmp_path)
-    store.set_last_issue(40)
+    _write_legacy_last_issue(tmp_path, 40)
     _enqueue_draft(store, 50)
 
     class Client(_ProdShapeClient):
@@ -135,7 +143,7 @@ def test_plan_reason_excludes_last_issue_literals():
 
 def test_dispatch_does_not_update_last_issue(tmp_path, monkeypatch):
     store = _store(tmp_path)
-    store.set_last_issue(40)
+    _write_legacy_last_issue(tmp_path, 40)
     _enqueue_draft(store, 50)
     client = _ProdShapeClient(
         issues={
@@ -166,12 +174,12 @@ def test_dispatch_does_not_update_last_issue(tmp_path, monkeypatch):
         call_llm=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")),
     )
     assert result.dispatched is True
-    assert store.snapshot().last_issue == 40
+    assert not hasattr(store.snapshot(), "last_issue")
 
 
 def test_status_omits_last_issue_and_does_not_fetch_it(tmp_path, monkeypatch, capsys):
     store = _store(tmp_path)
-    store.set_last_issue(40)
+    _write_legacy_last_issue(tmp_path, 40)
     _enqueue_draft(store, 50)
 
     class Client:

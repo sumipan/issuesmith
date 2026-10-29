@@ -99,7 +99,6 @@ def test_concurrent_dispatch_single_winner(tmp_path, monkeypatch):
     # Nested dispatch_lock + store.lock must not deadlock.
     with store.dispatch_lock():
         store.snapshot()
-        store.set_last_issue(None)
 
     for issue in (50, 51):
         store.enqueue(
@@ -188,35 +187,8 @@ def test_concurrent_dispatch_single_winner(tmp_path, monkeypatch):
     assert wins[0].reason == "dispatched"
 
 
-def test_audit_detects_multiple_in_flight(tmp_path, capsys):
-    """Two or more simultaneous -ready/-running → AUDIT FAIL + exit 1."""
-    from issuesmith import queue as qmod
-
-    store = _store(tmp_path)
-
-    class FakeClient:
-        def list_issues(self, label, state="open"):
-            if label == "issuesmith:draft-running":
-                return [{"number": 2805}, {"number": 2808}]
-            return []
-
-    args = argparse.Namespace(
-        queue_path=str(store.queue_path),
-        state_path=str(store.state_path),
-        lock_path=str(store.lock_path),
-        offline=False,
-    )
-    with patch.object(qmod, "get_forge", return_value=FakeClient()):
-        code = qmod._cmd_audit(args)
-    captured = capsys.readouterr()
-    assert code == 1
-    assert "AUDIT FAIL: multiple issues in-flight:" in captured.out
-    assert "#2805" in captured.out
-    assert "#2808" in captured.out
-
-
-def test_audit_offline_skips_github(tmp_path, capsys):
-    """--offline skips GitHub API and runs local checks only."""
+def test_audit_does_not_call_forge(tmp_path, capsys, monkeypatch):
+    """audit runs local store checks only (no GitHub in-flight scan)."""
     from issuesmith import queue as qmod
 
     store = _store(tmp_path)
@@ -224,14 +196,13 @@ def test_audit_offline_skips_github(tmp_path, capsys):
         queue_path=str(store.queue_path),
         state_path=str(store.state_path),
         lock_path=str(store.lock_path),
-        offline=True,
     )
 
     def boom(*a, **k):
-        raise AssertionError("get_forge must not be called in offline mode")
+        raise AssertionError("get_forge must not be called")
 
-    with patch.object(qmod, "get_forge", side_effect=boom):
-        code = qmod._cmd_audit(args)
+    monkeypatch.setattr(qmod, "get_forge", boom)
+    code = qmod._cmd_audit(args)
     assert code == 0
     assert "AUDIT OK" in capsys.readouterr().out
 

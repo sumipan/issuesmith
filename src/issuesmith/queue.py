@@ -529,14 +529,6 @@ def _issue_state_is_terminal(issue: dict[str, Any]) -> bool:
     )
 
 
-def _issue_is_terminal(client: ForgePort, issue_number: int) -> bool:
-    try:
-        issue = client.issue_get(issue_number, fields=["state", "labels"])
-    except Exception:
-        return False
-    return _issue_state_is_terminal(issue)
-
-
 def _issue_target_meta(issue: dict[str, Any]) -> tuple[str, tuple[str, ...]]:
     """Return (target_repo, allow_paths) from issue body YAML."""
     meta = parse_frontmatter_fields(str(issue.get("body") or ""))
@@ -1728,7 +1720,6 @@ def _github_api_brake_reason(now: datetime) -> str:
 
 def _evaluate_global_plan_wait(
     snap: QueueSnapshot,
-    client: ForgePort,
     idle_minutes: int,
     now: datetime,
 ) -> tuple[PlanReason | None, str]:
@@ -1797,7 +1788,7 @@ def _plan_with_window(
         return _global_wait_plan(store, snap, "api_brake", brake)
 
     global_reason, global_detail = _evaluate_global_plan_wait(
-        snap, client, idle_minutes, now
+        snap, idle_minutes, now
     )
     if global_reason is not None:
         return _global_wait_plan(store, snap, global_reason, global_detail)
@@ -2337,26 +2328,10 @@ def dispatch_one(
         snap = store.snapshot()
 
         if snap.halt:
-            # Legacy halts (no observe event) may self-resolve when the triggering
-            # condition clears (e.g. in_flight drains after last_issue was OPEN).
-            if snap.halt_event is None:
-                _reason = snap.halt_reason or ""
-                _resolved = False
-                if "is still OPEN" in _reason:
-                    _resolved = len(snap.in_flight) == 0
-                elif "without terminal label" in _reason:
-                    _m = re.search(r"#(\d+)", _reason)
-                    if _m:
-                        _resolved = _issue_is_terminal(client, int(_m.group(1)))
-                if _resolved:
-                    store.clear_halt()
-                    snap = store.snapshot()
-
-            if snap.halt:
-                halt_scope = snap.halt_scope
-                if halt_scope == "all":
-                    return DispatchResult(False, reason=f"halted: {snap.halt_reason}")
-                # Non-"all" scopes are checked per-request in the dispatch loop below.
+            halt_scope = snap.halt_scope
+            if halt_scope == "all":
+                return DispatchResult(False, reason=f"halted: {snap.halt_reason}")
+            # Non-"all" scopes are checked per-request in the dispatch loop below.
 
         # AC-2: re-register impl-phase running Issues missing from in_flight before
         # orphan detection in _dispatch_pipeline_ready can halt the whole queue.
@@ -2638,8 +2613,7 @@ def _cmd_reset(args: argparse.Namespace) -> int:
         lock_path=Path(args.lock_path) if getattr(args, "lock_path", None) else None,
     )
     store.clear_halt()
-    store.set_last_issue(None)
-    print("issuesmith-queue reset: halt=false last_issue=None")
+    print("issuesmith-queue reset: halt=false")
     return 0
 
 
@@ -2703,10 +2677,12 @@ def _cmd_audit(args: argparse.Namespace) -> int:
         print(f"purged orphan active_order ids: {', '.join(purged)}")
 
     snap = store.snapshot()
-    active_ids = set(snap.active_order)
+    with store.lock():
+        raw_state = store._load_state_unlocked()
+    raw_active = set(raw_state.get("active_order") or [])
     completed = set(snap.completed_request_ids)
     errors: list[str] = []
-    if active_ids & completed:
+    if raw_active & completed:
         errors.append("active_order intersects completed_request_ids")
     # Same issue+phase uniqueness
     seen: dict[tuple[int, str], str] = {}
@@ -2720,37 +2696,6 @@ def _cmd_audit(args: argparse.Namespace) -> int:
         seen[key] = rid
     if snap.last_triaged_revision > snap.revision:
         errors.append("last_triaged_revision > revision")
-
-    offline = bool(getattr(args, "offline", False))
-    if not offline:
-        client = get_forge(repo=REPO)
-        in_flight: set[int] = set()
-        labels_to_check: list[str] = []
-        for ph in get_config().phases:
-            if (
-                ph.role == "design"
-                or ph.writes_files
-                or "closing_pr_exists" in ph.advance_when
-            ):
-                ready, running, _ = get_config().phase_labels(ph.name)
-                labels_to_check.extend([ready, running])
-        for label in labels_to_check:
-            try:
-                issues = client.list_issues(label, state="open")
-            except Exception as exc:
-                print(f"warning: list_issues({label}) failed: {exc}", file=sys.stderr)
-                continue
-            if not isinstance(issues, list):
-                continue
-            for issue in issues:
-                if not isinstance(issue, dict):
-                    continue
-                num = issue.get("number")
-                if isinstance(num, int):
-                    in_flight.add(num)
-        if len(in_flight) >= 2:
-            nums = ", ".join(f"#{n}" for n in sorted(in_flight))
-            errors.append(f"multiple issues in-flight: {nums}")
 
     if errors:
         for e in errors:
@@ -2911,11 +2856,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_deq.set_defaults(func=_cmd_dequeue)
 
     p_audit = sub.add_parser("audit")
-    p_audit.add_argument(
-        "--offline",
-        action="store_true",
-        help="Skip GitHub in-flight checks; local store integrity only",
-    )
     p_audit.set_defaults(func=_cmd_audit)
 
     p_tlog = sub.add_parser("triage-log")

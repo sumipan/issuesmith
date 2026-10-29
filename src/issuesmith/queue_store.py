@@ -83,9 +83,6 @@ class QueueSnapshot:
     active_order: list[str]
     completed_request_ids: list[str]
     last_triaged_revision: int
-    # Legacy compatibility shim: the dispatch gate does not read this field.
-    # Remove it in the next breaking release after nexus callers have migrated.
-    last_issue: int | None
     halt: bool
     halt_reason: str | None
     requests: dict[str, QueueRequest]
@@ -188,7 +185,6 @@ def default_state() -> dict[str, Any]:
         "active_order": [],
         "completed_request_ids": [],
         "last_triaged_revision": 0,
-        "last_issue": None,
         "halt": False,
         "halt_reason": None,
         "halt_scope": "all",
@@ -250,7 +246,7 @@ class QueueStore:
             self.state_path = state_path or DEFAULT_STATE_PATH
             self.lock_path = lock_path or DEFAULT_LOCK_PATH
         # Separate from lock_path so dispatch_one can hold this while calling
-        # snapshot()/complete()/set_last_issue() which acquire lock() on another FD.
+        # snapshot()/complete() which acquire lock() on another FD.
         self.dispatch_lock_path = self.lock_path.with_name("dispatch.lock")
 
     @contextmanager
@@ -289,7 +285,6 @@ class QueueStore:
         state.setdefault("active_order", [])
         state.setdefault("completed_request_ids", [])
         state.setdefault("last_triaged_revision", 0)
-        state.setdefault("last_issue", None)
         state.setdefault("halt", False)
         state.setdefault("halt_reason", None)
         state.setdefault("halt_scope", "all")
@@ -361,7 +356,6 @@ class QueueStore:
             active_order=list(active_order),
             completed_request_ids=list(state.get("completed_request_ids") or []),
             last_triaged_revision=int(state.get("last_triaged_revision", 0)),
-            last_issue=state.get("last_issue"),
             halt=bool(state.get("halt", False)),
             halt_reason=state.get("halt_reason"),
             requests=requests,
@@ -567,16 +561,6 @@ class QueueStore:
 
     def clear_halt(self) -> None:
         self.set_halt(False, None)
-
-    def set_last_issue(self, issue: int | None) -> None:
-        """Persist legacy last_issue without affecting queue dispatch.
-
-        Remove this shim in the next breaking release after nexus callers migrate.
-        """
-        with self.lock():
-            state = self._load_state_unlocked()
-            state["last_issue"] = issue
-            self._save_state_unlocked(state)
 
     def add_in_flight(
         self,

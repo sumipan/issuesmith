@@ -57,7 +57,6 @@ def _snapshot(
         active_order=order,
         completed_request_ids=[],
         last_triaged_revision=0,
-        last_issue=None,
         halt=False,
         halt_reason=None,
         requests=requests,

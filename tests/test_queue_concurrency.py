@@ -461,7 +461,6 @@ def test_parallel_dispatch_respects_limit(tmp_path, monkeypatch, issuesmith_conf
     from issuesmith import queue as qmod
 
     store = _store(tmp_path)
-    store.set_last_issue(None)
     for issue in (50, 51):
         store.enqueue(
             issue=issue,
@@ -574,7 +573,7 @@ def test_non_issuesmith_done_does_not_affect_idle(
     assert qmod._pipeline_idle_enough_v2(snap, idle_minutes=5, now=now) is True
 
 
-def test_halt_auto_clears_when_in_flight_resolved(
+def test_legacy_halt_without_event_stays_halted(
     tmp_path, monkeypatch, issuesmith_config,
 ):
     _patch_paths(tmp_path, monkeypatch, issuesmith_config)
@@ -586,6 +585,10 @@ def test_halt_auto_clears_when_in_flight_resolved(
         True,
         "last_issue #2852 is still OPEN while pipeline idle for >= 30 minutes",
     )
+    with store.lock():
+        state = store._load_state_unlocked()
+        state["halt_event"] = None
+        store._save_state_unlocked(state)
     store.enqueue(
         issue=300,
         phase="draft",
@@ -598,10 +601,12 @@ def test_halt_auto_clears_when_in_flight_resolved(
     client = _DispatchClient({300: {"state": "OPEN", "labels": []}})
     now = datetime(2026, 9, 5, 12, 0, tzinfo=_JST)
     monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
+    monkeypatch.setattr(qmod, "_dispatch_pipeline_ready", lambda *a, **k: True)
 
     result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
-    assert result.dispatched is True
-    assert store.snapshot().halt is False
+    assert result.dispatched is False
+    assert (result.reason or "").startswith("halted:")
+    assert store.snapshot().halt is True
 
 
 def test_dispatch_bumps_ghdag_generation_when_handler_key_consumed(

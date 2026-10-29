@@ -7,6 +7,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.162.0 - 2026-10-29
+
+### Removed
+
+- **Breaking:** Serial-era `last_issue` gating (`PlanReason.last_issue_not_terminal` /
+  `last_issue_fetch_failed`, `QueueSnapshot.last_issue`, `QueueStore.set_last_issue`,
+  `status` / `migrate` exposure of `last_issue`, and dispatch/plan waits on the previous
+  issue).
+- **Breaking:** `queue skip`, `queue reset --keep-last-issue`, `queue audit --offline`, and
+  the online GitHub in-flight audit (local store checks only).
+- **Breaking:** Legacy halt self-clear in `dispatch_one` when `halt_event` is unset.
+- **Breaking:** `milestone_last_issue_terminal_ok` and language pack key `queue.skipped`.
+
 ## 0.161.2 - 2026-10-29
 
 ### Fixed
