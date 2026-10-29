@@ -168,9 +168,7 @@ class TestHaltToBlocksMigration:
         )
         saved = json.loads(state_path.read_text(encoding="utf-8"))
         assert "halt" not in saved
-        assert any(b.get("kind") == "main_red" for b in saved["blocks"]) or any(
-            b.get("kind") == "touch" for b in saved["blocks"]
-        )
+        assert {b.get("kind") for b in saved["blocks"]} == {"main_red", "touch"}
 
 
 class TestQueueMigrateLastIssue:

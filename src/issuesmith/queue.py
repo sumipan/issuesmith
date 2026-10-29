@@ -2500,10 +2500,9 @@ def _cmd_status(args: argparse.Namespace) -> int:
         held_part = f" held=andon:{held.get('by', '')}" if isinstance(held, dict) and held else ""
         print(f"  - in_flight issue=#{issue_num} engine={engine}{role_part}{held_part}")
     for block in snap.blocks:
-        until_part = f" until={block.until}" if block.until else ""
         print(
             f"  block scope={block.scope} kind={block.kind} reason={block.reason!r}"
-            f" set_by={block.set_by}{until_part}"
+            f" until={block.until} set_by={block.set_by}"
         )
     client: ForgePort | None = None
     try:
