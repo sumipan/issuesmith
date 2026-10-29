@@ -268,6 +268,7 @@ def test_status_ignores_last_issue_in_state_file(tmp_path, monkeypatch, capsys):
     assert set(payload) == {
         "revision",
         "active",
+        "blocks",
         "halt",
         "halt_reason",
         "in_flight",
@@ -298,8 +299,8 @@ def test_removed_cli_subcommands_exit_2(tmp_path, capsys):
     store.set_halt(True, "manual")
     code = qmod.main([*base, "reset"])
     assert code == 0
-    assert store.snapshot().halt is False
-    assert "issuesmith-queue reset: halt=false" in capsys.readouterr().out
+    assert store.snapshot().halt is True
+    assert "blocks unchanged" in capsys.readouterr().out
 
 
 def test_audit_offline_only(tmp_path, capsys, monkeypatch):
@@ -383,8 +384,11 @@ def test_legacy_halt_without_event_stays_halted(tmp_path, monkeypatch):
     now = datetime(2026, 10, 27, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
     result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
     assert result.dispatched is False
-    assert (result.reason or "").startswith("halted:")
-    assert store.snapshot().halt is True
+    assert (result.reason or "").startswith("blocked:")
+    assert "legacy@all:" in (result.reason or "")
+    snap = store.snapshot()
+    assert snap.halt is True
+    assert snap.blocks and snap.blocks[0].kind == "legacy"
 
 
 def test_migrate_imports_halt_not_last_issue(tmp_path, capsys):

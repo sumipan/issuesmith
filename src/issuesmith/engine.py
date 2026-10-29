@@ -1791,11 +1791,37 @@ def run_verified(
             return 1
 
 
+def _cmd_clear(args: argparse.Namespace) -> int:
+    observed = datetime.now(timezone.utc)
+    gate = QuotaGate(state_path=QUOTA_STATE_PATH)
+    kind = getattr(args, "kind", None)
+    if kind:
+        gate.clear(engine=args.engine, observed_at=observed, kind=kind)
+        cleared = f"kind={kind}"
+    else:
+        gate.clear(engine=args.engine, observed_at=observed)
+        cleared = "all"
+    snap = gate.snapshot()
+    eng = snap.engines.get(args.engine)
+    status = eng.status if eng is not None else "missing"
+    print(f"engine clear: engine={args.engine} cleared={cleared} status={status}")
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Switch issuesmith design/implementation LLMs")
     subparsers = parser.add_subparsers(dest="action", required=True)
     subparsers.add_parser("show", help="show effective role assignments")
     subparsers.add_parser("check", help="validate commands, models, and workflow drift")
+
+    clear_parser = subparsers.add_parser("clear", help="clear quota pause sources for an engine")
+    clear_parser.add_argument("engine")
+    clear_parser.add_argument(
+        "--kind",
+        choices=("budget", "failure", "manual", "drain"),
+        help="clear only this pause kind (default: all sources for the engine)",
+    )
+    clear_parser.set_defaults(func=_cmd_clear)
 
     switch_parser = subparsers.add_parser("switch", help="switch one role")
     switch_parser.add_argument("role", choices=tuple(ROLE_ENGINES))
@@ -1885,6 +1911,8 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             print("ACCEPTED")
             return 0
+        if args.action == "clear":
+            return args.func(args)
         if args.action == "exec":
             return exec_file(
                 args.role, args.input_path, args.cwd, args.tier, args.engine

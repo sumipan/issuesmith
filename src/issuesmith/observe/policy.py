@@ -25,6 +25,7 @@ from issuesmith.observe.events import (
     TaskTimeoutEvent,
     VersionSkewEvent,
 )
+from issuesmith.queue_store import QueueBlock
 
 if TYPE_CHECKING:
     from issuesmith.andon import AndonSink
@@ -65,9 +66,6 @@ class HaltAction:
     scope: str = "all"
     reason: str = ""
     event_kind: str = ""
-    # True: do not overwrite an existing halt raised by a different event (e.g. a manual or
-    # systemic_step_failure halt must not be narrowed to this action's scope).
-    keep_existing: bool = False
 
 
 @dataclass(frozen=True)
@@ -270,7 +268,6 @@ def _evaluate_one(event: ObserveEvent, config: "ObserveConfig") -> list[Action]:
                     scope="phase:develop",
                     reason=f"main red at {sha12}: {event.reason}",
                     event_kind="main_red",
-                    keep_existing=True,
                 ),
                 andon,
             ]
@@ -474,23 +471,25 @@ def execute(
 
     for action in actions:
         if isinstance(action, HaltAction):
-            if action.keep_existing:
-                current = store.snapshot()
-                if current.halt and current.halt_event != action.event_kind:
-                    logger.info(
-                        "halt kept: existing event=%s, skipping %s",
-                        current.halt_event, action.event_kind,
-                    )
-                    continue
-            store.set_halt(True, action.reason, scope=action.scope, event=action.event_kind)
-            logger.info("halt set: scope=%s reason=%s", action.scope, action.reason)
+            store.add_block(
+                QueueBlock(
+                    scope=action.scope,
+                    kind=action.event_kind or "legacy",
+                    reason=action.reason,
+                    until=None,
+                    set_by="observe",
+                )
+            )
+            logger.info("block added: scope=%s kind=%s", action.scope, action.event_kind)
 
         elif isinstance(action, ResumeAction):
-            if action.event_kind and store.snapshot().halt_event != action.event_kind:
-                logger.info("halt not cleared: not raised by %s", action.event_kind)
-                continue
-            store.clear_halt()
-            logger.info("halt cleared: %s", action.reason)
+            if action.event_kind:
+                removed = store.remove_blocks(kind=action.event_kind)
+                if not removed:
+                    logger.info("no blocks removed for kind=%s", action.event_kind)
+            else:
+                store.remove_blocks()
+            logger.info("blocks cleared: %s", action.reason)
 
         elif isinstance(action, AndonAction):
             if action.andon_id not in new_ids:

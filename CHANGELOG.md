@@ -7,6 +7,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.163.0 - 2026-10-29
+
+### Changed
+
+- Queue halt state is persisted as ``blocks[]`` (scope/kind/reason/until/set_by). Legacy
+  ``halt`` / ``halt_scope`` / ``halt_reason`` / ``halt_event`` fields are converted on
+  load and no longer written to disk.
+- ``queue reset`` no longer clears blocks; use ``queue unblock`` (optional ``--kind`` /
+  ``--scope``) to remove queue blocks. ``engine clear`` clears pause sources on the
+  quota gate (optional ``--kind``).
+- Engine pause detection for dispatch uses ``paths.quota_state`` only; ``paths.brake_state``
+  is deprecated for this purpose.
+
 ## 0.162.0 - 2026-10-29
 
 ### Removed

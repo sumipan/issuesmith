@@ -501,6 +501,7 @@ def test_status_json_output(tmp_path, monkeypatch):
     assert set(payload) == {
         "revision",
         "active",
+        "blocks",
         "halt",
         "halt_reason",
         "in_flight",

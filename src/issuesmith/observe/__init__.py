@@ -769,7 +769,7 @@ def _detect_main_health(
         return []
     if state.status == "red":
         return [MainRedEvent(sha=state.sha, reason=state.reason, failing=state.failing)]
-    if getattr(snapshot, "halt_event", None) == "main_red":
+    if any(block.kind == "main_red" for block in snapshot.blocks):
         return [MainGreenEvent(sha=state.sha)]
     return []
 
