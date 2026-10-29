@@ -7,6 +7,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.165.0 - 2026-10-29
+
+### Fixed
+
+- ``engine._execute`` converts a final ``QUOTA_EXHAUSTED`` ``ManagedResult`` into
+  ``RetrySignal(QUOTA_PAUSED)`` after metrics are recorded, so dispatch can enter
+  ``WAIT_QUOTA`` instead of treating the step as a hard failure.
+- ``ReviewGate`` maps unstructured review-engine failures to
+  ``review.<step>.engine_error`` violations that skip the repair loop.
+
 ## 0.164.0 - 2026-10-29
 
 ### Fixed

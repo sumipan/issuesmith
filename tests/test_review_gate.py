@@ -158,3 +158,33 @@ def test_check_without_optional_variables_unchanged(tmp_path: Path, capsys) -> N
     variables = _run_check(gate)
     assert variables == [f"{k}={v}" for k, v in passed.items()]
     assert "optional variables missing" not in capsys.readouterr().err
+
+
+def test_check_engine_error_for_unstructured_stdout(tmp_path: Path) -> None:
+    gate = ReviewGate(_review_cfg(), "cp2", tmp_path, {})
+    stdout = '{"type":"thread.started","thread_id":"abc"}\n'
+    with patch("issuesmith.engine.run_guarded_output", return_value=(1, stdout)):
+        vs = gate.check("", [])
+    assert len(vs) == 1
+    assert vs[0].rule_id == "review.cp2.engine_error"
+    assert vs[0].auto_fixable is False
+    assert "review engine exited 1:" in vs[0].message
+    assert stdout.strip() in vs[0].message
+
+
+def test_check_engine_error_empty_stdout(tmp_path: Path) -> None:
+    gate = ReviewGate(_review_cfg(), "cp2", tmp_path, {})
+    with patch("issuesmith.engine.run_guarded_output", return_value=(1, "")):
+        vs = gate.check("", [])
+    assert len(vs) == 1
+    assert vs[0].rule_id == "review.cp2.engine_error"
+    assert vs[0].message == "review failed without output"
+
+
+def test_check_failure_status_line_not_engine_error(tmp_path: Path) -> None:
+    gate = ReviewGate(_review_cfg(), "cp2", tmp_path, {})
+    stdout = "PIPELINE_STATUS: CP2_FAIL\n"
+    with patch("issuesmith.engine.run_guarded_output", return_value=(1, stdout)):
+        vs = gate.check("", [])
+    assert len(vs) == 1
+    assert vs[0].rule_id == "review.cp2"

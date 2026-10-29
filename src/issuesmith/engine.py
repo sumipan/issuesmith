@@ -1101,6 +1101,16 @@ def _execute(
         failure_class=result.failure_class,
         failure_detail=diagnostic_stderr or None,
     )
+    if (
+        result.returncode != 0
+        and result.failure_class == FailureClass.QUOTA_EXHAUSTED.value
+    ):
+        post_quota_snap, post_brake_snap = _dual_gate_snapshots(quota_gate, brake_gate)
+        role_engines = sorted(ROLE_ENGINES[role])
+        after = _earliest_paused_resume_at(
+            role_engines, post_quota_snap, post_brake_snap
+        )
+        raise RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=after, role=role)
     return subprocess.CompletedProcess(
         args=[],
         returncode=result.returncode,

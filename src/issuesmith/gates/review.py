@@ -56,7 +56,38 @@ class ReviewGate:
         )
         if rc == 0:
             return []
-        return _violations_from_stdout(stdout, self._review_cfg, self._step_id)
+        if _stdout_is_review_result(stdout, self._review_cfg):
+            return _violations_from_stdout(stdout, self._review_cfg, self._step_id)
+        return [_engine_error_violation(rc, stdout, self._step_id)]
+
+
+def _stdout_is_review_result(stdout: str, review_cfg: ReviewConfig) -> bool:
+    heading = review_cfg.problems_heading.strip()
+    for line in stdout.splitlines():
+        if line.strip() == heading:
+            return True
+    failure_marker = f"PIPELINE_STATUS: {review_cfg.failure_status}"
+    for line in stdout.splitlines():
+        if line.strip() == failure_marker:
+            return True
+    return False
+
+
+def _engine_error_violation(rc: int, stdout: str, step_id: str) -> Violation:
+    if stdout:
+        tail = stdout[-200:] if len(stdout) > 200 else stdout
+        detail = f"review engine exited {rc}: {tail}"
+    else:
+        detail = "review failed without output"
+    rule_id = f"review.{step_id}.engine_error"
+    return Violation(
+        rule_id=rule_id,
+        severity="fail",
+        message=detail,
+        location=None,
+        auto_fixable=False,
+        fix_hint=detail,
+    )
 
 
 def _violations_from_stdout(

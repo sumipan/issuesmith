@@ -10,6 +10,14 @@ from typing import Any, Callable, Literal, Mapping, Protocol
 
 NON_REPAIRABLE_RULE_IDS: frozenset[str] = frozenset({"pr_diff_scope.forbidden_path"})
 
+
+def is_non_repairable_rule_id(rule_id: str) -> bool:
+    """True for fixed non-repairable rules and review engine/process failures."""
+    if rule_id in NON_REPAIRABLE_RULE_IDS:
+        return True
+    return rule_id.startswith("review.") and rule_id.endswith(".engine_error")
+
+
 __all__ = [
     "Verdict",
     "GateBuildContext",
@@ -18,6 +26,7 @@ __all__ = [
     "RequiresGate",
     "GATE_REGISTRY",
     "NON_REPAIRABLE_RULE_IDS",
+    "is_non_repairable_rule_id",
     "resolve_gate",
     "validate_step_requires",
     "check_scope",
