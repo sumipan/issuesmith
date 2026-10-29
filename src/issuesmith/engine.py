@@ -94,6 +94,10 @@ class RetrySignal(RuntimeError):
     Replaces the old 6h wait loop: engine detects a paused / rate-limited state
     and immediately signals dispatch.py to hand the task back to ghdag as a quota wait
     (``PIPELINE_STATUS: WAIT_QUOTA``) and apply the <ns>:waiting label (exit 0, no DEP_FAILED).
+
+    The ``engine`` CLI converts ``RetrySignal`` to the WAIT_QUOTA companion lines and exit
+    code 0. Direct Python API callers of ``_execute()`` still receive ``RetrySignal`` as
+    raised. Other runtime errors remain ``REJECTED:`` on stderr with exit code 1.
     """
 
     def __init__(
@@ -646,6 +650,17 @@ def _parse_variables(variables: list[str]) -> dict[str, str]:
             key, _, raw = value.partition("=")
             parsed_variables[key] = raw
     return parsed_variables
+
+
+def _issue_number_from_variables(variables: list[str]) -> int | None:
+    """Parse optional issue_number= from CLI variable tokens; invalid values become None."""
+    raw = _parse_variables(variables).get("issue_number", "")
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
 
 
 def _render_template(template_path: str, variables: list[str]) -> str:
@@ -1603,48 +1618,39 @@ def _run_guarded_with_requires(
         except ValueError:
             pass
 
-    # Pre-phase: evaluate pre_llm gates before LLM
-    pre_rc = _run_pre_gate_phase(step_cfg, requires_step, context, failure_status)
-    if pre_rc is not None:
-        return pre_rc
-
-    # Execute LLM
-    if emit_status:
-        rc, _stdout = _run_emit_order(role, template_path, variables, failure_status, cwd, tier)
-    else:
-        rc, _stdout = _run_guarded_order(
-            role, template_path, variables, success_statuses, failure_status, cwd, tier
-        )
-    if rc != 0:
-        # An explicit failure report from the order is never overridden (#4530);
-        # HEAD-ahead only rescues abnormal exits after the LLM committed work.
-        reported = [s for s in _extract_status_values(_stdout) if s not in success_statuses]
-        if reported:
-            print(
-                f"[issuesmith-engine] order reported failure ({', '.join(reported)}); "
-                "not overriding with HEAD-ahead",
-                file=sys.stderr,
-            )
-            return rc
-        if _worktree_head_ahead(context):
-            print(
-                "[issuesmith-engine] HEAD advanced past base; "
-                "proceeding to requires loop despite LLM exit code",
-                file=sys.stderr,
-            )
-        else:
-            return rc
-
-    # Post-phase: run full requires loop
-    issue_number: int | None = None
-    raw_issue = context.get("issue_number", "")
-    if raw_issue:
-        try:
-            issue_number = int(raw_issue)
-        except ValueError:
-            pass
+    issue_number = _issue_number_from_variables(variables)
 
     try:
+        pre_rc = _run_pre_gate_phase(step_cfg, requires_step, context, failure_status)
+        if pre_rc is not None:
+            return pre_rc
+
+        if emit_status:
+            rc, _stdout = _run_emit_order(
+                role, template_path, variables, failure_status, cwd, tier
+            )
+        else:
+            rc, _stdout = _run_guarded_order(
+                role, template_path, variables, success_statuses, failure_status, cwd, tier
+            )
+        if rc != 0:
+            reported = [s for s in _extract_status_values(_stdout) if s not in success_statuses]
+            if reported:
+                print(
+                    f"[issuesmith-engine] order reported failure ({', '.join(reported)}); "
+                    "not overriding with HEAD-ahead",
+                    file=sys.stderr,
+                )
+                return rc
+            if _worktree_head_ahead(context):
+                print(
+                    "[issuesmith-engine] HEAD advanced past base; "
+                    "proceeding to requires loop despite LLM exit code",
+                    file=sys.stderr,
+                )
+            else:
+                return rc
+
         post_rc = run_requires_loop(step_cfg, requires_step, context)
         accepts = getattr(step_cfg, "accepts", ())
         if post_rc is None and isinstance(accepts, (list, tuple)) and accepts:
@@ -1952,6 +1958,15 @@ def main(argv: list[str] | None = None) -> int:
         return run_role(
             args.role, args.template_path, args.variables, args.cwd, args.tier
         )
+    except RetrySignal as sig:
+        from issuesmith.ops.dispatch import handle_retry_signal
+
+        issue_number: int | None = None
+        variables = getattr(args, "variables", None)
+        if variables is not None:
+            issue_number = _issue_number_from_variables(variables)
+        handle_retry_signal(sig, args.action, issue_number)
+        return 0
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"REJECTED:{exc}", file=sys.stderr)
         return 1

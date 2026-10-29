@@ -7,6 +7,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.164.0 - 2026-10-29
+
+### Fixed
+
+- The ``engine`` CLI converts ``RetrySignal`` to ``PIPELINE_STATUS: WAIT_QUOTA``, the
+  ``WAIT_QUOTA: after=... engines=...`` companion line, and exit code 0. Direct Python
+  API use of ``_execute()`` still raises ``RetrySignal``. Other runtime errors remain
+  ``REJECTED:`` on stderr with exit code 1.
+
 ## 0.163.0 - 2026-10-29
 
 ### Changed

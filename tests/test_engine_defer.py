@@ -461,3 +461,124 @@ class TestDispatchHandlesRetrySignal:
         rc = dispatch.main(["test-step"])
         assert rc == 0
         assert dispatch_mocks["forge"].touched() == set()
+
+
+# ==================== engine._run_guarded_with_requires() ====================
+
+
+class TestRunGuardedWithRequiresRetrySignal:
+    """RetrySignal at pre/LLM/post boundaries -> WAIT_QUOTA via handle_retry_signal."""
+
+    @pytest.fixture
+    def guarded_mocks(self, monkeypatch):
+        from issuesmith.ops import dispatch
+
+        step_cfg = MagicMock()
+        step_cfg.accepts = ("accepts-rule",)
+        monkeypatch.setattr(
+            "issuesmith.ops.dispatch.resolve_step_config",
+            MagicMock(return_value=step_cfg),
+        )
+        handle = MagicMock()
+        monkeypatch.setattr(dispatch, "handle_retry_signal", handle)
+        return {"handle": handle, "step_cfg": step_cfg}
+
+    def _call(self, **patch_targets):
+        from issuesmith.engine import _run_guarded_with_requires
+
+        defaults = {
+            "pre_rc": None,
+            "emit_rc": (0, "PIPELINE_STATUS: IMPL_DONE\n"),
+            "requires_rc": None,
+            "accepts_rc": None,
+        }
+        defaults.update(patch_targets)
+        return _run_guarded_with_requires(
+            "implementation",
+            "/tmp/t.md",
+            ["issue_number=5802"],
+            ["IMPL_DONE"],
+            "IMPL_FAILED",
+            cwd=None,
+            tier=None,
+            emit_status=None,
+            requires_step="p1",
+        )
+
+    def test_pre_gate_retry_uses_step_and_issue(
+        self, monkeypatch, guarded_mocks
+    ):
+        sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=None, role="implementation")
+        monkeypatch.setattr(
+            "issuesmith.engine._run_pre_gate_phase",
+            MagicMock(side_effect=sig),
+        )
+
+        rc = self._call()
+
+        assert rc == 0
+        guarded_mocks["handle"].assert_called_once_with(sig, "p1", 5802)
+
+    def test_llm_body_retry_uses_step_and_issue(
+        self, monkeypatch, guarded_mocks
+    ):
+        sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=None, role="implementation")
+        monkeypatch.setattr(
+            "issuesmith.engine._run_pre_gate_phase",
+            MagicMock(return_value=None),
+        )
+        monkeypatch.setattr(
+            "issuesmith.engine._run_guarded_order",
+            MagicMock(side_effect=sig),
+        )
+
+        rc = self._call()
+
+        assert rc == 0
+        guarded_mocks["handle"].assert_called_once_with(sig, "p1", 5802)
+
+    def test_post_requires_retry(
+        self, monkeypatch, guarded_mocks
+    ):
+        sig = RetrySignal(reason=RetryReason.RATE_LIMITED, after=None, role="implementation")
+        monkeypatch.setattr(
+            "issuesmith.engine._run_pre_gate_phase",
+            MagicMock(return_value=None),
+        )
+        monkeypatch.setattr(
+            "issuesmith.engine._run_guarded_order",
+            MagicMock(return_value=(0, "PIPELINE_STATUS: IMPL_DONE\n")),
+        )
+        monkeypatch.setattr(
+            "issuesmith.ops.dispatch.run_requires_loop",
+            MagicMock(side_effect=sig),
+        )
+
+        rc = self._call()
+
+        assert rc == 0
+        guarded_mocks["handle"].assert_called_once_with(sig, "p1", 5802)
+
+    def test_accepts_post_requires_retry(
+        self, monkeypatch, guarded_mocks
+    ):
+        sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=None, role="implementation")
+        requires_loop = MagicMock(side_effect=[None, sig])
+        monkeypatch.setattr(
+            "issuesmith.engine._run_pre_gate_phase",
+            MagicMock(return_value=None),
+        )
+        monkeypatch.setattr(
+            "issuesmith.engine._run_guarded_order",
+            MagicMock(return_value=(0, "PIPELINE_STATUS: IMPL_DONE\n")),
+        )
+        monkeypatch.setattr(
+            "issuesmith.ops.dispatch.run_requires_loop",
+            requires_loop,
+        )
+
+        rc = self._call()
+
+        assert rc == 0
+        assert requires_loop.call_count == 2
+        guarded_mocks["handle"].assert_called_once_with(sig, "p1", 5802)
