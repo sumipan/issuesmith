@@ -128,15 +128,41 @@ def _deps_terminal(ctx: PreconditionContext, config: IssuesmithConfig) -> tuple[
 
 
 def _closing_pr_exists(ctx: PreconditionContext, config: IssuesmithConfig) -> tuple[bool, str]:
+    from ghdag.forge import get_forge
+
+    from issuesmith.context_hook import parse_issue_metadata
     from issuesmith.queue import (
         _find_merged_prs_closing_issue,
         _find_open_prs_closing_issue,
     )
 
-    matched = _find_open_prs_closing_issue(ctx.client, ctx.issue_number)
+    body = str(ctx.issue.get("body") or "")
+    try:
+        metadata = parse_issue_metadata(body)
+    except ValueError:
+        metadata = {}
+    target_repo = str(metadata.get("target_repo") or "").strip()
+    issue_repo = config.repo
+
+    if target_repo and target_repo != issue_repo:
+        client = get_forge(repo=target_repo)
+        lookup_issue_repo: str | None = issue_repo
+    else:
+        client = ctx.client
+        lookup_issue_repo = None
+
+    matched = _find_open_prs_closing_issue(
+        client,
+        ctx.issue_number,
+        issue_repo=lookup_issue_repo,
+    )
     if matched:
         return True, "ok"
-    merged = _find_merged_prs_closing_issue(ctx.client, ctx.issue_number)
+    merged = _find_merged_prs_closing_issue(
+        client,
+        ctx.issue_number,
+        issue_repo=lookup_issue_repo,
+    )
     merge_done = ""
     for ph in config.phases:
         if "closing_pr_exists" in ph.advance_when:

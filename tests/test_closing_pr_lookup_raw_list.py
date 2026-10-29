@@ -75,3 +75,33 @@ class _NormalizedOnlyForge:
 def test_open_lookup_falls_back_without_api_request() -> None:
     matched = _find_open_prs_closing_issue(_NormalizedOnlyForge(), 3)  # type: ignore[arg-type]
     assert [pr["number"] for pr in matched] == [9]
+
+
+def test_unqualified_ref_digit_boundary() -> None:
+    client = _RawForge(
+        {
+            "open": [
+                {"number": 1, "title": "x", "body": "Refs #420"},
+                {"number": 2, "title": "y", "body": "Closes #42\n"},
+            ]
+        }
+    )
+    matched = _find_open_prs_closing_issue(client, 42)  # type: ignore[arg-type]
+    assert [pr["number"] for pr in matched] == [2]
+
+
+def test_head_match_only_when_issue_repo_given() -> None:
+    client = _RawForge(
+        {
+            "open": [
+                {"number": 1, "headRefName": "feat/issue-42-abc", "title": "", "body": ""},
+            ]
+        }
+    )
+    assert _find_open_prs_closing_issue(client, 42) == []  # type: ignore[arg-type]
+    matched = _find_open_prs_closing_issue(
+        client,  # type: ignore[arg-type]
+        42,
+        issue_repo="sumipan/nexus",
+    )
+    assert [pr["number"] for pr in matched] == [1]
