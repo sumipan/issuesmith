@@ -384,8 +384,11 @@ def test_legacy_halt_without_event_stays_halted(tmp_path, monkeypatch):
     now = datetime(2026, 10, 27, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
     result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
     assert result.dispatched is False
-    assert (result.reason or "").startswith("halted:")
-    assert store.snapshot().halt is True
+    assert (result.reason or "").startswith("blocked:")
+    assert "legacy@all:" in (result.reason or "")
+    snap = store.snapshot()
+    assert snap.halt is True
+    assert snap.blocks and snap.blocks[0].kind == "legacy"
 
 
 def test_migrate_imports_halt_not_last_issue(tmp_path, capsys):

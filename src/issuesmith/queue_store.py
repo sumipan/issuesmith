@@ -398,7 +398,7 @@ class QueueStore:
         state.setdefault("halt_reason", None)
         state.setdefault("halt_scope", "all")
         state.setdefault("halt_event", None)
-        if state.get("blocks") is None:
+        if state.get("blocks") is None or (state.get("halt") and not state.get("blocks")):
             state["blocks"] = _ensure_blocks_in_state(state)
         state.setdefault("request_meta", {})
         state.setdefault("seeded_keys", [])
@@ -410,10 +410,9 @@ class QueueStore:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.state_path.with_name(f"{self.state_path.name}.tmp.{os.getpid()}")
         to_save = dict(state)
+        to_save["blocks"] = _ensure_blocks_in_state(state)
         for legacy_key in ("halt", "halt_reason", "halt_scope", "halt_event"):
             to_save.pop(legacy_key, None)
-        if to_save.get("blocks") is None:
-            to_save["blocks"] = _ensure_blocks_in_state(state)
         payload = json.dumps(to_save, ensure_ascii=False, indent=2) + "\n"
         with open(tmp, "w", encoding="utf-8") as fh:
             fh.write(payload)
