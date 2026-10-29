@@ -219,4 +219,4 @@ class TestQueueMigrateLastIssue:
         snap = store.snapshot()
         assert snap.halt is True
         assert snap.halt_reason == "stopped"
-        assert snap.last_issue is None
+        assert not hasattr(snap, "last_issue")
