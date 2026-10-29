@@ -2027,7 +2027,6 @@ class TestCp2DevelopDispatch:
         from zoneinfo import ZoneInfo
 
         from issuesmith import queue as qmod
-        from issuesmith.config import ConcurrencyConfig
 
         store = _store(tmp_path)
         (tmp_path / "state.json").write_text(
