@@ -299,8 +299,8 @@ def test_removed_cli_subcommands_exit_2(tmp_path, capsys):
     store.set_halt(True, "manual")
     code = qmod.main([*base, "reset"])
     assert code == 0
-    assert store.snapshot().halt is False
-    assert "issuesmith-queue reset: halt=false" in capsys.readouterr().out
+    assert store.snapshot().halt is True
+    assert "blocks unchanged" in capsys.readouterr().out
 
 
 def test_audit_offline_only(tmp_path, capsys, monkeypatch):
