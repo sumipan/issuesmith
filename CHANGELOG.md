@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.161.2 - 2026-10-29
+
 ### Fixed
 
 - Merge-phase ``closing_pr_exists`` resolves ``target_repo`` from Issue YAML and
