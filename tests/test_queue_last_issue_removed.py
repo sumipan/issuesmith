@@ -268,6 +268,7 @@ def test_status_ignores_last_issue_in_state_file(tmp_path, monkeypatch, capsys):
     assert set(payload) == {
         "revision",
         "active",
+        "blocks",
         "halt",
         "halt_reason",
         "in_flight",
