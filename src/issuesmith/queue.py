@@ -1207,6 +1207,52 @@ def _closes_issue_marker(issue_number: int) -> re.Pattern[str]:
     return re.compile(rf"(?i)\b(?:closes|refs)\s+#{issue_number}(?!\d)")
 
 
+def _qualified_closes_issue_marker(issue_number: int, issue_repo: str) -> re.Pattern[str]:
+    repo = re.escape(issue_repo)
+    return re.compile(rf"(?i)\b(?:closes|refs)\s+{repo}#{issue_number}(?!\d)")
+
+
+def _feat_issue_head_matches(issue_number: int, head: str) -> bool:
+    if not head:
+        return False
+    pattern = re.compile(rf"^feat/issue-{issue_number}(?:-|$)", re.IGNORECASE)
+    return pattern.match(head) is not None
+
+
+def _pr_head_ref_name(pr: dict[str, Any]) -> str:
+    head_name = pr.get("headRefName")
+    if isinstance(head_name, str) and head_name:
+        return head_name
+    head = pr.get("head")
+    if isinstance(head, dict):
+        ref = head.get("ref")
+        if isinstance(ref, str):
+            return ref
+    return ""
+
+
+def _pr_closes_issue(
+    pr: dict[str, Any],
+    issue_number: int,
+    *,
+    issue_repo: str | None = None,
+) -> bool:
+    if issue_repo is not None:
+        head = _pr_head_ref_name(pr)
+        if _feat_issue_head_matches(issue_number, head):
+            return True
+    marker = _closes_issue_marker(issue_number)
+    title = str(pr.get("title") or "")
+    body = str(pr.get("body") or "")
+    if marker.search(title) or marker.search(body):
+        return True
+    if issue_repo is not None:
+        qmarker = _qualified_closes_issue_marker(issue_number, issue_repo)
+        if qmarker.search(title) or qmarker.search(body):
+            return True
+    return False
+
+
 def _raw_pr_list(client: ForgePort, state: str) -> list[dict[str, Any]] | None:
     """Raw REST ``pulls?state=...`` (newest 100), or ``None`` when unavailable.
 
@@ -1223,21 +1269,24 @@ def _raw_pr_list(client: ForgePort, state: str) -> list[dict[str, Any]] | None:
     return [pr for pr in raw if isinstance(pr, dict)]
 
 
-def _find_open_prs_closing_issue(client: ForgePort, issue_number: int) -> list[dict[str, Any]]:
+def _find_open_prs_closing_issue(
+    client: ForgePort,
+    issue_number: int,
+    *,
+    issue_repo: str | None = None,
+) -> list[dict[str, Any]]:
     """Find open PRs whose title/body contain ``Closes #N``.
 
     Uses the raw PR list when the client supports ``api_request``. Otherwise
     ``pr_list`` (whose ``_normalize_prs`` strips ``body``) plus ``pr_get`` per
     candidate to read the body.
     """
-    marker = _closes_issue_marker(issue_number)
     raw_prs = _raw_pr_list(client, "open")
     if raw_prs is not None:
         return [
             pr
             for pr in raw_prs
-            if marker.search(str(pr.get("title") or ""))
-            or marker.search(str(pr.get("body") or ""))
+            if _pr_closes_issue(pr, issue_number, issue_repo=issue_repo)
         ]
     try:
         prs = client.pr_list(state="open", limit=100)
@@ -1249,9 +1298,7 @@ def _find_open_prs_closing_issue(client: ForgePort, issue_number: int) -> list[d
     for pr in prs:
         if not isinstance(pr, dict):
             continue
-        title = str(pr.get("title") or "")
-        body = str(pr.get("body") or "")
-        if marker.search(title) or marker.search(body):
+        if _pr_closes_issue(pr, issue_number, issue_repo=issue_repo):
             matched.append(pr)
             continue
         number = pr.get("number")
@@ -1263,9 +1310,7 @@ def _find_open_prs_closing_issue(client: ForgePort, issue_number: int) -> list[d
             continue
         if not isinstance(detail, dict):
             continue
-        d_title = str(detail.get("title") or "")
-        d_body = str(detail.get("body") or "")
-        if marker.search(d_title) or marker.search(d_body):
+        if _pr_closes_issue(detail, issue_number, issue_repo=issue_repo):
             matched.append(detail)
     return matched
 
@@ -1281,7 +1326,12 @@ def _pr_is_merged(pr: dict[str, Any]) -> bool:
     return str(pr.get("state") or "").upper() == "MERGED"
 
 
-def _find_merged_prs_closing_issue(client: ForgePort, issue_number: int) -> list[dict[str, Any]]:
+def _find_merged_prs_closing_issue(
+    client: ForgePort,
+    issue_number: int,
+    *,
+    issue_repo: str | None = None,
+) -> list[dict[str, Any]]:
     """Find merged PRs whose title/body contain ``Closes #N``.
 
     Uses the raw closed-PR list (``merged_at`` and ``body`` included) when the
@@ -1289,17 +1339,13 @@ def _find_merged_prs_closing_issue(client: ForgePort, issue_number: int) -> list
     strips ``body`` and merge metadata, plus ``api_request("pulls/{n}")`` /
     ``pr_get`` per PR.
     """
-    marker = _closes_issue_marker(issue_number)
     raw_prs = _raw_pr_list(client, "closed")
     if raw_prs is not None:
         return [
             pr
             for pr in raw_prs
             if _pr_is_merged(pr)
-            and (
-                marker.search(str(pr.get("title") or ""))
-                or marker.search(str(pr.get("body") or ""))
-            )
+            and _pr_closes_issue(pr, issue_number, issue_repo=issue_repo)
         ]
     try:
         prs = client.pr_list(state="closed", limit=100)
@@ -1326,9 +1372,7 @@ def _find_merged_prs_closing_issue(client: ForgePort, issue_number: int) -> list
             else:
                 continue
 
-        title = str(detail.get("title") or "")
-        body = str(detail.get("body") or "")
-        if marker.search(title) or marker.search(body):
+        if _pr_closes_issue(detail, issue_number, issue_repo=issue_repo):
             matched.append(detail)
             continue
         try:
@@ -1337,9 +1381,7 @@ def _find_merged_prs_closing_issue(client: ForgePort, issue_number: int) -> list
             continue
         if not isinstance(fetched, dict):
             continue
-        d_title = str(fetched.get("title") or "")
-        d_body = str(fetched.get("body") or "")
-        if marker.search(d_title) or marker.search(d_body):
+        if _pr_closes_issue(fetched, issue_number, issue_repo=issue_repo):
             matched.append({**detail, **fetched})
     return matched
 
