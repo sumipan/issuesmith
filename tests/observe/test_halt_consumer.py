@@ -97,14 +97,22 @@ class TestHaltScopeAndEvent:
         store.set_halt(True, "generic halt")
         snap = store.snapshot()
         assert snap.halt_scope == "all"
-        assert snap.halt_event is None
+        assert snap.halt_event == "legacy"
 
     def test_halt_scope_persisted_to_state_file(self, tmp_path):
         store = _store(tmp_path)
         store.set_halt(True, "phase halt", scope="phase:merge", event="forge_unavailable")
         state = json.loads((tmp_path / "state.json").read_text())
-        assert state["halt_scope"] == "phase:merge"
-        assert state["halt_event"] == "forge_unavailable"
+        assert "halt_scope" not in state
+        assert state["blocks"] == [
+            {
+                "scope": "phase:merge",
+                "kind": "forge_unavailable",
+                "reason": "phase halt",
+                "until": None,
+                "set_by": "set_halt",
+            }
+        ]
 
 
 class TestHaltResolutionViaObserve:

@@ -5,10 +5,11 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import re
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator, Literal
 
@@ -42,6 +43,112 @@ def __getattr__(name: str) -> Any:
 
 class QueueValidationError(ValueError):
     """Invalid queue request input (exit 2)."""
+
+
+_REPO_BLOCK_SCOPE_RE = re.compile(r"^repo:[^/]+/[^/]+$")
+
+
+@dataclass(frozen=True)
+class QueueBlock:
+    scope: str
+    kind: str
+    reason: str
+    until: str | None
+    set_by: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "scope": self.scope,
+            "kind": self.kind,
+            "reason": self.reason,
+            "until": self.until,
+            "set_by": self.set_by,
+        }
+
+
+def _validate_block_scope(scope: str) -> None:
+    if scope == "all":
+        return
+    if scope.startswith("phase:"):
+        phase = scope[len("phase:") :]
+        if phase in tuple(p.name for p in get_config().phases):
+            return
+        raise QueueValidationError(f"invalid block scope: {scope!r}")
+    if scope.startswith("repo:"):
+        if _REPO_BLOCK_SCOPE_RE.match(scope):
+            return
+        raise QueueValidationError(f"invalid block scope: {scope!r}")
+    raise QueueValidationError(f"invalid block scope: {scope!r}")
+
+
+def _parse_block_until(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise QueueValidationError("block until must be a string or null")
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise QueueValidationError(f"invalid block until: {value!r}") from exc
+    if dt.tzinfo is None:
+        raise QueueValidationError("block until must include timezone")
+    return dt
+
+
+def _block_from_dict(data: dict[str, Any]) -> QueueBlock:
+    scope = str(data.get("scope", ""))
+    kind = str(data.get("kind", ""))
+    reason = str(data.get("reason", ""))
+    set_by = str(data.get("set_by", ""))
+    until_raw = data.get("until")
+    until = None if until_raw is None else str(until_raw)
+    if not kind.strip():
+        raise QueueValidationError("block kind must be non-empty")
+    if not set_by.strip():
+        raise QueueValidationError("block set_by must be non-empty")
+    _validate_block_scope(scope)
+    _parse_block_until(until)
+    return QueueBlock(scope=scope, kind=kind, reason=reason, until=until, set_by=set_by)
+
+
+def _blocks_effective(raw_blocks: list[Any], *, now: datetime) -> tuple[QueueBlock, ...]:
+    effective: list[QueueBlock] = []
+    for item in raw_blocks:
+        if not isinstance(item, dict):
+            continue
+        block = _block_from_dict(item)
+        until_dt = _parse_block_until(block.until)
+        if until_dt is not None and until_dt <= now:
+            continue
+        effective.append(block)
+    return tuple(effective)
+
+
+def _legacy_halt_to_block_dict(state: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "scope": str(state.get("halt_scope") or "all"),
+        "kind": str(state.get("halt_event") or "legacy"),
+        "reason": str(state.get("halt_reason") or ""),
+        "until": None,
+        "set_by": "legacy_state",
+    }
+
+
+def _derive_halt_fields(blocks: tuple[QueueBlock, ...]) -> tuple[bool, str, str | None, str | None]:
+    if not blocks:
+        return False, "all", None, None
+    all_scope = next((b for b in blocks if b.scope == "all"), None)
+    primary = all_scope or blocks[0]
+    return True, primary.scope, primary.reason or None, primary.kind or None
+
+
+def _ensure_blocks_in_state(state: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = state.get("blocks")
+    if isinstance(raw, list) and raw:
+        return [dict(x) for x in raw if isinstance(x, dict)]
+    if state.get("halt"):
+        return [_legacy_halt_to_block_dict(state)]
+    return [] if isinstance(raw, list) else []
 
 
 @dataclass(frozen=True)
@@ -91,6 +198,7 @@ class QueueSnapshot:
     milestone_chains: dict[str, dict[str, Any]] = field(default_factory=dict)
     halt_scope: str = "all"
     halt_event: str | None = None
+    blocks: tuple[QueueBlock, ...] = ()
 
     @property
     def active_requests(self) -> list[QueueRequest]:
@@ -189,6 +297,7 @@ def default_state() -> dict[str, Any]:
         "halt_reason": None,
         "halt_scope": "all",
         "halt_event": None,
+        "blocks": [],
         "request_meta": {},
         "seeded_keys": [],
         "in_flight": [],
@@ -289,6 +398,8 @@ class QueueStore:
         state.setdefault("halt_reason", None)
         state.setdefault("halt_scope", "all")
         state.setdefault("halt_event", None)
+        if state.get("blocks") is None:
+            state["blocks"] = _ensure_blocks_in_state(state)
         state.setdefault("request_meta", {})
         state.setdefault("seeded_keys", [])
         state.setdefault("in_flight", [])
@@ -298,7 +409,12 @@ class QueueStore:
     def _save_state_unlocked(self, state: dict[str, Any]) -> None:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.state_path.with_name(f"{self.state_path.name}.tmp.{os.getpid()}")
-        payload = json.dumps(state, ensure_ascii=False, indent=2) + "\n"
+        to_save = dict(state)
+        for legacy_key in ("halt", "halt_reason", "halt_scope", "halt_event"):
+            to_save.pop(legacy_key, None)
+        if to_save.get("blocks") is None:
+            to_save["blocks"] = _ensure_blocks_in_state(state)
+        payload = json.dumps(to_save, ensure_ascii=False, indent=2) + "\n"
         with open(tmp, "w", encoding="utf-8") as fh:
             fh.write(payload)
             fh.flush()
@@ -350,20 +466,25 @@ class QueueStore:
         for rid, req in requests.items():
             if rid not in completed and rid not in active_order:
                 active_order.append(rid)
+        now = datetime.now(timezone.utc)
+        raw_blocks = _ensure_blocks_in_state(state)
+        blocks = _blocks_effective(raw_blocks, now=now)
+        halt, halt_scope, halt_reason, halt_event = _derive_halt_fields(blocks)
         return QueueSnapshot(
             schema_version=int(state.get("schema_version", SCHEMA_VERSION)),
             revision=int(state.get("revision", 0)),
             active_order=list(active_order),
             completed_request_ids=list(state.get("completed_request_ids") or []),
             last_triaged_revision=int(state.get("last_triaged_revision", 0)),
-            halt=bool(state.get("halt", False)),
-            halt_reason=state.get("halt_reason"),
+            halt=halt,
+            halt_reason=halt_reason,
             requests=requests,
             in_flight=list(state.get("in_flight") or []),
             request_meta=dict(state.get("request_meta") or {}),
             milestone_chains=dict(state.get("milestone_chains") or {}),
-            halt_scope=str(state.get("halt_scope") or "all"),
-            halt_event=state.get("halt_event") or None,
+            halt_scope=halt_scope,
+            halt_event=halt_event,
+            blocks=blocks,
         )
 
     def enqueue(
@@ -543,6 +664,57 @@ class QueueStore:
             self._save_state_unlocked(state)
             return True
 
+    def add_block(self, block: QueueBlock) -> bool:
+        _validate_block_scope(block.scope)
+        _parse_block_until(block.until)
+        with self.lock():
+            state = self._load_state_unlocked()
+            blocks = _ensure_blocks_in_state(state)
+            new_dict = block.to_dict()
+            replaced = False
+            for idx, existing in enumerate(blocks):
+                if existing.get("scope") == block.scope and existing.get("kind") == block.kind:
+                    if existing != new_dict:
+                        blocks[idx] = new_dict
+                        replaced = True
+                    state["blocks"] = blocks
+                    if replaced:
+                        self._save_state_unlocked(state)
+                    return replaced
+            blocks.append(new_dict)
+            state["blocks"] = blocks
+            self._save_state_unlocked(state)
+            return True
+
+    def remove_blocks(
+        self,
+        *,
+        kind: str | None = None,
+        scope: str | None = None,
+    ) -> int:
+        with self.lock():
+            state = self._load_state_unlocked()
+            blocks = _ensure_blocks_in_state(state)
+            kept: list[dict[str, Any]] = []
+            removed = 0
+            for item in blocks:
+                if not isinstance(item, dict):
+                    kept.append(item)
+                    continue
+                item_kind = str(item.get("kind", ""))
+                item_scope = str(item.get("scope", ""))
+                if kind is not None and item_kind != kind:
+                    kept.append(item)
+                    continue
+                if scope is not None and item_scope != scope:
+                    kept.append(item)
+                    continue
+                removed += 1
+            if removed:
+                state["blocks"] = kept
+                self._save_state_unlocked(state)
+            return removed
+
     def set_halt(
         self,
         halt: bool,
@@ -551,16 +723,21 @@ class QueueStore:
         scope: str = "all",
         event: str | None = None,
     ) -> None:
-        with self.lock():
-            state = self._load_state_unlocked()
-            state["halt"] = halt
-            state["halt_reason"] = reason if halt else None
-            state["halt_scope"] = scope if halt else "all"
-            state["halt_event"] = event if halt else None
-            self._save_state_unlocked(state)
+        if halt:
+            self.add_block(
+                QueueBlock(
+                    scope=scope,
+                    kind=event or "legacy",
+                    reason=reason or "",
+                    until=None,
+                    set_by="set_halt",
+                )
+            )
+        else:
+            self.clear_halt()
 
     def clear_halt(self) -> None:
-        self.set_halt(False, None)
+        self.remove_blocks()
 
     def add_in_flight(
         self,

@@ -1080,13 +1080,12 @@ class TestCLI:
         )
         assert code == 0
         snap = store.snapshot()
-        assert snap.halt is False
+        assert snap.halt is True
         out = capsys.readouterr().out
-        assert "halt=false" in out
-        assert "issuesmith-queue reset: halt=false" in out
+        assert "blocks unchanged" in out
 
     def test_status_shows_halt_reason(self, tmp_path, capsys):
-        """When halt=true, status shows halt_reason (#2808)."""
+        """When blocks are active, status lists them (#2808)."""
         from issuesmith import queue as qmod
 
         store = _store(tmp_path)
@@ -1109,8 +1108,7 @@ class TestCLI:
         )
         assert code == 0
         out = capsys.readouterr().out
-        assert "halt=True" in out or "halt=true" in out
-        assert "halt_reason:" in out
+        assert "blocks=1" in out
         assert "pipeline idle timeout" in out
         assert "issue=#2808" in out
 
@@ -2366,18 +2364,20 @@ def test_required_engines_paused_role_filters_to_phase_engine(tmp_path):
     assert qmod._required_engines_paused(q, e, role="implementation") == []
 
 
-def test_required_engines_paused_brake_only(tmp_path):
-    """AC-3: paused on budget gate alone becomes a waiting target."""
+def test_required_engines_paused_brake_only(tmp_path, capsys, monkeypatch):
+    """Brake-only pause is ignored; quota state alone drives engine_paused waits."""
     from issuesmith import queue as qmod
 
+    monkeypatch.setattr(qmod, "_BRAKE_PATH_DEPRECATED_WARNED", False)
     q = tmp_path / "quota.json"
     b = tmp_path / "brake.json"
     e = tmp_path / "engine.yml"
     _write_quota(q, {"claude": "available", "cursor": "available"})
     _write_quota(b, {"claude": "paused", "cursor": "available"})
     _write_engine_state(e, "claude", "cursor")
-    assert qmod._required_engines_paused(q, e, role="design", brake_path=b) == ["claude"]
+    assert qmod._required_engines_paused(q, e, role="design", brake_path=b) == []
     assert qmod._required_engines_paused(q, e, role="implementation", brake_path=b) == []
+    assert "brake_state is deprecated" in capsys.readouterr().err
 
 
 def test_required_engines_paused_quota_only(tmp_path):

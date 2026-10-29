@@ -35,6 +35,7 @@ from issuesmith.queue_store import (
     DEFAULT_SEED_PATH,
     DEFAULT_TRIAGE_LOG_PATH,
     EnqueueResult,
+    QueueBlock,
     QueueRequest,
     QueueSnapshot,
     QueueStore,
@@ -73,6 +74,57 @@ DONE_DIR = _cfg.paths.done_dir
 EXEC_PATH = _cfg.paths.exec_jsonl
 QUOTA_STATE_PATH = _cfg.paths.quota_state
 BRAKE_STATE_PATH = _cfg.paths.brake_state or _cfg.paths.quota_state
+
+_BRAKE_PATH_DEPRECATED_WARNED = False
+
+
+def _warn_brake_path_deprecated() -> None:
+    global _BRAKE_PATH_DEPRECATED_WARNED
+    if not _BRAKE_PATH_DEPRECATED_WARNED:
+        print(
+            "warning: brake_state is deprecated for engine pause detection; "
+            "using quota_state only",
+            file=sys.stderr,
+            flush=True,
+        )
+        _BRAKE_PATH_DEPRECATED_WARNED = True
+
+
+def _global_blocks(snap: QueueSnapshot) -> tuple[QueueBlock, ...]:
+    return tuple(b for b in snap.blocks if b.scope == "all")
+
+
+def _blocks_for_request(
+    snap: QueueSnapshot,
+    *,
+    phase: str,
+    target_repo: str | None,
+) -> tuple[QueueBlock, ...]:
+    matched: list[QueueBlock] = []
+    for block in snap.blocks:
+        if block.scope == "all":
+            matched.append(block)
+        elif block.scope.startswith("phase:") and phase == block.scope[len("phase:") :]:
+            matched.append(block)
+        elif block.scope.startswith("repo:"):
+            repo = block.scope[len("repo:") :]
+            if target_repo and target_repo == repo:
+                matched.append(block)
+    return tuple(matched)
+
+
+def _block_wait_detail(blocks: tuple[QueueBlock, ...]) -> str:
+    if not blocks:
+        return "halted"
+    parts = [
+        f"{b.kind}@{b.scope}: {b.reason}" if b.reason else f"{b.kind}@{b.scope}"
+        for b in blocks
+    ]
+    return "blocked: " + "; ".join(parts)
+
+
+def _plan_has_global_halt(snap: QueueSnapshot) -> bool:
+    return bool(_global_blocks(snap))
 
 
 def _configured_phases():
@@ -1110,36 +1162,19 @@ def _required_engines_paused(
     role: str | None = None,
     brake_path: Path | None = None,
 ) -> list[str]:
-    """Return the paused engines among those required for dispatch.
-
-    Judged on the union of the global quota gate and the budget gate: an engine
-    ``paused`` in either one is included.
-
-    With ``role`` only that role's engine is considered; without it, the union of
-    the design / implementation roles (backward compatible). ``dispatch_one`` calls
-    it per phase with ``role=_phase_role_map()[phase]`` (#3091).
-
-    Existing callers that pass only ``quota_path`` and omit ``brake_path`` use the
-    same path for both gates to keep tests compatible. With the same path the
-    snapshot is read only once.
-    """
+    """Return paused engines among those required for dispatch (quota state only)."""
     resolved_quota = quota_path or QUOTA_STATE_PATH
-    if brake_path is not None:
-        resolved_brake = brake_path
-    elif quota_path is not None:
-        resolved_brake = quota_path
-    else:
-        resolved_brake = BRAKE_STATE_PATH
+    if brake_path is not None and brake_path != resolved_quota:
+        _warn_brake_path_deprecated()
+    elif (
+        brake_path is None
+        and quota_path is None
+        and BRAKE_STATE_PATH != QUOTA_STATE_PATH
+    ):
+        _warn_brake_path_deprecated()
 
-    if resolved_quota == resolved_brake:
-        snapshots = [QuotaGate(state_path=resolved_quota).snapshot()]
-    else:
-        snapshots = [
-            QuotaGate(state_path=resolved_quota).snapshot(),
-            QuotaGate(state_path=resolved_brake).snapshot(),
-        ]
-
-    if all(not snapshot.engines for snapshot in snapshots):
+    snapshot = QuotaGate(state_path=resolved_quota).snapshot()
+    if not snapshot.engines:
         return []
 
     role_map = _required_engines(engine_state_path)
@@ -1150,10 +1185,9 @@ def _required_engines_paused(
         required = set(role_map.values())
 
     paused: set[str] = set()
-    for snapshot in snapshots:
-        for name, engine in snapshot.engines.items():
-            if name in required and engine.status == "paused":
-                paused.add(name)
+    for name, engine in snapshot.engines.items():
+        if name in required and engine.status == "paused":
+            paused.add(name)
     return sorted(paused)
 
 
@@ -1723,11 +1757,9 @@ def _evaluate_global_plan_wait(
     idle_minutes: int,
     now: datetime,
 ) -> tuple[PlanReason | None, str]:
-    if snap.halt:
-        halt_scope = snap.halt_scope or "all"
-        if halt_scope == "all":
-            reason = snap.halt_reason or ""
-            return "halt", f"halted: {reason}" if reason else "halted"
+    global_blocks = _global_blocks(snap)
+    if global_blocks:
+        return "halt", _block_wait_detail(global_blocks)
     if not _dispatch_pipeline_ready(snap, idle_minutes, now):
         return "pipeline_not_idle", "pipeline not idle"
     return None, ""
@@ -1825,20 +1857,17 @@ def _plan_with_window(
             entries.append(_plan_wait_entry(req, "window", "outside source window", engine))
             continue
 
-        if snap.halt:
-            halt_scope = snap.halt_scope or "all"
-            if halt_scope.startswith("phase:") and req.phase == halt_scope[len("phase:"):]:
-                entries.append(
-                    _plan_wait_entry(req, "halt", snap.halt_reason or "halted", engine)
-                )
-                continue
-            if halt_scope.startswith("repo:"):
-                meta = snap.request_meta.get(rid) or {}
-                if meta.get("target_repo", "") == halt_scope[len("repo:"):]:
-                    entries.append(
-                        _plan_wait_entry(req, "halt", snap.halt_reason or "halted", engine)
-                    )
-                    continue
+        meta = snap.request_meta.get(rid) or {}
+        target_repo = meta.get("target_repo")
+        target_repo_str = str(target_repo) if target_repo else None
+        req_blocks = _blocks_for_request(
+            snap, phase=req.phase, target_repo=target_repo_str
+        )
+        if req_blocks:
+            entries.append(
+                _plan_wait_entry(req, "halt", _block_wait_detail(req_blocks), engine)
+            )
+            continue
 
         role = _phase_role_map()[req.phase]
         paused_for_role = _required_engines_paused(role=role)
@@ -1963,7 +1992,11 @@ def _plan_with_window(
             }
         )
 
-    return QueuePlan(revision=snap.revision, entries=tuple(entries), halt=snap.halt)
+    return QueuePlan(
+        revision=snap.revision,
+        entries=tuple(entries),
+        halt=_plan_has_global_halt(snap),
+    )
 
 
 def plan(
@@ -2327,10 +2360,9 @@ def dispatch_one(
         _release_finished_in_flight(store, client, open_issues)
         snap = store.snapshot()
 
-        if snap.halt:
-            halt_scope = snap.halt_scope
-            if halt_scope == "all":
-                return DispatchResult(False, reason=f"halted: {snap.halt_reason}")
+        global_blocks = _global_blocks(snap)
+        if global_blocks:
+            return DispatchResult(False, reason=_block_wait_detail(global_blocks))
             # Non-"all" scopes are checked per-request in the dispatch loop below.
 
         # AC-2: re-register impl-phase running Issues missing from in_flight before
@@ -2432,7 +2464,9 @@ def _cmd_status(args: argparse.Namespace) -> int:
         except Exception:
             status_client = None
         if status_client is None:
-            queue_plan = QueuePlan(revision=snap.revision, entries=(), halt=snap.halt)
+            queue_plan = QueuePlan(
+                revision=snap.revision, entries=(), halt=_plan_has_global_halt(snap)
+            )
         else:
             queue_plan = plan(store, status_client, now=_now_jst())
         print(
@@ -2442,6 +2476,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
                     "active": len(snap.active_order),
                     "halt": snap.halt,
                     "halt_reason": snap.halt_reason,
+                    "blocks": [b.to_dict() for b in snap.blocks],
                     "in_flight": list(snap.in_flight),
                     "plan": [_plan_entry_to_dict(e) for e in queue_plan.entries],
                 },
@@ -2453,7 +2488,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
         "issuesmith-queue status: "
         f"revision={snap.revision} "
         f"active={len(snap.active_order)} "
-        f"halt={snap.halt}"
+        f"blocks={len(snap.blocks)}"
     )
     print(f"  in_flight: {_format_in_flight_status(snap)}")
     for entry in snap.in_flight:
@@ -2464,8 +2499,12 @@ def _cmd_status(args: argparse.Namespace) -> int:
         held = entry.get("held")
         held_part = f" held=andon:{held.get('by', '')}" if isinstance(held, dict) and held else ""
         print(f"  - in_flight issue=#{issue_num} engine={engine}{role_part}{held_part}")
-    if snap.halt and snap.halt_reason:
-        print(f"  halt_reason: {snap.halt_reason}")
+    for block in snap.blocks:
+        until_part = f" until={block.until}" if block.until else ""
+        print(
+            f"  block scope={block.scope} kind={block.kind} reason={block.reason!r}"
+            f" set_by={block.set_by}{until_part}"
+        )
     client: ForgePort | None = None
     try:
         client = get_forge(repo=REPO)
@@ -2607,13 +2646,21 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def _cmd_reset(args: argparse.Namespace) -> int:
+    del args
+    print("issuesmith-queue reset: ok (queue blocks unchanged; use queue unblock to clear blocks)")
+    return 0
+
+
+def _cmd_unblock(args: argparse.Namespace) -> int:
     store = QueueStore(
         queue_path=Path(args.queue_path) if getattr(args, "queue_path", None) else None,
         state_path=Path(args.state_path) if getattr(args, "state_path", None) else None,
         lock_path=Path(args.lock_path) if getattr(args, "lock_path", None) else None,
     )
-    store.clear_halt()
-    print("issuesmith-queue reset: halt=false")
+    kind = getattr(args, "kind", None)
+    scope = getattr(args, "scope", None)
+    removed = store.remove_blocks(kind=kind, scope=scope)
+    print(f"issuesmith-queue unblock: removed {removed} block(s)")
     return 0
 
 
@@ -2849,6 +2896,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_reset = sub.add_parser("reset")
     p_reset.set_defaults(func=_cmd_reset)
+
+    p_unblock = sub.add_parser("unblock")
+    p_unblock.add_argument("--kind")
+    p_unblock.add_argument("--scope")
+    p_unblock.set_defaults(func=_cmd_unblock)
 
     p_deq = sub.add_parser("dequeue")
     p_deq.add_argument("--request-id", required=True)

@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from issuesmith.queue_store import QueueStore, default_state
+from issuesmith.queue_store import QueueBlock, QueueStore, default_state
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "issuesmith"
 _NOW = datetime.now(timezone.utc).isoformat()
@@ -133,7 +133,44 @@ class TestDefaultState:
         assert state["revision"] == 0
         assert state["active_order"] == []
         assert state["halt"] is False
+        assert state["blocks"] == []
         assert state["milestone_chains"] == {}
+
+
+class TestHaltToBlocksMigration:
+    def test_legacy_halt_saved_as_blocks_only(self, tmp_path):
+        state_path = tmp_path / "state.json"
+        state_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "halt": True,
+                    "halt_scope": "phase:develop",
+                    "halt_reason": "main red",
+                    "halt_event": "main_red",
+                }
+            ),
+            encoding="utf-8",
+        )
+        store = QueueStore(
+            queue_path=tmp_path / "queue.jsonl",
+            state_path=state_path,
+            lock_path=tmp_path / "lock",
+        )
+        store.add_block(
+            QueueBlock(
+                scope="all",
+                kind="touch",
+                reason="persist",
+                until=None,
+                set_by="test",
+            )
+        )
+        saved = json.loads(state_path.read_text(encoding="utf-8"))
+        assert "halt" not in saved
+        assert any(b.get("kind") == "main_red" for b in saved["blocks"]) or any(
+            b.get("kind") == "touch" for b in saved["blocks"]
+        )
 
 
 class TestQueueMigrateLastIssue:

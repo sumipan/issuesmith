@@ -84,7 +84,6 @@ def test_evaluate_main_red():
             scope="phase:develop",
             reason=f"main red at {_SHA_A[:12]}: exit 1",
             event_kind="main_red",
-            keep_existing=True,
         ),
         AndonAction(
             kind="broken",
@@ -156,9 +155,8 @@ def test_main_red_does_not_override_other_halt(env):
     execute(actions, store, sinks=[])
 
     snap = store.snapshot()
-    assert snap.halt is True
-    assert snap.halt_scope == "all"
-    assert snap.halt_event == "systemic_step_failure"
+    kinds = {b.kind for b in snap.blocks}
+    assert kinds == {"systemic_step_failure", "main_red"}
 
 
 def test_main_green_does_not_clear_other_halt(env):
@@ -188,7 +186,8 @@ def test_halt_without_keep_existing_overwrites(env):
     execute([HaltAction(scope="phase:develop", reason="x", event_kind="forge_unavailable")], store, sinks=[])
 
     snap = store.snapshot()
-    assert (snap.halt_scope, snap.halt_event) == ("phase:develop", "forge_unavailable")
+    pairs = {(b.scope, b.kind) for b in snap.blocks}
+    assert pairs == {("all", "systemic_step_failure"), ("phase:develop", "forge_unavailable")}
 
 
 def _observe_halt_on_red_false(config) -> ObserveConfig:
