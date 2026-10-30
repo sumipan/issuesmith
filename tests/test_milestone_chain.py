@@ -8,7 +8,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from issuesmith.config import MilestoneChainConfig, reset_config_cache
-from tests.conftest import _write_nexus_config
 from issuesmith.language import EN
 from issuesmith.milestone import (
     PlanRow,
@@ -26,6 +25,7 @@ from issuesmith.milestone import (
 )
 from issuesmith.queue_store import QueueStore
 from issuesmith.queue_triage import DONE_LABEL
+from tests.conftest import _write_nexus_config
 from tests.legacy_text import ADD, CHANGE_TYPE, DESCRIPTION, FILE_PATH, REPOSITORY
 
 # Split-plan / section vocabulary comes from the language pack (EN in tests); the
