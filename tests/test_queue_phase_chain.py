@@ -388,6 +388,48 @@ class TestQueueChainEnqueue:
         ]
         assert chained == []
 
+    def test_excluded_impl_label_does_not_chain(
+        self, tmp_path, monkeypatch, issuesmith_config
+    ):
+        """Primary impl phase ``excludes`` blocks queue-chain after design completes."""
+        from issuesmith import queue as qmod
+
+        cfg_path = issuesmith_config
+        payload = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+        phases = []
+        for ph in payload["phases"]:
+            item = dict(ph)
+            if item["name"] == "develop":
+                item["excludes"] = ["scope:milestone", "scope:epic"]
+            phases.append(item)
+        payload["phases"] = phases
+        cfg_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+        reset_config_cache()
+        _patch_paths(tmp_path, monkeypatch, cfg_path)
+
+        store = _store(tmp_path)
+        store.add_in_flight(200, "claude", role="design", phase="draft")
+        client = _Client(
+            {
+                200: {
+                    "state": "OPEN",
+                    "labels": [
+                        {"name": "scope:epic"},
+                        {"name": "issuesmith:draft-done"},
+                    ],
+                    "body": _body(),
+                }
+            }
+        )
+        qmod._release_finished_in_flight(store, client, [])
+        chained = [
+            req
+            for req in store.snapshot().requests.values()
+            if req.source == "queue-chain"
+        ]
+        assert chained == []
+        reset_config_cache()
+
     def test_terminal_issue_does_not_chain(self, tmp_path, monkeypatch, issuesmith_config):
         _patch_paths(tmp_path, monkeypatch, issuesmith_config)
         from issuesmith import queue as qmod
@@ -489,6 +531,54 @@ class TestQueueChainEnqueue:
         assert len(develop_entries) == 1
         assert develop_entries[0].decision == "wait"
         assert develop_entries[0].reason != "ok"
+
+
+class TestTerminalLabelsUseNamespace:
+    def test_rejected_and_superseded_use_label_namespace(
+        self, tmp_path, monkeypatch, issuesmith_config
+    ):
+        from issuesmith import queue as qmod
+
+        cfg_path = issuesmith_config
+        payload = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+        payload["label_namespace"] = "acme"
+        cfg_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+        reset_config_cache()
+        _patch_paths(tmp_path, monkeypatch, cfg_path)
+
+        store = _store(tmp_path)
+        req = store.enqueue(
+            issue=7,
+            phase="draft",
+            source="skill",
+            actor_kind="human",
+            priority="normal",
+            requested_by=["alice"],
+            requested_at=_NOW,
+        )
+
+        class _TrackingClient(_Client):
+            def __init__(self):
+                super().__init__({7: {"state": "OPEN", "labels": []}})
+                self.updates: list[tuple] = []
+
+            def issue_update(self, number, labels_add=None, labels_remove=None):
+                self.updates.append((number, labels_add, labels_remove))
+
+        client = _TrackingClient()
+        qmod._apply_terminal(
+            store,
+            client,
+            req.request_id,
+            7,
+            "superseded",
+            "newer semver",
+            add_rejected_label=True,
+            comment=False,
+        )
+        assert "acme:rejected" in (client.updates[0][1] or [])
+        assert "acme:superseded" in (client.updates[1][1] or [])
+        reset_config_cache()
 
 
 class TestDispatchIntegration:

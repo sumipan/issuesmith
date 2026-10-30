@@ -9,10 +9,8 @@ import pytest
 from tests.conventions._util import REPO_ROOT
 
 _VOCABULARY_FREE_PATHS = (
-    "src/issuesmith/config.py",
     "src/issuesmith/preconditions.py",
     "src/issuesmith/queue.py",
-    "src/issuesmith/queue_triage.py",
     "src/issuesmith/resume.py",
     "src/issuesmith/ops/dispatch.py",
 )
@@ -22,6 +20,9 @@ _VOCAB = re.compile(
     r'|"(draft|develop|merge|sub|brushup|impl|subissue)"'
     r'|\b(MERGE_DONE|IMPL_DONE|REPORT_DONE)\b'
     r"|scope:milestone"
+    r'|"(b1|cp1|cp2|p0|p1|p3|m1|m2|mg1|sub1)"'
+    r'|\b(BRUSHUP_(DONE|FAILED)|IMPL_FAILED|CP2_(PASS|FAIL)|SUB_(CREATED|BODY_READY|BODY_FAILED)|P3_[A-Z_]+|MIGRATE_DONE|B1_RECOVERY)\b'
+    r"|issuesmith:(rejected|superseded)"
 )
 
 _LEDGER_PATH = REPO_ROOT / "tests/conventions/known_vocabulary_hits.txt"
@@ -33,9 +34,6 @@ def _src_py_files() -> list[Path]:
 
 
 def _count_hits(path: Path) -> int:
-    rel = str(path.relative_to(REPO_ROOT))
-    if rel in _VOCABULARY_FREE_PATHS:
-        return 0
     count = 0
     for line in path.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
@@ -57,6 +55,18 @@ def _read_ledger() -> dict[str, int]:
         rel, count_str = line.rsplit(" ", 1)
         ledger[rel] = int(count_str)
     return ledger
+
+
+@pytest.mark.parametrize(
+    "sample",
+    [
+        '"b1"',
+        "BRUSHUP_DONE",
+        "issuesmith:rejected",
+    ],
+)
+def test_vocab_matches_consumer_workflow_literals(sample: str):
+    assert _VOCAB.search(sample), f"_VOCAB must match {sample!r}"
 
 
 def test_vocabulary_gate_matches_ledger():
