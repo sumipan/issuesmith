@@ -38,8 +38,11 @@ def _run_module(
     *args: str,
     check: bool = True,
     extra_env: dict[str, str] | None = None,
+    warn_default: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "PYTHONPATH": _pythonpath()}
+    if warn_default:
+        env["PYTHONWARNINGS"] = "default::DeprecationWarning"
     if extra_env:
         env.update(extra_env)
     return subprocess.run(
@@ -165,3 +168,42 @@ def test_resume_in_usage() -> None:
     lines = _USAGE.splitlines()
     standalone = [ln for ln in lines if "resume" in ln and "milestone" not in ln]
     assert standalone, "resume not listed as standalone command in _USAGE"
+
+
+def test_cli_has_no_hardcoded_workflow_step_literals() -> None:
+    text = (SRC_PATH / "issuesmith" / "cli.py").read_text(encoding="utf-8")
+    for token in ('"b1"', '"cp1"', '"cp2"', '"m2"'):
+        assert token not in text
+
+
+def test_cp1_gate_alias_emits_deprecation(tmp_path: Path) -> None:
+    cfg_env = {"ISSUESMITH_CONFIG": str(_subprocess_config_path(tmp_path))}
+    proc = _run_module(
+        "cp1-gate",
+        "1",
+        extra_env=cfg_env,
+        check=False,
+        warn_default=True,
+    )
+    assert "deprecated" in proc.stderr.lower()
+    assert proc.returncode in (0, 1, 2)
+
+
+def test_legacy_cp2_tier_matches_declared_path(tmp_path: Path) -> None:
+    cfg_env = {"ISSUESMITH_CONFIG": str(_subprocess_config_path(tmp_path))}
+    proc = _run_module(
+        "tier",
+        "cp2",
+        "--diff-lines",
+        "10",
+        "--unchecked-ac",
+        "0",
+        "--p2-all-pass",
+        "true",
+        extra_env=cfg_env,
+        check=False,
+        warn_default=True,
+    )
+    assert "deprecated" in proc.stderr.lower()
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == "light"

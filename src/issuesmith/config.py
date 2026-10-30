@@ -181,6 +181,12 @@ class RepairConfig:
 
 
 @dataclass(frozen=True)
+class TierConfig:
+    kind: Literal["design_doc", "pr_diff"]
+    light_max_diff_lines: int = 200
+
+
+@dataclass(frozen=True)
 class ReviewConfig:
     role: str
     template: str
@@ -202,6 +208,8 @@ class StepConfig:
     andon_when: tuple[str, ...] = ()
     repair: RepairConfig = field(default_factory=RepairConfig)
     review: ReviewConfig | None = None
+    tier: TierConfig | None = None
+    verify: Literal["design_doc"] | None = None
 
 
 _DEFAULT_STEPS: dict[str, StepConfig] = {
@@ -881,6 +889,37 @@ def _build_review(raw: Any, step_id: str) -> ReviewConfig | None:
     )
 
 
+def _build_tier(raw: Any, step_id: str) -> TierConfig | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping):
+        raise ConfigError(f"steps.{step_id}.tier must be a mapping")
+    kind_raw = raw.get("kind")
+    kind = str(kind_raw) if kind_raw is not None else ""
+    if kind not in ("design_doc", "pr_diff"):
+        raise ConfigError(
+            f"steps.{step_id}.tier kind must be 'design_doc' or 'pr_diff', got {kind!r}"
+        )
+    light_max = raw.get("light_max_diff_lines", 200)
+    if not isinstance(light_max, int) or isinstance(light_max, bool) or light_max < 1:
+        raise ConfigError(
+            f"steps.{step_id}.tier light_max_diff_lines must be an integer >= 1,"
+            f" got {light_max!r}"
+        )
+    return TierConfig(kind=kind, light_max_diff_lines=light_max)
+
+
+def _build_step_verify(raw: Any, step_id: str) -> Literal["design_doc"] | None:
+    if raw is None:
+        return None
+    verify = str(raw)
+    if verify != "design_doc":
+        raise ConfigError(
+            f"steps.{step_id}.verify must be 'design_doc', got {verify!r}"
+        )
+    return "design_doc"
+
+
 def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
     steps = dict(_DEFAULT_STEPS)
     if not raw:
@@ -937,6 +976,13 @@ def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
                 f"steps.{step_id}: gate 'review' requires steps.{step_id}.review"
             )
 
+        tier: TierConfig | None = None
+        if "tier" in conf:
+            tier = _build_tier(conf.get("tier"), str(step_id))
+        verify: Literal["design_doc"] | None = None
+        if "verify" in conf:
+            verify = _build_step_verify(conf.get("verify"), str(step_id))
+
         steps[str(step_id)] = StepConfig(
             module=module,
             template=template,
@@ -947,6 +993,8 @@ def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
             andon_when=andon_when,
             repair=repair,
             review=review,
+            tier=tier,
+            verify=verify,
         )
     return steps
 

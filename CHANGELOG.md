@@ -7,6 +7,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Added
+
+- `steps.<id>.tier` and `steps.<id>.verify` in config; `issuesmith.step_tier` and `issuesmith.step_verify` CLI backends.
+- Concept gate ids `design_lint`, `ac_complete`, `ac_format`, `migration_plan`, and `milestone_subdesign` (aliases of the previous ids).
+
+### Deprecated
+
+- CLI entry points `cp1-gate`, `m2-gate`, and `b1-verify` (use `issuesmith gate` / `issuesmith verify`).
+- Undeclared `tier` / `verify` routing through `issuesmith.<step_id>_tier` / `issuesmith.<step_id>_verify`.
+- Gate ids `cp1`, `m2`, `b1_ac_format`, `b1_migration`, and `b1_milestone_subdesign` (use the concept names above; removed in the next minor).
+
 ## 0.165.0 - 2026-10-29
 
 ### Fixed

@@ -4,6 +4,8 @@ Returns a tier ("light" / "heavy"); the tier-to-model mapping is resolved by
 skills/system-issuesmith/scripts/engine.py per configured engine.
 """
 
+from issuesmith.step_tier import pr_diff_tier
+
 
 def determine_cp2_tier(
     pr_diff_lines: int,
@@ -15,9 +17,12 @@ def determine_cp2_tier(
     "light" when: diff < 200 lines AND all AC checked AND P2 all pass.
     "heavy" in all other cases.
     """
-    if pr_diff_lines < 200 and unchecked_ac_count == 0 and p2_all_pass:
-        return "light"
-    return "heavy"
+    return pr_diff_tier(
+        pr_diff_lines,
+        unchecked_ac_count,
+        p2_all_pass,
+        light_max_diff_lines=200,
+    )
 
 
 def main() -> None:

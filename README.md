@@ -100,10 +100,10 @@ Run a command as `python3 -m issuesmith <command>` or through the `issuesmith` c
 | `gate cp1 <issue>` / `gate m2 <issue>` | Run the CP1 / M2 gate entry points on an Issue |
 | `gate-preflight` | ghdag gate runner (`ghdag.workflow.gates`) with the issuesmith rules registered |
 | `cp1-gate` / `m2-gate` | CP1 pattern gate / M2 acceptance-criteria gate |
-| `verify b1` / `b1-verify` | Deterministic Verify of B1 output (`--prev-report FILE` adds oscillation detection) |
+| `verify <step_id>` / `b1-verify` | Deterministic Verify for a step with `steps.<id>.verify: design_doc` (`VERIFY_RECOVERY:` markers; `--prev-report FILE` adds oscillation detection) |
 | `queue <subcommand>` | Request queue (see [`queue`](#queue-subcommands)) |
 | `deps` | Extract and check Issue dependencies |
-| `tier b1` / `tier cp2` | Pick the light or heavy model tier for B1 / CP2 |
+| `tier <step_id>` | Pick light or heavy model tier when `steps.<id>.tier` is set (`design_doc` or `pr_diff`); legacy `issuesmith.<id>_tier` modules still work with a deprecation warning |
 | `comments` | Pipeline comment filter |
 | `gh` | Issue / PR helpers on the ghdag forge client, with label and target guards (does not shell out to the `gh` CLI) |
 | `engine <subcommand>` | LLM role switcher and runner (see [`engine`](#engine-subcommands)) |
@@ -214,7 +214,7 @@ Ledger keys: `lanes` (lane name to Issue numbers), `hold`, `backlog`, `auto_lane
 | `issuesmith.ac_contract` | `GateMaterializationError`, `materialize_gate_root`, `cleanup_gate_root`, `dual_gate_roots`, `extract_contract_from_body`, `run_checks`, `contract_failures`, `pending_manual_checks`, `is_invalid_contract_path`, `normalize_reference_entry`, `extract_key_path_values`, `manual_check_description`, `KNOWN_POST_MERGE_KINDS`, `POST_MERGE_REQUIRED_FIELDS` |
 | `issuesmith.gate_rules.b1_milestone_subdesign` | `B1MilestoneSubdesignRules`, `extract_sub_blocks`, `infer_sub_dependencies`, `find_dependency_cycles`, `apply_inferred_dependency_fixes`, `apply_sub_plan_dep_format_fixes`, `change_rows_with_content` |
 
-Gate ids usable in `steps.*.requires`: `ac_contract`, `allow_paths_forbidden`, `b1_ac_format`, `b1_migration`, `b1_milestone_subdesign`, `base_freshness`, `cp1`, `deps`, `deps_format`, `external_leak`, `importer_import`, `lint`, `m2`, `milestone_consistency`, `pin_bump`, `pr_scope`, `scope`, `scope_breadth`, `scope_coupling`, `scope_size`, `tests` (`GATE_REGISTRY`), plus `review` (`STEP_BOUND_GATES`; needs `steps.<id>.review`). A `module.path:attr` reference loads an external gate.
+Gate ids usable in `steps.*.requires`: `ac_complete`, `ac_contract`, `ac_format`, `allow_paths_forbidden`, `b1_ac_format`, `b1_migration`, `b1_milestone_subdesign`, `base_freshness`, `cp1`, `deps`, `deps_format`, `design_lint`, `external_leak`, `importer_import`, `lint`, `m2`, `migration_plan`, `milestone_consistency`, `milestone_subdesign`, `pin_bump`, `pr_scope`, `scope`, `scope_breadth`, `scope_coupling`, `scope_size`, `tests` (`GATE_REGISTRY`), plus `review` (`STEP_BOUND_GATES`; needs `steps.<id>.review`). A `module.path:attr` reference loads an external gate. Prefer the concept names (`design_lint`, `ac_complete`, …); old ids remain as deprecated aliases.
 
 ### Contract, projection and labels
 
@@ -386,20 +386,25 @@ Gate ids in `GATE_REGISTRY` (usable in `steps.*.requires`). `input_kind` is the 
 
 | id | input_kind | pre_llm | repairable | Responsibility |
 |---|---|---|---|---|
+| `ac_complete` | issue | no | yes | M2 merge readiness rules |
 | `ac_contract` | worktree | no | yes | Enforce acceptance-contract `paths_must_exist` / `paths_must_not_exist` on the worktree diff |
+| `ac_format` | issue | no | yes | Acceptance-criteria YAML format in the Issue body |
 | `allow_paths_forbidden` | issue | yes | no | allow_paths / host_allow_paths overlap with `forbidden_pr_paths` (no repair loop) |
-| `b1_ac_format` | issue | no | yes | Acceptance-criteria YAML format in the Issue body |
-| `b1_migration` | issue | no | yes | Migration plan rules for B1 |
-| `b1_milestone_subdesign` | issue | no | yes | Milestone sub-design blocks, dependency inference and fixes |
+| `b1_ac_format` | issue | no | yes | Deprecated alias of `ac_format` |
+| `b1_migration` | issue | no | yes | Deprecated alias of `migration_plan` |
+| `b1_milestone_subdesign` | issue | no | yes | Deprecated alias of `milestone_subdesign` |
 | `base_freshness` | worktree | yes | yes | Worktree includes the configured base branch (P0 fetch / rebase) |
-| `cp1` | issue | no | yes | CP1 design rules |
+| `cp1` | issue | no | yes | Deprecated alias of `design_lint` |
 | `deps` | issue | no | yes | Declared Issue dependencies are satisfied |
 | `deps_format` | issue | no | yes | Dependencies section lists `#N` refs in table/list form, not prose-only |
+| `design_lint` | issue | no | yes | CP1 design rules |
 | `external_leak` | worktree | no | yes | Persona / CJK leak checks on external `target_repo` branches |
 | `importer_import` | worktree | no | yes | Changed modules remain importable (importer smoke) |
 | `lint` | worktree | no | yes | `ruff check` on changed files (safe auto-fix may narrow scope) |
-| `m2` | issue | no | yes | M2 merge readiness rules |
+| `m2` | issue | no | yes | Deprecated alias of `ac_complete` |
+| `migration_plan` | issue | no | yes | Migration plan rules for B1 |
 | `milestone_consistency` | issue | no | yes | Split plan present without the `scope:milestone` label |
+| `milestone_subdesign` | issue | no | yes | Milestone sub-design blocks, dependency inference and fixes |
 | `pin_bump` | issue | no | yes | Reject dependency pin changes in feature Issues |
 | `pr_scope` | worktree | no | yes | PR diff paths stay within allow_paths (plus derived test paths) |
 | `scope` | worktree | no | yes | Changed files stay within allow_paths |
@@ -512,6 +517,8 @@ A file that is not found is treated as empty, which fails validation because `re
 | `andon_when` | `[]` (`p1`: `external_leak.target_unknown`) | Violation ids that raise an andon instead of a repair |
 | `repair.max` | `3` | Repair attempts for blocking violations (`0` disables repair) |
 | `repair.push` | `false` | Push the branch after a repair |
+| `tier` | (unset) | Tier selection for `issuesmith tier <id>`: `kind: design_doc` (issue body) or `pr_diff` (`light_max_diff_lines`, default `200`) |
+| `verify` | (unset) | When set to `design_doc`, `issuesmith verify <id>` runs the design-doc gate bundle (`VERIFY_RECOVERY:` markers) |
 | `review` | (unset) | Required when `requires` or `accepts` lists `review`: `role`, `template`, `success_status`, `failure_status` (required), `tier`, `problems_heading` (`Problems:`) |
 
 #### `paths` keys
