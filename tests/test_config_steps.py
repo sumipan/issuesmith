@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
-from issuesmith.config import StepConfig, get_config, load_config, reset_config_cache
+from issuesmith.config import ConfigError, StepConfig, TierConfig, get_config, load_config, reset_config_cache
 from issuesmith.ops import dispatch as dispatch_mod
 
 
@@ -36,6 +36,51 @@ def test_default_steps_has_no_m2_role_dispatch(tmp_path, monkeypatch):
     cfg = load_config()
 
     assert "m2-role-dispatch" not in cfg.steps
+
+
+def test_step_tier_and_verify_loaded_from_yaml(tmp_path, monkeypatch):
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "repo": "example/app",
+            "steps": {
+                "x": {
+                    "tier": {"kind": "pr_diff", "light_max_diff_lines": 150},
+                    "verify": "design_doc",
+                },
+            },
+        },
+    )
+    step = load_config().steps["x"]
+    assert step.tier == TierConfig(kind="pr_diff", light_max_diff_lines=150)
+    assert step.verify == "design_doc"
+
+
+def test_step_tier_invalid_kind_raises(tmp_path, monkeypatch):
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "repo": "example/app",
+            "steps": {"x": {"tier": {"kind": "unknown"}}},
+        },
+    )
+    with pytest.raises(ConfigError, match="kind must be"):
+        load_config()
+
+
+def test_step_verify_invalid_value_raises(tmp_path, monkeypatch):
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "repo": "example/app",
+            "steps": {"x": {"verify": "unknown"}},
+        },
+    )
+    with pytest.raises(ConfigError, match="verify must be"):
+        load_config()
 
 
 def test_custom_step_module_loaded_by_dispatch(tmp_path, monkeypatch):

@@ -273,7 +273,10 @@ def validate_step_requires(steps: "Mapping[str, Any]") -> None:
     the gate registry (sumipan/nexus#3687). Raises ``issuesmith.config.ConfigError``.
     Call from doctor, dispatch and ``config show``.
     """
+    import warnings
+
     from issuesmith.config import ConfigError  # noqa: PLC0415 - config must not import gates
+    from issuesmith.gate_rules import GATE_ID_ALIASES
 
     known = _known_gate_ids()
     for step_id, step in steps.items():
@@ -288,6 +291,14 @@ def validate_step_requires(steps: "Mapping[str, Any]") -> None:
                     resolve_gate(g)
                 except ConfigError:
                     unknown.append(g)
+                else:
+                    new_id = GATE_ID_ALIASES.get(g)
+                    if new_id is not None:
+                        warnings.warn(
+                            f"gate id {g!r} is deprecated; use {new_id!r}",
+                            DeprecationWarning,
+                            stacklevel=2,
+                        )
             if unknown:
                 raise ConfigError(
                     f"steps.{step_id}.{field_name} contains unknown gate ids"

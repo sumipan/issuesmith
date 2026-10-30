@@ -4,7 +4,7 @@ Returns a tier ("light" / "heavy"); the tier-to-model mapping is resolved by
 skills/system-issuesmith/scripts/engine.py per configured engine.
 """
 
-from issuesmith.config import get_config
+from issuesmith.step_tier import design_doc_tier
 
 
 def determine_b1_tier(body: str) -> str:
@@ -13,12 +13,7 @@ def determine_b1_tier(body: str) -> str:
     Design-doc templates (background / design section headings) → "heavy".
     Light-fix templates → "light".
     """
-    sections = get_config().sections
-    background = f"## {sections['background']}"
-    design = f"## {sections['design']}"
-    if background in body or design in body:
-        return "heavy"
-    return "light"
+    return design_doc_tier(body)
 
 
 def main() -> None:
