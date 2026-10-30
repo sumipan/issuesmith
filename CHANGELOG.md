@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.166.0 - 2026-10-30
+
 ### Added
 
 - `steps.<id>.tier` and `steps.<id>.verify` in config; `issuesmith.step_tier` and `issuesmith.step_verify` CLI backends.
