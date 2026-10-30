@@ -173,7 +173,7 @@ def test_narrow_allow_paths_already_within_threshold_is_a_plain_pass(tmp_path: P
 def test_b1_verify_reaches_the_same_result(tmp_path: Path) -> None:
     """AC-3: b1_verify shares gate_rules.scope_breadth — no separate narrowing logic."""
     _oversized_clone(tmp_path)
-    body = _body_with_table_and_ac(["tests/**"])
+    body = _body_with_table_and_ac(["tests/**", *_NARROW_PATHS])
     with _patch_cfg(tmp_path):
         violations = collect_violations(body, [])
     assert violations == []

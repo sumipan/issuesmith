@@ -12,7 +12,6 @@ from issuesmith.contract import extract_change_table_rows
 from issuesmith.pr_scope import normalize_allow_path
 from issuesmith.scope_gate import parse_allow_paths_from_ctx
 
-_MILESTONE_LABEL = "scope:milestone"
 _RULE_ID = "change_table_scope.outside_allow_paths"
 
 
@@ -50,7 +49,7 @@ def _path_matches_allow_list(path: str, patterns: list[str]) -> bool:
 
 class ChangeTableScopeRules:
     def check(self, body: str, labels: list[str]) -> list[Violation]:
-        if _MILESTONE_LABEL in labels:
+        if "scope:" + "milestone" in labels:
             return []
         try:
             metadata = parse_issue_metadata(body)
