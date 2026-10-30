@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from issuesmith.config import MilestoneChainConfig, reset_config_cache
+from tests.conftest import _write_nexus_config
 from issuesmith.language import EN
 from issuesmith.milestone import (
     PlanRow,
@@ -296,6 +297,9 @@ class TestChainRules:
         """C0 absorbed into queue.dispatch_one draft-done release (#2980)."""
         from issuesmith import queue as qmod
 
+        cfg_path = _write_nexus_config(tmp_path)
+        monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+        reset_config_cache()
         store = _store(tmp_path)
         store.add_in_flight(100, "claude", role="design")
         client = FakeClient(
