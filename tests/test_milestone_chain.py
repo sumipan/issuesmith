@@ -25,6 +25,7 @@ from issuesmith.milestone import (
 )
 from issuesmith.queue_store import QueueStore
 from issuesmith.queue_triage import DONE_LABEL
+from tests.conftest import _write_nexus_config
 from tests.legacy_text import ADD, CHANGE_TYPE, DESCRIPTION, FILE_PATH, REPOSITORY
 
 # Split-plan / section vocabulary comes from the language pack (EN in tests); the
@@ -296,6 +297,9 @@ class TestChainRules:
         """C0 absorbed into queue.dispatch_one draft-done release (#2980)."""
         from issuesmith import queue as qmod
 
+        cfg_path = _write_nexus_config(tmp_path)
+        monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+        reset_config_cache()
         store = _store(tmp_path)
         store.add_in_flight(100, "claude", role="design")
         client = FakeClient(

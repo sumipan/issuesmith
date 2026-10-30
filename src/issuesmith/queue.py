@@ -317,7 +317,8 @@ def _iter_issuesmith_exec_records() -> list[tuple[str, int | None]]:
             continue
         idempotency_key = str(row.get("idempotency_key", ""))
         uuid = row.get("uuid")
-        if idempotency_key.startswith("issuesmith:") and isinstance(uuid, str) and uuid:
+        prefix = f"{WORKFLOW_NAME}:"
+        if idempotency_key.startswith(prefix) and isinstance(uuid, str) and uuid:
             records.append((uuid, _issue_from_idempotency_key(idempotency_key)))
     return records
 
@@ -712,12 +713,13 @@ def _open_pr_occupancy(client: ForgePort, snap: QueueSnapshot) -> list[dict[str,
         target_repo, allow_paths = _issue_target_meta(issue)
         if not target_repo:
             continue
+        impl_phase = _primary_impl_phase_name()
         entries.append(
             {
                 "issue": issue_num,
                 "target_repo": target_repo,
                 "allow_paths": list(allow_paths),
-                "phase": "develop",
+                "phase": impl_phase,
                 "occupancy_source": "open_pr",
                 "open_pr_number": pr_num,
             }
@@ -991,8 +993,12 @@ def _queue_chain_blocked(labels: set[str], completed_phase: str) -> bool:
     if labels & terminal:
         return True
     design = _design_phase_name()
-    if design and completed_phase == design and "scope:milestone" in labels:
-        return True
+    if design and completed_phase == design:
+        impl = _primary_impl_phase_name()
+        if impl:
+            excluded = cfg.excluded_labels(impl)
+            if labels & excluded:
+                return True
     return False
 
 
@@ -1042,8 +1048,8 @@ def _try_enqueue_queue_chain(
 def _recheck_dependents_after_merge(
     client: ForgePort, issue_number: int, open_issues: list[dict[str, Any]]
 ) -> None:
-    """When a released in_flight Issue is merge-done, re-run the scope_coupling deletion
-    check on the open Issues that depend on it (nexus #3953)."""
+    """When a released in_flight Issue reaches a terminal label, re-run the scope_coupling
+    deletion check on the open Issues that depend on it (nexus #3953)."""
     closing = _closing_phase_name()
     if closing is None:
         return
@@ -1699,14 +1705,23 @@ def _apply_terminal(
         return
     if comment:
         _ensure_comment(client, issue_number, request_id, decision_kind, reason)
+    cfg = get_config()
     if add_rejected_label:
         try:
-            client.issue_update(issue_number, labels_add=["issuesmith:rejected"], labels_remove=[])
+            client.issue_update(
+                issue_number,
+                labels_add=[f"{cfg.label_namespace}:rejected"],
+                labels_remove=[],
+            )
         except Exception as exc:
             print(f"warning: failed to add rejected label: {exc}", file=sys.stderr)
     if decision_kind == "superseded":
         try:
-            client.issue_update(issue_number, labels_add=["issuesmith:superseded"], labels_remove=[])
+            client.issue_update(
+                issue_number,
+                labels_add=[f"{cfg.label_namespace}:superseded"],
+                labels_remove=[],
+            )
         except Exception as exc:
             print(f"warning: failed to add superseded label: {exc}", file=sys.stderr)
     if close_issue:
