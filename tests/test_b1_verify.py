@@ -125,6 +125,83 @@ def test_pin_bump_gate_is_registered():
     assert "pin_bump" in _GATES
 
 
+def test_change_table_scope_gate_is_registered():
+    from issuesmith.b1_verify import _GATES
+
+    assert "change_table_scope" in _GATES
+
+
+def test_change_table_scope_imported_in_gate_registry():
+    import issuesmith.gate_rules  # noqa: F401 — side-effect registration
+    from issuesmith.gate_rules import GATE_REGISTRY
+
+    assert "change_table_scope" in GATE_REGISTRY
+
+
+def test_5581_recovery_body_fails_change_table_scope(tmp_path, monkeypatch):
+    import yaml
+
+    from issuesmith.config import reset_config_cache
+    from tests import legacy_text as lt
+
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump(
+            {
+                "repo": "sumipan/nexus",
+                "scope_gate": {"enabled": False},
+                "installs": {
+                    "issuesmith": "/var/tmp/issuesmith",
+                    "ghdag": "/var/tmp/ghdag",
+                    "mltgnt": "/var/tmp/mltgnt",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    table = (
+        f"| {lt.REPOSITORY} | {lt.FILE_PATH} | {lt.CHANGE_TYPE} | {lt.DESCRIPTION} |\n"
+        "|---|---|---|---|\n"
+        "| `sumipan/nexus` | `pyproject.toml` | modify | raise ghdag pin |\n"
+        "| `sumipan/nexus` | `tests/conventions/test_required_upstream_apis_exist.py` | modify | assert pin |\n"
+    )
+    recovery_body = f"""\
+```yaml
+target_repo: sumipan/nexus
+base_branch: main
+allow_paths:
+  - tests/conventions/test_required_upstream_apis_exist.py
+```
+
+## Design
+
+Bump the ghdag pin to ghdag v0.104.5 in pyproject.toml.
+
+### Change targets
+
+{table}"""
+    consistent_body = recovery_body.replace(
+        "allow_paths:\n  - tests/conventions/test_required_upstream_apis_exist.py",
+        "allow_paths:\n  - pyproject.toml\n  - tests/conventions/test_required_upstream_apis_exist.py",
+    )
+    try:
+        recovery_v = collect_violations(recovery_body, [])
+        consistent_v = collect_violations(consistent_body, [])
+    finally:
+        reset_config_cache()
+    assert any(
+        v.rule_id == "change_table_scope.outside_allow_paths"
+        and v.location == "pyproject.toml"
+        for v in recovery_v
+    )
+    assert not any(
+        v.rule_id == "change_table_scope.outside_allow_paths" for v in consistent_v
+    )
+    assert not any(v.rule_id == "pin_bump.in_feature_issue" for v in consistent_v)
+
+
 def test_allow_paths_forbidden_gate_is_registered():
     assert "allow_paths_forbidden" in _GATES
 

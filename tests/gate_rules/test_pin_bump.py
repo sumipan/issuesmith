@@ -10,6 +10,7 @@ from issuesmith.b1_verify import collect_violations
 from issuesmith.config import reset_config_cache
 from issuesmith.gate_rules import GATE_REGISTRY
 from issuesmith.gate_rules.pin_bump import _self_package
+from tests import legacy_text as lt
 
 _INSTALLS = {
     "issuesmith": "/var/tmp/issuesmith",
@@ -264,3 +265,119 @@ def test_in_feature_issue_fix_hint_discourages_self_requires_pin():
     hint = violations[0].fix_hint or ""
     assert "requires_pins" in hint
     assert "target_repo" in hint.lower() or "own" in hint.lower() or "self" in hint.lower()
+
+
+_PIN_ONLY_5581_BODY = f"""\
+```yaml
+target_repo: sumipan/nexus
+base_branch: main
+allow_paths:
+  - pyproject.toml
+  - tests/conventions/test_required_upstream_apis_exist.py
+```
+
+## Design
+
+Bump the ghdag pin to ghdag v0.104.5 in pyproject.toml.
+
+### Change targets
+
+| {lt.REPOSITORY} | {lt.FILE_PATH} | {lt.CHANGE_TYPE} | {lt.DESCRIPTION} |
+|---|---|---|---|
+| `sumipan/nexus` | `pyproject.toml` | modify | raise ghdag pin |
+| `sumipan/nexus` | `tests/conventions/test_required_upstream_apis_exist.py` | modify | assert pin |
+"""
+
+
+def test_pin_only_dependency_bump_passes_without_bump_label():
+    assert _check(_PIN_ONLY_5581_BODY, []) == []
+
+
+def test_pin_only_with_src_row_still_fails_in_feature_issue():
+    body = _PIN_ONLY_5581_BODY.replace(
+        "| `sumipan/nexus` | `tests/conventions/test_required_upstream_apis_exist.py` | modify | assert pin |",
+        "| `sumipan/nexus` | `src/foo.py` | modify | impl |",
+    )
+    violations = _check(body, [])
+    assert len(violations) == 1
+    assert violations[0].rule_id == "pin_bump.in_feature_issue"
+
+
+def test_pin_only_with_changelog_row_still_fails_in_feature_issue():
+    body = _PIN_ONLY_5581_BODY + (
+        "\n| `sumipan/nexus` | `CHANGELOG.md` | modify | note |\n"
+    )
+    violations = _check(body, [])
+    assert len(violations) == 1
+    assert violations[0].rule_id == "pin_bump.in_feature_issue"
+
+
+def test_pin_only_no_table_keeps_existing_pyproject_pin_detection():
+    body = """\
+```yaml
+target_repo: sumipan/nexus
+base_branch: main
+allow_paths:
+  - pyproject.toml
+  - src/foo.py
+```
+
+## Design
+
+Bump the issuesmith pin to issuesmith v0.133.1 in pyproject.toml.
+"""
+    violations = _check(body, [])
+    assert len(violations) == 1
+    assert violations[0].rule_id == "pin_bump.in_feature_issue"
+
+
+def test_pin_only_other_repo_rows_only_unchanged():
+    body = """\
+```yaml
+target_repo: sumipan/nexus
+base_branch: main
+allow_paths:
+  - pyproject.toml
+```
+
+## Design
+
+Requires issuesmith v0.133.1 after the bump workflow lands.
+
+### Change targets
+
+| {lt.REPOSITORY} | {lt.FILE_PATH} | {lt.CHANGE_TYPE} | {lt.DESCRIPTION} |
+|---|---|---|---|
+| `sumipan/ghdag` | `pyproject.toml` | modify | version |
+"""
+    violations = _check(body, [])
+    assert len(violations) == 1
+    assert violations[0].rule_id == "pin_bump.in_feature_issue"
+
+
+def test_pin_only_self_requires_pin_still_fails():
+    body = """\
+```yaml
+target_repo: sumipan/issuesmith
+base_branch: main
+allow_paths:
+  - pyproject.toml
+  - tests/foo/test_bar.py
+requires_pins:
+  issuesmith: v0.157.2
+```
+
+## Design
+
+Pin-only table with invalid self requires_pins.
+
+### Change targets
+
+| {lt.REPOSITORY} | {lt.FILE_PATH} | {lt.CHANGE_TYPE} | {lt.DESCRIPTION} |
+|---|---|---|---|
+| `sumipan/issuesmith` | `pyproject.toml` | modify | pin |
+| `sumipan/issuesmith` | `tests/foo/test_bar.py` | modify | test |
+"""
+    violations = _check(body, [])
+    assert len(violations) == 1
+    assert violations[0].rule_id == "pin_bump.self_requires_pin"
