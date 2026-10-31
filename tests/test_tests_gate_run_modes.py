@@ -178,29 +178,24 @@ def test_mapped_four_new_failures_returned_together(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Mapped run without -x reports every new failure in one evaluation (#5787)."""
-    output = "\n".join(
-        f"FAILED tests/test_foo.py::test_ok_{i} - assert 99 == 1"
-        for i in range(4)
+    tests = "from foo import value\n\n" + "\n\n".join(
+        f"def test_value_{i}():\n    assert value() == 1" for i in range(4)
     ) + "\n"
-    calls: list[list[str]] = []
+    clone = _setup_repo(tmp_path, {
+        "src/foo.py": _FOO,
+        "tests/test_foo.py": tests,
+    })
+    _commit(clone, {"src/foo.py": "def value():\n    return 2\n"})
+    calls = _count_calls(monkeypatch, clone)
 
-    def fake_run(root: Path, args: list[str]) -> tuple[int, str]:
-        calls.append(list(args))
-        if any("--durations" in a for a in args):
-            return 0, ""
-        return 1, output
-
-    monkeypatch.setattr(wt, "_run_pytest", fake_run)
-    monkeypatch.setattr(wt, "changed_files", lambda root, base: ["src/foo.py"])
-    monkeypatch.setattr(wt, "_baseline_failed_func_ids", lambda *a, **k: set())
-    (tmp_path / "tests").mkdir()
-    (tmp_path / "tests" / "test_foo.py").write_text("")
-
-    violations = TestsGate(tmp_path, base_branch="main").check("", [])
+    violations = TestsGate(clone, base_branch="main").check("", [])
 
     assert len(calls) == 1
     assert "-x" not in calls[0]
     assert [v.rule_id for v in violations] == ["tests.pytest_failure"] * 4
+    assert [v.message.split(" - ", 1)[0] for v in violations] == [
+        f"FAILED tests/test_foo.py::test_value_{i}" for i in range(4)
+    ]
 
 
 # ---------------------------------------------------------------------------
