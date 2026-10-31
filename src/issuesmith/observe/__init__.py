@@ -254,7 +254,14 @@ def _detect_stall(
             dispatched = dispatched.replace(tzinfo=timezone.utc)
         elapsed_min = int((now.timestamp() - dispatched.timestamp()) / 60)
         if elapsed_min >= stall_minutes:
-            phase = phase_by_issue.get(issue, _role_to_phase(entry.get("role", ""), config))
+            if issue in phase_by_issue:
+                phase = phase_by_issue[issue]
+            else:
+                entry_phase = entry.get("phase")
+                if isinstance(entry_phase, str) and entry_phase:
+                    phase = entry_phase
+                else:
+                    phase = _role_to_phase(entry.get("role", ""), config)
             events.append(IssueStallEvent(issue=issue, phase=phase, minutes=elapsed_min))
 
     return events
