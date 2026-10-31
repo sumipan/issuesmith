@@ -1946,3 +1946,313 @@ def test_sub_plan_dep_format_violation_auto_fixable():
     assert len(hits) == 1 and hits[0].auto_fixable
     fixed = _dep_body(_projection_subs(), ["none", "#2"])
     assert not [v for v in _check(fixed, MILESTONE_LABELS) if v.rule_id == _SUB_PLAN_DEP_FORMAT_ID]
+
+
+# ---------------------------------------------------------------------------
+# #5750 — deletion AC consistency and sibling referrer dependencies
+# ---------------------------------------------------------------------------
+
+_DELETED_IN_EXIST = "b1_milestone_subdesign.deleted_path_in_paths_must_exist"
+_REFERRER_DEP = "b1_milestone_subdesign.deletion_referrer_in_sibling_without_dependency"
+
+
+def _sub_with_structured_ac(
+    num: int,
+    title: str,
+    rows: list[tuple[str, str, str]],
+    *,
+    paths_must_exist: list[str] | None = None,
+    paths_must_not_exist: list[str] | None = None,
+) -> str:
+    table = "\n".join(
+        f"| `sumipan/nexus` | `{path}` | {change_type} | {desc} |"
+        for path, change_type, desc in rows
+    )
+    exist = paths_must_exist if paths_must_exist is not None else []
+    not_exist = paths_must_not_exist if paths_must_not_exist is not None else []
+    exist_yaml = (
+        "paths_must_exist: []"
+        if not exist
+        else "paths_must_exist:\n" + "\n".join(f"  - {p}" for p in exist)
+    )
+    not_yaml = (
+        "paths_must_not_exist: []"
+        if not not_exist
+        else "paths_must_not_exist:\n" + "\n".join(f"  - {p}" for p in not_exist)
+    )
+    return f"""\
+#### {SUB}{num}: {title}
+
+**Scope**: scope {num}
+**Design Policy**: policy {num}
+**Changed Files**:
+| {_TABLE_HEADER} |
+|---|---|---|---|
+{table}
+
+**Acceptance Criteria**:
+```yaml
+{exist_yaml}
+{not_yaml}
+```
+- [ ] alpha {num}
+- [ ] beta {num}
+- [ ] gamma {num}
+"""
+
+
+def _milestone_with_subs(
+    subs: list[str],
+    *,
+    plan_deps: list[str] | None = None,
+    parent_prefix: str = "",
+    parent_ac: str = "",
+    allow_paths: tuple[str, ...] = ("docs/**",),
+) -> str:
+    cfg = get_config()
+    plan_deps = plan_deps or [cfg.language.no_deps_word] * len(subs)
+    plan_rows = "\n".join(
+        f"| {i + 1} | sub{i + 1} | sumipan/nexus | scope{i + 1} | {plan_deps[i]} |"
+        for i in range(len(subs))
+    )
+    parent_ac_block = parent_ac or "```yaml\npaths_must_exist: []\npaths_must_not_exist: []\n```"
+    allow = "\n".join(f"  - {p}" for p in allow_paths)
+    return f"""\
+```yaml
+target_repo: sumipan/nexus
+base_branch: main
+allow_paths:
+{allow}
+```
+
+## {cfg.sections['design']}
+
+{parent_prefix}
+{chr(10).join(subs)}
+
+## {cfg.sections['milestone']}
+
+### {cfg.sections['sub_plan']}
+{cfg.language.sub_plan_header}
+|---|---|---|---|---|
+{plan_rows}
+
+## {cfg.sections['acceptance_criteria']}
+
+{parent_ac_block}
+"""
+
+
+def test_deleted_path_in_paths_must_exist_sub():
+    body = _milestone_with_subs([
+        _sub_with_structured_ac(
+            1,
+            "drop",
+            [("tools/foo/old.py", "Delete", "remove")],
+            paths_must_exist=["tools/foo/old.py"],
+        ),
+    ])
+    hits = [v for v in _check(body, MILESTONE_LABELS) if v.rule_id == _DELETED_IN_EXIST]
+    assert len(hits) == 1
+    assert "tools/foo/old.py" in hits[0].message
+    assert hits[0].auto_fixable
+
+
+def test_deleted_path_in_paths_must_exist_fixed_by_not_exist():
+    body = _milestone_with_subs([
+        _sub_with_structured_ac(
+            1,
+            "drop",
+            [("tools/foo/old.py", "Delete", "remove")],
+            paths_must_not_exist=["tools/foo/old.py"],
+        ),
+    ])
+    assert _DELETED_IN_EXIST not in _rule_ids(_check(body, MILESTONE_LABELS))
+
+
+def test_deleted_path_in_paths_must_exist_other_sub_ignored():
+    body = _milestone_with_subs([
+        _sub_with_structured_ac(
+            1,
+            "keep",
+            [("src/a.py", "Modify", "change")],
+            paths_must_exist=["tools/foo/old.py"],
+        ),
+        _sub_with_structured_ac(
+            2,
+            "drop",
+            [("tools/foo/old.py", "Delete", "remove")],
+            paths_must_exist=["tools/foo/old.py"],
+        ),
+    ])
+    hits = [v for v in _check(body, MILESTONE_LABELS) if v.rule_id == _DELETED_IN_EXIST]
+    assert len(hits) == 1
+    assert hits[0].location == f"#### {SUB}2"
+
+
+def test_deleted_path_in_paths_must_exist_parent_table_only():
+    parent_table = f"""\
+**Changed Files**:
+| {_TABLE_HEADER} |
+|---|---|---|---|
+| `sumipan/nexus` | `tools/parent/old.py` | Delete | drop |
+"""
+    parent_ac = """```yaml
+paths_must_exist:
+  - tools/parent/old.py
+paths_must_not_exist: []
+```"""
+    body = _milestone_with_subs(
+        [_sub_with_structured_ac(1, "sub", [("src/x.py", "Add", "new")])],
+        parent_prefix=parent_table,
+        parent_ac=parent_ac,
+    )
+    hits = [v for v in _check(body, MILESTONE_LABELS) if v.rule_id == _DELETED_IN_EXIST]
+    assert len(hits) == 1
+    assert "tools/parent/old.py" in hits[0].message
+    assert hits[0].location == "## Acceptance Criteria"
+
+
+def test_deleted_path_ac_skipped_when_yaml_invalid():
+    block = _sub_with_structured_ac(
+        1,
+        "drop",
+        [("tools/foo/old.py", "Delete", "remove")],
+        paths_must_exist=["tools/foo/old.py"],
+    ).replace(
+        "paths_must_exist:",
+        "paths_must_exist: not-a-list",
+        1,
+    )
+    body = _milestone_with_subs([block])
+    assert _DELETED_IN_EXIST not in _rule_ids(_check(body, MILESTONE_LABELS))
+
+
+def test_deletion_referrer_dependency_without_plan_dep(deletion_repo):
+    body = _milestone_with_subs([
+        _sub_with_structured_ac(
+            1,
+            "drop",
+            [("src/pkg/old.py", "Delete", "remove")],
+            paths_must_not_exist=["src/pkg/old.py"],
+        ),
+        _sub_with_structured_ac(
+            2,
+            "follow",
+            [("src/pkg/user.py", "Modify", "update import")],
+        ),
+    ])
+    hits = [v for v in _check(body, MILESTONE_LABELS) if v.rule_id == _REFERRER_DEP]
+    assert len(hits) == 1
+    assert "src/pkg/old.py" in hits[0].message
+    assert "src/pkg/user.py" in hits[0].message
+    assert "Sub 1" in hits[0].message
+    assert "Sub 2" in hits[0].message
+    assert not hits[0].auto_fixable
+
+
+def test_deletion_referrer_dependency_passes_with_hash_dep(deletion_repo):
+    body = _milestone_with_subs(
+        [
+            _sub_with_structured_ac(
+                1,
+                "drop",
+                [("src/pkg/old.py", "Delete", "remove")],
+                paths_must_not_exist=["src/pkg/old.py"],
+            ),
+            _sub_with_structured_ac(
+                2,
+                "follow",
+                [("src/pkg/user.py", "Modify", "update import")],
+            ),
+        ],
+        plan_deps=["#2", get_config().language.no_deps_word],
+    )
+    assert _REFERRER_DEP not in _rule_ids(_check(body, MILESTONE_LABELS))
+
+
+def test_deletion_referrer_dependency_skipped_when_referrer_in_same_sub(deletion_repo):
+    body = _milestone_with_subs([
+        _sub_with_structured_ac(
+            1,
+            "drop",
+            [
+                ("src/pkg/old.py", "Delete", "remove"),
+                ("src/pkg/user.py", "Modify", "update import"),
+            ],
+            paths_must_not_exist=["src/pkg/old.py"],
+        ),
+    ])
+    assert _REFERRER_DEP not in _rule_ids(_check(body, MILESTONE_LABELS))
+
+
+def test_deletion_referrer_dependency_skipped_without_clone(monkeypatch):
+    monkeypatch.setattr(
+        "issuesmith.gate_rules.scope_coupling.resolve_scope_root",
+        lambda metadata, cfg: None,
+    )
+    body = _milestone_with_subs([
+        _sub_with_structured_ac(
+            1,
+            "drop",
+            [("src/pkg/old.py", "Delete", "remove")],
+            paths_must_exist=["src/pkg/old.py"],
+        ),
+        _sub_with_structured_ac(
+            2,
+            "follow",
+            [("src/pkg/user.py", "Modify", "update import")],
+        ),
+    ])
+    assert _REFERRER_DEP not in _rule_ids(_check(body, MILESTONE_LABELS))
+
+
+def test_issue_5744_shape_reports_both_new_rules(deletion_repo):
+    body = _milestone_with_subs([
+        _sub_with_structured_ac(
+            1,
+            "drop",
+            [("src/pkg/old.py", "Delete", "remove module")],
+            paths_must_exist=["src/pkg/old.py"],
+        ),
+        _sub_with_structured_ac(
+            2,
+            "follow",
+            [("src/pkg/user.py", "Modify", "fix import")],
+        ),
+    ])
+    rule_ids = _rule_ids(_check(body, MILESTONE_LABELS))
+    assert _DELETED_IN_EXIST in rule_ids
+    assert _REFERRER_DEP in rule_ids
+    assert _ORPHAN_RULE not in rule_ids
+
+
+def test_placeholder_design_fix_hint_allows_ac_key_moves():
+    from issuesmith.gate_rules.b1_milestone_subdesign import (
+        PLACEHOLDER_DESIGN_ID,
+        PLACEHOLDER_DESIGN_MARKER,
+    )
+
+    promoted_body = _minimal_milestone_with_sub(
+        f"""\
+#### {SUB}1: foo
+
+**Scope**: {PLACEHOLDER_DESIGN_MARKER} `foo`
+**Design Policy**: Real policy
+**Changed Files**:
+| {_TABLE_HEADER} |
+|---|---|---|---|
+| `sumipan/nexus` | `tools/foo/a.py` | Add | add |
+
+**Acceptance Criteria**:
+- [ ] Concern `foo` change table lists every assigned path
+- [ ] Sub design `1` includes the required subsections
+- [ ] Parent change-file union includes every path under `foo`
+"""
+    )
+    hits = [v for v in _check(promoted_body, MILESTONE_LABELS) if v.rule_id == PLACEHOLDER_DESIGN_ID]
+    assert hits
+    hint = hits[0].fix_hint or ""
+    assert "paths_must_exist" in hint
+    assert "paths_must_not_exist" in hint
+    assert "or YAML blocks" not in hint

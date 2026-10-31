@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 from typing import cast
 
+import yaml
 from ghdag.workflow.gates import GATE_REGISTRY, Violation
 
 from issuesmith.config import get_config
@@ -190,6 +191,168 @@ def _has_glob(path: str) -> bool:
     return any(ch in path for ch in "*?[")
 
 
+def _ac_yaml_contract_from_text(text: str) -> dict[str, list[str]] | None:
+    """Parse structured AC YAML from a section or sub block; ``None`` when absent or invalid."""
+    from issuesmith.gate_rules.b1_ac_format import extract_yaml_block
+
+    ac = get_config().sections["acceptance_criteria"]
+    ac_match = re.search(
+        rf"\*\*{re.escape(ac)}\*\*:?\s*\n(.*?)(?=\*\*|\Z)",
+        text,
+        re.DOTALL,
+    )
+    if ac_match:
+        yaml_source = ac_match.group(1)
+    else:
+        yaml_source = text
+    yaml_text = extract_yaml_block(yaml_source)
+    if yaml_text is None:
+        return None
+    try:
+        data = yaml.safe_load(yaml_text)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    exist = data.get("paths_must_exist")
+    not_exist = data.get("paths_must_not_exist")
+    if exist is not None and not isinstance(exist, list):
+        return None
+    if not_exist is not None and not isinstance(not_exist, list):
+        return None
+    return {
+        "paths_must_exist": [
+            str(p).strip() for p in (exist or []) if str(p).strip()
+        ],
+        "paths_must_not_exist": [
+            str(p).strip() for p in (not_exist or []) if str(p).strip()
+        ],
+    }
+
+
+def _check_deleted_path_ac_contradiction(
+    location: str,
+    change_rows: list[tuple[str, str, str, str]],
+    text: str,
+) -> list[Violation]:
+    contract = _ac_yaml_contract_from_text(text)
+    if contract is None:
+        return []
+    must_exist = set(contract["paths_must_exist"])
+    violations: list[Violation] = []
+    for _, path, change_type, content in change_rows:
+        if not _is_deletion_row(change_type, content):
+            continue
+        if path not in must_exist:
+            continue
+        violations.append(
+            Violation(
+                rule_id=_DELETED_PATH_IN_EXIST_ID,
+                severity="fail",
+                message=(
+                    f"deleted path `{path}` is listed in paths_must_exist"
+                    " (use paths_must_not_exist for deletions)"
+                ),
+                location=location,
+                auto_fixable=True,
+                fix_hint=(
+                    f"Move `{path}` from paths_must_exist to paths_must_not_exist"
+                    " in the structured AC YAML block"
+                ),
+            )
+        )
+    return violations
+
+
+def _parent_design_prefix(body: str) -> str:
+    design = get_section(body, get_config().sections["design"]) or ""
+    sub_match = _SUB_HEADER_RE.search(design)
+    return design[: sub_match.start()] if sub_match else ""
+
+
+def _check_parent_deleted_path_ac_contradiction(body: str) -> list[Violation]:
+    prefix = _parent_design_prefix(body)
+    if not prefix.strip():
+        return []
+    rows = change_rows_with_content(prefix)
+    if not any(_is_deletion_row(ct, c) for _, _, ct, c in rows):
+        return []
+    from issuesmith.gate_rules.b1_ac_format import get_ac_section
+
+    ac_section = get_ac_section(body)
+    if ac_section is None:
+        return []
+    ac_heading = get_config().sections["acceptance_criteria"]
+    return _check_deleted_path_ac_contradiction(
+        f"## {ac_heading}",
+        rows,
+        ac_section,
+    )
+
+
+def _check_deletion_referrer_dependency(
+    body: str,
+    sub_blocks: list[tuple[int, str]],
+    dependencies: dict[int, set[int]],
+) -> list[Violation]:
+    from issuesmith.gate_rules import scope_coupling
+
+    if not any(
+        _is_deletion_row(change_type, content)
+        for _, block in sub_blocks
+        for _, _, change_type, content in change_rows_with_content(block)
+    ):
+        return []
+    try:
+        metadata = parse_issue_metadata(body)
+    except Exception:
+        return []
+    root = scope_coupling.resolve_scope_root(metadata, get_config())
+    if root is None:
+        return []
+    allow_paths = sorted(_allow_paths_union(body))
+    _, sibling_handled = scope_coupling._deletion_hits(body, allow_paths, root)
+
+    deletions_by_sub: dict[int, list[str]] = {}
+    for sub_num, block in sub_blocks:
+        for _, path, change_type, content in change_rows_with_content(block):
+            if _is_deletion_row(change_type, content):
+                deletions_by_sub.setdefault(sub_num, []).append(path)
+
+    violations: list[Violation] = []
+    seen: set[tuple[int, str, int]] = set()
+    for d_sub, paths in deletions_by_sub.items():
+        declared = dependencies.get(d_sub, set())
+        for deleted_path in paths:
+            for referrer, owner_sub in sibling_handled.get(deleted_path, []):
+                if owner_sub == d_sub:
+                    continue
+                if owner_sub in declared:
+                    continue
+                key = (d_sub, deleted_path, owner_sub)
+                if key in seen:
+                    continue
+                seen.add(key)
+                violations.append(
+                    Violation(
+                        rule_id=_REFERRER_WITHOUT_DEP_ID,
+                        severity="fail",
+                        message=(
+                            f"Sub {d_sub} deletes `{deleted_path}` but referrer"
+                            f" `{referrer}` is owned by Sub {owner_sub} and row {d_sub}"
+                            f" does not depend on #{owner_sub}"
+                        ),
+                        location=_sub_location(d_sub),
+                        auto_fixable=False,
+                        fix_hint=(
+                            f"Add #{owner_sub} to sub plan row {d_sub}'s depends-on"
+                            f" column, or move `{referrer}` into Sub {d_sub}'s change table"
+                        ),
+                    )
+                )
+    return violations
+
+
 def _is_deletion_row(change_type: str, content: str) -> bool:
     from issuesmith.gate_rules import scope_coupling
 
@@ -250,6 +413,10 @@ def _extract_file_refs_from_text(text: str) -> set[str]:
 
 _DEPENDENCY_MISSING_ID = "b1_milestone_subdesign.sibling_new_file_unreferenced_dependency"
 _DEPENDENCY_CYCLE_ID = "b1_milestone_subdesign.dependency_cycle"
+_DELETED_PATH_IN_EXIST_ID = "b1_milestone_subdesign.deleted_path_in_paths_must_exist"
+_REFERRER_WITHOUT_DEP_ID = (
+    "b1_milestone_subdesign.deletion_referrer_in_sibling_without_dependency"
+)
 
 PLACEHOLDER_DESIGN_MARKER = "Split work for concern"
 PLACEHOLDER_CHANGE_CONTENT = "split from oversized issue"
@@ -722,10 +889,19 @@ class B1MilestoneSubdesignRules:
         violations.extend(self._check_deletion_reference_orphan(body, sub_blocks))
         violations.extend(_check_sub_plan_dep_format(body))
         dependencies = _sub_plan_dependencies(body)
+        violations.extend(_check_deletion_referrer_dependency(body, sub_blocks, dependencies))
+        violations.extend(_check_parent_deleted_path_ac_contradiction(body))
         violations.extend(self._check_behavior_test_in_sibling(sub_blocks, dependencies))
         violations.extend(self._check_inferred_dependencies(body, sub_blocks))
         for sub_num, block in sub_blocks:
             violations.extend(self._check_sub_ac_contradiction(sub_num, block))
+            violations.extend(
+                _check_deleted_path_ac_contradiction(
+                    _sub_location(sub_num),
+                    change_rows_with_content(block),
+                    block,
+                )
+            )
             violations.extend(
                 self._check_sub_order_without_dependency(sub_num, block, dependencies)
             )
@@ -763,8 +939,10 @@ class B1MilestoneSubdesignRules:
             " acceptance criteria beyond the three promotion templates (concern path"
             " list, required subsections, parent union). Derive scope, design policy,"
             " change content and AC from the parent ## Design section and the parent"
-            f" change table. Do not change the `####` sub header, change-table paths,"
-            " or YAML blocks."
+            f" change table. Do not change the `####` sub header or change-table paths."
+            " You may move listed paths between paths_must_exist and"
+            " paths_must_not_exist in the structured AC YAML to match change types;"
+            " do not add or remove paths from those lists."
         )
         return [
             Violation(

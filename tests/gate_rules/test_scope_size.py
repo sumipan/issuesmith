@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from issuesmith.config import reset_config_cache
+from issuesmith.config import get_config, reset_config_cache
 from issuesmith.gate_rules.scope_size import ScopeSizeRules, measure_size
 
 _FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
@@ -925,3 +925,71 @@ def test_atomic_phrase_logs_matched_phrase(tmp_path, monkeypatch, caplog):
     with caplog.at_level(logging.INFO, logger="issuesmith.gate_rules.scope_size"):
         assert is_atomic(body)
     assert _ATOMIC_PHRASE_JP in caplog.text
+
+
+# --- Promotion AC YAML by change kind (#5750) ---
+
+
+def _build_sub_block_for_rows(rows: list[tuple[str, str]]) -> str:
+    from issuesmith.gate_rules.scope_size import _build_sub_block
+
+    cfg = get_config()
+    sections = cfg.sections
+    full_rows = [
+        ("sumipan/issuesmith", path, _decode(kind), "desc") for path, kind in rows
+    ]
+    return _build_sub_block(
+        1,
+        "concern-a",
+        full_rows,
+        target_repo="sumipan/issuesmith",
+        subsections=cfg.sub_design_subsections,
+        changed_label=sections["changed_files"],
+        ac_label=sections["acceptance_criteria"],
+    )
+
+
+def _structured_ac_yaml(block: str) -> dict:
+    match = re.search(r"```yaml\n(.*?)\n```", block, re.DOTALL)
+    assert match, block
+    return yaml.safe_load(match.group(1))
+
+
+def test_build_sub_block_ac_delete_only():
+    block = _build_sub_block_for_rows([
+        ("tools/a.py", _DELETE),
+        ("tools/b.py", _DELETE),
+    ])
+    ac = _structured_ac_yaml(block)
+    assert ac["paths_must_exist"] == []
+    assert ac["paths_must_not_exist"] == ["tools/a.py", "tools/b.py"]
+
+
+def test_build_sub_block_ac_modify_only():
+    block = _build_sub_block_for_rows([
+        ("src/x.py", _MODIFY),
+        ("src/y.py", _NEW),
+    ])
+    ac = _structured_ac_yaml(block)
+    assert ac["paths_must_not_exist"] == []
+    assert ac["paths_must_exist"] == ["src/x.py", "src/y.py"]
+
+
+def test_build_sub_block_ac_mixed_delete_and_modify():
+    block = _build_sub_block_for_rows([
+        ("src/old.py", _DELETE),
+        ("src/new.py", _NEW),
+        ("src/mid.py", _MODIFY),
+    ])
+    ac = _structured_ac_yaml(block)
+    assert ac["paths_must_not_exist"] == ["src/old.py"]
+    assert ac["paths_must_exist"] == ["src/new.py", "src/mid.py"]
+    assert "paths_must_exist: []" not in block
+    assert "paths_must_not_exist: []" not in block
+
+
+def test_build_sub_block_ac_empty_lists_use_brackets():
+    block = _build_sub_block_for_rows([])
+    ac = _structured_ac_yaml(block)
+    assert ac["paths_must_exist"] == []
+    assert ac["paths_must_not_exist"] == []
