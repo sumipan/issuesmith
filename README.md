@@ -7,31 +7,31 @@ issuesmith is a toolkit for GitHub Issue workflows driven by labels, built on [g
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.161.0-blue)
+![version](https://img.shields.io/badge/version-v0.167.5-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.161.0** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.167.5** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.161.0"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.167.5"
 ```
 
 The gates, forge access, `observe`, `andon`, `lanes` and `metrics` import ghdag, so install the `ghdag` extra unless another package already provides ghdag. The base package alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.161.0"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.167.5"
 ```
 
 | Item | Value |
 |---|---|
 | Python | `>=3.10` (tested on 3.10, 3.11, 3.12) |
 | Runtime dependencies | `pyyaml`, `ruamel.yaml`, `packaging`, `python-dotenv` |
-| `[ghdag]` extra | `ghdag @ git+https://github.com/sumipan/ghdag.git@v0.106.0` |
-| `[dev]` extra | `pytest`, `pytest-cov`, `mypy`, `ruff`, ghdag `v0.106.0` |
+| `[ghdag]` extra | `ghdag @ git+https://github.com/sumipan/ghdag.git@v0.106.2` |
+| `[dev]` extra | `pytest`, `pytest-cov`, `mypy`, `ruff`, ghdag `v0.106.2` |
 | Console script | `issuesmith` (`issuesmith.cli:main`) |
 
 See [TESTING.md](./TESTING.md) for what tests should and should not pin.
@@ -145,6 +145,7 @@ Run a command as `python3 -m issuesmith <command>` or through the `issuesmith` c
 |---|---|
 | `engine show` | Print the effective engine and model per role |
 | `engine check` | Validate commands, models and workflow drift |
+| `engine clear <engine> [--kind {budget,failure,manual,drain}]` | Clear quota pause sources for an engine (all kinds when `--kind` is omitted) |
 | `engine switch <role> <engine> [--model M] [--light-model M]` | Switch one role (`design` or `implementation`) |
 | `engine run-guarded <role> <template> --failure-status S [--cwd D] [--tier T] [--success S] [--emit-status S] [--requires-step ID] [vars...]` | Run an LLM template, then evaluate the step's `requires` gates |
 | `engine run-verified <role> <template> --failure-status S --verify V --recover R [--max-loops N] [--recover-tier T] [--skip-verify-on S] ...` | Run with a verify / recover loop (`--max-loops` default 2, `--recover-tier` default `light`) |
@@ -160,11 +161,12 @@ Global options: `--queue-path`, `--state-path`, `--lock-path`.
 |---|---|
 | `queue enqueue --issue N --phase P --source S --actor-kind {human,automation} --priority {high,normal,low} --requested-by X [--force] [--after N]` | Queue an Issue for a configured phase (`--after` is repeatable) |
 | `queue tick [--seed PATH]` | Triage and dispatch queued requests |
-| `queue status [--json]` | Show queue state; `--json` adds a read-only dispatch `plan` snapshot (revision, halt, in_flight, planned entries) |
+| `queue status [--json]` | Show queue state including `blocks[]` (scope, kind, reason, until, set_by); `--json` also emits legacy `halt` fields (read-only migration) plus a dispatch `plan` snapshot |
 | `queue doctor` | Report untracked in-flight Issues |
-| `queue reset` | Clear the halt state |
+| `queue reset` | Acknowledge reset without changing queue blocks (use `queue unblock` to remove blocks) |
+| `queue unblock [--kind K] [--scope S]` | Remove matching entries from `blocks[]` |
 | `queue dequeue --request-id ID [--reason R]` | Remove a request |
-| `queue audit` | Check queue store integrity (offline checks) |
+| `queue audit` | Check queue store integrity |
 | `queue triage-log [--last N] [--path P]` | Show recent triage log entries (default 20) |
 | `queue migrate [--from-night-queue-state P] [--seed P] [--dry-run]` | Migrate from the legacy night-queue state |
 | `queue release --issue N` | Release a design-slot in-flight entry (recovery only) |
@@ -285,6 +287,11 @@ issuesmith is pre-1.0 and follows `0.Y.Z`: a `Y` bump may change or remove publi
 |---|---|
 | `recover` command (emits `FutureWarning`) | `resume <issue> --from <step>` |
 | `redispatch` command (emits `FutureWarning`) | `resume <issue> --phase <phase>` |
+| `cp1-gate` / `m2-gate` CLI (emit `DeprecationWarning`) | `issuesmith gate cp1` / `issuesmith gate m2` |
+| `b1-verify` CLI (emit `DeprecationWarning`) | `issuesmith verify b1` (with `steps.b1.verify: design_doc`) |
+| Gate ids `cp1`, `m2`, `b1_ac_format`, `b1_migration`, `b1_milestone_subdesign` in `steps.*.requires` | `design_lint`, `ac_complete`, `ac_format`, `migration_plan`, `milestone_subdesign` (removed in the next minor) |
+| `issuesmith tier <id>` / `verify <id>` via undeclared `issuesmith.<id>_tier` / `issuesmith.<id>_verify` modules (emit `DeprecationWarning`) | Declare `steps.<id>.tier` / `steps.<id>.verify` in `issuesmith.yaml` and use `issuesmith tier` / `issuesmith verify` |
+| `paths.brake_state` for engine pause / quota dispatch | `paths.quota_state` (legacy `halt*` fields are converted on read and not written back) |
 | `apply` / `ingest-review` commands (exit 2) | The host's `tools/stash/` scripts |
 | `issuesmith.yaml` keys `sections`, `sub_design_subsections`, `scope_size.delete_words` / `new_words` / `sub_plan_header` / `no_deps_word` (emit `DeprecationWarning`) | `language_pack` |
 
@@ -318,6 +325,7 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/gate_rules/b1_ac_format.py` | Acceptance-criteria YAML format rules |
 | `issuesmith/gate_rules/b1_migration.py` | Migration plan rules |
 | `issuesmith/gate_rules/b1_milestone_subdesign.py` | Milestone sub-design rules and dependency inference |
+| `issuesmith/gate_rules/change_table_scope.py` | Change-table path scope vs allow_paths / host_allow_paths |
 | `issuesmith/gate_rules/cp1.py` | CP1 design rules |
 | `issuesmith/gate_rules/deps_format.py` | Dependencies section format: unparsed `#N` refs without forge calls |
 | `issuesmith/gate_rules/m2.py` | M2 merge rules |
@@ -373,6 +381,8 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/repair.py` | `requires` evaluation and repair orchestration |
 | `issuesmith/resume.py` | `resume` entry point |
 | `issuesmith/scope_gate.py` | allow_paths scope measurement |
+| `issuesmith/step_tier.py` | Config-driven tier CLI backend for `steps.<id>.tier` |
+| `issuesmith/step_verify.py` | Config-driven verify CLI backend for `steps.<id>.verify: design_doc` |
 | `issuesmith/targets.py` | Multi-target Issue model |
 | `issuesmith/template_ids.py` | `string.Template` identifier extraction (Python 3.10 compatible) |
 | `issuesmith/verbs/__init__.py` | Public verb API |
@@ -526,7 +536,7 @@ A file that is not found is treated as empty, which fails validation because `re
 
 #### `paths` keys
 
-Relative to the config file directory: `queue` `jobs/issuesmith-queue.jsonl`, `queue_state` `logs/issuesmith-queue-state.json`, `queue_lock` `logs/issuesmith-queue.lock`, `triage_log` `jobs/issuesmith-triage.jsonl`, `seed` `configs/night-queue.yaml`, `night_state` `logs/night-queue-state.json`, `exec_jsonl` `jobs/exec.jsonl`, `done_dir` `jobs/done`, `quota_state` `jobs/quota-gate.json`, `metrics` `jobs/metrics.jsonl`, `worktrees_dir` `.claude/worktrees`, `external_dir` `.claude/external`, `workflow` `workflows/issuesmith.yml`, `template_dir` `workflows/issuesmith`, `engine_state` `.pipeline-state/issuesmith-engine.yml`, `brake_state` (defaults to `quota_state`), `lanes` (unset; the ledger read by the `lanes` command).
+Relative to the config file directory: `queue` `jobs/issuesmith-queue.jsonl`, `queue_state` `logs/issuesmith-queue-state.json`, `queue_lock` `logs/issuesmith-queue.lock`, `triage_log` `jobs/issuesmith-triage.jsonl`, `seed` `configs/night-queue.yaml`, `night_state` `logs/night-queue-state.json`, `exec_jsonl` `jobs/exec.jsonl`, `done_dir` `jobs/done`, `quota_state` `jobs/quota-gate.json`, `metrics` `jobs/metrics.jsonl`, `worktrees_dir` `.claude/worktrees`, `external_dir` `.claude/external`, `workflow` `workflows/issuesmith.yml`, `template_dir` `workflows/issuesmith`, `engine_state` `.pipeline-state/issuesmith-engine.yml`, `brake_state` (deprecated alias of `quota_state` for reads only; dispatch pause uses `quota_state`), `lanes` (unset; the ledger read by the `lanes` command).
 
 #### `observe` keys
 
