@@ -34,6 +34,8 @@ pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.161.0
 | `[dev]` extra | `pytest`, `pytest-cov`, `mypy`, `ruff`, ghdag `v0.106.0` |
 | Console script | `issuesmith` (`issuesmith.cli:main`) |
 
+See [TESTING.md](./TESTING.md) for what tests should and should not pin.
+
 ## Quick Start
 
 1. Put an `issuesmith.yaml` at the root of the host repository. `repo` and `phases` are required; every other key has a default (see [Configuration](#configuration)):
