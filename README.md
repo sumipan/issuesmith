@@ -394,6 +394,7 @@ Gate ids in `GATE_REGISTRY` (usable in `steps.*.requires`). `input_kind` is the 
 | `b1_migration` | issue | no | yes | Deprecated alias of `migration_plan` |
 | `b1_milestone_subdesign` | issue | no | yes | Deprecated alias of `milestone_subdesign` |
 | `base_freshness` | worktree | yes | yes | Worktree includes the configured base branch (P0 fetch / rebase) |
+| `change_table_scope` | issue | no | yes | Change-table paths (target / host rows) stay within allow_paths / host_allow_paths |
 | `cp1` | issue | no | yes | Deprecated alias of `design_lint` |
 | `deps` | issue | no | yes | Declared Issue dependencies are satisfied |
 | `deps_format` | issue | no | yes | Dependencies section lists `#N` refs in table/list form, not prose-only |
