@@ -312,6 +312,23 @@ def test_pin_only_with_changelog_row_still_fails_in_feature_issue():
     assert violations[0].rule_id == "pin_bump.in_feature_issue"
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "nested/pyproject.toml",
+        "../tests/escape.py",
+    ],
+)
+def test_pin_only_rejects_non_root_or_traversing_paths(path: str):
+    body = _PIN_ONLY_5581_BODY.replace(
+        "tests/conventions/test_required_upstream_apis_exist.py",
+        path,
+    )
+    violations = _check(body, [])
+    assert len(violations) == 1
+    assert violations[0].rule_id == "pin_bump.in_feature_issue"
+
+
 def test_pin_only_no_table_keeps_existing_pyproject_pin_detection():
     body = """\
 ```yaml

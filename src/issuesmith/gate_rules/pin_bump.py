@@ -10,6 +10,7 @@ from ghdag.workflow.gates import GATE_REGISTRY, Violation
 from issuesmith.config import get_config
 from issuesmith.context_hook import parse_issue_metadata
 from issuesmith.contract import extract_change_table_rows
+from issuesmith.pr_scope import normalize_allow_path
 
 _VERSION_TOKEN = re.compile(r"v?\d+\.\d+\.\d+")
 
@@ -66,10 +67,12 @@ def _is_pin_only_issue(body: str, target_repo: str) -> bool:
     if not target_rows:
         return False
     for _repo, path, _change_type in target_rows:
-        name = Path(path).name
-        if name == "pyproject.toml":
+        try:
+            normalized = normalize_allow_path(path)
+        except ValueError:
+            return False
+        if normalized == "pyproject.toml":
             continue
-        normalized = path.replace("\\", "/").lstrip("./")
         if normalized == "tests" or normalized.startswith("tests/"):
             continue
         return False
