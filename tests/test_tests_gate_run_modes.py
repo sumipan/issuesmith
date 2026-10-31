@@ -128,7 +128,7 @@ def test_ac4_mapped_failure_skips_full_run(
     assert [v.rule_id for v in violations] == ["tests.pytest_failure"]
     assert "tests/test_foo.py::test_value" in violations[0].message
     assert len(calls) == 1
-    assert calls[0] == ["tests/test_foo.py", "-x"]
+    assert calls[0] == ["tests/test_foo.py"]
 
 
 def test_ac4_mapped_pass_runs_full(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -142,7 +142,7 @@ def test_ac4_mapped_pass_runs_full(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 
     assert TestsGate(clone, base_branch="main").check("", []) == []
     assert len(calls) == 2
-    assert calls[0] == ["tests/test_foo.py", "-x"]
+    assert calls[0] == ["tests/test_foo.py"]
     assert "--durations=20" in calls[1]
 
 
@@ -172,6 +172,30 @@ def test_ac4_mapped_preexisting_failure_runs_full(
 
     assert TestsGate(clone, base_branch="main").check("", []) == []
     assert len(calls) == 2
+
+
+def test_mapped_four_new_failures_returned_together(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mapped run without -x reports every new failure in one evaluation (#5787)."""
+    tests = "from foo import value\n\n" + "\n\n".join(
+        f"def test_value_{i}():\n    assert value() == 1" for i in range(4)
+    ) + "\n"
+    clone = _setup_repo(tmp_path, {
+        "src/foo.py": _FOO,
+        "tests/test_foo.py": tests,
+    })
+    _commit(clone, {"src/foo.py": "def value():\n    return 2\n"})
+    calls = _count_calls(monkeypatch, clone)
+
+    violations = TestsGate(clone, base_branch="main").check("", [])
+
+    assert len(calls) == 1
+    assert "-x" not in calls[0]
+    assert [v.rule_id for v in violations] == ["tests.pytest_failure"] * 4
+    assert [v.message.split(" - ", 1)[0] for v in violations] == [
+        f"FAILED tests/test_foo.py::test_value_{i}" for i in range(4)
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -320,5 +344,5 @@ def test_mapped_run_no_tests_collected_runs_full(
 
     assert TestsGate(clone, base_branch="main").check("", []) == []
     assert len(calls) == 2
-    assert calls[0] == ["tests/test_foo_data.py", "-x"]
+    assert calls[0] == ["tests/test_foo_data.py"]
     assert "--durations=20" in calls[1]

@@ -697,6 +697,21 @@ def _violation_fingerprint(v) -> tuple[str, str, str]:
     return (v.rule_id, v.location or "", v.message)
 
 
+def _repair_limit_summary(
+    step_id: str,
+    *,
+    repairs: int,
+    no_progress: int,
+    blocking_messages: list[str],
+) -> str:
+    base = (
+        f"requires evaluation failed after {no_progress} repair(s)"
+        f" in step {step_id}: "
+        + "; ".join(blocking_messages)
+    )
+    return f"{base} repairs={repairs} no_progress={no_progress}"
+
+
 def run_requires_loop(
     step_cfg: StepConfig,
     step_id: str,
@@ -705,6 +720,8 @@ def run_requires_loop(
     repair_count: int = 0,
     auto_fix_round: int = 0,
     _prev_blocking_fingerprints: frozenset[tuple[str, str, str]] | None = None,
+    _total_repair_count: int | None = None,
+    _initial_blocking_count: int | None = None,
     origin: Literal["requires", "accepts"] = "requires",
 ) -> int | None:
     """Evaluate requires gates; auto-fix, repair, or raise andon as needed.
@@ -715,6 +732,9 @@ def run_requires_loop(
     """
     from issuesmith.gates.base import ContractInput
     from issuesmith.repair import apply_auto_fixes, evaluate_requires
+
+    if _total_repair_count is None:
+        _total_repair_count = repair_count
 
     gate_ids = step_cfg.requires if origin == "requires" else step_cfg.accepts
     if not gate_ids:
@@ -814,6 +834,8 @@ def run_requires_loop(
                 step_cfg, step_id, context,
                 repair_count=repair_count,
                 auto_fix_round=auto_fix_round + 1,
+                _total_repair_count=_total_repair_count,
+                _initial_blocking_count=_initial_blocking_count,
                 origin=origin,
             )
 
@@ -851,9 +873,21 @@ def run_requires_loop(
             _safe_record_metrics("requires_check", step_id, issue_num, origin=origin)
             return None
 
-    # Oscillation detection: repair made no progress (same or worsened violations).
     current_fingerprints = frozenset(_violation_fingerprint(v) for v in result.blocking)
     current_rule_ids = frozenset(v.rule_id for v in result.blocking)
+    if _initial_blocking_count is None:
+        _initial_blocking_count = len(current_fingerprints)
+
+    no_progress_count = repair_count
+    if (
+        _prev_blocking_fingerprints is not None
+        and current_fingerprints < _prev_blocking_fingerprints
+    ):
+        pass
+    elif _prev_blocking_fingerprints is not None:
+        no_progress_count = repair_count + 1
+
+    # Oscillation detection: repair made no progress (same or worsened violations).
     if (
         _prev_blocking_fingerprints is not None
         and result.blocking
@@ -861,7 +895,8 @@ def run_requires_loop(
     ):
         options = _build_andon_options(result.blocking)
         summary = (
-            f"repair oscillation detected in step {step_id} after {repair_count} repair(s): "
+            f"repair oscillation detected in step {step_id} "
+            f"after {_total_repair_count} repair(s): "
             + "; ".join(sorted(current_rule_ids))
         )
         full_andon = _FullAndon(
@@ -897,13 +932,35 @@ def run_requires_loop(
         _raise_andon(get_forge(), full_andon)
         return 1
 
-    # Non-auto-fixable repairable violations remain → repair step or andon.
-    if repair_count >= step_cfg.repair.max:
+    blocking_messages = [v.message for v in result.blocking]
+
+    if no_progress_count >= step_cfg.repair.max:
         options = _build_andon_options(result.blocking)
-        summary = (
-            f"requires evaluation failed after {repair_count} repair(s)"
-            f" in step {step_id}: "
-            + "; ".join(v.message for v in result.blocking)
+        summary = _repair_limit_summary(
+            step_id,
+            repairs=_total_repair_count,
+            no_progress=no_progress_count,
+            blocking_messages=blocking_messages,
+        )
+        full_andon = _FullAndon(
+            id=f"{workflow}:{issue_num}:{step_id}:0",
+            kind="decision",
+            issue=issue_num,
+            step=step_id,
+            summary=summary,
+            options=options,
+        )
+        _raise_andon(get_forge(), full_andon)
+        return 1
+
+    safety_limit = step_cfg.repair.max + _initial_blocking_count
+    if _total_repair_count >= safety_limit:
+        options = _build_andon_options(result.blocking)
+        summary = _repair_limit_summary(
+            step_id,
+            repairs=_total_repair_count,
+            no_progress=no_progress_count,
+            blocking_messages=blocking_messages,
         )
         full_andon = _FullAndon(
             id=f"{workflow}:{issue_num}:{step_id}:0",
@@ -926,11 +983,12 @@ def run_requires_loop(
     if rc is not None:
         return rc  # repair step failed
 
-    # Re-evaluate after successful repair (increment repair_count).
     return run_requires_loop(
         step_cfg, step_id, context,
-        repair_count=repair_count + 1,
+        repair_count=no_progress_count,
         _prev_blocking_fingerprints=current_fingerprints,
+        _total_repair_count=_total_repair_count + 1,
+        _initial_blocking_count=_initial_blocking_count,
         origin=origin,
     )
 
