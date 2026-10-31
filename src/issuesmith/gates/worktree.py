@@ -756,7 +756,7 @@ def check_derived_test_guard(
 class TestsGate:
     """Run pytest in the worktree with baseline comparison against `origin/<base_branch>`.
 
-    - Runs tests mapped from changed files first (`-x`); new failures there skip the full run.
+    - Runs tests mapped from changed files first (all mapped failures in one run); new failures there skip the full run.
     - Runs all tests (no -x) with `--durations` and collects all failure IDs.
     - rc from SIGTERM/SIGKILL → `tests.interrupted` (rerun only, no code change).
     - Failures that also fail on `origin/<base_branch>` are non-blocking (preexisting).
@@ -817,7 +817,7 @@ class TestsGate:
             changed = []
         mapped = _mapped_test_paths(self._root, changed)
         if mapped:
-            rc, output = self._run("mapped", [*mapped, "-x"])
+            rc, output = self._run("mapped", mapped)
             # rc=5: nothing collected (helper-only file, all deselected); the full run decides.
             if rc not in (0, _NO_TESTS_RC):
                 violations = self._judge(rc, output)

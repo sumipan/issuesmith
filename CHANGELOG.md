@@ -7,6 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Fixed
+
+- Tests gate mapped pytest runs collect every mapped failure in one evaluation (removed `-x`) so repair receives all new failures at once (#5787).
+- Requires repair loop distinguishes no-progress rounds from total repair count: strict-subset progress no longer consumes `repair.max`, churn and safety limits include `repairs=` / `no_progress=` in decision andon summaries (#5787).
+
 ## 0.167.1 - 2026-10-31
 
 ### Fixed
