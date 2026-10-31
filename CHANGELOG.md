@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.167.1 - 2026-10-31
+
+### Fixed
+
+- Milestone promotion builds structured AC with `paths_must_not_exist` for deletion
+  rows; B1 verify rejects delete rows listed in `paths_must_exist` and requires
+  sub-plan dependencies when a sibling sub owns deletion referrers (#5750).
+
 ## 0.167.0 - 2026-10-31
 
 ### Added

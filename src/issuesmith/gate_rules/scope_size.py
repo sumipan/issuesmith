@@ -467,14 +467,31 @@ def _build_sub_block(
         _change_table_header(),
         "|---|---|---|---|",
     ]
-    paths = [path for _, path, _, _ in rows]
+    cfg = get_config().scope_size
+    paths_must_exist: list[str] = []
+    paths_must_not_exist: list[str] = []
     for repo, path, change_type, content in rows:
         repo_cell = repo or target_repo
         table_lines.append(
             f"| `{repo_cell}` | `{path}` | {change_type or 'modify'} "
             f"| {content or PLACEHOLDER_CHANGE_CONTENT} |"
         )
-    yaml_paths = "\n".join(f"  - {p}" for p in paths) or "  - []"
+        kind = _normalize_kind(change_type or "modify", cfg)
+        if kind == "delete":
+            paths_must_not_exist.append(path)
+        else:
+            paths_must_exist.append(path)
+    ac_yaml_lines: list[str] = []
+    if paths_must_exist:
+        ac_yaml_lines.append("paths_must_exist:")
+        ac_yaml_lines.extend(f"  - {p}" for p in paths_must_exist)
+    else:
+        ac_yaml_lines.append("paths_must_exist: []")
+    if paths_must_not_exist:
+        ac_yaml_lines.append("paths_must_not_exist:")
+        ac_yaml_lines.extend(f"  - {p}" for p in paths_must_not_exist)
+    else:
+        ac_yaml_lines.append("paths_must_not_exist: []")
     concern = _concern_display_name(concern)
     sub_parts = [f"#### {_sub_header_prefix()}{num}: {concern}", ""]
     for name in subsections:
@@ -484,8 +501,7 @@ def _build_sub_block(
         elif name == ac_label:
             sub_parts.append(f"**{ac_label}**:")
             sub_parts.append("```yaml")
-            sub_parts.append("paths_must_exist:")
-            sub_parts.append(yaml_paths)
+            sub_parts.extend(ac_yaml_lines)
             sub_parts.append("```")
             for tpl in PLACEHOLDER_AC_TEMPLATES:
                 sub_parts.append(f"- [ ] {tpl.format(concern=concern, num=num)}")
