@@ -57,10 +57,6 @@ def test_core_gate_ids_present(gate_id: str) -> None:
 # (d) README.md gate table matches GATE_REGISTRY
 # ---------------------------------------------------------------------------
 
-# New gates land in GATE_REGISTRY before README ## Gates is updated (scoped Issues
-# often omit README.md from allow_paths); keep the registry test green until README sync.
-_README_GATE_TABLE_PENDING: frozenset[str] = frozenset({"change_table_scope"})
-
 
 def _parse_readme_gate_table() -> set[str]:
     """Extract gate ids from the '## Gates' table in README.md."""
@@ -88,7 +84,7 @@ def test_readme_gate_table_matches_registry() -> None:
     if not readme_ids:
         pytest.skip("README.md has no ## Gates table yet")
     registry_ids = set(GATE_REGISTRY.keys())
-    missing_from_readme = registry_ids - readme_ids - _README_GATE_TABLE_PENDING
+    missing_from_readme = registry_ids - readme_ids
     extra_in_readme = readme_ids - registry_ids
     assert not missing_from_readme, (
         f"GATE_REGISTRY ids missing from README ## Gates table: {sorted(missing_from_readme)}"
