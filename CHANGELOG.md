@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.167.3 - 2026-10-31
+
+### Fixed
+
+- Stall andon resolves phase from the active queue request, then in-flight
+  entry `phase`, then role mapping — fixing develop work mis-reported as `sub`
+  when `sub` is declared before `develop` (#5805).
+
 ## 0.167.2 - 2026-10-31
 
 ### Fixed

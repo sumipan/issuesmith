@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from issuesmith.config import get_config
-from issuesmith.observe import observe
+from issuesmith.observe import _detect_stall, observe
 from issuesmith.observe.events import (
     DagDeferredEvent,
     IssueStallEvent,
@@ -92,6 +92,104 @@ class TestIssueStallDetection:
         events = observe(snap, client, cfg, now=_NOW)
         stall_events = [e for e in events if isinstance(e, IssueStallEvent)]
         assert len(stall_events) == 0
+
+    def test_stall_phase_uses_in_flight_entry_when_no_active_request(self, tmp_path):
+        snap = _empty_snap(tmp_path=tmp_path)
+        dispatched_at = (_NOW - timedelta(minutes=130)).isoformat()
+        snap = _snap_with_in_flight(snap, [
+            {
+                "issue": 501,
+                "role": "implementation",
+                "phase": "develop",
+                "dispatched_at": dispatched_at,
+            },
+        ])
+        cfg = get_config()
+        events = _detect_stall(snap, cfg, _NOW, cfg.observe.stall_minutes)
+        assert len(events) == 1
+        assert events[0].issue == 501
+        assert events[0].phase == "develop"
+
+    def test_stall_phase_prefers_active_request_over_in_flight_entry(self, tmp_path):
+        store = _store(tmp_path)
+        _enqueue(store, 502, "merge")
+        base = store.snapshot()
+        dispatched_at = (_NOW - timedelta(minutes=130)).isoformat()
+        snap = _snap_with_in_flight(base, [
+            {
+                "issue": 502,
+                "role": "implementation",
+                "phase": "develop",
+                "dispatched_at": dispatched_at,
+            },
+        ])
+        cfg = get_config()
+        events = _detect_stall(snap, cfg, _NOW, cfg.observe.stall_minutes)
+        assert len(events) == 1
+        assert events[0].phase == "merge"
+
+    def test_stall_phase_falls_back_to_role_when_entry_phase_missing(self, tmp_path):
+        snap = _empty_snap(tmp_path=tmp_path)
+        dispatched_at = (_NOW - timedelta(minutes=130)).isoformat()
+        snap = _snap_with_in_flight(snap, [
+            {
+                "issue": 503,
+                "role": "implementation",
+                "dispatched_at": dispatched_at,
+            },
+        ])
+        cfg = get_config()
+        events = _detect_stall(snap, cfg, _NOW, cfg.observe.stall_minutes)
+        assert len(events) == 1
+        assert events[0].phase == "sub"
+
+    def test_stall_phase_falls_back_to_role_when_entry_phase_empty(self, tmp_path):
+        snap = _empty_snap(tmp_path=tmp_path)
+        dispatched_at = (_NOW - timedelta(minutes=130)).isoformat()
+        snap = _snap_with_in_flight(snap, [
+            {
+                "issue": 504,
+                "role": "implementation",
+                "phase": "",
+                "dispatched_at": dispatched_at,
+            },
+        ])
+        cfg = get_config()
+        events = _detect_stall(snap, cfg, _NOW, cfg.observe.stall_minutes)
+        assert len(events) == 1
+        assert events[0].phase == "sub"
+
+    def test_stall_fires_at_exact_stall_minutes_threshold(self, tmp_path):
+        cfg = get_config()
+        stall = cfg.observe.stall_minutes
+        snap = _empty_snap(tmp_path=tmp_path)
+        dispatched_at = (_NOW - timedelta(minutes=stall)).isoformat()
+        snap = _snap_with_in_flight(snap, [
+            {
+                "issue": 505,
+                "role": "implementation",
+                "phase": "develop",
+                "dispatched_at": dispatched_at,
+            },
+        ])
+        events = _detect_stall(snap, cfg, _NOW, stall)
+        assert len(events) == 1
+
+    def test_stall_not_fired_one_minute_below_threshold(self, tmp_path):
+        cfg = get_config()
+        stall = cfg.observe.stall_minutes
+        snap = _empty_snap(tmp_path=tmp_path)
+        dispatched_at = (_NOW - timedelta(minutes=stall - 1)).isoformat()
+        snap = _snap_with_in_flight(snap, [
+            {
+                "issue": 506,
+                "role": "implementation",
+                "phase": "develop",
+                "dispatched_at": dispatched_at,
+            },
+        ])
+        events = _detect_stall(snap, cfg, _NOW, stall)
+        assert events == []
 
 
 class TestDeferredDagObservation:

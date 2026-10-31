@@ -896,7 +896,11 @@ def _build_tier(raw: Any, step_id: str) -> TierConfig | None:
         raise ConfigError(f"steps.{step_id}.tier must be a mapping")
     kind_raw = raw.get("kind")
     kind = str(kind_raw) if kind_raw is not None else ""
-    if kind not in ("design_doc", "pr_diff"):
+    if kind == "design_doc":
+        tier_kind: Literal["design_doc", "pr_diff"] = "design_doc"
+    elif kind == "pr_diff":
+        tier_kind = "pr_diff"
+    else:
         raise ConfigError(
             f"steps.{step_id}.tier kind must be 'design_doc' or 'pr_diff', got {kind!r}"
         )
@@ -906,7 +910,7 @@ def _build_tier(raw: Any, step_id: str) -> TierConfig | None:
             f"steps.{step_id}.tier light_max_diff_lines must be an integer >= 1,"
             f" got {light_max!r}"
         )
-    return TierConfig(kind=kind, light_max_diff_lines=light_max)
+    return TierConfig(kind=tier_kind, light_max_diff_lines=light_max)
 
 
 def _build_step_verify(raw: Any, step_id: str) -> Literal["design_doc"] | None:
