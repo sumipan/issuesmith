@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.167.2 - 2026-10-31
+
 ### Fixed
 
 - Tests gate mapped pytest runs collect every mapped failure in one evaluation (removed `-x`) so repair receives all new failures at once (#5787).
