@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.167.0 - 2026-10-31
+
 ### Added
 
 - B1 Verify gate `change_table_scope`: each change-table row must fall within
