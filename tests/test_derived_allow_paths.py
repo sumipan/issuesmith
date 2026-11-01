@@ -20,6 +20,8 @@ from issuesmith.gates.worktree import (
     TestsGate,
     check_derived_test_guard,
     derive_ledger_allow_paths,
+    derive_static_ledger_allow_paths,
+    derive_static_test_allow_paths,
     derive_test_allow_paths,
 )
 
@@ -282,10 +284,12 @@ def test_ac3_registry_pr_scope_passes_derived(mod_repo: Path) -> None:
     assert gate.check("", []) == []
 
 
-def test_ac3_pr_scope_default_has_no_derived(mod_repo: Path) -> None:
+def test_ac3_pr_scope_default_has_no_derived(mod_repo: Path, _derived_config) -> None:
+    """Without explicit derived_allow_paths, static derivation still applies (#5884)."""
+    _derived_config(None)
     _write(mod_repo, {"tests/test_uses_mod.py": _TEST_USES_MOD.replace("== 3", "== 4")})
     gate = PrScopeGate(mod_repo, ["src/pkg/mod.py"], "main")
-    assert [v.location for v in gate.check("", [])] == ["tests/test_uses_mod.py"]
+    assert gate.check("", []) == []
 
 
 def test_ac3_pr_scope_derived_edit_is_guarded(mod_repo: Path, _derived_config) -> None:
@@ -1115,3 +1119,119 @@ def test_5351_grep_failure_falls_back_to_direct_keys_only(tmp_path: Path) -> Non
             ["src/pkg/core/engine_spec.py"],
         )
     assert derived == []
+
+
+# ---------------------------------------------------------------------------
+# #5884: static derived allow_paths without pytest failure history
+# ---------------------------------------------------------------------------
+
+
+def test_static_pr_scope_referencing_test_passes_without_failure(
+    mod_repo: Path, _derived_config,
+) -> None:
+    _derived_config(None)
+    _write(mod_repo, {"tests/test_uses_mod.py": _TEST_USES_MOD.replace("== 3", "== 4")})
+    gate = PrScopeGate(mod_repo, ["src/pkg/mod.py"], "main")
+    assert gate.check("", []) == []
+
+
+def test_static_pr_scope_weakened_and_skipped(mod_repo: Path, _derived_config) -> None:
+    _derived_config(None)
+    weakened = _TEST_USES_MOD.replace(
+        "def test_total():\n    assert pkg.mod.compute_total(1, 2) == 3\n", ""
+    )
+    _write(mod_repo, {"tests/test_uses_mod.py": weakened})
+    gate = PrScopeGate(mod_repo, ["src/pkg/mod.py"], "main")
+    assert [v.rule_id for v in gate.check("", [])] == ["derived_allow.test_weakened"]
+
+    skipped = _TEST_USES_MOD.replace(
+        "def test_total():", "@pytest.mark.skip\n\ndef test_total():"
+    )
+    _write(mod_repo, {"tests/test_uses_mod.py": skipped})
+    assert [v.rule_id for v in gate.check("", [])] == ["derived_allow.test_skipped"]
+
+
+def test_static_pr_scope_new_test_not_on_base(mod_repo: Path, _derived_config) -> None:
+    _derived_config(None)
+    _write(mod_repo, {"tests/test_new.py": "import pkg.mod\n\ndef test_x():\n    assert True\n"})
+    _commit_all(mod_repo)
+    gate = PrScopeGate(mod_repo, ["src/pkg/mod.py"], "main")
+    violations = gate.check("", [])
+    assert len(violations) == 1
+    v = violations[0]
+    assert v.rule_id == "pr_scope.out_of_allow"
+    assert v.location == "tests/test_new.py"
+    assert v.fix_hint == "widen:tests/test_new.py"
+    assert v.message == "tests/test_new.py: outside allow_paths (not on base)"
+
+
+def test_static_pr_scope_unreferenced_test_message(mod_repo: Path, _derived_config) -> None:
+    _derived_config(None)
+    _write(
+        mod_repo,
+        {"tests/test_unrelated.py": _TEST_UNRELATED + "\n\ndef test_more():\n    assert 2\n"},
+    )
+    gate = PrScopeGate(mod_repo, ["src/pkg/mod.py"], "main")
+    violations = gate.check("", [])
+    assert len(violations) == 1
+    v = violations[0]
+    assert v.rule_id == "pr_scope.out_of_allow"
+    assert v.location == "tests/test_unrelated.py"
+    assert v.message == (
+        "tests/test_unrelated.py: outside allow_paths (no reference to changed files)"
+    )
+
+
+def test_static_pr_scope_ledger_without_failure(
+    ledger_repo: Path, _derived_config,
+) -> None:
+    _derived_config(None)
+    _write(ledger_repo, {_LEDGER: "alpha\nbeta\n"})
+    gate = PrScopeGate(ledger_repo, ["src/pkg/gamma.py"], "main")
+    assert gate.check("", []) == []
+
+    _write(ledger_repo, {_LEDGER: "alpha\nbeta\ngamma\ndelta\n"})
+    assert [v.rule_id for v in gate.check("", [])] == ["derived_allow.ledger_grew"]
+
+
+def test_static_pr_scope_disabled_keeps_out_of_allow(mod_repo: Path, _derived_config) -> None:
+    _derived_config(False)
+    _write(mod_repo, {"tests/test_uses_mod.py": _TEST_USES_MOD.replace("== 3", "== 4")})
+    gate = PrScopeGate(mod_repo, ["src/pkg/mod.py"], "main")
+    violations = gate.check("", [])
+    assert len(violations) == 1
+    v = violations[0]
+    assert v.rule_id == "pr_scope.out_of_allow"
+    assert v.message == "tests/test_uses_mod.py: outside allow_paths"
+
+
+def test_derive_test_allow_paths_delegates_to_static(mod_repo: Path) -> None:
+    static = derive_static_test_allow_paths(
+        mod_repo, "main", ["tests/test_uses_mod.py"], ["src/pkg/mod.py"], ["src/pkg/mod.py"]
+    )
+    assert static == ["tests/test_uses_mod.py"]
+    derived = derive_test_allow_paths(
+        mod_repo, "main",
+        ["tests/test_uses_mod.py::test_total"],
+        ["src/pkg/mod.py"],
+        ["src/pkg/mod.py"],
+    )
+    assert derived == static
+    assert derive_test_allow_paths(
+        mod_repo, "main",
+        ["tests/test_unrelated.py::test_unrelated"],
+        ["src/pkg/mod.py"],
+        ["src/pkg/mod.py"],
+    ) == []
+
+
+def test_static_derive_functions_exported() -> None:
+    import issuesmith.gates.worktree as wt
+    from issuesmith.gates.worktree import (
+        derive_static_test_allow_paths,
+    )
+
+    assert derive_static_test_allow_paths is wt.derive_static_test_allow_paths
+    assert derive_static_ledger_allow_paths is wt.derive_static_ledger_allow_paths
+    assert "derive_static_test_allow_paths" in wt.__all__
+    assert "derive_static_ledger_allow_paths" in wt.__all__

@@ -490,6 +490,41 @@ def _reference_keys(
     return substr_keys, word_keys
 
 
+def derive_static_test_allow_paths(
+    root: Path,
+    base_branch: str,
+    candidates: list[str],
+    changed: list[str],
+    allow_paths: list[str],
+) -> list[str]:
+    """Return ``tests/**`` paths that may be derived without a pytest failure (#5884).
+
+    Each candidate must be under ``tests/``, outside ``allow_paths``, exist on
+    ``origin/<base_branch>``, and reference keys from ``changed`` (condition C).
+    """
+    if not candidates:
+        return []
+
+    substr_keys, word_keys = _reference_keys(root, base_branch, changed)
+    word_res = [re.compile(rf"\b{re.escape(k)}\b") for k in sorted(word_keys)]
+
+    derived: list[str] = []
+    for path in sorted(set(candidates)):
+        if not path.startswith(_DERIVED_TESTS_PREFIX):
+            continue
+        if any(fnmatch.fnmatch(path, pat) for pat in allow_paths):
+            continue
+        if not _exists_on_base(root, base_branch, path):
+            continue
+        try:
+            text = (root / path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if any(k in text for k in substr_keys) or any(r.search(text) for r in word_res):
+            derived.append(path)
+    return derived
+
+
 def derive_test_allow_paths(
     root: Path,
     base_branch: str,
@@ -514,21 +549,9 @@ def derive_test_allow_paths(
         candidates.add(path)
     if not candidates:
         return []
-
-    substr_keys, word_keys = _reference_keys(root, base_branch, changed)
-    word_res = [re.compile(rf"\b{re.escape(k)}\b") for k in sorted(word_keys)]
-
-    derived: list[str] = []
-    for path in sorted(candidates):
-        if not _exists_on_base(root, base_branch, path):
-            continue
-        try:
-            text = (root / path).read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        if any(k in text for k in substr_keys) or any(r.search(text) for r in word_res):
-            derived.append(path)
-    return derived
+    return derive_static_test_allow_paths(
+        root, base_branch, sorted(candidates), changed, allow_paths
+    )
 
 
 def derive_ledger_allow_paths(
@@ -568,6 +591,32 @@ def derive_ledger_allow_paths(
             if any(fnmatch.fnmatch(path, pat) for pat in allow_paths):
                 continue
             derived.add(path)
+    return sorted(derived)
+
+
+def derive_static_ledger_allow_paths(
+    root: Path,
+    base_branch: str,
+    candidates: list[str],
+    allow_paths: list[str],
+    ledger_globs: Sequence[str],
+) -> list[str]:
+    """Return ratchet ledgers that may be derived without a pytest failure (#5884).
+
+    Each candidate must match ``ledger_globs``, sit outside ``allow_paths``, and exist
+    on ``origin/<base_branch>``.
+    """
+    if not ledger_globs or not candidates:
+        return []
+    derived: set[str] = set()
+    for path in candidates:
+        if not any(fnmatch.fnmatch(path, pat) for pat in ledger_globs):
+            continue
+        if any(fnmatch.fnmatch(path, pat) for pat in allow_paths):
+            continue
+        if not _exists_on_base(root, base_branch, path):
+            continue
+        derived.add(path)
     return sorted(derived)
 
 
@@ -1429,6 +1478,8 @@ WORKTREE_GATES: dict[str, object] = {
 
 __all__ = [
     "changed_files",
+    "derive_static_test_allow_paths",
+    "derive_static_ledger_allow_paths",
     "derive_test_allow_paths",
     "derive_ledger_allow_paths",
     "check_derived_test_guard",
