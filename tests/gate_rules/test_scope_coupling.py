@@ -22,11 +22,13 @@ from issuesmith.gate_rules.scope_coupling import (
     DELETION_SEARCH_DIRS,
     PATH_STRING_RULE_ID,
     ScopeCouplingRules,
+    _deletion_search_pathspecs,
     check_allow_paths_string_references,
     check_behavior_pinning,
     check_code_consts_pinning,
     check_deletion_references,
     deletion_search_keys,
+    uncovered_deletion_references,
 )
 
 
@@ -1100,3 +1102,76 @@ def test_code_consts_no_violation_allow_paths_tests_only(tmp_path):
     allow = ["tests/test_plain.py"]
     body = _code_consts_body(allow)
     assert check_code_consts_pinning(body, allow, root) == []
+
+
+# ---------------------------------------------------------------------------
+# Root config files in deletion reference search (#5886)
+# ---------------------------------------------------------------------------
+
+_ROOT_PYPROJECT_REF_FILES = {
+    "pyproject.toml": (
+        "[tool.ruff.lint.per-file-ignores]\n"
+        '"tools/skill/report/analyzer.py" = ["TID251"]\n'
+    ),
+    "tools/skill/report/analyzer.py": "x = 1\n",
+}
+
+_DELETE_ANALYZER_ROW = (
+    "| sumipan/issuesmith | tools/skill/report/analyzer.py | delete | retire |"
+)
+
+
+def test_deletion_reference_in_root_pyproject_is_reported(tmp_path):
+    """Ref: #5886 AC1."""
+    root = _init_repo(tmp_path / "pyproj_ref", _ROOT_PYPROJECT_REF_FILES)
+    allow = ["tools/skill/report/analyzer.py"]
+    body = _body(allow, rows=_DELETE_ANALYZER_ROW)
+    [v] = check_deletion_references(body, allow, root)
+    assert v.rule_id == DELETION_RULE_ID
+    assert "pyproject.toml" in v.message
+    hint = v.fix_hint or ""
+    assert "  - pyproject.toml" in hint
+    assert "- pyproject.toml: name `analyzer.py`" in hint
+
+
+def test_deletion_reference_in_root_pyproject_covered_by_allow_paths(tmp_path):
+    """Ref: #5886 AC2."""
+    root = _init_repo(tmp_path / "pyproj_cov", _ROOT_PYPROJECT_REF_FILES)
+    allow = ["tools/skill/report/analyzer.py", "pyproject.toml"]
+    body = _body(allow, rows=_DELETE_ANALYZER_ROW)
+    assert check_deletion_references(body, allow, root) == []
+
+
+def test_uncovered_deletion_references_includes_root_pyproject(tmp_path):
+    """Ref: #5886 AC3."""
+    root = _init_repo(tmp_path / "pyproj_uncov", _ROOT_PYPROJECT_REF_FILES)
+    allow = ["tools/skill/report/analyzer.py"]
+    body = _body(allow, rows=_DELETE_ANALYZER_ROW)
+    refs = uncovered_deletion_references(body, allow, root)
+    assert refs == {"tools/skill/report/analyzer.py": ["pyproject.toml"]}
+
+
+def test_deletion_search_pathspecs_adds_only_existing_root_files(tmp_path):
+    """Ref: #5886 AC4."""
+    root = _init_repo(tmp_path / "pathspecs", {"pyproject.toml": "[project]\nname = 'x'\n"})
+    deleted = "tools/skill/report/analyzer.py"
+    assert _deletion_search_pathspecs(deleted, root) == (
+        "src",
+        "tests",
+        "scripts",
+        "tools",
+        "tools/skill/report",
+        "pyproject.toml",
+    )
+
+
+def test_deletion_search_pathspecs_without_repo_path_unchanged():
+    """Ref: #5886 AC5."""
+    deleted = "tools/skill/report/analyzer.py"
+    assert _deletion_search_pathspecs(deleted) == (
+        "src",
+        "tests",
+        "scripts",
+        "tools",
+        "tools/skill/report",
+    )

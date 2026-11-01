@@ -498,6 +498,12 @@ DELETION_RULE_ID = "scope_coupling.deletion_reference_uncovered"
 # Directories whose files break when a referenced file is deleted but are not covered by
 # type checks / CI of the runtime code.
 DELETION_SEARCH_DIRS: tuple[str, ...] = ("src", "tests", "scripts", "tools")
+DELETION_SEARCH_FILES: tuple[str, ...] = (
+    "pyproject.toml",
+    "setup.cfg",
+    "ruff.toml",
+    ".ruff.toml",
+)
 
 
 def _module_parts_from_path(path: str) -> tuple[str, ...]:
@@ -508,12 +514,18 @@ def _module_parts_from_path(path: str) -> tuple[str, ...]:
     return parts
 
 
-def _deletion_search_pathspecs(deleted_path: str) -> tuple[str, ...]:
+def _deletion_search_pathspecs(
+    deleted_path: str, repo_path: Path | None = None
+) -> tuple[str, ...]:
     """Return grep pathspecs for a deleted path, including its parent directory."""
     parent = str(Path(deleted_path).parent)
     specs = list(DELETION_SEARCH_DIRS)
     if parent and parent not in (".", "") and parent not in specs:
         specs.append(parent)
+    if repo_path is not None:
+        for name in DELETION_SEARCH_FILES:
+            if (repo_path / name).is_file():
+                specs.append(name)
     return tuple(specs)
 
 
@@ -736,7 +748,7 @@ def _deletion_hits(
         by_referrer: dict[str, tuple[str, str, str, str]] = {}
         by_sibling: dict[str, tuple[str, int]] = {}
         for key, kind in _deletion_search_key_kinds(path, repo_path):
-            for d in _deletion_search_pathspecs(path):
+            for d in _deletion_search_pathspecs(path, repo_path):
                 for rel_path, line in _git_grep_lines(repo_path, key, d):
                     if rel_path in deleted or _in_allow_paths(rel_path, covered):
                         continue
@@ -770,8 +782,9 @@ def uncovered_deletion_references(
     """Map each deleted path to its referrers outside ``allow_paths`` / ``paths_must_not_exist``.
 
     For every change-table row whose change type matches ``scope_size.delete_words``, ``git grep``
-    the base checkout at ``repo_path`` under :data:`DELETION_SEARCH_DIRS` for the file name, stem
-    and module name, then re-check each matching line with kind-specific boundary rules.
+    the base checkout at ``repo_path`` under :data:`DELETION_SEARCH_DIRS`, the deleted file's
+    parent and the root-level :data:`DELETION_SEARCH_FILES` for the file name, stem and module
+    name, then re-check each matching line with kind-specific boundary rules.
     Deleted paths without uncovered referrers are omitted.
     """
     hits, _sibling = _deletion_hits(body, allow_paths, repo_path)
