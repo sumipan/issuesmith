@@ -184,6 +184,12 @@ class B1AcFormatRules:
                     "Use a file path or `{file, key_path}` only; "
                     "verify symbol existence via checked AC and tests."
                 )
+                _NOT_A_PATH_HINT = (
+                    "Write only a single relative source file path (or `{file, key_path}`). "
+                    "Link or reference relations such as `A -> B` cannot be expressed in the "
+                    "contract; list the source file only and verify the link via checked AC "
+                    "and tests."
+                )
                 for i, entry in enumerate(refs):
                     _, _, error_kind = normalize_reference_entry(entry)
                     if error_kind == "symbol_form":
@@ -194,6 +200,15 @@ class B1AcFormatRules:
                             location=f"references_must_resolve[{i}]",
                             auto_fixable=True,
                             fix_hint=_SYMBOL_HINT,
+                        ))
+                    elif error_kind == "not_a_path":
+                        violations.append(Violation(
+                            rule_id="b1_ac_format.reference_entry_invalid",
+                            severity="fail",
+                            message=f"references_must_resolve[{i}] is not a file path",
+                            location=f"references_must_resolve[{i}]",
+                            auto_fixable=True,
+                            fix_hint=_NOT_A_PATH_HINT,
                         ))
                     elif error_kind is not None:
                         violations.append(Violation(

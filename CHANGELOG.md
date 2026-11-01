@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Fixed
+
+- B1 and M2 `run_checks` reject `references_must_resolve` entries that are not a single
+  relative file path (e.g. `A -> B` link notation) before existence checks, with
+  auto-fixable `b1_ac_format.reference_entry_invalid` (#5885).
+
 ## 0.169.0 - 2026-11-01
 
 ### Fixed

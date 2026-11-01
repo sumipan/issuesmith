@@ -11,6 +11,7 @@ from issuesmith.ac_contract import (
     dual_gate_roots,
     extract_contract_from_body,
     is_invalid_contract_path,
+    normalize_reference_entry,
     pending_manual_checks,
     run_checks,
 )
@@ -233,6 +234,51 @@ def test_run_checks_references_plain_string_pass_regression(tmp_path):
     contract = {"references_must_resolve": ["docs/README.md"]}
     records = run_checks(contract, tmp_path)
     assert records[0]["result"] == "PASS"
+
+
+# ---------------------------------------------------------------------------
+# normalize_reference_entry — not_a_path (issue #5885)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        "README.md -> TESTING.md",
+        "a b.md",
+        "../x.md",
+        "/abs.md",
+        {"file": "README.md -> TESTING.md"},
+    ],
+)
+def test_normalize_reference_entry_not_a_path(ref):
+    assert normalize_reference_entry(ref) == (None, None, "not_a_path")
+
+
+def test_normalize_reference_entry_valid_path_and_glob_unchanged():
+    assert normalize_reference_entry("README.md") == ("README.md", None, None)
+    assert normalize_reference_entry("tests/conventions/known_*.txt") == (
+        "tests/conventions/known_*.txt",
+        None,
+        None,
+    )
+    assert normalize_reference_entry("a.py::f") == (None, None, "symbol_form")
+    assert normalize_reference_entry({"file": "x.yaml", "key_path": "a.b", "extra": 1}) == (
+        None,
+        None,
+        "invalid",
+    )
+
+
+def test_run_checks_records_not_a_path_without_existence_check(tmp_path):
+    (tmp_path / "README.md").write_text("# doc\n", encoding="utf-8")
+    contract = {"references_must_resolve": ["README.md -> TESTING.md"]}
+    records = run_checks(contract, tmp_path)
+    assert len(records) == 1
+    r = records[0]
+    assert r["result"] == "FAIL"
+    assert r["detail"].startswith("not a file path")
+    assert "source file not found" not in r["detail"]
 
 
 def test_run_checks_references_dict_file_only_pass_regression(tmp_path):
