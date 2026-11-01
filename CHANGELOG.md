@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.169.1 - 2026-11-01
+
 ### Fixed
 
 - B1 and M2 `run_checks` reject `references_must_resolve` entries that are not a single
