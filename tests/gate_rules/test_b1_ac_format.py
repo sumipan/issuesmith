@@ -458,6 +458,64 @@ def test_references_invalid_without_milestone_label_when_yaml_present():
     assert violations[0].rule_id == "b1_ac_format.reference_entry_invalid"
 
 
+_BODY_REFS_ARROW = """\
+## Acceptance Criteria
+
+```yaml
+references_must_resolve:
+  - README.md -> TESTING.md
+```
+"""
+
+_BODY_REFS_INVALID_DICT_EXTRA = """\
+## Acceptance Criteria
+
+```yaml
+references_must_resolve:
+  - file: x.yaml
+    extra: 1
+```
+"""
+
+_BODY_ISSUE_5874_AC = """\
+## Acceptance Criteria
+
+```yaml
+paths_must_exist:
+- README.md
+paths_must_not_exist: []
+references_must_resolve:
+- README.md -> TESTING.md
+```
+"""
+
+
+def test_references_arrow_entry_is_auto_fixable_entry_invalid():
+    violations = _check(_BODY_REFS_ARROW, MILESTONE_LABELS)
+    assert len(violations) == 1
+    v = violations[0]
+    assert v.rule_id == "b1_ac_format.reference_entry_invalid"
+    assert v.severity == "fail"
+    assert v.auto_fixable is True
+    assert v.location == "references_must_resolve[0]"
+    assert v.fix_hint is not None
+    assert "single relative source file path" in v.fix_hint
+    assert "checked AC" in v.fix_hint
+
+
+def test_references_invalid_dict_stays_not_auto_fixable():
+    violations = _check(_BODY_REFS_INVALID_DICT_EXTRA, MILESTONE_LABELS)
+    assert len(violations) == 1
+    v = violations[0]
+    assert v.rule_id == "b1_ac_format.reference_entry_invalid"
+    assert v.auto_fixable is False
+
+
+def test_issue_5874_contract_fails_b1_preflight():
+    violations = _check(_BODY_ISSUE_5874_AC, MILESTONE_LABELS)
+    assert any(v.severity == "fail" for v in violations)
+
+
 def test_unknown_key_without_milestone_label_when_yaml_present():
     violations = _check(BODY_WITH_INVALID_YAML, NON_MILESTONE_LABELS)
     assert len(violations) == 1

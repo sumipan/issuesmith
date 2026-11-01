@@ -179,6 +179,16 @@ def _invalid_path_record(check: str, entry: object) -> dict:
     }
 
 
+def _not_a_path(value: str) -> bool:
+    if is_invalid_contract_path(value):
+        return True
+    if any(ch.isspace() for ch in value):
+        return True
+    if "->" in value or "→" in value or "=>" in value:
+        return True
+    return False
+
+
 def _looks_like_file_path(value: str) -> bool:
     if "/" in value or value.startswith("."):
         return True
@@ -202,13 +212,15 @@ def normalize_reference_entry(ref: Any) -> tuple[str | None, str | None, str | N
     """Normalize one references_must_resolve entry.
 
     Returns (file, key_path, error_kind).
-    error_kind is None (valid), 'symbol_form' (path::symbol), or 'invalid'.
+    error_kind is None (valid), 'symbol_form' (path::symbol), 'not_a_path', or 'invalid'.
     """
     if isinstance(ref, str):
         if not ref:
             return None, None, "invalid"
         if "::" in ref:
             return None, None, "symbol_form"
+        if _not_a_path(ref):
+            return None, None, "not_a_path"
         return ref, None, None
     if isinstance(ref, dict):
         extra = set(ref.keys()) - {"file", "key_path"}
@@ -222,6 +234,8 @@ def normalize_reference_entry(ref: Any) -> tuple[str | None, str | None, str | N
             return None, None, "invalid"
         if "::" in file_val:
             return None, None, "symbol_form"
+        if _not_a_path(file_val):
+            return None, None, "not_a_path"
         return file_val, key_path, None
     return None, None, "invalid"
 
@@ -399,6 +413,20 @@ def run_checks(contract: dict, repo_root: Path, *, base_ref: str = "HEAD") -> li
                     "detail": (
                         "unsupported reference form (path::symbol);"
                         " use a file path or {file, key_path}"
+                    ),
+                    "git_log": "",
+                }
+            )
+            continue
+        if error_kind == "not_a_path":
+            records.append(
+                {
+                    "check": "references_must_resolve",
+                    "path": str(ref),
+                    "result": "FAIL",
+                    "detail": (
+                        "not a file path (write a single relative file path, or "
+                        f"{{file, key_path}}): {ref}"
                     ),
                     "git_log": "",
                 }
