@@ -8,7 +8,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Literal, Mapping, Protocol
 
-NON_REPAIRABLE_RULE_IDS: frozenset[str] = frozenset({"pr_diff_scope.forbidden_path"})
+NON_REPAIRABLE_RULE_IDS: frozenset[str] = frozenset({
+    "pr_diff_scope.forbidden_path",
+    "base_freshness.fetch_transient_exhausted",
+})
 
 
 def is_non_repairable_rule_id(rule_id: str) -> bool:
