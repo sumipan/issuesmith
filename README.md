@@ -210,7 +210,7 @@ Ledger keys: `lanes` (lane name to Issue numbers), `hold`, `backlog`, `auto_lane
 | `issuesmith.gates.pr_scope` | `check_pr_scope`, `PrScopeGate` |
 | `issuesmith.gates.review` | `ReviewGate`, `build_review_gate` |
 | `issuesmith.gates.scope` | `check_scope`, `ScopeGate` |
-| `issuesmith.gates.worktree` | `LintGate`, `TestsGate`, `ExternalLeakGate`, `BaseFreshnessGate`, `WORKTREE_GATES`, `changed_files`, `derive_test_allow_paths`, `derive_ledger_allow_paths`, `check_derived_test_guard`, `line_has_cjk`, `cjk_added_lines`, `external_target_state`, `is_external_target` |
+| `issuesmith.gates.worktree` | `LintGate`, `TestsGate`, `ExternalLeakGate`, `BaseFreshnessGate`, `WORKTREE_GATES`, `changed_files`, `derive_static_test_allow_paths`, `derive_static_ledger_allow_paths`, `derive_test_allow_paths`, `derive_ledger_allow_paths`, `check_derived_test_guard`, `line_has_cjk`, `cjk_added_lines`, `external_target_state`, `is_external_target` |
 | `issuesmith.m2_gate` | `has_acceptance_criteria_section`, `get_unchecked_count`, `check_gate`, `check_gate_multi_root`, `synthesize_contract_failures`, `main` |
 | `issuesmith.repair` | `RequiresResult`, `evaluate_requires`, `apply_auto_fixes`, `record_metrics` |
 | `issuesmith.scope_gate` | `ScopeMeasure`, `ScopeVerdict`, `evaluate`, `format_comment`, `measure_scope`, `override_from_metadata`, `parse_allow_paths_from_ctx`, `record_p0_trip_metric`, `resolve_scope_root` |
@@ -483,7 +483,7 @@ A file that is not found is treated as empty, which fails validation because `re
 | `scope_size` | `enabled: true` | B1 Issue size: `max_files` (`8`), `max_concerns` (`4`), `max_slices` (`3`), `delete_with_new` (`false`), `exclude_prefixes`, `atomic_phrases` (`[]`, phrases matched in the design section skip sub-plan promotion, same as `split: atomic`) |
 | `tests` | `flaky_reruns: 2` | Reruns of newly failing tests (`0` turns flaky detection off) |
 | `metrics` | `done_step: m2` | Rework metrics: `done_step`, `repair_templates`, `cause_targets` |
-| `derived_allow` | `enabled: true`, `ledger_globs: [tests/conventions/known_*.txt]` | Let repair edit newly failing tests outside allow_paths; ledgers matching `ledger_globs` may only shrink (`[]` turns ledger derivation off) |
+| `derived_allow` | `enabled: true`, `ledger_globs: [tests/conventions/known_*.txt]` | Let repair (and impl ahead of repair) edit tests outside allow_paths when they reference in-scope changes, or shrink matching ledgers; newly failing tests still extend the set via TestsGate (`[]` turns ledger derivation off) |
 | `external_leak` | `cjk_free_external_targets: false` | Fail added CJK lines on branches whose `target_repo` is not `repo` |
 | `observe` | see below | Observe thresholds and `main_health` |
 | `api_brake` | `enabled: false` | GitHub API brake: `min_remaining` (`800`) |
