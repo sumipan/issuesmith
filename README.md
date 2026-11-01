@@ -7,23 +7,23 @@ issuesmith is a toolkit for GitHub Issue workflows driven by labels, built on [g
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.167.5-blue)
+![version](https://img.shields.io/badge/version-v0.169.2-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.167.5** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.169.2** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.167.5"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.169.2"
 ```
 
 The gates, forge access, `observe`, `andon`, `lanes` and `metrics` import ghdag, so install the `ghdag` extra unless another package already provides ghdag. The base package alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.167.5"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.169.2"
 ```
 
 | Item | Value |
@@ -321,6 +321,7 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/forge_api.py` | Typed raw REST calls on forge clients |
 | `issuesmith/forge_guard.py` | Label-write guard for step dispatch |
 | `issuesmith/gate_rules/__init__.py` | Imports every rule module to fill ghdag's gate registry |
+| `issuesmith/gate_rules/README.md` | GateRule protocol, Violation shape and host extension guide |
 | `issuesmith/gate_rules/allow_paths_forbidden.py` | allow_paths vs forbidden_pr_paths overlap (pre-LLM) |
 | `issuesmith/gate_rules/b1_ac_format.py` | Acceptance-criteria YAML format rules |
 | `issuesmith/gate_rules/b1_migration.py` | Migration plan rules |
