@@ -632,7 +632,12 @@ def test_allow_paths_forbidden_registry_entry() -> None:
 def test_non_repairable_rule_ids_and_pr_scope_repairable() -> None:
     from issuesmith.gates import GATE_REGISTRY, NON_REPAIRABLE_RULE_IDS, is_non_repairable_rule_id
 
-    assert NON_REPAIRABLE_RULE_IDS == frozenset({"pr_diff_scope.forbidden_path"})
+    assert NON_REPAIRABLE_RULE_IDS == frozenset(
+        {
+            "pr_diff_scope.forbidden_path",
+            "base_freshness.fetch_transient_exhausted",
+        }
+    )
     assert GATE_REGISTRY["pr_scope"].repairable is True
     assert is_non_repairable_rule_id("pr_diff_scope.forbidden_path") is True
     assert is_non_repairable_rule_id("review.cp2.engine_error") is True

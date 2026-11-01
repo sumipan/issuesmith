@@ -18,7 +18,7 @@ from ghdag.workflow.gates import Violation
 
 from issuesmith.gates.base import ContractInput
 from issuesmith.ops.publish import run_version_bump
-from issuesmith.worktree import _fetch_base_gate_result
+from issuesmith.worktree import fetch_base_gate_result
 
 RULE_ID = "m1.version_behind_base"
 
@@ -69,7 +69,7 @@ class VersionBehindBaseGate:
         branch_ver = self._version_at("HEAD")
         if branch_ver is None:
             return []
-        success, transient_exhausted = _fetch_base_gate_result(
+        success, transient_exhausted = fetch_base_gate_result(
             self._root, self._base
         )
         if not success:

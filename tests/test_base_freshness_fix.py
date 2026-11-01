@@ -164,7 +164,7 @@ def test_m1_check_matches_base_freshness_fetch_outcomes(tmp_path: Path, monkeypa
     assert exhausted[0].rule_id == "base_freshness.fetch_transient_exhausted"
 
     with patch(
-        "issuesmith.gates.m1._fetch_base_gate_result",
+        "issuesmith.gates.m1.fetch_base_gate_result",
         return_value=(True, False),
     ):
         with patch.object(

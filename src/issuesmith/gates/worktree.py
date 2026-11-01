@@ -23,7 +23,7 @@ from typing import Literal, Sequence
 from ghdag.workflow.gates import Violation
 
 from issuesmith.gates.base import ContractInput
-from issuesmith.worktree import _fetch_base_gate_result
+from issuesmith.worktree import fetch_base_gate_result
 
 _CHANGED_FILES_EXCLUDE_PREFIXES: tuple[str, ...] = ("jobs/", "logs/", ".pipeline-state/")
 
@@ -1177,7 +1177,7 @@ class BaseFreshnessGate:
         self._base = base_branch
 
     def check(self, body: str, labels: list[str]) -> list[Violation]:
-        success, transient_exhausted = _fetch_base_gate_result(
+        success, transient_exhausted = fetch_base_gate_result(
             self._root, self._base
         )
         if not success:

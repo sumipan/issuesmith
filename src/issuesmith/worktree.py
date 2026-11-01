@@ -95,7 +95,7 @@ def _lock_wait_seconds() -> int:
         return 30
 
 
-def _fetch_base_gate_result(
+def fetch_base_gate_result(
     repo_dir: Path, base: str, *, max_attempts: int = 3
 ) -> tuple[bool, bool]:
     """Fetch origin base with lock + retries.
@@ -177,7 +177,7 @@ def fetch_base_with_retry(repo_dir: Path, base: str, *, max_attempts: int = 3) -
     Returns ``True`` on success. On exhaustion returns ``False``; callers that
     need a raised error should use :func:`fetch_base_or_raise`.
     """
-    success, _ = _fetch_base_gate_result(repo_dir, base, max_attempts=max_attempts)
+    success, _ = fetch_base_gate_result(repo_dir, base, max_attempts=max_attempts)
     return success
 
 
