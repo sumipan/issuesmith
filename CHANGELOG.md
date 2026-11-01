@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.169.2 - 2026-11-01
+
 ### Fixed
 
 - Deletion reference gate searches root-level config files (``pyproject.toml``, etc.) for
