@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.168.0 - 2026-11-01
+
 ### Fixed
 
 - P1/M1 base freshness fetch retries transient ``origin/<base>`` ref-lock failures
