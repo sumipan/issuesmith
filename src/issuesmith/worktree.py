@@ -71,6 +71,22 @@ def _is_transient_fetch_error(stderr: str) -> bool:
     return any(marker in stderr for marker in _TRANSIENT_FETCH_MARKERS)
 
 
+def _git_common_dir(repo_dir: Path) -> Path:
+    proc = subprocess.run(
+        ["git", "-C", str(repo_dir), "rev-parse", "--git-common-dir"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return repo_dir / ".git"
+    raw = proc.stdout.strip()
+    path = Path(raw)
+    if not path.is_absolute():
+        path = (repo_dir / path).resolve()
+    return path
+
+
 def _lock_wait_seconds() -> int:
     raw = os.environ.get("P0_FETCH_LOCK_WAIT", "30")
     try:
@@ -79,14 +95,17 @@ def _lock_wait_seconds() -> int:
         return 30
 
 
-def fetch_base_with_retry(repo_dir: Path, base: str, *, max_attempts: int = 3) -> bool:
-    """Fetch origin base with mkdir lock + transient ref-lock retries.
+def _fetch_base_gate_result(
+    repo_dir: Path, base: str, *, max_attempts: int = 3
+) -> tuple[bool, bool]:
+    """Fetch origin base with lock + retries.
 
-    Returns ``True`` on success. On exhaustion returns ``False``; callers that
-    need a raised error should use :func:`fetch_base_or_raise`.
+    Returns ``(success, transient_exhausted)``. ``transient_exhausted`` is
+    ``True`` only when every attempt failed with a transient ref-lock error.
     """
-    lock_dir = repo_dir / ".git" / "issuesmith-fetch.lock"
+    lock_dir = _git_common_dir(repo_dir) / "issuesmith-fetch.lock"
     lock_wait = _lock_wait_seconds()
+    transient_attempts = 0
 
     for attempt in range(1, max_attempts + 1):
         waited = 0
@@ -119,10 +138,11 @@ def fetch_base_with_retry(repo_dir: Path, base: str, *, max_attempts: int = 3) -
             pass
 
         if proc.returncode == 0:
-            return True
+            return True, False
 
         stderr = proc.stderr or ""
         if _is_transient_fetch_error(stderr):
+            transient_attempts += 1
             print(
                 f"P0_FETCH_RETRY: attempt={attempt} (transient ref conflict)",
                 file=sys.stderr,
@@ -144,9 +164,21 @@ def fetch_base_with_retry(repo_dir: Path, base: str, *, max_attempts: int = 3) -
 
         if stderr:
             print(stderr, file=sys.stderr, end="" if stderr.endswith("\n") else "\n")
-        return False
+        return False, False
 
-    return False
+    if transient_attempts >= max_attempts:
+        return False, True
+    return False, False
+
+
+def fetch_base_with_retry(repo_dir: Path, base: str, *, max_attempts: int = 3) -> bool:
+    """Fetch origin base with mkdir lock + transient ref-lock retries.
+
+    Returns ``True`` on success. On exhaustion returns ``False``; callers that
+    need a raised error should use :func:`fetch_base_or_raise`.
+    """
+    success, _ = _fetch_base_gate_result(repo_dir, base, max_attempts=max_attempts)
+    return success
 
 
 def fetch_base_or_raise(repo_dir: Path, base: str, *, remote: str = "origin") -> None:

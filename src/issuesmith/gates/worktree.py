@@ -23,6 +23,7 @@ from typing import Literal, Sequence
 from ghdag.workflow.gates import Violation
 
 from issuesmith.gates.base import ContractInput
+from issuesmith.worktree import _fetch_base_gate_result
 
 _CHANGED_FILES_EXCLUDE_PREFIXES: tuple[str, ...] = ("jobs/", "logs/", ".pipeline-state/")
 
@@ -1176,18 +1177,26 @@ class BaseFreshnessGate:
         self._base = base_branch
 
     def check(self, body: str, labels: list[str]) -> list[Violation]:
-        proc = subprocess.run(
-            ["git", "fetch", "origin", self._base],
-            capture_output=True, text=True, check=False,
-            cwd=str(self._root),
+        success, transient_exhausted = _fetch_base_gate_result(
+            self._root, self._base
         )
-        if proc.returncode != 0:
+        if not success:
+            if transient_exhausted:
+                return [Violation(
+                    rule_id="base_freshness.fetch_transient_exhausted",
+                    severity="fail",
+                    message=(
+                        f"git fetch origin {self._base} failed after retries "
+                        "(transient ref lock)"
+                    ),
+                    location=None,
+                    auto_fixable=False,
+                    fix_hint="Re-run the step",
+                )]
             return [Violation(
                 rule_id="base_freshness.fetch_failed",
                 severity="fail",
-                message=(
-                    f"git fetch origin {self._base} failed: {proc.stderr.strip()}"
-                ),
+                message=f"git fetch origin {self._base} failed",
                 location=None,
                 auto_fixable=False,
                 fix_hint=f"Manually fetch origin/{self._base}",

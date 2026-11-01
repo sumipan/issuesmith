@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Fixed
+
+- P1/M1 base freshness fetch retries transient ``origin/<base>`` ref-lock failures
+  with the same lock and backoff as P0, and reports exhausted transient failures
+  as non-repairable ``base_freshness.fetch_transient_exhausted`` (#5907).
+
 ## 0.167.4 - 2026-10-31
 
 ### Added

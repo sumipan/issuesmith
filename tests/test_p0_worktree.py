@@ -239,6 +239,8 @@ def test_fetch_base_or_raise_includes_remote_and_ref(
     )
 
     def always_fail(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        if "rev-parse" in cmd and "--git-common-dir" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout=".git\n", stderr="")
         if "fetch" in cmd:
             return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="network down")
         return subprocess.run(cmd, **kwargs)
@@ -248,6 +250,77 @@ def test_fetch_base_or_raise_includes_remote_and_ref(
     monkeypatch.setattr(wt.subprocess, "run", always_fail)
     with pytest.raises(wt.WorktreeError, match="failed to fetch sumipan/issuesmith:main"):
         wt.fetch_base_or_raise(repo, "main", remote="sumipan/issuesmith")
+
+
+def test_git_common_dir_resolves_linked_worktree(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_init_with_main(repo)
+    worktree_dir = tmp_path / "linked-wt"
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "worktree",
+            "add",
+            "-b",
+            "linked-main",
+            str(worktree_dir),
+            "main",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    assert (worktree_dir / ".git").is_file()
+    common = wt._git_common_dir(worktree_dir)
+    assert common.is_dir()
+    assert common == wt._git_common_dir(repo).resolve()
+
+
+def test_fetch_base_with_retry_uses_common_dir_lock_on_linked_worktree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    _git_init_with_main(repo)
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin", str(repo)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "update-ref", "refs/remotes/origin/main", "HEAD"],
+        check=True,
+        capture_output=True,
+    )
+    worktree_dir = tmp_path / "linked-wt"
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "worktree",
+            "add",
+            "-b",
+            "linked-main",
+            str(worktree_dir),
+            "main",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    monkeypatch.setenv("P0_FETCH_LOCK_WAIT", "0")
+    monkeypatch.setattr(wt, "_sleep", lambda _s: None)
+    real_run = subprocess.run
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        if len(cmd) >= 5 and cmd[0] == "git" and cmd[1] == "-C" and "fetch" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return real_run(cmd, **kwargs)
+
+    monkeypatch.setattr(wt.subprocess, "run", fake_run)
+    assert wt.fetch_base_with_retry(worktree_dir, "main") is True
+    lock_dir = wt._git_common_dir(worktree_dir) / "issuesmith-fetch.lock"
+    assert not lock_dir.exists()
 
 
 def test_prepare_local_worktree_returns_path(tmp_path: Path) -> None:

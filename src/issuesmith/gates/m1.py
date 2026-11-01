@@ -18,6 +18,7 @@ from ghdag.workflow.gates import Violation
 
 from issuesmith.gates.base import ContractInput
 from issuesmith.ops.publish import run_version_bump
+from issuesmith.worktree import _fetch_base_gate_result
 
 RULE_ID = "m1.version_behind_base"
 
@@ -68,15 +69,29 @@ class VersionBehindBaseGate:
         branch_ver = self._version_at("HEAD")
         if branch_ver is None:
             return []
-        fetch = self._git("fetch", "origin", self._base)
-        if fetch.returncode != 0:
+        success, transient_exhausted = _fetch_base_gate_result(
+            self._root, self._base
+        )
+        if not success:
+            if transient_exhausted:
+                return [Violation(
+                    rule_id="base_freshness.fetch_transient_exhausted",
+                    severity="fail",
+                    message=(
+                        f"git fetch origin {self._base} failed after retries "
+                        "(transient ref lock)"
+                    ),
+                    location="pyproject.toml",
+                    auto_fixable=False,
+                    fix_hint="Re-run the step",
+                )]
             return [Violation(
-                rule_id=RULE_ID,
+                rule_id="base_freshness.fetch_failed",
                 severity="fail",
-                message=f"git fetch origin {self._base} failed: {fetch.stderr.strip()}",
+                message=f"git fetch origin {self._base} failed",
                 location="pyproject.toml",
                 auto_fixable=False,
-                fix_hint=f"Manually fetch origin/{self._base} and re-run M1",
+                fix_hint=f"Manually fetch origin/{self._base}",
             )]
         base_ver = self._version_at(f"origin/{self._base}")
         if base_ver is None:
