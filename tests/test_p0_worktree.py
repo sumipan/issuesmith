@@ -346,7 +346,7 @@ def test_clone_if_missing_skips_existing_checkout(tmp_path: Path, monkeypatch: p
     assert calls == []
 
 
-def test_clone_if_missing_clones_when_absent(
+def test_clone_if_missing_clones_into_empty_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     clone_path = tmp_path / "external" / "issuesmith"

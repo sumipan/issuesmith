@@ -33,7 +33,7 @@ def test_get_section_by_keyword_matches_suffixed_heading():
     assert result is not None and "AC1" in result
 
 
-def test_get_section_by_keyword_returns_none_when_absent():
+def test_get_section_by_keyword_returns_none_for_missing_keyword():
     from issuesmith.body_editor import get_section_by_keyword
 
     assert get_section_by_keyword("## Design\n\nbody text\n", "Acceptance Criteria") is None

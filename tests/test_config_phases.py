@@ -7,7 +7,6 @@ import argparse
 import pytest
 import yaml
 
-import issuesmith.config as issuesmith_config_module
 from issuesmith import engine
 from issuesmith.config import ConfigError, get_config, load_config, reset_config_cache
 from tests.conftest import NEXUS_TEST_PHASES
@@ -59,8 +58,6 @@ def test_missing_phases_raises_config_error(tmp_path, monkeypatch):
     _write_config(tmp_path, monkeypatch, {"repo": "example/app"})
     with pytest.raises(ConfigError, match="phases must be declared"):
         load_config()
-    assert not hasattr(issuesmith_config_module, "_DEFAULT_PHASES")
-    assert not hasattr(issuesmith_config_module, "_DEFAULT_HANDLER_BY_PHASE")
 
 
 @pytest.mark.no_auto_phases

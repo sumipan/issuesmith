@@ -647,7 +647,7 @@ class TestLinkSubIssue:
         assert link_sub_issue(client, 100, 101) is True
         assert client.sub_issue_links == [(100, 5407000506)]
 
-    def test_link_sub_issue_422_duplicate_is_idempotent(self):
+    def test_link_sub_issue_duplicate_http_422_is_idempotent(self):
         """ghdag add_sub_issue treats 422 as success (returns None); link stays True."""
         child = {"number": 101, "id": 5407000506, "state": "OPEN", "labels": []}
         parent = {"number": 100, "state": "OPEN", "labels": [], "milestone": {"number": 1}}
@@ -658,7 +658,7 @@ class TestLinkSubIssue:
         assert link_sub_issue(client, 100, 101) is True
         assert client.sub_issue_links == [(100, 5407000506)]
 
-    def test_link_sub_issue_422_raised_is_still_idempotent(self):
+    def test_link_sub_issue_http_422_raised_is_still_idempotent(self):
         """Defense: if client raises 422, treat as idempotent success."""
         child = {"number": 101, "id": 5407000506, "state": "OPEN", "labels": []}
         parent = {"number": 100, "state": "OPEN", "labels": [], "milestone": {"number": 1}}
@@ -1044,7 +1044,7 @@ class TestIssue3130Fixes:
         snap = store.snapshot()
         assert _has_request(store, snap, 3166, "develop") is False
 
-    def test_ac14_rejected_fixture_reenqueues_develop(self, tmp_path):
+    def test_rejected_fixture_reenqueues_develop(self, tmp_path):
         """AC-14: rejected completed develop requests must not block re-enqueue."""
         # Real request_meta prefixes from #3130 investigation.
         fixtures = [
@@ -1421,7 +1421,7 @@ class TestConsolidation:
         advance_milestone_chains(store, client, _chain_config())
         assert client.closed == [100]
 
-    def test_issue_4788_shape(self, tmp_path, monkeypatch):
+    def test_consolidate_handles_merged_and_rejected_children(self, tmp_path, monkeypatch):
         from issuesmith.milestone import milestone_consolidate
 
         parent_body = (

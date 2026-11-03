@@ -108,7 +108,7 @@ def _derived_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 # ---------------------------------------------------------------------------
 
 
-def test_ac1_tests_gate_derives_referencing_test(mod_repo: Path, _derived_config) -> None:
+def test_tests_gate_derives_referencing_test(mod_repo: Path, _derived_config) -> None:
     _derived_config(None)
     gate = TestsGate(mod_repo, allow_paths=["src/pkg/mod.py"])
     violations = gate.check("", [])
@@ -118,7 +118,7 @@ def test_ac1_tests_gate_derives_referencing_test(mod_repo: Path, _derived_config
     assert "derived_allow: tests/test_uses_mod.py" in (violations[0].fix_hint or "")
 
 
-def test_ac1_build_tests_passes_allow_paths(mod_repo: Path) -> None:
+def test_build_tests_passes_allow_paths(mod_repo: Path) -> None:
     ctx = GateBuildContext(
         worktree_path=mod_repo, allow_paths=["src/pkg/mod.py"], base_branch="main"
     )
@@ -128,7 +128,7 @@ def test_ac1_build_tests_passes_allow_paths(mod_repo: Path) -> None:
     assert gate._allow_paths == ["src/pkg/mod.py"]
 
 
-def test_ac1_derive_by_module_name_and_public_def(mod_repo: Path) -> None:
+def test_derive_by_module_name_and_public_def(mod_repo: Path) -> None:
     derived = derive_test_allow_paths(
         mod_repo, "main",
         ["tests/test_uses_mod.py::test_total"],
@@ -143,7 +143,7 @@ def test_ac1_derive_by_module_name_and_public_def(mod_repo: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_ac1b_path_string_reference(tmp_path: Path) -> None:
+def test_path_string_reference(tmp_path: Path) -> None:
     clone = _make_repo(tmp_path, {
         "templates/order.md": "hello\n",
         "tests/test_template.py": (
@@ -169,7 +169,7 @@ def test_ac1b_path_string_reference(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_ac2_unrelated_test_not_derived(mod_repo: Path) -> None:
+def test_unrelated_test_not_derived(mod_repo: Path) -> None:
     derived = derive_test_allow_paths(
         mod_repo, "main",
         ["tests/test_unrelated.py::test_unrelated"],
@@ -179,7 +179,7 @@ def test_ac2_unrelated_test_not_derived(mod_repo: Path) -> None:
     assert derived == []
 
 
-def test_ac2_new_test_file_not_derived(mod_repo: Path) -> None:
+def test_new_test_file_not_derived(mod_repo: Path) -> None:
     _write(mod_repo, {"tests/test_brand_new.py": "import pkg.mod\n"})
     _commit_all(mod_repo)
     derived = derive_test_allow_paths(
@@ -191,7 +191,7 @@ def test_ac2_new_test_file_not_derived(mod_repo: Path) -> None:
     assert derived == []
 
 
-def test_ac2_already_allowed_test_not_derived(mod_repo: Path) -> None:
+def test_already_allowed_test_not_derived(mod_repo: Path) -> None:
     derived = derive_test_allow_paths(
         mod_repo, "main",
         ["tests/test_uses_mod.py::test_total"],
@@ -201,7 +201,7 @@ def test_ac2_already_allowed_test_not_derived(mod_repo: Path) -> None:
     assert derived == []
 
 
-def test_ac2_non_tests_file_not_derived(tmp_path: Path) -> None:
+def test_non_tests_file_not_derived(tmp_path: Path) -> None:
     clone = _make_repo(tmp_path, {
         "src/pkg/__init__.py": "",
         "src/pkg/mod.py": _MOD_BASE,
@@ -218,7 +218,7 @@ def test_ac2_non_tests_file_not_derived(tmp_path: Path) -> None:
     assert derived == []
 
 
-def test_ac2_preexisting_failure_not_derived(tmp_path: Path, _derived_config) -> None:
+def test_preexisting_failure_not_derived(tmp_path: Path, _derived_config) -> None:
     """A referencing test that already fails on base is preexisting → not derived."""
     _derived_config(None)
     clone = _make_repo(tmp_path, {
@@ -238,7 +238,7 @@ def test_ac2_preexisting_failure_not_derived(tmp_path: Path, _derived_config) ->
     assert gate.derived_allow_paths == []
 
 
-def test_ac2_baseline_unavailable_yields_empty(
+def test_baseline_unavailable_yields_empty(
     mod_repo: Path, monkeypatch: pytest.MonkeyPatch, _derived_config
 ) -> None:
     _derived_config(None)
@@ -256,7 +256,7 @@ def test_ac2_baseline_unavailable_yields_empty(
 # ---------------------------------------------------------------------------
 
 
-def test_ac3_pr_scope_allows_derived(mod_repo: Path, _derived_config) -> None:
+def test_pr_scope_allows_derived(mod_repo: Path, _derived_config) -> None:
     _derived_config(None)
     _write(mod_repo, {
         "tests/test_uses_mod.py": _TEST_USES_MOD.replace("== 3", "== 4"),
@@ -272,7 +272,7 @@ def test_ac3_pr_scope_allows_derived(mod_repo: Path, _derived_config) -> None:
     ]
 
 
-def test_ac3_registry_pr_scope_passes_derived(mod_repo: Path) -> None:
+def test_registry_pr_scope_passes_derived(mod_repo: Path) -> None:
     _write(mod_repo, {"tests/test_uses_mod.py": _TEST_USES_MOD.replace("== 3", "== 4")})
     ctx = GateBuildContext(
         worktree_path=mod_repo,
@@ -284,7 +284,7 @@ def test_ac3_registry_pr_scope_passes_derived(mod_repo: Path) -> None:
     assert gate.check("", []) == []
 
 
-def test_ac3_pr_scope_default_has_no_derived(mod_repo: Path, _derived_config) -> None:
+def test_pr_scope_default_has_no_derived(mod_repo: Path, _derived_config) -> None:
     """Without explicit derived_allow_paths, static derivation still applies (#5884)."""
     _derived_config(None)
     _write(mod_repo, {"tests/test_uses_mod.py": _TEST_USES_MOD.replace("== 3", "== 4")})
@@ -292,7 +292,7 @@ def test_ac3_pr_scope_default_has_no_derived(mod_repo: Path, _derived_config) ->
     assert gate.check("", []) == []
 
 
-def test_ac3_pr_scope_derived_edit_is_guarded(mod_repo: Path, _derived_config) -> None:
+def test_pr_scope_derived_edit_is_guarded(mod_repo: Path, _derived_config) -> None:
     _derived_config(None)
     _write(mod_repo, {"tests/test_uses_mod.py": "import pkg.mod\n"})
     gate = PrScopeGate(
@@ -328,11 +328,11 @@ def _guard(root: Path, content: str) -> list:
     return check_derived_test_guard(root, "main", ["tests/test_guard.py"])
 
 
-def test_ac4_expectation_change_only_is_ok(guard_repo: Path) -> None:
+def test_expectation_change_only_is_ok(guard_repo: Path) -> None:
     assert _guard(guard_repo, _GUARD_BASE.replace("3 == 3", "3 == 4")) == []
 
 
-def test_ac4_removed_test_function_is_weakened(guard_repo: Path) -> None:
+def test_removed_test_function_is_weakened(guard_repo: Path) -> None:
     content = _GUARD_BASE.replace("    def test_b(self):", "    def helper_b(self):")
     violations = _guard(guard_repo, content)
     assert [v.rule_id for v in violations] == ["derived_allow.test_weakened"]
@@ -341,26 +341,26 @@ def test_ac4_removed_test_function_is_weakened(guard_repo: Path) -> None:
     assert violations[0].auto_fixable is False
 
 
-def test_ac4_removed_assert_is_weakened(guard_repo: Path) -> None:
+def test_removed_assert_is_weakened(guard_repo: Path) -> None:
     violations = _guard(guard_repo, _GUARD_BASE.replace("        assert 3 == 3\n", ""))
     assert [v.rule_id for v in violations] == ["derived_allow.test_weakened"]
 
 
-def test_ac4_added_skip_marker_is_skipped(guard_repo: Path) -> None:
+def test_added_skip_marker_is_skipped(guard_repo: Path) -> None:
     content = _GUARD_BASE.replace(
         "def test_a():", "@pytest.mark.skip(reason=\"x\")\ndef test_a():"
     )
     assert [v.rule_id for v in _guard(guard_repo, content)] == ["derived_allow.test_skipped"]
 
 
-def test_ac4_added_xfail_call_is_skipped(guard_repo: Path) -> None:
+def test_added_xfail_call_is_skipped(guard_repo: Path) -> None:
     content = _GUARD_BASE.replace(
         "def test_a():\n", "def test_a():\n    pytest.xfail(\"later\")\n"
     )
     assert [v.rule_id for v in _guard(guard_repo, content)] == ["derived_allow.test_skipped"]
 
 
-def test_ac4_syntax_error_is_weakened(guard_repo: Path) -> None:
+def test_syntax_error_is_weakened(guard_repo: Path) -> None:
     violations = _guard(guard_repo, "def test_a(:\n")
     assert [v.rule_id for v in violations] == ["derived_allow.test_weakened"]
 
@@ -370,7 +370,7 @@ def test_ac4_syntax_error_is_weakened(guard_repo: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_ac6_disabled_yields_no_derived(mod_repo: Path, _derived_config) -> None:
+def test_disabled_yields_no_derived(mod_repo: Path, _derived_config) -> None:
     _derived_config(False)
     gate = TestsGate(mod_repo, allow_paths=["src/pkg/mod.py"])
     violations = gate.check("", [])
@@ -379,7 +379,7 @@ def test_ac6_disabled_yields_no_derived(mod_repo: Path, _derived_config) -> None
     assert "derived_allow:" not in (violations[0].fix_hint or "")
 
 
-def test_ac6_disabled_pr_scope_ignores_derived(mod_repo: Path, _derived_config) -> None:
+def test_disabled_pr_scope_ignores_derived(mod_repo: Path, _derived_config) -> None:
     _derived_config(False)
     _write(mod_repo, {"tests/test_uses_mod.py": _TEST_USES_MOD.replace("== 3", "== 4")})
     gate = PrScopeGate(
@@ -691,7 +691,7 @@ def _derive_one(root: Path, test_path: str, changed: list[str]) -> list[str]:
     )
 
 
-def test_5134_untracked_added_file_derives_dir_glob_test(tmp_path: Path) -> None:
+def test_untracked_added_file_derives_dir_glob_test(tmp_path: Path) -> None:
     clone = _make_repo(tmp_path, {
         "workflows/base.yml": "name: base\n",
         "tests/workflows/test_names.py": _TEST_GLOBS_WORKFLOWS,
@@ -702,7 +702,7 @@ def test_5134_untracked_added_file_derives_dir_glob_test(tmp_path: Path) -> None
     assert derived == ["tests/workflows/test_names.py"]
 
 
-def test_5134_deleted_file_derives_dir_glob_test(tmp_path: Path) -> None:
+def test_deleted_file_derives_dir_glob_test(tmp_path: Path) -> None:
     clone = _make_repo(tmp_path, {
         "workflows/base.yml": "name: base\n",
         "workflows/legacy.yml": "name: legacy\n",
@@ -715,7 +715,7 @@ def test_5134_deleted_file_derives_dir_glob_test(tmp_path: Path) -> None:
     ]
 
 
-def test_5134_rename_derives_both_source_and_dest_dirs(tmp_path: Path) -> None:
+def test_rename_derives_both_source_and_dest_dirs(tmp_path: Path) -> None:
     clone = _make_repo(tmp_path, {
         "legacy/tasks.yml": "name: moved\nsteps: [a, b, c]\n",
         "tests/test_legacy_dir.py": _TEST_GLOBS_LEGACY,
@@ -734,7 +734,7 @@ def test_5134_rename_derives_both_source_and_dest_dirs(tmp_path: Path) -> None:
     assert derived == ["tests/test_legacy_dir.py", "tests/test_workflows_dir.py"]
 
 
-def test_5134_modified_only_adds_no_parent_dir_key(tmp_path: Path) -> None:
+def test_modified_only_adds_no_parent_dir_key(tmp_path: Path) -> None:
     clone = _make_repo(tmp_path, {
         "workflows/tasks.yml": "name: tasks\n",
         "tests/workflows/test_names.py": _TEST_GLOBS_WORKFLOWS,
@@ -744,7 +744,7 @@ def test_5134_modified_only_adds_no_parent_dir_key(tmp_path: Path) -> None:
     assert _derive_one(clone, "tests/workflows/test_names.py", ["workflows/tasks.yml"]) == []
 
 
-def test_5134_root_level_add_and_delete_adds_no_empty_or_dot_key(tmp_path: Path) -> None:
+def test_root_level_add_and_delete_adds_no_empty_or_dot_key(tmp_path: Path) -> None:
     from issuesmith.gates.worktree import _parent_dir_keys, _reference_keys
 
     clone = _make_repo(tmp_path, {"setup.cfg": "[x]\n"})
@@ -757,7 +757,7 @@ def test_5134_root_level_add_and_delete_adds_no_empty_or_dot_key(tmp_path: Path)
     assert _parent_dir_keys({"pyproject.toml", "./setup.cfg", "a/b/c.yml"}) == {"a/b"}
 
 
-def test_5134_structural_change_paths_statuses(tmp_path: Path) -> None:
+def test_structural_change_paths_statuses(tmp_path: Path) -> None:
     from issuesmith.gates.worktree import _structural_change_paths
 
     clone = _make_repo(tmp_path, {
@@ -776,7 +776,7 @@ def test_5134_structural_change_paths_statuses(tmp_path: Path) -> None:
     assert paths == {"fresh/new.yml", "gone/old.yml", "src_dir/moved.yml", "dst_dir/moved.yml"}
 
 
-def test_5134_structural_change_paths_git_failure_is_tolerated(tmp_path: Path) -> None:
+def test_structural_change_paths_git_failure_is_tolerated(tmp_path: Path) -> None:
     from issuesmith.gates.worktree import _structural_change_paths
 
     clone = _make_repo(tmp_path, {"workflows/base.yml": "x: 1\n"})
@@ -815,22 +815,22 @@ def _derive_extractor(clone: Path) -> list[str]:
     )
 
 
-def test_5134_function_body_constant_change_derives_co_consts_test(tmp_path: Path) -> None:
+def test_function_body_constant_change_derives_name_referencing_test(tmp_path: Path) -> None:
     clone = _extractor_repo(tmp_path, (
         "from pkg.extractor import extract\n\n\n"
         "def test_consts():\n"
-        "    assert \"alpha\" in extract.__code__.co_consts\n"
+        "    assert extract(\"alpha\") is not None\n"
     ))
     assert _derive_extractor(clone) == ["tests/test_extractor.py"]
 
 
-def test_5134_enclosing_name_is_the_only_matching_key(tmp_path: Path) -> None:
+def test_enclosing_name_is_the_only_matching_key(tmp_path: Path) -> None:
     # Only `extract_terms` links the test to the change: no path, module or stem in the text.
     # (`extract` itself is a generic symbol rejected by _is_valid_key.)
     test_text = (
         "from pkg.api import extract_terms\n\n\n"
         "def test_consts():\n"
-        "    assert \",\" in extract_terms.__code__.co_consts\n"
+        "    assert extract_terms(\"a,b\") is not None\n"
     )
     clone = _extractor_repo(tmp_path, test_text)
     assert _derive_extractor(clone) == ["tests/test_extractor.py"]
@@ -868,7 +868,7 @@ def _nested_repo(tmp_path: Path, changed_content: str) -> Path:
     return clone
 
 
-def test_5134_hunk_enclosing_names_nested_and_filters(tmp_path: Path) -> None:
+def test_hunk_enclosing_names_nested_and_filters(tmp_path: Path) -> None:
     from issuesmith.gates.worktree import _hunk_enclosing_names
 
     changed = (
@@ -882,14 +882,14 @@ def test_5134_hunk_enclosing_names_nested_and_filters(tmp_path: Path) -> None:
     assert names == {"Processor", "handle_item", "inner_step", "nested_public"}
 
 
-def test_5134_hunk_enclosing_names_module_level_only(tmp_path: Path) -> None:
+def test_hunk_enclosing_names_module_level_only(tmp_path: Path) -> None:
     from issuesmith.gates.worktree import _hunk_enclosing_names
 
     clone = _nested_repo(tmp_path, _NESTED_BASE.replace("VALUE = 1", "VALUE = 2"))
     assert _hunk_enclosing_names(clone, "main", "src/pkg/nested.py") == set()
 
 
-def test_5134_hunk_enclosing_names_degrades_to_empty(tmp_path: Path) -> None:
+def test_hunk_enclosing_names_degrades_to_empty(tmp_path: Path) -> None:
     from issuesmith.gates.worktree import _hunk_enclosing_names
 
     clone = _nested_repo(tmp_path, _NESTED_BASE.replace("y + 1", "y +"))
@@ -904,7 +904,7 @@ def test_5134_hunk_enclosing_names_degrades_to_empty(tmp_path: Path) -> None:
     assert _hunk_enclosing_names(clone, "main", "src/pkg/nested.py") == set()
 
 
-def test_5134_hunk_enclosing_names_bad_hunk_header(tmp_path: Path) -> None:
+def test_hunk_enclosing_names_bad_hunk_header(tmp_path: Path) -> None:
     from issuesmith.gates import worktree as wt
 
     clone = _nested_repo(tmp_path, _NESTED_BASE.replace("y + 1", "y + 2"))
@@ -915,7 +915,7 @@ def test_5134_hunk_enclosing_names_bad_hunk_header(tmp_path: Path) -> None:
         assert wt._hunk_enclosing_names(clone, "main", "src/pkg/nested.py") == set()
 
 
-def test_5134_syntax_error_keeps_existing_keys(tmp_path: Path) -> None:
+def test_syntax_error_keeps_existing_keys(tmp_path: Path) -> None:
     clone = _make_repo(tmp_path, {
         "src/pkg/__init__.py": "",
         "src/pkg/mod.py": _MOD_BASE,
