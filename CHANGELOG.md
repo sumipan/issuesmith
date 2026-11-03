@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.169.4 - 2026-11-04
+
 - Tests: rename issue/AC-numbered tests and replace source pins and mock-call assertions with behaviour checks in top-level tests (test_ac_contract to test_p0_worktree).
 
 ## 0.169.2 - 2026-11-01
