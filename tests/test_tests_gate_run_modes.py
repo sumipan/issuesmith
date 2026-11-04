@@ -112,7 +112,7 @@ def test_mapped_test_paths_empty(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_ac4_mapped_failure_skips_full_run(
+def test_mapped_failure_skips_full_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     clone = _setup_repo(tmp_path, {
@@ -131,7 +131,7 @@ def test_ac4_mapped_failure_skips_full_run(
     assert calls[0] == ["tests/test_foo.py"]
 
 
-def test_ac4_mapped_pass_runs_full(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_mapped_pass_runs_full(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     clone = _setup_repo(tmp_path, {
         "src/foo.py": _FOO,
         "tests/test_foo.py": _TEST_FOO,
@@ -146,7 +146,7 @@ def test_ac4_mapped_pass_runs_full(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert "--durations=20" in calls[1]
 
 
-def test_ac4_no_mapping_runs_full_only(
+def test_no_mapping_runs_full_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     clone = _setup_repo(tmp_path, {"tests/test_other.py": _TEST_OTHER})
@@ -158,7 +158,7 @@ def test_ac4_no_mapping_runs_full_only(
     assert "--durations=20" in calls[0]
 
 
-def test_ac4_mapped_preexisting_failure_runs_full(
+def test_mapped_preexisting_failure_runs_full(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Mapped failure that also fails on base is non-blocking; the full run decides."""
@@ -212,7 +212,7 @@ _FULL_OUTPUT = (
 )
 
 
-def test_ac2_full_run_durations_and_stderr(
+def test_full_run_durations_and_stderr(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     calls: list[list[str]] = []
@@ -234,7 +234,7 @@ def test_ac2_full_run_durations_and_stderr(
     assert "2 passed in 1.12s" in err
 
 
-def test_ac2_mapped_run_logs_elapsed(
+def test_mapped_run_logs_elapsed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     (tmp_path / "tests").mkdir()
@@ -255,7 +255,7 @@ def test_ac2_mapped_run_logs_elapsed(
 
 
 @pytest.mark.parametrize("rc", [143, 137, -15, -9])
-def test_ac5_interrupted_full_run(
+def test_interrupted_full_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rc: int
 ) -> None:
     monkeypatch.setattr(wt, "_run_pytest", lambda root, args: (rc, "Terminated\n"))
@@ -272,7 +272,7 @@ def test_ac5_interrupted_full_run(
 
 
 @pytest.mark.parametrize("rc", [143, -9])
-def test_ac5_interrupted_mapped_run(
+def test_interrupted_mapped_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rc: int
 ) -> None:
     (tmp_path / "tests").mkdir()
@@ -297,7 +297,7 @@ def test_ac5_interrupted_mapped_run(
 # ---------------------------------------------------------------------------
 
 
-def test_ac6_changed_files_error_runs_full_once(
+def test_changed_files_error_runs_full_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     (tmp_path / "tests").mkdir()
@@ -319,7 +319,7 @@ def test_ac6_changed_files_error_runs_full_once(
     assert "--durations=20" in calls[0]
 
 
-def test_ac6_rc2_stays_collection_error(
+def test_rc2_stays_collection_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(wt, "_run_pytest", lambda root, args: (2, "ERROR collecting\n"))

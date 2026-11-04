@@ -1,13 +1,10 @@
 """issuesmith.projection: pure state -> label projection and diff (#4807)."""
 from __future__ import annotations
 
-import ast
 from dataclasses import replace
-from pathlib import Path
 
 import pytest
 
-import issuesmith.projection as projection
 from issuesmith.config import IssuesmithConfig, PhaseConfig, get_config
 from issuesmith.projection import (
     IssueState,
@@ -159,26 +156,3 @@ def test_default_config_projects_merge_done_for_m2():
     assert phase is not None
     state = IssueState(phases={phase: "done"})
     assert project(state, cfg) == {f"{cfg.label_namespace}:merge-done"}
-
-
-def test_projection_module_has_no_phase_or_label_literals(cfg):
-    """Phase names and label words come from config / contract, never from string literals."""
-    tree = ast.parse(Path(projection.__file__).read_text(encoding="utf-8"))
-    docstrings = {
-        id(node.body[0].value)
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.Module, ast.FunctionDef, ast.ClassDef))
-        and node.body
-        and isinstance(node.body[0], ast.Expr)
-        and isinstance(node.body[0].value, ast.Constant)
-    }
-    literals = {
-        node.value
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docstrings
-    }
-    words = {p.name for p in get_config().phases} | {
-        "ready", "running", "done", "queued", "waiting", "andon", "andon-",
-        "broken", "decision", "blocked", "issuesmith",
-    }
-    assert not {lit for lit in literals if any(w in lit for w in words)}

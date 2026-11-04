@@ -14,6 +14,10 @@ from issuesmith.ops.publish import _ensure_rebased
 _ALLOW = ["src/issuesmith/ops/publish.py"]
 
 
+def _read(root: Path, rel: str) -> str:
+    return (root / rel).read_text(encoding="utf-8")
+
+
 def _git(cwd: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", "-C", str(cwd), *args],
@@ -112,9 +116,7 @@ def test_allow_paths_dirty_returns_dirty_worktree(tmp_path: Path) -> None:
 
     # Runtime dirt discarded; allow_paths dirt remains; no rebase performed.
     assert (wt / "jobs" / "audit.jsonl").read_text(encoding="utf-8") == "audit-v1\n"
-    assert "publish-local-dirty" in (wt / "src/issuesmith/ops/publish.py").read_text(
-        encoding="utf-8"
-    )
+    assert "publish-local-dirty" in _read(wt, "src/issuesmith/ops/publish.py")
     ancestor = _git(wt, "merge-base", "--is-ancestor", "origin/main", "HEAD", check=False)
     assert ancestor.returncode != 0
 

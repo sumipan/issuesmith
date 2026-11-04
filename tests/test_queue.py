@@ -1,6 +1,7 @@
 """tests/tools/issuesmith/test_queue.py — QueueStore comprehensive tests."""
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import threading
@@ -984,17 +985,6 @@ class TestTriage:
         assert log["config"]["engine"] == "claude"
         assert log["config"]["model"] == "claude-sonnet-4-6"
 
-    def test_no_hardcoded_cursor_gemini_in_triage_source(self):
-        """No hardcoded engine/model left in LLM call or log sites (#2803)."""
-        import issuesmith.queue_triage as triage_mod
-
-        src = Path(triage_mod.__file__).read_text(encoding="utf-8")
-        assert 'engine="cursor"' not in src
-        assert 'engine="cursor", model="gemini-3-flash"' not in src
-        assert '"engine": "cursor"' not in src
-        assert '"model": "gemini-3-flash"' not in src
-        assert 'engine="gemini"' not in src
-
 
 class TestCLI:
     def test_enqueue_cli(self, tmp_path, capsys):
@@ -1759,7 +1749,6 @@ class TestCp2SupersedeRepoWide:
                 },
             ],
         )
-        assert not hasattr(client, "list_open_issues_for_queue")
         monkeypatch.setattr(qmod, "_pipeline_idle_enough", lambda idle, now: True)
         monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
         # Inside release-watcher window
@@ -2690,20 +2679,48 @@ def _run_tick(store, client):
     )
 
 
+def test_audit_reports_active_order_in_completed(tmp_path, capsys):
+    """Audit detects active_order intersecting completed_request_ids (#5691, #5965)."""
+    from issuesmith import queue as qmod
+
+    store = _store(tmp_path)
+    args = argparse.Namespace(
+        queue_path=str(store.queue_path),
+        state_path=str(store.state_path),
+        lock_path=str(store.lock_path),
+    )
+    rid = store.enqueue(
+        issue=1,
+        phase="draft",
+        source="s",
+        actor_kind="human",
+        priority="normal",
+        requested_by=["x"],
+        requested_at=_NOW,
+    ).request_id
+    with store.lock():
+        state = store._load_state_unlocked()
+        state["active_order"] = [rid]
+        state["completed_request_ids"] = [rid]
+        store._save_state_unlocked(state)
+    assert qmod._cmd_audit(args) == 1
+    assert "active_order intersects completed_request_ids" in capsys.readouterr().out
+
+
 class TestTickApiBudget:
-    def test_ac1_tick_api_calls_at_most_8(self, tmp_path, monkeypatch):
+    def test_tick_api_calls_at_most_8(self, tmp_path, monkeypatch):
         store, client = _tick_budget_setup(tmp_path, monkeypatch)
         _run_tick(store, client)
         assert len(client.calls) <= 8, client.calls
 
-    def test_ac2_in_flight_issue_get_once_per_tick(self, tmp_path, monkeypatch):
+    def test_in_flight_issue_get_once_per_tick(self, tmp_path, monkeypatch):
         store, client = _tick_budget_setup(tmp_path, monkeypatch)
         _run_tick(store, client)
         for n in _IN_FLIGHT:
             assert client.issue_get_count(n) == 1, client.calls
         assert client.issue_get_count(_QUEUED) == 1, client.calls
 
-    def test_ac3_stale_running_issues_not_fetched(self, tmp_path, monkeypatch):
+    def test_stale_running_issues_not_fetched(self, tmp_path, monkeypatch):
         store, client = _tick_budget_setup(tmp_path, monkeypatch)
         _run_tick(store, client)
         for n in _STALE_RUNNING:

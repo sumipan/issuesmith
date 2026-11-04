@@ -166,7 +166,7 @@ class TestQueueUnblockCLI:
         assert kinds == {"systemic_step_failure"}
         assert "removed 1 block" in capsys.readouterr().out
 
-    def test_unblock_idempotent_zero_removed(self, tmp_path, capsys):
+    def test_unblock_twice_reports_zero_blocks(self, tmp_path, capsys):
         store = _store(tmp_path)
         code = qmod.main(
             [

@@ -154,7 +154,7 @@ class TestInferHandlerFromExec:
 # AC-1 / AC-5: resume --from m1 without --handler resets m1 and m2 of the impl DAG
 # ---------------------------------------------------------------------------
 
-def test_ac1_from_m1_infers_impl_and_resets_two_steps(tmp_path, capsys):
+def test_from_m1_infers_impl_and_resets_two_steps(tmp_path, capsys):
     jobs, cfg = _fs(tmp_path, _impl_records(_ISSUE))
     _m1_failed(jobs)
     calls: list = []
@@ -169,7 +169,7 @@ def test_ac1_from_m1_infers_impl_and_resets_two_steps(tmp_path, capsys):
     assert all(after[name] == "success" for name in _CHAIN[:5])
 
 
-def test_ac5_logs_when_inferred_differs_from_table(tmp_path, capsys):
+def test_logs_when_inferred_differs_from_table(tmp_path, capsys):
     jobs, cfg = _fs(tmp_path, _impl_records(_ISSUE))
     _m1_failed(jobs)
 
@@ -204,7 +204,7 @@ def test_explicit_handler_wins_over_exec(tmp_path, capsys):
 # AC-2: no exec record for the issue -> static table
 # ---------------------------------------------------------------------------
 
-def test_ac2_falls_back_to_static_table(tmp_path, capsys):
+def test_falls_back_to_static_table(tmp_path, capsys):
     jobs, cfg = _fs(tmp_path, _impl_records(4000))
     calls: list = []
 
@@ -221,7 +221,7 @@ def test_ac2_falls_back_to_static_table(tmp_path, capsys):
 # AC-3: the handler's DAG has no such step -> exit 1 before ghdag recover
 # ---------------------------------------------------------------------------
 
-def test_ac3_step_missing_from_handler_dag_exits_1(tmp_path, capsys):
+def test_step_missing_from_handler_dag_exits_1(tmp_path, capsys):
     jobs, cfg = _fs(tmp_path, _impl_records(_ISSUE))
     _m1_failed(jobs)
     calls: list = []
@@ -234,7 +234,7 @@ def test_ac3_step_missing_from_handler_dag_exits_1(tmp_path, capsys):
     assert "no steps to reset: step m1 not found in handler merge (try --handler impl)" in err
 
 
-def test_ac3_fallback_handler_without_run_exits_1(tmp_path, capsys):
+def test_fallback_handler_without_run_exits_1(tmp_path, capsys):
     """exec knows the issue but not the step; the table's handler has no run -> exit 1."""
     jobs, cfg = _fs(tmp_path, _impl_records(_ISSUE))
     _m1_failed(jobs)

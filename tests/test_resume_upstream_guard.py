@@ -180,7 +180,7 @@ class TestUpstreamBlockers:
 # AC-1: p1 failed, p2 dep_failed; resume from p2 -> exit 1, no recover call
 # ---------------------------------------------------------------------------
 
-class TestAC1:
+class TestRejectsFailedUpstream:
     def test_rejects_with_failed_upstream(self, pipeline_fs, capsys):
         tmp, cfg = pipeline_fs
         _make_done(tmp / "jobs" / "done", "p1-uuid", "TIMEOUT")
@@ -193,7 +193,7 @@ class TestAC1:
         assert "--from p1" in captured.err
         assert "--from p2 --mark-done p1" in captured.err
 
-    def test_ac1b_from_p3_shows_both_blockers(self, pipeline_fs, capsys):
+    def test_from_p3_shows_both_blockers(self, pipeline_fs, capsys):
         """p1 failed, p2 dep_failed, from=p3: blockers show p1 and p2."""
         tmp, cfg = pipeline_fs
         _make_done(tmp / "jobs" / "done", "p1-uuid", "TIMEOUT")
@@ -207,7 +207,7 @@ class TestAC1:
         assert "--from p1" in captured.err
         assert "--from p2 --mark-done p1" in captured.err
 
-    def test_ac1c_cancelled_upstream_also_rejected(self, pipeline_fs, capsys):
+    def test_cancelled_upstream_also_rejected(self, pipeline_fs, capsys):
         """p1 CANCELLED -> resume from p2 is also rejected."""
         tmp, cfg = pipeline_fs
         _make_done(tmp / "jobs" / "done", "p1-uuid", "CANCELLED")
@@ -223,7 +223,7 @@ class TestAC1:
 # AC-2: --mark-done p1 writes done marker and calls recover
 # ---------------------------------------------------------------------------
 
-class TestAC2:
+class TestMarkDone:
     def test_mark_done_writes_marker_and_calls_recover(self, pipeline_fs, capsys):
         tmp, cfg = pipeline_fs
         _make_done(tmp / "jobs" / "done", "p1-uuid", "TIMEOUT")
@@ -293,7 +293,7 @@ class TestAC2:
         assert by_name["p1"] == "success"
         assert by_name["p2"] == "pending"
 
-    def test_ac2b_mark_done_dep_failed_exits_2(self, pipeline_fs, capsys):
+    def test_mark_done_dep_failed_exits_2(self, pipeline_fs, capsys):
         """--mark-done p2 (dep_failed) returns 2, no marker written."""
         tmp, cfg = pipeline_fs
         _make_done(tmp / "jobs" / "done", "p1-uuid", "TIMEOUT")
@@ -306,7 +306,7 @@ class TestAC2:
         assert mock_recover.call_count == 0
         assert (tmp / "jobs" / "done" / "p2-uuid").exists() is False
 
-    def test_ac2b_mark_done_downstream_exits_2(self, pipeline_fs, capsys):
+    def test_mark_done_downstream_exits_2(self, pipeline_fs, capsys):
         """--mark-done p3 (downstream of from=p2) returns 2, no marker written."""
         tmp, cfg = pipeline_fs
         _make_done(tmp / "jobs" / "done", "p1-uuid", "TIMEOUT")
@@ -318,7 +318,7 @@ class TestAC2:
         assert rc == 2
         assert mock_recover.call_count == 0
 
-    def test_ac2c_mark_done_p1_but_p2_still_blocks_from_p3(self, pipeline_fs, capsys):
+    def test_mark_done_p1_but_p2_still_blocks_from_p3(self, pipeline_fs, capsys):
         """from=p3 --mark-done p1: p2 dep_failed remains, exit 1, no marker written."""
         tmp, cfg = pipeline_fs
         _make_done(tmp / "jobs" / "done", "p1-uuid", "TIMEOUT")
@@ -335,7 +335,7 @@ class TestAC2:
         assert p1_done.read_text() == original_content
         assert "--from p2 --mark-done p1" in captured.err
 
-    def test_ac2d_warns_when_result_file_missing(self, pipeline_fs, capsys):
+    def test_warns_when_result_file_missing(self, pipeline_fs, capsys):
         """--mark-done p1 when p1 has no result file: warning on stderr, proceeds."""
         tmp, cfg = pipeline_fs
         _make_done(tmp / "jobs" / "done", "p1-uuid", "TIMEOUT")
@@ -353,7 +353,7 @@ class TestAC2:
 # AC-2e: CLI --mark-done without --from exits 2
 # ---------------------------------------------------------------------------
 
-class TestAC2e:
+class TestMarkDoneRequiresFrom:
     def test_mark_done_without_from_exits_2(self):
         from issuesmith.cli import _cmd_resume
         with pytest.raises(SystemExit) as exc_info:
@@ -365,7 +365,7 @@ class TestAC2e:
 # AC-3: all upstream success -> guard passes through to recover
 # ---------------------------------------------------------------------------
 
-class TestAC3:
+class TestPassesThroughToRecover:
     def test_all_success_calls_recover(self, pipeline_fs, capsys):
         """p1 success, p2 pending: resume from p2 calls recover once."""
         tmp, cfg = pipeline_fs
@@ -407,7 +407,7 @@ class TestAC3:
 # AC-4: from_step not in steps -> pass through
 # ---------------------------------------------------------------------------
 
-class TestAC4:
+class TestUnknownFromStep:
     def test_unknown_from_step_passes_through(self, pipeline_fs, capsys):
         """from_step not found in steps -> no blockers -> recover called."""
         tmp, cfg = pipeline_fs

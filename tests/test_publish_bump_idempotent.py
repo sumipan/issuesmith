@@ -22,14 +22,14 @@ index 1111111..2222222 100644
 +version = "0.27.0"
 """
 
-_ISSUE_3922_LOG = [
+_BUMP_NOT_AT_HEAD_LOG = [
     "fix: b",
     "fix: a",
     "chore: bump version to 0.105.0 (Y: B1)",
     "feat: impl",
 ]
 
-_ISSUE_3922_CUMULATIVE_DIFF = """\
+_BUMP_NOT_AT_HEAD_DIFF = """\
 diff --git a/pyproject.toml b/pyproject.toml
 index 1111111..2222222 100644
 --- a/pyproject.toml
@@ -82,7 +82,7 @@ def test_bump_versions_in_range_collects_bump_subjects_anywhere_in_range():
 
 
 def test_strip_bump_version_lines_removes_matching_pyproject_version_hunks():
-    diff = _ISSUE_3922_CUMULATIVE_DIFF
+    diff = _BUMP_NOT_AT_HEAD_DIFF
     stripped = _strip_bump_version_lines(diff, ["0.105.0"])
     assert "-version = " not in stripped
     assert '+version = "0.105.0"' not in stripped
@@ -93,17 +93,17 @@ def test_strip_bump_version_lines_removes_matching_pyproject_version_hunks():
     assert _strip_bump_version_lines(diff, []) == diff
 
 
-def test_diff_gate_passes_issue_3922_layout_with_bump_not_at_head():
-    router = _git_router(_ISSUE_3922_LOG, {"origin/main...HEAD": _ISSUE_3922_CUMULATIVE_DIFF})
+def test_diff_gate_passes_with_bump_not_at_head():
+    router = _git_router(_BUMP_NOT_AT_HEAD_LOG, {"origin/main...HEAD": _BUMP_NOT_AT_HEAD_DIFF})
     with patch("issuesmith.ops.publish._run_git", side_effect=router):
         assert _check_commit_diff_gates(Path("/tmp/wt"), "main") is None
 
 
 def test_diff_gate_rejects_llm_version_edit_after_publish_bump():
-    llm_diff = _ISSUE_3922_CUMULATIVE_DIFF.replace(
+    llm_diff = _BUMP_NOT_AT_HEAD_DIFF.replace(
         '+version = "0.105.0"', '+version = "0.106.0"'
     )
-    router = _git_router(_ISSUE_3922_LOG, {"origin/main...HEAD": llm_diff})
+    router = _git_router(_BUMP_NOT_AT_HEAD_LOG, {"origin/main...HEAD": llm_diff})
     with patch("issuesmith.ops.publish._run_git", side_effect=router):
         result = _check_commit_diff_gates(Path("/tmp/wt"), "main")
     assert result is not None and result.status == "P3_GATE_FAILED"
@@ -142,9 +142,9 @@ def test_maybe_bump_version_skips_when_bump_commit_in_range(tmp_path: Path):
     run_bump.assert_not_called()
 
 
-def test_maybe_bump_version_skips_issue_3922_layout(tmp_path: Path):
+def test_maybe_bump_version_skips_when_bump_not_at_head(tmp_path: Path):
     (tmp_path / "pyproject.toml").write_text('version = "0.105.0"\n', encoding="utf-8")
-    router = _git_router(_ISSUE_3922_LOG, {})
+    router = _git_router(_BUMP_NOT_AT_HEAD_LOG, {})
     with patch("issuesmith.ops.publish._run_git", side_effect=router), \
          patch("issuesmith.ops.publish._run_version_bump") as run_bump:
         assert _maybe_bump_version(tmp_path, "main", "sumipan/ghdag", "sumipan/nexus") is None

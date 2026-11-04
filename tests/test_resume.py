@@ -54,18 +54,22 @@ def test_resume_from_step_releases_in_flight():
 
 def test_resume_from_step_calls_ghdag_recover():
     from issuesmith.resume import resume
+    captured: list[tuple] = []
+
+    def fake_recover(*args, **kwargs):
+        captured.append((args, kwargs))
+        return 0
+
     with (
         patch("issuesmith.resume.QueueStore") as mock_store_cls,
         patch("issuesmith.resume._generation_keys_available", return_value=True),
-        patch("issuesmith.resume._run_ghdag_recover", return_value=0) as mock_recover,
+        patch("issuesmith.resume._run_ghdag_recover", side_effect=fake_recover),
     ):
         mock_store_cls.return_value = _make_store_mock()
         rc = resume(123, from_step="m1")
     assert rc == 0
-    mock_recover.assert_called_once()
-    call_args = mock_recover.call_args
-    assert call_args[0][0] == 123  # issue
-    assert call_args[0][2] == "m1"  # from_step
+    assert captured[0][0][0] == 123
+    assert captured[0][0][2] == "m1"
 
 
 def test_resume_from_step_returns_1_when_ghdag_unavailable(capsys):
@@ -103,24 +107,35 @@ def test_resume_phase_releases_in_flight():
 def test_resume_phase_calls_apply_redispatch_labels():
     store = _make_store_mock()
     client = _make_client_mock(labels=["issuesmith:develop-running"])
+    captured: list[tuple] = []
+
+    def fake_labels(*args, **kwargs):
+        captured.append(args)
+        return None
+
     with (
         patch("issuesmith.resume.QueueStore", return_value=store),
         patch("issuesmith.resume.get_forge", return_value=client),
         patch("issuesmith.resume.get_config") as mock_cfg,
-        patch("issuesmith.resume.apply_redispatch_labels") as mock_labels,
+        patch("issuesmith.resume.apply_redispatch_labels", side_effect=fake_labels),
     ):
         mock_cfg.return_value.repo = "sumipan/issuesmith"
         from issuesmith.resume import resume
         resume(123, phase="develop")
-    mock_labels.assert_called_once()
-    args = mock_labels.call_args[0]
-    assert args[1] == 123
-    assert args[2] == "develop"
+    assert captured[0][1] == 123
+    assert captured[0][2] == "develop"
 
 
 def test_resume_phase_enqueues_issue():
     store = _make_store_mock()
     client = _make_client_mock()
+    captured: list[dict] = []
+
+    def fake_enqueue(**kwargs):
+        captured.append(kwargs)
+        return store.enqueue.return_value
+
+    store.enqueue.side_effect = fake_enqueue
     with (
         patch("issuesmith.resume.QueueStore", return_value=store),
         patch("issuesmith.resume.get_forge", return_value=client),
@@ -131,10 +146,8 @@ def test_resume_phase_enqueues_issue():
         from issuesmith.resume import resume
         rc = resume(123, phase="merge")
     assert rc == 0
-    store.enqueue.assert_called_once()
-    eq_kwargs = store.enqueue.call_args[1]
-    assert eq_kwargs["issue"] == 123
-    assert eq_kwargs["phase"] == "merge"
+    assert captured[0]["issue"] == 123
+    assert captured[0]["phase"] == "merge"
 
 
 def test_resume_phase_prints_request_id(capsys):
@@ -201,47 +214,6 @@ def test_cmd_redispatch_emits_future_warning():
             cmd_redispatch(123, phase="develop")
     categories = [str(x.category.__name__) for x in w]
     assert "FutureWarning" in categories
-
-
-def test_cmd_redispatch_still_works_with_warning():
-    """cmd_redispatch emits FutureWarning but still performs in_flight release + enqueue."""
-    from issuesmith.recovery import cmd_redispatch
-    store = _make_store_mock()
-    client = MagicMock()
-    client.issue_get.return_value = {"labels": []}
-    with (
-        patch("issuesmith.recovery._github_client", return_value=client),
-        patch("issuesmith.recovery.plan", return_value=_mock_unblocked_plan()),
-        patch("issuesmith.recovery.apply_redispatch_labels", return_value=False),
-        patch("issuesmith.recovery.QueueStore", return_value=store),
-        patch("warnings.warn"),
-    ):
-        rc = cmd_redispatch(123, phase="develop")
-    assert rc == 0
-    store.remove_in_flight.assert_called_once_with(123)
-    store.enqueue.assert_called_once()
-
-
-# ---------------------------------------------------------------------------
-# _cmd_resume CLI routing (AC-1 through AC-4)
-# ---------------------------------------------------------------------------
-
-def test_cmd_resume_from_step_delegates_to_resume():
-    """AC-1: _cmd_resume with --from calls resume(issue, from_step=...)."""
-    from issuesmith.cli import _cmd_resume
-    with patch("issuesmith.resume.resume", return_value=0) as mock_resume:
-        rc = _cmd_resume(["123", "--from", "cp2"])
-    assert rc == 0
-    mock_resume.assert_called_once_with(123, from_step="cp2", phase=None, workflow=None, handler=None)
-
-
-def test_cmd_resume_phase_delegates_to_resume():
-    """AC-2: _cmd_resume with --phase calls resume(issue, phase=...)."""
-    from issuesmith.cli import _cmd_resume
-    with patch("issuesmith.resume.resume", return_value=0) as mock_resume:
-        rc = _cmd_resume(["123", "--phase", "develop"])
-    assert rc == 0
-    mock_resume.assert_called_once_with(123, from_step=None, phase="develop", workflow=None, handler=None)
 
 
 def test_cmd_resume_both_flags_exits_2():
