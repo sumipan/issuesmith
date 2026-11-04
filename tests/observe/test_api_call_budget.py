@@ -86,8 +86,8 @@ def test_default_max_api_calls_is_8():
     assert ObserveConfig().max_api_calls == 8
 
 
-def test_ac1_ac2_ac3_three_in_flight_tick_budget(tmp_path):
-    """AC-1/2/3: 3 in_flight (all DAGs failed) -> <=6 calls, 1 issue_get each, no /labels."""
+def test_three_failed_in_flight_issues_stay_within_tick_budget(tmp_path):
+    """Three failed in-flight issues stay within per-tick forge call budget."""
     cfg0 = get_config()
     ns = cfg0.label_namespace
     nums = [101, 102, 103]
@@ -96,15 +96,15 @@ def test_ac1_ac2_ac3_three_in_flight_tick_budget(tmp_path):
 
     events = observe(snap, client, cfg, now=_NOW)
 
-    # AC-1: total forge calls
+    # total forge calls
     assert len(client.calls) <= 6, client.calls
-    # AC-2: one issue_get per issue per tick
+    # one issue_get per issue per tick
     assert client.issue_get_counts() == Counter({101: 1, 102: 1, 103: 1})
-    # AC-3: only issue_get / list_issues -- no label or comment endpoints
+    # only issue_get / list_issues -- no label or comment endpoints
     assert {name for name, _, _ in client.calls} <= {"issue_get", "list_issues"}
     assert sum(1 for name, _, _ in client.calls if name == "list_issues") == 1
 
-    # AC-4: detection results unchanged
+    # detection results unchanged
     dag_events = sorted(
         (e for e in events if isinstance(e, DagTerminatedEvent)), key=lambda e: e.issue,
     )

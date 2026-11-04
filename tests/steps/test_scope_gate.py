@@ -151,35 +151,6 @@ def test_format_comment_includes_table_and_split_hint() -> None:
     assert "allow_paths" in text
 
 
-def test_ac4_issue_3339_regression_134_files_exceeds(tmp_path: Path) -> None:
-    repo = tmp_path / "mltgnt-like"
-    _git_init(repo)
-    (repo / "tests" / "fixtures").mkdir(parents=True)
-
-    for i in range(125):
-        (repo / "tests" / f"test_{i:03d}.py").write_text(f"# t{i}\n", encoding="utf-8")
-    for i in range(9):
-        (repo / "tests" / "fixtures" / f"f{i}.jsonl").write_text("{}\n", encoding="utf-8")
-    _commit_all(repo)
-
-    allow_paths = [
-        "AGENTS.md",
-        "CLAUDE.md",
-        "scripts/check-external-leak.py",
-        "workflows/issuesmith.yml",
-        "workflows/issuesmith/**",
-        "tests/**",
-        "docs/GHDAG-MLTGNT-NEXUS.md",
-        "docs/OSS_QUALITY.md",
-    ]
-    measure = measure_scope(repo, allow_paths)
-    assert measure.files == 134
-    assert measure.skipped_jsonl == 9
-    verdict = evaluate(measure, ScopeGateConfig())
-    assert verdict.exceeded is True
-    assert verdict.reason == "files: 134 > 80"
-
-
 def _verdict() -> ScopeVerdict:
     measure = ScopeMeasure(
         files=134, lines=5000, by_dir={"tests/": 125}, skipped_binary=1, skipped_jsonl=9

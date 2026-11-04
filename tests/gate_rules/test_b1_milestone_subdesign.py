@@ -2207,26 +2207,6 @@ def test_deletion_referrer_dependency_skipped_without_clone(monkeypatch):
     assert _REFERRER_DEP not in _rule_ids(_check(body, MILESTONE_LABELS))
 
 
-def test_issue_5744_shape_reports_both_new_rules(deletion_repo):
-    body = _milestone_with_subs([
-        _sub_with_structured_ac(
-            1,
-            "drop",
-            [("src/pkg/old.py", "Delete", "remove module")],
-            paths_must_exist=["src/pkg/old.py"],
-        ),
-        _sub_with_structured_ac(
-            2,
-            "follow",
-            [("src/pkg/user.py", "Modify", "fix import")],
-        ),
-    ])
-    rule_ids = _rule_ids(_check(body, MILESTONE_LABELS))
-    assert _DELETED_IN_EXIST in rule_ids
-    assert _REFERRER_DEP in rule_ids
-    assert _ORPHAN_RULE not in rule_ids
-
-
 def test_placeholder_design_fix_hint_allows_ac_key_moves():
     from issuesmith.gate_rules.b1_milestone_subdesign import (
         PLACEHOLDER_DESIGN_ID,

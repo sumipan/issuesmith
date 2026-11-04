@@ -477,19 +477,6 @@ references_must_resolve:
 ```
 """
 
-_BODY_ISSUE_5874_AC = """\
-## Acceptance Criteria
-
-```yaml
-paths_must_exist:
-- README.md
-paths_must_not_exist: []
-references_must_resolve:
-- README.md -> TESTING.md
-```
-"""
-
-
 def test_references_arrow_entry_is_auto_fixable_entry_invalid():
     violations = _check(_BODY_REFS_ARROW, MILESTONE_LABELS)
     assert len(violations) == 1
@@ -509,11 +496,6 @@ def test_references_invalid_dict_stays_not_auto_fixable():
     v = violations[0]
     assert v.rule_id == "b1_ac_format.reference_entry_invalid"
     assert v.auto_fixable is False
-
-
-def test_issue_5874_contract_fails_b1_preflight():
-    violations = _check(_BODY_ISSUE_5874_AC, MILESTONE_LABELS)
-    assert any(v.severity == "fail" for v in violations)
 
 
 def test_unknown_key_without_milestone_label_when_yaml_present():

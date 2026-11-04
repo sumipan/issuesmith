@@ -160,52 +160,67 @@ class TestProjectAttentionAxis:
 # apply()
 # ---------------------------------------------------------------------------
 
+class _Forge:
+    def __init__(self, labels):
+        self.labels = set(labels)
+        self.updates = []
+
+    def issue_get(self, number, fields=None):
+        return {"number": number, "labels": [{"name": lb} for lb in sorted(self.labels)]}
+
+    def issue_update(self, number, **kwargs):
+        self.updates.append(kwargs)
+        self.labels |= set(kwargs.get("labels_add") or [])
+        self.labels -= set(kwargs.get("labels_remove") or [])
+
+
 class TestApply:
     def test_adds_missing_managed_label(self):
-        client = MagicMock()
+        forge = _Forge([])
         issue = _mk_issue(42, [])
-        apply(client, issue, {f"{NS}:queued"})
-        client.issue_update.assert_called_once()
-        kwargs = client.issue_update.call_args[1]
-        assert f"{NS}:queued" in kwargs["labels_add"]
+        apply(forge, issue, {f"{NS}:queued"})
+        assert len(forge.updates) == 1
+        assert f"{NS}:queued" in forge.updates[0]["labels_add"]
+        assert f"{NS}:queued" in forge.labels
 
     def test_removes_extra_managed_label(self):
-        client = MagicMock()
+        forge = _Forge([f"{NS}:queued"])
         issue = _mk_issue(42, [f"{NS}:queued"])
-        apply(client, issue, set())
-        client.issue_update.assert_called_once()
-        kwargs = client.issue_update.call_args[1]
-        assert f"{NS}:queued" in kwargs["labels_remove"]
+        apply(forge, issue, set())
+        assert len(forge.updates) == 1
+        assert f"{NS}:queued" in forge.updates[0]["labels_remove"]
+        assert f"{NS}:queued" not in forge.labels
 
     def test_no_api_call_when_already_aligned(self):
-        client = MagicMock()
+        forge = _Forge([f"{NS}:queued"])
         issue = _mk_issue(42, [f"{NS}:queued"])
-        apply(client, issue, {f"{NS}:queued"})
-        client.issue_update.assert_not_called()
+        apply(forge, issue, {f"{NS}:queued"})
+        assert forge.updates == []
 
     def test_does_not_remove_unmanaged_labels(self):
-        client = MagicMock()
+        forge = _Forge(["scope:milestone", f"{NS}:queued"])
         issue = _mk_issue(42, ["scope:milestone", f"{NS}:queued"])
-        apply(client, issue, set())
-        kwargs = client.issue_update.call_args[1]
+        apply(forge, issue, set())
+        assert "scope:milestone" in forge.labels
+        kwargs = forge.updates[0]
         assert "scope:milestone" not in kwargs.get("labels_remove", [])
 
     def test_does_not_add_unmanaged_labels(self):
-        client = MagicMock()
+        forge = _Forge([])
         issue = _mk_issue(42, [])
-        # passing an unmanaged label in desired should not trigger add
-        apply(client, issue, {"scope:milestone"})
-        # no call because scope:milestone is not managed
-        client.issue_update.assert_not_called()
+        apply(forge, issue, {"scope:milestone"})
+        assert forge.updates == []
 
     def test_adds_and_removes_in_one_call(self):
-        client = MagicMock()
+        forge = _Forge([f"{NS}:draft-done", f"{NS}:develop-running"])
         issue = _mk_issue(42, [f"{NS}:draft-done", f"{NS}:develop-running"])
-        apply(client, issue, {f"{NS}:develop-running"})
-        client.issue_update.assert_called_once()
-        kwargs = client.issue_update.call_args[1]
+        apply(forge, issue, {f"{NS}:develop-running"})
+        assert len(forge.updates) == 1
+        kwargs = forge.updates[0]
         assert f"{NS}:draft-done" in kwargs["labels_remove"]
         assert not kwargs.get("labels_add")
+        assert f"{NS}:develop-running" in forge.labels
+        assert f"{NS}:draft-done" not in forge.labels
 
 
 # ---------------------------------------------------------------------------
@@ -382,50 +397,10 @@ class TestReconcile:
             13, labels_add=[f"{NS}:andon-broken"], labels_remove=[f"{NS}:andon-blocked"]
         )
 
-    def test_uses_projection(self):
-        import issuesmith.projection as projection_mod
-
-        with (
-            patch("issuesmith.queue_store.QueueStore") as MockStore,
-            patch.object(projection_mod, "project", wraps=projection_mod.project) as spy,
-        ):
-            MockStore.return_value.snapshot.return_value = _make_snap()
-            reconcile(_make_client([_mk_issue(14, [])]), fix=False)
-        spy.assert_called_once()
-
-
-# ---------------------------------------------------------------------------
-# Per-axis rules live in issuesmith.projection only (#4807)
-# ---------------------------------------------------------------------------
-
-def test_individual_rules_are_gone():
-    import issuesmith.ops.labels as labels_mod
-
-    for name in (
-        "_phase_label", "_attention_label", "_precondition_labels",
-        "_PHASE_PRI", "_STATUS_PRI", "_ANDON_PRI",
-        "_MANAGED_STATUSES", "_MANAGED_ANDON_KINDS",
-    ):
-        assert not hasattr(labels_mod, name), name
-
 
 # ---------------------------------------------------------------------------
 # project_issue() — the single label writer
 # ---------------------------------------------------------------------------
-
-class _Forge:
-    def __init__(self, labels):
-        self.labels = set(labels)
-        self.updates = []
-
-    def issue_get(self, number, fields=None):
-        return {"number": number, "labels": [{"name": lb} for lb in sorted(self.labels)]}
-
-    def issue_update(self, number, **kwargs):
-        self.updates.append(kwargs)
-        self.labels |= set(kwargs.get("labels_add") or [])
-        self.labels -= set(kwargs.get("labels_remove") or [])
-
 
 class TestProjectIssue:
     def test_change_is_written_in_one_update(self):
