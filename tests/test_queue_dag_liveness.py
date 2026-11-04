@@ -50,7 +50,7 @@ class _ListIssuesClient:
         return {"number": number, "state": "OPEN", "labels": []}
 
 
-def test_ac5_failed_dag_not_reregistered(tmp_path, monkeypatch):
+def test_failed_dag_not_reregistered(tmp_path, monkeypatch):
     """AC-5: develop-running open issue with failed DAG is NOT re-registered into in_flight."""
     from issuesmith import queue as qmod
 
@@ -79,7 +79,7 @@ def test_ac5_failed_dag_not_reregistered(tmp_path, monkeypatch):
     assert store.snapshot().in_flight == []
 
 
-def test_ac5_running_dag_is_reregistered(tmp_path, monkeypatch):
+def test_running_dag_is_reregistered(tmp_path, monkeypatch):
     """AC-5: develop-running open issue with running DAG IS re-registered into in_flight."""
     from issuesmith import queue as qmod
 
@@ -130,7 +130,7 @@ def test_ac5_running_dag_is_reregistered(tmp_path, monkeypatch):
     assert any(e["issue"] == 103 for e in snap2.in_flight)
 
 
-def test_ac6_running_dag_does_not_block_dispatch_gate(tmp_path, monkeypatch):
+def test_running_dag_does_not_block_dispatch_gate(tmp_path, monkeypatch):
     """AC-6: in_flight-absent issue with running DAG does NOT block _dispatch_pipeline_ready."""
     from issuesmith import queue as qmod
 
@@ -154,7 +154,7 @@ def test_ac6_running_dag_does_not_block_dispatch_gate(tmp_path, monkeypatch):
     assert result is True
 
 
-def test_ac6_orphan_pending_exec_blocks_dispatch_gate(tmp_path, monkeypatch):
+def test_orphan_pending_exec_blocks_dispatch_gate(tmp_path, monkeypatch):
     """AC-6: in_flight-absent issue with no running marker (orphan) still blocks the gate."""
     from issuesmith import queue as qmod
 

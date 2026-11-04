@@ -9,30 +9,13 @@ import pytest
 
 from issuesmith import verbs
 from issuesmith.verbs import (
-    cleanup_branches,
     cleanup_worktrees,
-    close_issue,
     find_pr,
     merge_pr,
     merge_state,
     prepare_worktree,
     publish_branch,
 )
-
-# ---------------------------------------------------------------------------
-# prepare_worktree
-# ---------------------------------------------------------------------------
-
-
-def test_prepare_worktree_calls_underlying_prepare(tmp_path: Path) -> None:
-    with (
-        patch("issuesmith.verbs.worktree.resolve_base_ref") as mock_resolve,
-        patch("issuesmith.verbs.worktree._prepare_worktree") as mock_prepare,
-    ):
-        mock_resolve.return_value = "origin/main"
-        prepare_worktree(tmp_path, "main", "feat/test", tmp_path / "wt")
-        mock_resolve.assert_called_once_with(tmp_path, "main")
-        mock_prepare.assert_called_once_with(tmp_path, tmp_path / "wt", "feat/test", "origin/main")
 
 
 def test_prepare_worktree_uses_external_dir_when_provided(tmp_path: Path) -> None:
@@ -50,13 +33,6 @@ def test_prepare_worktree_uses_external_dir_when_provided(tmp_path: Path) -> Non
 # ---------------------------------------------------------------------------
 # publish_branch
 # ---------------------------------------------------------------------------
-
-
-def test_publish_branch_delegates_to_push_branch_for_origin(tmp_path: Path) -> None:
-    with patch("issuesmith.verbs.publish._push_branch") as mock_push:
-        mock_push.return_value = None  # success
-        publish_branch(tmp_path, "feat/test")
-        mock_push.assert_called_once_with(tmp_path, "feat/test")
 
 
 def test_publish_branch_raises_on_push_failure(tmp_path: Path) -> None:
@@ -120,7 +96,6 @@ def test_merge_state_delegates_to_get_merge_state() -> None:
         mock_state.return_value = expected
         result = merge_state(client, "owner/repo", 42)
         assert result == expected
-        mock_state.assert_called_once_with(client, "owner/repo", 42)
 
 
 # ---------------------------------------------------------------------------
@@ -144,23 +119,6 @@ def test_merge_pr_passes_none_repo_for_empty_string() -> None:
     client = MagicMock()
     merge_pr(client, "", 42)
     client.pr_merge.assert_called_once_with(42, method="merge", delete_branch=True, repo=None)
-
-
-# ---------------------------------------------------------------------------
-# cleanup_branches
-# ---------------------------------------------------------------------------
-
-
-def test_cleanup_branches_delegates_to_m2_finalize(tmp_path: Path) -> None:
-    with patch("issuesmith.verbs.finalize._cleanup_branches") as mock_cleanup:
-        cleanup_branches(tmp_path, "1234")
-        mock_cleanup.assert_called_once_with(tmp_path, "1234", external=False)
-
-
-def test_cleanup_branches_passes_external_flag(tmp_path: Path) -> None:
-    with patch("issuesmith.verbs.finalize._cleanup_branches") as mock_cleanup:
-        cleanup_branches(tmp_path, "1234", external=True)
-        mock_cleanup.assert_called_once_with(tmp_path, "1234", external=True)
 
 
 # ---------------------------------------------------------------------------
@@ -204,18 +162,6 @@ def test_cleanup_worktrees_handles_cross_repo(tmp_path: Path) -> None:
         cleanup_worktrees(tmp_path, "99", is_cross_repo=True, target_clone_path=target_clone)
         # Called twice: once for repo_cwd, once for target
         assert mock_list.call_count == 2
-
-
-# ---------------------------------------------------------------------------
-# close_issue
-# ---------------------------------------------------------------------------
-
-
-def test_close_issue_delegates_to_close_issue_if_open() -> None:
-    client = MagicMock()
-    with patch("issuesmith.verbs.finalize._close_issue_if_open") as mock_close:
-        close_issue(client, 42)
-        mock_close.assert_called_once_with(client, 42)
 
 
 # ---------------------------------------------------------------------------

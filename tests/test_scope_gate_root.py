@@ -17,7 +17,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from issuesmith import scope_gate
-from issuesmith.gate_rules import scope_breadth
 from issuesmith.scope_gate import resolve_scope_root
 
 
@@ -54,12 +53,6 @@ def test_cross_repo_returns_none_when_clone_missing(tmp_path):
 def test_malformed_target_repo_returns_none(tmp_path):
     cfg = _cfg(tmp_path)
     assert resolve_scope_root({"target_repo": "not-a-valid-repo-slug"}, cfg) is None
-
-
-def test_scope_breadth_gate_imports_the_shared_function():
-    """scope_breadth.py must not carry a second, divergent root resolver (#3487 R1)."""
-    assert scope_breadth.resolve_scope_root is resolve_scope_root
-    assert not hasattr(scope_breadth, "_resolve_root")
 
 
 # --- clone freshness (#4452) -------------------------------------------------

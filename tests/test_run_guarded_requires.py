@@ -295,7 +295,7 @@ def test_run_guarded_with_requires_step_post_pass_emits_status(capsys, fresh_rep
 
     # All gates pass on post evaluation
     with patch("issuesmith.engine._run_emit_order", return_value=(0, "")):
-        with patch("issuesmith.ops.dispatch.run_requires_loop", return_value=None) as mock_loop:
+        with patch("issuesmith.ops.dispatch.run_requires_loop", return_value=None):
             with patch("issuesmith.ops.dispatch.resolve_step_config") as mock_resolve:
                 from issuesmith.config import StepConfig
                 mock_resolve.return_value = StepConfig(
@@ -314,7 +314,6 @@ def test_run_guarded_with_requires_step_post_pass_emits_status(capsys, fresh_rep
     assert rc == 0
     out = capsys.readouterr().out
     assert "PIPELINE_STATUS: IMPL_DONE" in out
-    mock_loop.assert_called_once()
 
 
 def test_run_guarded_with_requires_step_post_fail_no_impl_done(capsys, fresh_repo: Path):

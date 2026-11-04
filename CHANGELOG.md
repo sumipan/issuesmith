@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.169.6 - 2026-11-04
+
+### Changed
+
+- Align root-level tests (second half of `tests/` alphabetically) with TESTING.md T1-T5 (#5965).
+
 ## 0.169.2 - 2026-11-01
 
 ### Fixed
