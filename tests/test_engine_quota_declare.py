@@ -62,7 +62,8 @@ def _allowed() -> AdmissionDecision:
 
 
 class RecordingQuotaGate:
-    def __init__(self) -> None:
+    def __init__(self, events: list[str] | None = None) -> None:
+        self.events = events
         self.begin_runs: list[dict] = []
         self.finish_runs: list[dict] = []
         self.snapshot_result = _snapshot()
@@ -74,6 +75,8 @@ class RecordingQuotaGate:
         return self.snapshot_result
 
     def begin_run(self, **kwargs):
+        if self.events is not None:
+            self.events.append("begin_run")
         self.begin_runs.append(dict(kwargs))
         if self.begin_run_side_effect is not None:
             if isinstance(self.begin_run_side_effect, list):
@@ -82,6 +85,8 @@ class RecordingQuotaGate:
         return self.begin_run_result
 
     def finish_run(self, **kwargs):
+        if self.events is not None:
+            self.events.append("finish_run")
         self.finish_runs.append(dict(kwargs))
         if self.finish_run_side_effect is not None:
             raise self.finish_run_side_effect
@@ -92,12 +97,15 @@ class RecordingQuotaGate:
 
 
 class RecordingCallManaged:
-    def __init__(self) -> None:
+    def __init__(self, events: list[str] | None = None) -> None:
+        self.events = events
         self.calls: list[dict] = []
         self.return_value = _result()
         self.side_effect = None
 
     def __call__(self, *args, **kwargs):
+        if self.events is not None:
+            self.events.append("call_managed")
         record = dict(kwargs)
         if args:
             record["content"] = args[0]
@@ -122,13 +130,14 @@ def mocks(monkeypatch, tmp_path):
     monkeypatch.setattr("issuesmith.engine._resolve_timeout_sec", lambda role: 600.0)
     monkeypatch.setattr("issuesmith.engine.time.sleep", lambda *a, **k: None)
 
-    gate = RecordingQuotaGate()
-    call_managed = RecordingCallManaged()
+    events: list[str] = []
+    gate = RecordingQuotaGate(events=events)
+    call_managed = RecordingCallManaged(events=events)
     monkeypatch.setattr("issuesmith.engine.QuotaGate", lambda state_path: gate)
     monkeypatch.setattr("issuesmith.engine.call_managed", call_managed)
 
     monkeypatch.setenv("GHDAG_TASK_UUID", TASK_UUID)
-    return {"gate": gate, "call_managed": call_managed}
+    return {"gate": gate, "call_managed": call_managed, "events": events}
 
 
 def _use_engine(monkeypatch, engine: str) -> None:
@@ -156,6 +165,7 @@ def test_begin_run_declares_selected_engine_before_call_managed(
     assert gate.begin_runs[0]["engine"] != "shell"
     assert len(mocks["call_managed"].calls) == 1
     assert gate.begin_runs[0]["engine"] == mocks["call_managed"].calls[0].get("engine", engine)
+    assert mocks["events"].index("begin_run") < mocks["events"].index("call_managed")
 
 
 @pytest.mark.parametrize("engine", ENGINES)
@@ -185,6 +195,7 @@ def test_call_order_begin_call_finish(mocks, monkeypatch):
     assert len(gate.begin_runs) == 1
     assert len(mocks["call_managed"].calls) == 1
     assert len(gate.finish_runs) == 1
+    assert mocks["events"] == ["begin_run", "call_managed", "finish_run"]
     assert gate.begin_runs[0] == {"task_uuid": TASK_UUID, "engine": "claude"}
     assert gate.finish_runs[0] == {"task_uuid": TASK_UUID}
 
@@ -228,6 +239,10 @@ def test_rate_limit_retry_redeclares_alt_engine(mocks, monkeypatch):
         {"task_uuid": TASK_UUID, "engine": "claude"},
         {"task_uuid": TASK_UUID, "engine": retry_engine},
     ]
+    events = mocks["events"]
+    begin_idx = [i for i, n in enumerate(events) if n == "begin_run"]
+    call_idx = [i for i, n in enumerate(events) if n == "call_managed"]
+    assert begin_idx[1] < call_idx[1]
     assert len(mocks["gate"].finish_runs) == 1
 
 
