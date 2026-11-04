@@ -163,7 +163,7 @@ def test_dag_terminated_recurs_after_auto_resolve(store, client, monkeypatch):
 
 
 # AC-2: orphan andon is auto-resolved when UUID disappears from running
-def test_orphan_auto_resolved_when_uuid_removed(store, client):
+def test_orphan_auto_resolved_when_uuid_leaves_running(store, client):
     number = client.issue_create("orphan issue", "body")
     uuid = "dead-beef-1234"
     execute(_orphan_actions(uuid, issue=number), store, sinks=[], client=client)

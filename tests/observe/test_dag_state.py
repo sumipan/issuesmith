@@ -1,4 +1,4 @@
-"""Tests for issuesmith.observe.dag_state.load_dag_states (AC-4)."""
+"""Tests for issuesmith.observe.dag_state.load_dag_states."""
 from __future__ import annotations
 
 import json
@@ -38,8 +38,8 @@ _DAG_A_P1 = {"uuid": "p1", "idempotency_key": "issuesmith:impl:101", "depends": 
 _DAG_A_P2 = {"uuid": "p2", "idempotency_key": "issuesmith:impl:101", "depends": ["p1"]}
 
 
-def test_ac4a_p1_running(dirs):
-    """AC-4a: p1 running -> DagState.status == 'running'."""
+def test_running_first_step_gives_running(dirs):
+    """First step running yields DagState.status == 'running'."""
     exec_path, done_dir, running_dir = dirs
     _write_exec(exec_path, [_DAG_A_P1, _DAG_A_P2])
     _write_running(running_dir, "p1")
@@ -50,8 +50,8 @@ def test_ac4a_p1_running(dirs):
     assert states[101].key == "issuesmith:impl:101"
 
 
-def test_ac4b_p1_success_p2_pending(dirs):
-    """AC-4b: p1 success, p2 no marker -> 'pending'."""
+def test_unmarked_second_step_gives_pending(dirs):
+    """First step success with no marker on second step yields pending."""
     exec_path, done_dir, running_dir = dirs
     _write_exec(exec_path, [_DAG_A_P1, _DAG_A_P2])
     _write_done(done_dir, "p1", "0")
@@ -60,8 +60,8 @@ def test_ac4b_p1_success_p2_pending(dirs):
     assert states[101].status == "pending"
 
 
-def test_ac4c_p1_success_p2_engine_error(dirs):
-    """AC-4c: p1 success, p2 done ENGINE_ERROR -> 'failed', failed_step == 'p2'."""
+def test_engine_error_gives_failed_with_step(dirs):
+    """Engine error on second step yields failed with failed_step set."""
     exec_path, done_dir, running_dir = dirs
     p2_with_name = {**_DAG_A_P2, "annotations": {"step_name": "p2"}}
     _write_exec(exec_path, [_DAG_A_P1, p2_with_name])
@@ -74,8 +74,8 @@ def test_ac4c_p1_success_p2_engine_error(dirs):
     assert states[101].failed_uuid == "p2"
 
 
-def test_ac4d_both_success(dirs):
-    """AC-4d: both p1 and p2 success -> 'succeeded'."""
+def test_all_steps_success_gives_succeeded(dirs):
+    """Both steps succeed yields succeeded status."""
     exec_path, done_dir, running_dir = dirs
     _write_exec(exec_path, [_DAG_A_P1, _DAG_A_P2])
     _write_done(done_dir, "p1", "0")
@@ -85,8 +85,8 @@ def test_ac4d_both_success(dirs):
     assert states[101].status == "succeeded"
 
 
-def test_ac4e_newer_generation_wins(dirs):
-    """AC-4e: impl:101 failed then impl:101:1 running -> uses newer generation."""
+def test_newer_generation_wins(dirs):
+    """Newer idempotency generation wins over an older failed generation."""
     exec_path, done_dir, running_dir = dirs
     gen0_p1 = {"uuid": "g0-p1", "idempotency_key": "issuesmith:impl:101", "depends": []}
     gen1_p1 = {"uuid": "g1-p1", "idempotency_key": "issuesmith:impl:101:1", "depends": []}
@@ -99,8 +99,8 @@ def test_ac4e_newer_generation_wins(dirs):
     assert states[101].key == "issuesmith:impl:101:1"
 
 
-def test_ac4f_no_exec_jsonl(tmp_path):
-    """AC-4f: exec.jsonl does not exist -> empty dict."""
+def test_missing_exec_jsonl_gives_empty(tmp_path):
+    """Missing exec.jsonl yields an empty state map."""
     exec_path = tmp_path / "exec.jsonl"
     done_dir = tmp_path / "done"
     done_dir.mkdir()
@@ -209,7 +209,7 @@ def test_deferred_with_running_step_is_running(dirs):
 
 
 def test_p1_failed_first_returned_as_failed_step(dirs):
-    """AC-4: first failed step in row order is reported, not the last."""
+    """First failed step in row order is reported, not the last."""
     exec_path, done_dir, running_dir = dirs
     p1_named = {**_DAG_A_P1, "annotations": {"step_name": "p1"}}
     p2_named = {**_DAG_A_P2, "annotations": {"step_name": "p2"}}
