@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Fixed
+
+- TestsGate baseline worktrees use `merge-base(HEAD, origin/<base>)` instead of the
+  moving `origin/<base>` tip so failures fixed on base during a long pytest run are not
+  misclassified as new (#5952).
+
 ## 0.169.10 - 2026-11-06
 
 ### Changed

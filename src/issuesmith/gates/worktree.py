@@ -237,15 +237,32 @@ def _func_id(test_id: str) -> str:
     return re.sub(r"\[.*\]$", "", test_id)
 
 
+def _baseline_ref(root: Path, base_branch: str) -> str:
+    """Return merge-base of HEAD and origin/<base>, or origin/<base> when unavailable."""
+    remote = f"origin/{base_branch}"
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(root), "merge-base", "HEAD", remote],
+            capture_output=True, text=True, check=False,
+        )
+        if proc.returncode == 0:
+            sha = proc.stdout.strip()
+            if sha:
+                return sha
+    except Exception:
+        pass
+    return remote
+
+
 def _baseline_failed_func_ids(
     root: Path, base_branch: str, ids: list[str]
 ) -> set[str] | None:
-    """Return func-level IDs that also fail on `origin/<base_branch>`, or None if unavailable."""
+    """Return func-level IDs that also fail on the baseline ref, or None if unavailable."""
     tmp = tempfile.mkdtemp(dir=str(root.parent))
+    baseline_ref = _baseline_ref(root, base_branch)
     try:
         result = subprocess.run(
-            ["git", "-C", str(root), "worktree", "add", "--detach", tmp,
-             f"origin/{base_branch}"],
+            ["git", "-C", str(root), "worktree", "add", "--detach", tmp, baseline_ref],
             capture_output=True, text=True, check=False,
         )
         if result.returncode != 0:
