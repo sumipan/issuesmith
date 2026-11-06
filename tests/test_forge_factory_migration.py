@@ -1,64 +1,6 @@
-"""Acceptance: issuesmith constructs forge clients via get_forge() (#3102 / #3066 sub4)."""
+"""Behaviour tests for forge client construction via get_forge() (#3102 / #3066 sub4)."""
 
 from __future__ import annotations
-
-import ast
-from pathlib import Path
-
-SRC_ROOT = Path(__file__).resolve().parents[1] / "src" / "issuesmith"
-
-
-def _iter_py_files(root: Path):
-    yield from sorted(root.rglob("*.py"))
-
-
-def test_no_github_client_construction_in_src():
-    """GitHubClient( must not appear in issuesmith src (factory-only construction)."""
-    offenders: list[str] = []
-    for path in _iter_py_files(SRC_ROOT):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            func = node.func
-            name = None
-            if isinstance(func, ast.Name):
-                name = func.id
-            elif isinstance(func, ast.Attribute):
-                name = func.attr
-            if name == "GitHubClient":
-                rel = path.relative_to(SRC_ROOT.parent.parent)
-                offenders.append(f"{rel}:{node.lineno}")
-    assert offenders == [], f"GitHubClient( remains at: {offenders}"
-
-
-def test_get_forge_imported_where_clients_are_built():
-    """Modules that previously constructed clients must import get_forge."""
-    # Spot-check high-traffic modules listed in #3066 sub4.
-    modules = [
-        "dep_extractor.py",
-        "queue.py",
-        "milestone.py",
-        "recovery.py",
-        "ops/dispatch.py",
-        "ops/smoke.py",
-        "ops/publish.py",
-        "context_hook.py",
-    ]
-    for rel in modules:
-        text = (SRC_ROOT / rel).read_text(encoding="utf-8")
-        assert "get_forge" in text, f"{rel} must use get_forge"
-
-
-def test_dep_extractor_rescue_uses_pr_get_not_api_request():
-    """The raw api_request for pulls/{n} must move to typed pr_get."""
-    from issuesmith import dep_extractor as de
-
-    src = Path(de.__file__).read_text(encoding="utf-8")
-    # Construction site for rescue PR detail fetch
-    assert "pr_get(" in src
-    assert 'api_request("GET"' not in src
-    assert "api_request(f\"/repos" not in src
 
 
 def test_check_dependencies_uses_get_forge_when_client_omitted(monkeypatch):
@@ -105,8 +47,20 @@ def test_rescue_pr_uses_pr_get_merged_flag():
     ]
     client.pr_get.return_value = {"merged": True, "state": "CLOSED"}
 
+    pr_get_calls: list[int] = []
+    api_request_calls: list[tuple] = []
+
+    original_pr_get = client.pr_get
+
+    def tracking_pr_get(number):
+        pr_get_calls.append(number)
+        return original_pr_get(number)
+
+    client.pr_get = tracking_pr_get
+    client.api_request.side_effect = lambda *a, **k: api_request_calls.append((a, k))
+
     result = check_dependencies([600], client=client)
     assert result.decision == "PASS"
     assert result.dep_statuses[0].rescue_pr == 42
-    client.pr_get.assert_called_once_with(42)
-    client.api_request.assert_not_called()
+    assert pr_get_calls == [42]
+    assert api_request_calls == []

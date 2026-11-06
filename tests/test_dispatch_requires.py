@@ -5,11 +5,16 @@ gate-exception→broken / preexisting-non-blocking.
 """
 from __future__ import annotations
 
+import sys
+import types
+from contextlib import contextmanager
+from dataclasses import asdict
 from unittest.mock import MagicMock, patch
 
 import pytest
 from ghdag.workflow.gates import Violation
 
+from issuesmith.andon import from_comment as _andon_from_comment_body
 from issuesmith.gates.base import ContractInput
 from issuesmith.repair import (
     RequiresResult,
@@ -51,6 +56,84 @@ def _error_gate(exc: Exception | None = None) -> MagicMock:
     g.check.side_effect = exc or RuntimeError("gate exploded")
     return g
 
+
+
+class _RecordingForge:
+    def __init__(self) -> None:
+        self.issue_comments: list[tuple[int, str]] = []
+        self.issue_updates: list[tuple[int, dict]] = []
+
+    def issue_comment(self, issue: int, body: str) -> dict:
+        self.issue_comments.append((issue, body))
+        return {"id": 1, "body": body}
+
+    def issue_update(self, issue: int, **kwargs) -> dict:
+        self.issue_updates.append((issue, kwargs))
+        return {}
+
+
+_REPAIR_BOUNDARY_MODULE = "issuesmith_test_dispatch_requires_repair_boundary"
+
+
+class RepairStepBoundary:
+    """Records repair-step launches via a fake module at resolve_step_config boundary."""
+
+    def __init__(self) -> None:
+        self.launches: list = []
+        self.exit_code: int | None = None
+        self.side_effect: BaseException | None = None
+        self.on_run = None
+
+    def _install_module(self) -> None:
+        boundary = self
+
+        def run(ctx, step=None):
+            from issuesmith.contract import StepResult
+
+            if boundary.side_effect is not None:
+                raise boundary.side_effect
+            boundary.launches.append(ctx)
+            if boundary.on_run is not None:
+                boundary.on_run(ctx)
+            if boundary.exit_code is not None and boundary.exit_code != 0:
+                return StepResult(status="done", exit_code=boundary.exit_code)
+            return StepResult(status="done", markers=["REPAIR_DONE"])
+
+        mod = types.ModuleType(_REPAIR_BOUNDARY_MODULE)
+        mod.run = run
+        sys.modules[_REPAIR_BOUNDARY_MODULE] = mod
+
+
+@contextmanager
+def stand_in_repair_step(boundary: RepairStepBoundary | None = None, **kwargs):
+    """Patch resolve_step_config so the repair step runs a test-local fake module."""
+    from issuesmith.config import StepConfig
+    from issuesmith.ops import dispatch as dispatch_mod
+
+    b = boundary if boundary is not None else RepairStepBoundary()
+    if "exit_code" in kwargs:
+        b.exit_code = kwargs["exit_code"]
+    if "side_effect" in kwargs:
+        b.side_effect = kwargs["side_effect"]
+    b._install_module()
+    real_resolve = dispatch_mod.resolve_step_config
+
+    def resolve(step_id: str):
+        if step_id == "repair":
+            return StepConfig(module=_REPAIR_BOUNDARY_MODULE)
+        return real_resolve(step_id)
+
+    with patch("issuesmith.ops.dispatch.resolve_step_config", side_effect=resolve):
+        yield b
+
+
+def _raised_andons(forge: _RecordingForge):
+    out = []
+    for _, body in forge.issue_comments:
+        parsed = _andon_from_comment_body(body)
+        if parsed is not None:
+            out.append(parsed)
+    return out
 
 def _inp() -> ContractInput:
     return ContractInput(body="issue body", labels=[])
@@ -196,7 +279,9 @@ class TestDispatchRequiresPass:
         cfg = StepConfig(module="issuesmith.steps.test", requires=("scope",))
         gate = _pass_gate()
         with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"scope": gate}):
-            with patch("issuesmith.ops.dispatch.get_forge"):
+            with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
+                forge = _RecordingForge()
+                mock_forge.return_value = forge
                 rc = map_step_result(
                     StepResult(status="done", markers=["IMPL_DONE"]),
                     step_id="p2",
@@ -215,7 +300,9 @@ class TestDispatchRequiresPass:
         cfg = StepConfig(module="issuesmith.steps.test", requires=("lint",))
         gate = _pass_gate()
         with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"lint": gate}):
-            with patch("issuesmith.ops.dispatch.get_forge"):
+            with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
+                forge = _RecordingForge()
+                mock_forge.return_value = forge
                 rc = map_step_result(
                     StepResult(status="done", markers=["MERGE_DONE"]),
                     step_id="m2",
@@ -245,7 +332,9 @@ class TestDispatchAutoFix:
         gate.fix.side_effect = lambda inp: inp
 
         with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"lint": gate}):
-            with patch("issuesmith.ops.dispatch.get_forge"):
+            with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
+                forge = _RecordingForge()
+                mock_forge.return_value = forge
                 rc = map_step_result(
                     StepResult(status="done", markers=["IMPL_DONE"]),
                     step_id="p2",
@@ -266,16 +355,19 @@ class TestDispatchAutoFix:
         gate.check.side_effect = [[_v(rule_id="lint.X", auto_fixable=True)], []]
         gate.fix.side_effect = lambda inp: inp
 
+        repair = RepairStepBoundary()
         with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"lint": gate}):
-            with patch("issuesmith.ops.dispatch.get_forge"):
-                with patch("issuesmith.ops.dispatch._run_repair_step") as mock_repair:
+            with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
+                forge = _RecordingForge()
+                mock_forge.return_value = forge
+                with stand_in_repair_step(repair):
                     map_step_result(
                         StepResult(status="done", markers=["IMPL_DONE"]),
                         step_id="p2",
                         context=_make_ctx(),
                         step_cfg=cfg,
                     )
-        mock_repair.assert_not_called()
+        assert repair.launches == []
 
 
 class TestDispatchRepairOnePass:
@@ -294,8 +386,10 @@ class TestDispatchRepairOnePass:
         ]
 
         with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"tests": gate}):
-            with patch("issuesmith.ops.dispatch.get_forge"):
-                with patch("issuesmith.ops.dispatch._run_repair_step", return_value=None):
+            with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
+                forge = _RecordingForge()
+                mock_forge.return_value = forge
+                with stand_in_repair_step():
                     rc = map_step_result(
                         StepResult(status="done", markers=["IMPL_DONE"]),
                         step_id="p2",
@@ -314,9 +408,11 @@ class TestDispatchRepairOnePass:
         gate = _fail_gate(rule_id="tests.pytest_failure", auto_fixable=False)
 
         with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"tests": gate}):
-            with patch("issuesmith.ops.dispatch.get_forge"):
+            with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
+                forge = _RecordingForge()
+                mock_forge.return_value = forge
                 # repair step itself fails (returns 1)
-                with patch("issuesmith.ops.dispatch._run_repair_step", return_value=1):
+                with stand_in_repair_step(exit_code=1):
                     rc = map_step_result(
                         StepResult(status="done", markers=["IMPL_DONE"]),
                         step_id="p2",
@@ -339,19 +435,18 @@ class TestDispatchMaxRepairs:
 
         with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"tests": gate}):
             with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
-                mock_forge.return_value = MagicMock()
-                with patch("issuesmith.ops.dispatch._raise_andon") as mock_andon:
-                    with patch("issuesmith.ops.dispatch._run_repair_step", return_value=None):
-                        rc = map_step_result(
-                            StepResult(status="done", markers=["IMPL_DONE"]),
-                            step_id="p2",
-                            context=_make_ctx(),
-                            step_cfg=cfg,
-                            _repair_count=3,
-                        )
+                forge = _RecordingForge()
+                mock_forge.return_value = forge
+                with stand_in_repair_step():
+                    rc = map_step_result(
+                        StepResult(status="done", markers=["IMPL_DONE"]),
+                        step_id="p2",
+                        context=_make_ctx(),
+                        step_cfg=cfg,
+                        _repair_count=3,
+                    )
         assert rc == 1
-        mock_andon.assert_called_once()
-        _, raised = mock_andon.call_args[0]
+        raised = _raised_andons(forge)[0]
         assert raised.kind == "decision"
 
     def test_andon_decision_options_contain_fix_hints(self):
@@ -372,16 +467,16 @@ class TestDispatchMaxRepairs:
 
         with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"tests": gate}):
             with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
-                mock_forge.return_value = MagicMock()
-                with patch("issuesmith.ops.dispatch._raise_andon") as mock_andon:
-                    map_step_result(
-                        StepResult(status="done", markers=["IMPL_DONE"]),
-                        step_id="p2",
-                        context=_make_ctx(),
-                        step_cfg=cfg,
-                        _repair_count=3,
-                    )
-        _, raised = mock_andon.call_args[0]
+                forge = _RecordingForge()
+                mock_forge.return_value = forge
+                map_step_result(
+                    StepResult(status="done", markers=["IMPL_DONE"]),
+                    step_id="p2",
+                    context=_make_ctx(),
+                    step_cfg=cfg,
+                    _repair_count=3,
+                )
+        raised = _raised_andons(forge)[0]
         assert raised.kind == "decision"
         assert "split" in raised.options
         assert "reject" in raised.options
@@ -398,22 +493,22 @@ class TestDispatchGateException:
         cfg = StepConfig(module="issuesmith.steps.test", requires=("scope",))
         gate = _error_gate()
 
+        repair = RepairStepBoundary()
         with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"scope": gate}):
             with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
-                mock_forge.return_value = MagicMock()
-                with patch("issuesmith.ops.dispatch._raise_andon") as mock_andon:
-                    with patch("issuesmith.ops.dispatch._run_repair_step") as mock_repair:
-                        rc = map_step_result(
-                            StepResult(status="done", markers=["IMPL_DONE"]),
-                            step_id="p2",
-                            context=_make_ctx(),
-                            step_cfg=cfg,
-                        )
+                forge = _RecordingForge()
+                mock_forge.return_value = forge
+                with stand_in_repair_step(repair):
+                    rc = map_step_result(
+                        StepResult(status="done", markers=["IMPL_DONE"]),
+                        step_id="p2",
+                        context=_make_ctx(),
+                        step_cfg=cfg,
+                    )
         assert rc == 1
-        mock_repair.assert_not_called()
-        mock_andon.assert_called_once()
-        _, raised = mock_andon.call_args[0]
+        raised = _raised_andons(forge)[0]
         assert raised.kind == "broken"
+        assert repair.launches == []
 
     def test_gate_exception_does_not_emit_markers(self, capsys):
         from issuesmith.config import StepConfig
@@ -424,14 +519,14 @@ class TestDispatchGateException:
 
         with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"scope": _error_gate()}):
             with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
-                mock_forge.return_value = MagicMock()
-                with patch("issuesmith.ops.dispatch._raise_andon"):
-                    map_step_result(
-                        StepResult(status="done", markers=["IMPL_DONE"]),
-                        step_id="p2",
-                        context=_make_ctx(),
-                        step_cfg=cfg,
-                    )
+                forge = _RecordingForge()
+                mock_forge.return_value = forge
+                map_step_result(
+                    StepResult(status="done", markers=["IMPL_DONE"]),
+                    step_id="p2",
+                    context=_make_ctx(),
+                    step_cfg=cfg,
+                )
         assert "PIPELINE_STATUS" not in capsys.readouterr().out
 
 
@@ -447,7 +542,9 @@ class TestDispatchPreexisting:
         gate = _fail_gate(rule_id="scope.old_issue")
 
         with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"scope": gate}):
-            with patch("issuesmith.ops.dispatch.get_forge"):
+            with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
+                forge = _RecordingForge()
+                mock_forge.return_value = forge
                 with patch(
                     "issuesmith.ops.dispatch._get_preexisting_rule_ids",
                     return_value=frozenset({"scope.old_issue"}),
@@ -475,12 +572,13 @@ class TestDispatchPreexisting:
 
         with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"scope": gate}):
             with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
-                mock_forge.return_value = MagicMock()
+                forge = _RecordingForge()
+                mock_forge.return_value = forge
                 with patch(
                     "issuesmith.ops.dispatch._get_preexisting_rule_ids",
                     return_value=frozenset({"scope.old_issue"}),
                 ):
-                    with patch("issuesmith.ops.dispatch._run_repair_step", return_value=1):
+                    with stand_in_repair_step(exit_code=1):
                         rc = map_step_result(
                             StepResult(status="done", markers=["IMPL_DONE"]),
                             step_id="p2",
@@ -511,9 +609,11 @@ class TestDispatchRetryNotCounted:
         sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=None)
 
         with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"tests": gate}):
-            with patch("issuesmith.ops.dispatch.get_forge"):
+            with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
+                forge = _RecordingForge()
+                mock_forge.return_value = forge
                 # repair step raises RetrySignal (quota)
-                with patch("issuesmith.ops.dispatch._run_repair_step", side_effect=sig):
+                with stand_in_repair_step(side_effect=sig):
                     with pytest.raises(RetrySignal):
                         map_step_result(
                             StepResult(status="done", markers=["IMPL_DONE"]),
@@ -549,17 +649,17 @@ class TestDispatchGateBuildError:
             side_effect=GateBuildError("gate 'lint' requires worktree_path but context has none"),
         ):
             with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
-                mock_forge.return_value = MagicMock()
-                with patch("issuesmith.ops.dispatch._raise_andon") as mock_andon:
-                    rc = map_step_result(
-                        StepResult(status="done", markers=["IMPL_DONE"]),
-                        step_id="p2",
-                        context=_make_ctx(),
-                        step_cfg=cfg,
-                    )
+                forge = _RecordingForge()
+                mock_forge.return_value = forge
+                rc = map_step_result(
+                    StepResult(status="done", markers=["IMPL_DONE"]),
+                    step_id="p2",
+                    context=_make_ctx(),
+                    step_cfg=cfg,
+                )
         assert rc == 1
-        assert mock_andon.called
-        andon_arg = mock_andon.call_args[0][1]
+        andon_arg = _raised_andons(forge)[0]
+        assert andon_arg is not None
         assert andon_arg.kind == "broken"
         assert "could not be built" in andon_arg.summary
 
@@ -583,7 +683,9 @@ class TestDispatchRepairGuards:
             input_kind="issue",
         )
         with patch("issuesmith.ops.dispatch._build_requires_gates") as mock_build:
-            with patch("issuesmith.ops.dispatch.get_forge"):
+            with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
+                forge = _RecordingForge()
+                mock_forge.return_value = forge
                 rc = map_step_result(
                     StepResult(status="done"),
                     step_id="repair",
@@ -600,13 +702,13 @@ class TestDispatchRepairGuards:
         from issuesmith.ops.dispatch import main
 
         with patch.dict(os.environ, {"ISSUESMITH_REPAIR_ACTIVE": "1"}):
-            with patch("issuesmith.ops.dispatch._raise_andon") as mock_andon:
-                with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
-                    mock_forge.return_value = MagicMock()
-                    rc = main(["repair", "issue_number=42", "workflow_name=issuesmith"])
+            with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
+                forge = _RecordingForge()
+                mock_forge.return_value = forge
+                rc = main(["repair", "issue_number=42", "workflow_name=issuesmith"])
         assert rc == 1
-        assert mock_andon.called
-        andon_arg = mock_andon.call_args[0][1]
+        andon_arg = _raised_andons(forge)[0]
+        assert andon_arg is not None
         assert andon_arg.kind == "broken"
         assert "re-entered" in andon_arg.summary
 
@@ -745,14 +847,16 @@ class TestRepairGaveUp:
             patch("issuesmith.ops.dispatch._fetch_fresh_issue_body", return_value=""),
             patch("issuesmith.ops.dispatch._get_issue_labels", return_value=[]),
             patch("issuesmith.ops.dispatch._try_python_step", side_effect=fake_try),
-            patch("issuesmith.ops.dispatch._raise_andon") as mock_raise,
-            patch("issuesmith.ops.dispatch.get_forge"),
+            patch("issuesmith.ops.dispatch.get_forge") as mock_forge,
         ):
+            forge = _RecordingForge()
+            mock_forge.return_value = forge
             rc = run_requires_loop(cfg, "p1", context)
 
         assert rc == 1
-        assert mock_raise.call_count == 1
-        assert mock_raise.call_args[0][1].rule_id == "repair.gave_up"
+        raised_list = _raised_andons(forge)
+        assert len(raised_list) == 1
+        assert raised_list[0].rule_id == "repair.gave_up"
 
 
 # ---------------------------------------------------------------------------
@@ -782,11 +886,13 @@ class TestDerivedAllowPaths:
             return ["src/pkg/mod.py"]
 
         repair_contexts: list[dict] = []
+        repair = RepairStepBoundary()
 
-        def fake_repair(violations, step_id, context):
-            repair_contexts.append(dict(context))
+        def _on_repair_run(ctx):
+            repair_contexts.append(asdict(ctx))
             state["repaired"] = True
-            return None
+
+        repair.on_run = _on_repair_run
 
         cfg = StepConfig(
             module="", requires=("tests", "pr_scope"), input_kind="worktree",
@@ -805,14 +911,15 @@ class TestDerivedAllowPaths:
             patch("issuesmith.gates.worktree.check_derived_test_guard", return_value=[]),
             patch("issuesmith.ops.dispatch._fetch_fresh_issue_body", return_value=""),
             patch("issuesmith.ops.dispatch._get_issue_labels", return_value=[]),
-            patch("issuesmith.ops.dispatch._run_repair_step", side_effect=fake_repair),
-            patch("issuesmith.ops.dispatch._raise_andon") as andon,
-            patch("issuesmith.ops.dispatch.get_forge"),
+            stand_in_repair_step(repair),
+            patch("issuesmith.ops.dispatch.get_forge") as mock_forge,
         ):
+            forge = _RecordingForge()
+            mock_forge.return_value = forge
             rc = run_requires_loop(cfg, "p1", context)
 
         assert rc is None
-        andon.assert_not_called()
+        assert _raised_andons(forge) == []
         assert state["calls"] == 2
         assert context["derived_allow_paths"] == "tests/test_uses_mod.py"
         assert repair_contexts[0]["derived_allow_paths"] == "tests/test_uses_mod.py"
@@ -881,9 +988,12 @@ class TestAutoFixRoundLimit:
         gate.check.side_effect = lambda body, labels: [_v(rule_id="base_freshness.behind_base", auto_fixable=True)]
         gate.fix.side_effect = lambda inp: inp
 
+        repair = RepairStepBoundary()
         with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"base_freshness": gate}):
-            with patch("issuesmith.ops.dispatch.get_forge"):
-                with patch("issuesmith.ops.dispatch._run_repair_step") as mock_repair:
+            with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
+                forge = _RecordingForge()
+                mock_forge.return_value = forge
+                with stand_in_repair_step(repair):
                     rc = map_step_result(
                         StepResult(status="done", markers=["IMPL_DONE"]),
                         step_id="p1",
@@ -895,7 +1005,7 @@ class TestAutoFixRoundLimit:
         assert gate.fix.call_count == _MAX_AUTO_FIX_ROUNDS
         assert "auto-fix round limit" in out and "base_freshness.behind_base" in out
         assert "PIPELINE_STATUS: IMPL_DONE" in out
-        mock_repair.assert_not_called()
+        assert repair.launches == []
 
     def test_gate_fix_raising_keeps_violation_and_does_not_recurse(self):
         from issuesmith.config import StepConfig
@@ -908,15 +1018,16 @@ class TestAutoFixRoundLimit:
         gate.fix.side_effect = RuntimeError("rebase conflict")
 
         with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"base_freshness": gate}):
-            with patch("issuesmith.ops.dispatch.get_forge"):
-                with patch("issuesmith.ops.dispatch._run_repair_step", return_value=1):
-                    with patch("issuesmith.ops.dispatch._raise_andon"):
-                        rc = map_step_result(
-                            StepResult(status="done", markers=["IMPL_DONE"]),
-                            step_id="p1",
-                            context=_make_ctx(),
-                            step_cfg=cfg,
-                        )
+            with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
+                forge = _RecordingForge()
+                mock_forge.return_value = forge
+                with stand_in_repair_step(exit_code=1):
+                    rc = map_step_result(
+                        StepResult(status="done", markers=["IMPL_DONE"]),
+                        step_id="p1",
+                        context=_make_ctx(),
+                        step_cfg=cfg,
+                    )
         assert rc != 0
         assert gate.fix.call_count == 1
 
@@ -1005,21 +1116,23 @@ class TestDepsUnmergedRequires:
 
         cfg = StepConfig(module="", requires=("deps",))
         gate = _fail_gate("deps.unmerged")
+        repair = RepairStepBoundary()
         with (
             patch(
                 "issuesmith.ops.dispatch._build_requires_gates",
                 return_value={"deps": gate},
             ),
             patch("issuesmith.ops.dispatch._deps_gated_by_admission", return_value=True),
-            patch("issuesmith.ops.dispatch.get_forge"),
-            patch("issuesmith.ops.dispatch._raise_andon") as mock_andon,
-            patch("issuesmith.ops.dispatch._run_repair_step") as mock_repair,
+            patch("issuesmith.ops.dispatch.get_forge") as mock_forge,
+            stand_in_repair_step(repair),
         ):
+            forge = _RecordingForge()
+            mock_forge.return_value = forge
             rc = run_requires_loop(cfg, "b1", _make_ctx())
         assert rc is None
-        mock_repair.assert_not_called()
-        mock_andon.assert_not_called()
+        assert _raised_andons(forge) == []
         assert "deps.unmerged deferred to phase admission" in capsys.readouterr().err
+        assert repair.launches == []
 
     def test_unmerged_raises_andon_when_not_gated_by_admission(self):
         from issuesmith.config import StepConfig
@@ -1027,20 +1140,22 @@ class TestDepsUnmergedRequires:
 
         cfg = StepConfig(module="", requires=("deps",))
         gate = _fail_gate("deps.unmerged")
+        repair = RepairStepBoundary()
         with (
             patch(
                 "issuesmith.ops.dispatch._build_requires_gates",
                 return_value={"deps": gate},
             ),
             patch("issuesmith.ops.dispatch._deps_gated_by_admission", return_value=False),
-            patch("issuesmith.ops.dispatch.get_forge"),
-            patch("issuesmith.ops.dispatch._raise_andon") as mock_andon,
-            patch("issuesmith.ops.dispatch._run_repair_step") as mock_repair,
+            patch("issuesmith.ops.dispatch.get_forge") as mock_forge,
+            stand_in_repair_step(repair),
         ):
+            forge = _RecordingForge()
+            mock_forge.return_value = forge
             rc = run_requires_loop(cfg, "repair", _make_ctx())
         assert rc == 1
-        mock_repair.assert_not_called()
-        assert mock_andon.call_args[0][1].kind == "decision"
+        assert _raised_andons(forge)[0].kind == "decision"
+        assert repair.launches == []
 
     def test_unparsed_dependency_section_still_triggers_repair(self):
         from issuesmith.config import RepairConfig, StepConfig
@@ -1050,17 +1165,19 @@ class TestDepsUnmergedRequires:
             module="", requires=("deps",), repair=RepairConfig(max=1)
         )
         gate = _fail_gate("deps.unparsed_dependency_section")
+        repair = RepairStepBoundary()
         with (
             patch(
                 "issuesmith.ops.dispatch._build_requires_gates",
                 return_value={"deps": gate},
             ),
-            patch("issuesmith.ops.dispatch.get_forge"),
-            patch("issuesmith.ops.dispatch._raise_andon"),
-            patch("issuesmith.ops.dispatch._run_repair_step") as mock_repair,
+            patch("issuesmith.ops.dispatch.get_forge") as mock_forge,
+            stand_in_repair_step(repair),
         ):
+            forge = _RecordingForge()
+            mock_forge.return_value = forge
             run_requires_loop(cfg, "b1", _make_ctx())
-        mock_repair.assert_called_once()
+        assert len(repair.launches) == 1
 
 
 class TestTargetUnknownNotRepairable:
@@ -1081,14 +1198,16 @@ class TestTargetUnknownNotRepairable:
 
         cfg = StepConfig(module="issuesmith.steps.test", requires=("external_leak",))
         gate = _fail_gate("external_leak.target_unknown")
+        repair = RepairStepBoundary()
         with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"external_leak": gate}), \
-             patch("issuesmith.ops.dispatch.get_forge"), \
-             patch("issuesmith.ops.dispatch._raise_andon") as mock_andon, \
-             patch("issuesmith.ops.dispatch._run_repair_step") as mock_repair:
+             patch("issuesmith.ops.dispatch.get_forge") as mock_forge, \
+             stand_in_repair_step(repair):
+            forge = _RecordingForge()
+            mock_forge.return_value = forge
             rc = run_requires_loop(cfg, "p1", _make_ctx())
         assert rc == 1
-        mock_repair.assert_not_called()
-        assert mock_andon.call_args[0][1].kind == "decision"
+        assert _raised_andons(forge)[0].kind == "decision"
+        assert repair.launches == []
 
 
 class TestForbiddenPathPrScopeRequires:
@@ -1127,22 +1246,24 @@ class TestForbiddenPathPrScopeRequires:
             recorded.append(metric)
 
         cfg = StepConfig(module="", requires=("review",), repair=RepairConfig(max=2))
+        repair = RepairStepBoundary()
         with (
             patch(
                 "issuesmith.ops.dispatch._build_requires_gates",
                 return_value={"review": gate},
             ),
-            patch("issuesmith.ops.dispatch.get_forge"),
-            patch("issuesmith.ops.dispatch._raise_andon") as mock_andon,
-            patch("issuesmith.ops.dispatch._run_repair_step") as mock_repair,
+            patch("issuesmith.ops.dispatch.get_forge") as mock_forge,
+            stand_in_repair_step(repair),
             patch("issuesmith.ops.dispatch._safe_record_metrics", side_effect=_record),
         ):
+            forge = _RecordingForge()
+            mock_forge.return_value = forge
             rc = run_requires_loop(cfg, "cp2", _make_ctx())
         assert rc == 1
-        mock_repair.assert_not_called()
         assert "requires_repair" not in recorded
-        andon_arg = mock_andon.call_args[0][1]
+        andon_arg = _raised_andons(forge)[0]
         assert andon_arg.kind == "decision"
+        assert repair.launches == []
 
     def test_forbidden_only_decision_andon_without_repair_or_metrics(self):
         from issuesmith.config import StepConfig
@@ -1165,25 +1286,27 @@ class TestForbiddenPathPrScopeRequires:
             recorded.append(metric)
 
         cfg = StepConfig(module="", requires=("pr_scope",))
+        repair = RepairStepBoundary()
         with (
             patch(
                 "issuesmith.ops.dispatch._build_requires_gates",
                 return_value={"pr_scope": gate},
             ),
-            patch("issuesmith.ops.dispatch.get_forge"),
-            patch("issuesmith.ops.dispatch._raise_andon") as mock_andon,
-            patch("issuesmith.ops.dispatch._run_repair_step") as mock_repair,
+            patch("issuesmith.ops.dispatch.get_forge") as mock_forge,
+            stand_in_repair_step(repair),
             patch("issuesmith.ops.dispatch._safe_record_metrics", side_effect=_record),
         ):
+            forge = _RecordingForge()
+            mock_forge.return_value = forge
             rc = run_requires_loop(cfg, "p1", _make_ctx())
         assert rc == 1
-        mock_repair.assert_not_called()
         assert "requires_repair" not in recorded
-        andon_arg = mock_andon.call_args[0][1]
+        andon_arg = _raised_andons(forge)[0]
         assert andon_arg.kind == "decision"
         assert andon_arg.options == ["split", "reject"]
         assert "forbidden path:" in andon_arg.summary
         assert path in andon_arg.summary
+        assert repair.launches == []
 
     def test_mixed_forbidden_and_out_of_allow_widen_only_out_of_allow(self):
         from issuesmith.config import StepConfig
@@ -1211,21 +1334,23 @@ class TestForbiddenPathPrScopeRequires:
             ),
         ]
         cfg = StepConfig(module="", requires=("pr_scope",))
+        repair = RepairStepBoundary()
         with (
             patch(
                 "issuesmith.ops.dispatch._build_requires_gates",
                 return_value={"pr_scope": gate},
             ),
-            patch("issuesmith.ops.dispatch.get_forge"),
-            patch("issuesmith.ops.dispatch._raise_andon") as mock_andon,
-            patch("issuesmith.ops.dispatch._run_repair_step") as mock_repair,
+            patch("issuesmith.ops.dispatch.get_forge") as mock_forge,
+            stand_in_repair_step(repair),
         ):
+            forge = _RecordingForge()
+            mock_forge.return_value = forge
             run_requires_loop(cfg, "p1", _make_ctx())
-        mock_repair.assert_not_called()
-        andon_arg = mock_andon.call_args[0][1]
+        andon_arg = _raised_andons(forge)[0]
         widen_opts = [o for o in andon_arg.options if o.startswith("widen:")]
         assert widen_opts == [f"widen:{out_path}"]
         assert forbidden_path not in widen_opts[0]
+        assert repair.launches == []
 
 
 class TestFetchFreshIssueBodyLogging:
@@ -1286,15 +1411,13 @@ class TestRepairOscillation:
 
         with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"tests": gate}):
             with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
-                mock_forge.return_value = MagicMock()
-                with patch("issuesmith.ops.dispatch._raise_andon") as mock_andon:
-                    with patch("issuesmith.ops.dispatch._run_repair_step", return_value=None) as mock_repair:
-                        rc = run_requires_loop(cfg, "p1", _make_ctx())
+                forge = _RecordingForge()
+                mock_forge.return_value = forge
+                with stand_in_repair_step():
+                    rc = run_requires_loop(cfg, "p1", _make_ctx())
 
         assert rc == 1
-        mock_repair.assert_called_once()
-        mock_andon.assert_called_once()
-        andon_arg = mock_andon.call_args[0][1]
+        andon_arg = _raised_andons(forge)[0]
         assert andon_arg.kind == "decision"
         assert "repair oscillation detected" in andon_arg.summary
         assert "step p1" in andon_arg.summary
@@ -1319,16 +1442,18 @@ class TestRepairOscillation:
             [],
         ]
 
+        repair = RepairStepBoundary()
         with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"tests": gate}):
-            with patch("issuesmith.ops.dispatch.get_forge"):
-                with patch("issuesmith.ops.dispatch._raise_andon") as mock_andon:
-                    with patch("issuesmith.ops.dispatch._run_repair_step", return_value=None) as mock_repair:
-                        rc = run_requires_loop(cfg, "p1", _make_ctx())
+            with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
+                forge = _RecordingForge()
+                mock_forge.return_value = forge
+                with stand_in_repair_step(repair):
+                    rc = run_requires_loop(cfg, "p1", _make_ctx())
 
         assert rc is None
-        assert mock_repair.call_count == 2
-        mock_andon.assert_not_called()
-        assert "PIPELINE_STATUS" not in capsys.readouterr().out
+        assert _raised_andons(forge) == []
+        assert "PIPELINE_STATUS: IMPL_DONE" not in capsys.readouterr().out
+        assert len(repair.launches) == 2
 
     def test_worsened_violations_after_repair_raises_oscillation_andon(self):
         from issuesmith.config import StepConfig
@@ -1349,14 +1474,13 @@ class TestRepairOscillation:
 
         with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"tests": gate}):
             with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
-                mock_forge.return_value = MagicMock()
-                with patch("issuesmith.ops.dispatch._raise_andon") as mock_andon:
-                    with patch("issuesmith.ops.dispatch._run_repair_step", return_value=None) as mock_repair:
-                        rc = run_requires_loop(cfg, "p1", _make_ctx())
+                forge = _RecordingForge()
+                mock_forge.return_value = forge
+                with stand_in_repair_step():
+                    rc = run_requires_loop(cfg, "p1", _make_ctx())
 
         assert rc == 1
-        mock_repair.assert_called_once()
-        andon_arg = mock_andon.call_args[0][1]
+        andon_arg = _raised_andons(forge)[0]
         assert "repair oscillation detected" in andon_arg.summary
 
     def test_oscillation_with_pr_scope_includes_widen_option(self):
@@ -1377,13 +1501,13 @@ class TestRepairOscillation:
 
         with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"pr_scope": gate}):
             with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
-                mock_forge.return_value = MagicMock()
-                with patch("issuesmith.ops.dispatch._raise_andon") as mock_andon:
-                    with patch("issuesmith.ops.dispatch._run_repair_step", return_value=None):
-                        rc = run_requires_loop(cfg, "p1", _make_ctx())
+                forge = _RecordingForge()
+                mock_forge.return_value = forge
+                with stand_in_repair_step():
+                    rc = run_requires_loop(cfg, "p1", _make_ctx())
 
         assert rc == 1
-        andon_arg = mock_andon.call_args[0][1]
+        andon_arg = _raised_andons(forge)[0]
         assert any(
             o.startswith("widen:") and "scripts/x.py" in o for o in andon_arg.options
         )
@@ -1405,15 +1529,17 @@ class TestRepairOscillation:
             [],
         ]
 
+        repair = RepairStepBoundary()
         with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"tests": gate}):
-            with patch("issuesmith.ops.dispatch.get_forge"):
-                with patch("issuesmith.ops.dispatch._raise_andon") as mock_andon:
-                    with patch("issuesmith.ops.dispatch._run_repair_step", return_value=None) as mock_repair:
-                        rc = run_requires_loop(cfg, "p1", _make_ctx())
+            with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
+                forge = _RecordingForge()
+                mock_forge.return_value = forge
+                with stand_in_repair_step(repair):
+                    rc = run_requires_loop(cfg, "p1", _make_ctx())
 
         assert rc is None
-        assert mock_repair.call_count == 2
-        mock_andon.assert_not_called()
+        assert _raised_andons(forge) == []
+        assert len(repair.launches) == 2
 
     def test_same_file_different_test_is_progress(self):
         from issuesmith.config import StepConfig
@@ -1427,15 +1553,17 @@ class TestRepairOscillation:
             [],
         ]
 
+        repair = RepairStepBoundary()
         with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"tests": gate}):
-            with patch("issuesmith.ops.dispatch.get_forge"):
-                with patch("issuesmith.ops.dispatch._raise_andon") as mock_andon:
-                    with patch("issuesmith.ops.dispatch._run_repair_step", return_value=None) as mock_repair:
-                        rc = run_requires_loop(cfg, "p1", _make_ctx())
+            with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
+                forge = _RecordingForge()
+                mock_forge.return_value = forge
+                with stand_in_repair_step(repair):
+                    rc = run_requires_loop(cfg, "p1", _make_ctx())
 
         assert rc is None
-        assert mock_repair.call_count == 2
-        mock_andon.assert_not_called()
+        assert _raised_andons(forge) == []
+        assert len(repair.launches) == 2
 
     def test_identical_pytest_fingerprint_raises_oscillation(self):
         from issuesmith.config import StepConfig
@@ -1448,14 +1576,13 @@ class TestRepairOscillation:
 
         with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"tests": gate}):
             with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
-                mock_forge.return_value = MagicMock()
-                with patch("issuesmith.ops.dispatch._raise_andon") as mock_andon:
-                    with patch("issuesmith.ops.dispatch._run_repair_step", return_value=None) as mock_repair:
-                        rc = run_requires_loop(cfg, "p1", _make_ctx())
+                forge = _RecordingForge()
+                mock_forge.return_value = forge
+                with stand_in_repair_step():
+                    rc = run_requires_loop(cfg, "p1", _make_ctx())
 
         assert rc == 1
-        mock_repair.assert_called_once()
-        andon_arg = mock_andon.call_args[0][1]
+        andon_arg = _raised_andons(forge)[0]
         assert "repair oscillation detected" in andon_arg.summary
 
     def test_partial_resolution_continues_repair(self):
@@ -1468,15 +1595,17 @@ class TestRepairOscillation:
         gate = MagicMock()
         gate.check.side_effect = [[a, b], [a], []]
 
+        repair = RepairStepBoundary()
         with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"tests": gate}):
-            with patch("issuesmith.ops.dispatch.get_forge"):
-                with patch("issuesmith.ops.dispatch._raise_andon") as mock_andon:
-                    with patch("issuesmith.ops.dispatch._run_repair_step", return_value=None) as mock_repair:
-                        rc = run_requires_loop(cfg, "p1", _make_ctx())
+            with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
+                forge = _RecordingForge()
+                mock_forge.return_value = forge
+                with stand_in_repair_step(repair):
+                    rc = run_requires_loop(cfg, "p1", _make_ctx())
 
         assert rc is None
-        assert mock_repair.call_count == 2
-        mock_andon.assert_not_called()
+        assert _raised_andons(forge) == []
+        assert len(repair.launches) == 2
 
     def test_added_failure_with_same_fingerprint_raises_oscillation(self):
         from issuesmith.config import StepConfig
@@ -1490,14 +1619,13 @@ class TestRepairOscillation:
 
         with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"tests": gate}):
             with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
-                mock_forge.return_value = MagicMock()
-                with patch("issuesmith.ops.dispatch._raise_andon") as mock_andon:
-                    with patch("issuesmith.ops.dispatch._run_repair_step", return_value=None) as mock_repair:
-                        rc = run_requires_loop(cfg, "p1", _make_ctx())
+                forge = _RecordingForge()
+                mock_forge.return_value = forge
+                with stand_in_repair_step():
+                    rc = run_requires_loop(cfg, "p1", _make_ctx())
 
         assert rc == 1
-        mock_repair.assert_called_once()
-        andon_arg = mock_andon.call_args[0][1]
+        andon_arg = _raised_andons(forge)[0]
         assert "repair oscillation detected" in andon_arg.summary
 
     def test_always_new_failures_hits_max_repairs_not_oscillation(self):
@@ -1513,18 +1641,19 @@ class TestRepairOscillation:
             [_pytest_failure_v("tests/d.py::test_d")],
         ]
 
+        repair = RepairStepBoundary()
         with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"tests": gate}):
             with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
-                mock_forge.return_value = MagicMock()
-                with patch("issuesmith.ops.dispatch._raise_andon") as mock_andon:
-                    with patch("issuesmith.ops.dispatch._run_repair_step", return_value=None) as mock_repair:
-                        rc = run_requires_loop(cfg, "p1", _make_ctx())
+                forge = _RecordingForge()
+                mock_forge.return_value = forge
+                with stand_in_repair_step(repair):
+                    rc = run_requires_loop(cfg, "p1", _make_ctx())
 
         assert rc == 1
-        assert mock_repair.call_count == 3
-        andon_arg = mock_andon.call_args[0][1]
+        andon_arg = _raised_andons(forge)[0]
         assert "requires evaluation failed after 3 repair(s)" in andon_arg.summary
         assert "repair oscillation" not in andon_arg.summary
+        assert len(repair.launches) == 3
 
 
 # ---------------------------------------------------------------------------

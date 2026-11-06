@@ -1246,7 +1246,7 @@ def test_build_context_comment_takes_priority_over_branch_reuse(
 # ===========================================================================
 
 
-def test_ac1_40_comments_marker_at_position_35(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_pipeline_id_marker_found_among_40_comments(monkeypatch: pytest.MonkeyPatch) -> None:
     """AC-1: 40 comments with marker at position 35 (beyond old 30-cap) is picked up."""
     comments = [{"body": "other"} for _ in range(34)]
     comments.append({"body": "<!-- pipeline-branch: feat/issue-42-ac1f1234 -->"})
@@ -1260,7 +1260,7 @@ def test_ac1_40_comments_marker_at_position_35(monkeypatch: pytest.MonkeyPatch) 
     assert ctx["reuse_source"] == "comment"
 
 
-def test_ac1_two_markers_last_wins(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_pipeline_id_two_markers_last_wins(monkeypatch: pytest.MonkeyPatch) -> None:
     """AC-1: when both position 5 and 35 have markers, position 35 wins."""
     comments = [{"body": "other"} for _ in range(4)]
     comments.append({"body": "<!-- pipeline-branch: feat/issue-42-f1f1f1f1 -->"})
@@ -1281,7 +1281,7 @@ def test_ac1_two_markers_last_wins(monkeypatch: pytest.MonkeyPatch) -> None:
 # ===========================================================================
 
 
-def test_ac1b_fallback_comments_restore_pipeline_id(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fallback_comments_restore_pipeline_id(monkeypatch: pytest.MonkeyPatch) -> None:
     """AC-1b: when _fetch_issue_comments_from_api returns marker comments, build_context uses them."""
     comments = [{"body": "<!-- pipeline-branch: feat/issue-42-fa11bacc -->"}]
     monkeypatch.setattr(
@@ -1292,7 +1292,7 @@ def test_ac1b_fallback_comments_restore_pipeline_id(monkeypatch: pytest.MonkeyPa
     assert ctx["reuse_source"] == "comment"
 
 
-def test_ac1b_both_fail_build_context_falls_back_to_new_uuid(
+def test_build_context_falls_back_to_new_uuid_when_both_lookups_fail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """AC-1b: when _fetch_issue_comments_from_api returns [] (both failed), new uuid is used."""
@@ -1310,7 +1310,7 @@ def test_ac1b_both_fail_build_context_falls_back_to_new_uuid(
 # ===========================================================================
 
 
-def test_ac3a_reuse_source_comment(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_reuse_source_comment(monkeypatch: pytest.MonkeyPatch) -> None:
     """AC-3a: pipeline-branch comment → reuse_source='comment'."""
     comments = [{"body": "<!-- pipeline-branch: feat/issue-42-deadbeef -->"}]
     monkeypatch.setattr(
@@ -1320,7 +1320,7 @@ def test_ac3a_reuse_source_comment(monkeypatch: pytest.MonkeyPatch) -> None:
     assert ctx["reuse_source"] == "comment"
 
 
-def test_ac3a_reuse_source_none(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_reuse_source_none(monkeypatch: pytest.MonkeyPatch) -> None:
     """AC-3a: no comments, no reusable branch → reuse_source='none'."""
     monkeypatch.setattr(
         "issuesmith.context_hook._fetch_issue_comments_from_api", lambda *_: []
@@ -1329,7 +1329,7 @@ def test_ac3a_reuse_source_none(monkeypatch: pytest.MonkeyPatch) -> None:
     assert ctx["reuse_source"] == "none"
 
 
-def test_ac3a_reuse_source_recorded(
+def test_reuse_source_recorded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """AC-3a: find_reusable_branch returns recorded branch → reuse_source='recorded'."""
@@ -1344,7 +1344,7 @@ def test_ac3a_reuse_source_recorded(
     assert ctx["reuse_source"] == "recorded"
 
 
-def test_ac3a_reuse_source_unrecorded(
+def test_reuse_source_unrecorded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """AC-3a: find_reusable_branch returns unrecorded branch → reuse_source='unrecorded'."""

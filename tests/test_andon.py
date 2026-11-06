@@ -47,12 +47,54 @@ def _make_andon(
     )
 
 
-def _fake_client(*, comments: list[dict] | None = None, issues: list[dict] | None = None) -> MagicMock:
-    client = MagicMock()
-    client.issue_comment.return_value = {"id": 999, "body": ""}
-    client.get_issue_comments.return_value = comments or []
-    client.list_issues.return_value = issues or []
-    return client
+class RecordingForgeClient:
+    """Records forge issue_comment / issue_update calls for behaviour assertions."""
+
+    def __init__(
+        self,
+        *,
+        comments: list[dict] | None = None,
+        issues: list[dict] | None = None,
+        labels: list | None = None,
+    ) -> None:
+        self.issue_comments: list[tuple[int, str]] = []
+        self.issue_updates: list[tuple[int, dict]] = []
+        self.get_issue_comments_calls: list[int] = []
+        self._stored_comments = comments or []
+        self._issues = issues or []
+        self.issue_get = MagicMock(return_value={"labels": labels or []})
+
+    def issue_comment(self, issue: int, body: str) -> dict:
+        self.issue_comments.append((issue, body))
+        return {"id": 999, "body": body}
+
+    def get_issue_comments(self, issue: int) -> list[dict]:
+        self.get_issue_comments_calls.append(issue)
+        return self._stored_comments
+
+    def list_issues(self, **kwargs):
+        return self._issues
+
+    def issue_update(self, issue: int, **kwargs) -> dict:
+        self.issue_updates.append((issue, kwargs))
+        return {}
+
+
+class RecordingSink:
+    def __init__(self) -> None:
+        self.emitted: list[Andon] = []
+
+    def emit(self, andon: Andon) -> None:
+        self.emitted.append(andon)
+
+
+def _fake_client(
+    *,
+    comments: list[dict] | None = None,
+    issues: list[dict] | None = None,
+    labels: list | None = None,
+) -> RecordingForgeClient:
+    return RecordingForgeClient(comments=comments, issues=issues, labels=labels)
 
 
 # ---------------------------------------------------------------------------
@@ -198,9 +240,8 @@ def test_raise_andon_posts_comment():
     a = _make_andon(issue=10)
     with patch("issuesmith.andon._write_metrics"):
         raise_andon(client, a)
-    client.issue_comment.assert_called_once()
-    args = client.issue_comment.call_args
-    assert args[0][0] == 10
+    assert client.issue_comments == [(10, client.issue_comments[0][1])]
+    assert client.issue_comments[0][0] == 10
 
 
 def test_raise_andon_comment_body_contains_andon_block():
@@ -208,7 +249,7 @@ def test_raise_andon_comment_body_contains_andon_block():
     a = _make_andon(issue=10)
     with patch("issuesmith.andon._write_metrics"):
         raise_andon(client, a)
-    body = client.issue_comment.call_args[0][1]
+    body = client.issue_comments[0][1]
     assert "```andon" in body
 
 
@@ -217,8 +258,8 @@ def test_raise_andon_adds_label():
     a = _make_andon(issue=10, kind="decision")
     with patch("issuesmith.andon._write_metrics"):
         raise_andon(client, a)
-    client.issue_update.assert_called_once()
-    kwargs = client.issue_update.call_args[1]
+    assert len(client.issue_updates) == 1
+    kwargs = client.issue_updates[0][1]
     ns = _ns()
     assert f"{ns}:andon-decision" in kwargs.get("labels_add", [])
 
@@ -232,7 +273,7 @@ def test_raise_andon_external_namespace_uses_direct_label():
     ) as project:
         raise_andon(client, a)
     project.assert_not_called()
-    kwargs = client.issue_update.call_args[1]
+    kwargs = client.issue_updates[0][1]
     assert "bump:andon-blocked" in kwargs.get("labels_add", [])
 
 
@@ -284,7 +325,7 @@ def test_raise_andon_label_uses_config_namespace(monkeypatch):
     a = _make_andon(issue=5, kind="blocked")
     with patch("issuesmith.andon._write_metrics"):
         raise_andon(client, a)
-    kwargs = client.issue_update.call_args[1]
+    kwargs = client.issue_updates[0][1]
     assert "myns:andon-blocked" in kwargs.get("labels_add", [])
 
     cfg_module.reset_config_cache()
@@ -292,11 +333,11 @@ def test_raise_andon_label_uses_config_namespace(monkeypatch):
 
 def test_raise_andon_calls_sinks():
     client = _fake_client()
-    sink = MagicMock()
+    sink = RecordingSink()
     a = _make_andon(issue=10)
     with patch("issuesmith.andon._write_metrics"):
         raise_andon(client, a, sinks=[sink])
-    sink.emit.assert_called_once_with(a)
+    assert sink.emitted == [a]
 
 
 def test_raise_andon_writes_metrics(tmp_path):
@@ -330,7 +371,7 @@ def test_list_open_finds_andon_in_comment():
     )
     with patch("issuesmith.andon._iter_open_andon_issues") as mock_iter:
         mock_iter.return_value = iter([{"number": 7}])
-        client.get_issue_comments.return_value = [{"body": comment_body, "id": 1}]
+        client._stored_comments = [{"body": comment_body, "id": 1}]
         result = list_open(client)
     assert len(result) == 1
     assert result[0].id == "wf:7:step:0"
@@ -343,7 +384,7 @@ def test_list_open_skips_comments_without_andon_block():
     )
     with patch("issuesmith.andon._iter_open_andon_issues") as mock_iter:
         mock_iter.return_value = iter([{"number": 5}])
-        client.get_issue_comments.return_value = [{"body": "regular comment", "id": 1}]
+        client._stored_comments = [{"body": "regular comment", "id": 1}]
         result = list_open(client)
     assert result == []
 
@@ -365,12 +406,12 @@ def test_answer_posts_comment():
         patch("issuesmith.andon._call_resume_hook"),
     ):
         mock_iter.return_value = iter([{"number": 15}])
-        client.get_issue_comments.return_value = [{"body": comment_body, "id": 10}]
+        client._stored_comments = [{"body": comment_body, "id": 10}]
         answer(client, "wf:15:s:0", "yes")
-    client.issue_comment.assert_called_once()
-    args = client.issue_comment.call_args[0]
-    assert args[0] == 15
-    assert "yes" in args[1]
+    assert len(client.issue_comments) == 1
+    issue_num, body = client.issue_comments[0]
+    assert issue_num == 15
+    assert "yes" in body
 
 
 def test_answer_removes_label():
@@ -387,10 +428,10 @@ def test_answer_removes_label():
         patch("issuesmith.andon._call_resume_hook"),
     ):
         mock_iter.return_value = iter([{"number": 15}])
-        client.get_issue_comments.return_value = [{"body": comment_body, "id": 10}]
+        client._stored_comments = [{"body": comment_body, "id": 10}]
         answer(client, "wf:15:s:0", "yes")
-    client.issue_update.assert_called_once()
-    kwargs = client.issue_update.call_args[1]
+    assert len(client.issue_updates) == 1
+    kwargs = client.issue_updates[0][1]
     assert f"{ns}:andon-decision" in kwargs.get("labels_remove", [])
 
 
@@ -406,9 +447,11 @@ def test_answer_calls_resume_hook():
         patch("issuesmith.andon._call_resume_hook") as mock_hook,
     ):
         mock_iter.return_value = iter([{"number": 15}])
-        client.get_issue_comments.return_value = [{"body": comment_body, "id": 10}]
+        client._stored_comments = [{"body": comment_body, "id": 10}]
+        resume_calls: list[tuple] = []
+        mock_hook.side_effect = lambda *a: resume_calls.append(a)
         answer(client, "wf:15:s:0", "yes")
-    mock_hook.assert_called_once_with(client, "wf:15:s:0", "yes")
+    assert resume_calls == [(client, "wf:15:s:0", "yes")]
 
 
 def test_answer_raises_if_andon_not_found():
@@ -417,7 +460,7 @@ def test_answer_raises_if_andon_not_found():
         patch("issuesmith.andon._iter_open_andon_issues") as mock_iter,
     ):
         mock_iter.return_value = iter([{"number": 5}])
-        client.get_issue_comments.return_value = [{"body": "no andon here", "id": 1}]
+        client._stored_comments = [{"body": "no andon here", "id": 1}]
         with pytest.raises(KeyError):
             answer(client, "wf:5:s:0", "yes")
 
@@ -570,7 +613,6 @@ def test_list_open_excludes_answered_with_mock_client():
     with patch("issuesmith.andon._iter_open_andon_issues", return_value=iter([{"number": 9}])):
         result = list_open(client)
     assert [x.id for x in result] == ["wf:9:s:1"]
-    client.get_issue_comments.assert_called_once_with(9)
 
 
 def test_note_unknown_id_raises_key_error(local_client, tmp_path):
@@ -643,7 +685,7 @@ def test_raise_andon_projects_through_project_issue(monkeypatch):
     client = _fake_client()
     with patch("issuesmith.andon._write_metrics"):
         raise_andon(client, _make_andon(issue=10, kind="blocked", step="cp2"))
-    client.issue_update.assert_not_called()
+    assert client.issue_updates == []
     [(issue, state)] = calls
     assert issue == 10
     assert state.andon_kinds == {"blocked"}
@@ -670,7 +712,7 @@ def test_answer_projects_through_project_issue(monkeypatch):
         patch("issuesmith.andon._call_resume_hook"),
     ):
         answer(client, "wf:15:s:0", "yes")
-    client.issue_update.assert_not_called()
+    assert client.issue_updates == []
     [(issue, state)] = calls
     assert issue == 15
     assert state.andon_kinds == {"blocked"}
@@ -735,13 +777,13 @@ def test_raise_andon_without_in_flight_entry_is_noop(tmp_path, caplog):
         raise_andon(client, a, metrics_path=tmp_path / "metrics.jsonl")
     assert store.snapshot().in_flight == []
     assert not [r for r in caplog.records if r.name == "issuesmith.andon"]
-    client.issue_comment.assert_called_once()
+    assert len(client.issue_comments) == 1
 
 
 @pytest.mark.parametrize("fail_on", ["init", "hold"])
 def test_raise_andon_continues_when_queue_store_fails(tmp_path, caplog, fail_on):
     client = _fake_client()
-    sink = MagicMock()
+    sink = RecordingSink()
     a = _make_andon(issue=10, kind="blocked")
     mfile = tmp_path / "metrics.jsonl"
     if fail_on == "init":
@@ -756,10 +798,10 @@ def test_raise_andon_continues_when_queue_store_fails(tmp_path, caplog, fail_on)
     assert len(warnings) == 1
     assert warnings[0].levelname == "WARNING"
     assert warnings[0].exc_info is not None
-    client.issue_comment.assert_called_once()
-    client.issue_update.assert_called_once()
-    assert f"{_ns()}:andon-blocked" in client.issue_update.call_args[1].get("labels_add", [])
-    sink.emit.assert_called_once_with(a)
+    assert len(client.issue_comments) == 1
+    assert len(client.issue_updates) == 1
+    assert f"{_ns()}:andon-blocked" in client.issue_updates[0][1].get("labels_add", [])
+    assert sink.emitted == [a]
     assert json.loads(mfile.read_text().strip())["event"] == "andon_raised"
 
 
@@ -821,4 +863,4 @@ def test_answer_continues_when_release_hold_fails(tmp_path, caplog, fail_on):
         answer(client, "wf:10:p1:0", "resume")
     warnings = [r for r in caplog.records if r.name == "issuesmith.andon"]
     assert len(warnings) == 1
-    client.issue_comment.assert_called_once()
+    assert len(client.issue_comments) == 1

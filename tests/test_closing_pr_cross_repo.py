@@ -200,7 +200,7 @@ def test_issue_number_boundary_in_lookup() -> None:
     assert [pr["number"] for pr in matched] == [3]
 
 
-def test_head_boundary_issue_12_not_123() -> None:
+def test_head_boundary_does_not_match_longer_number() -> None:
     client = _RawForge(
         {
             "open": [

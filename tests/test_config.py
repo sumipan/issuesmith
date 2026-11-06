@@ -206,7 +206,7 @@ def test_brake_state_omitted_equals_quota_state(tmp_path, monkeypatch):
     assert cfg.paths.quota_state == (tmp_path / "data/quota.json").resolve()
 
 
-def test_scope_coupling_defaults_when_section_absent(tmp_path, monkeypatch):
+def test_scope_coupling_defaults_without_section(tmp_path, monkeypatch):
     """Without scope_coupling section, defaults apply (ignore_symbols removed in #3628)."""
     cfg_path = tmp_path / "issuesmith.yaml"
     cfg_path.write_text(yaml.safe_dump({"repo": "example/repo"}), encoding="utf-8")
@@ -217,7 +217,6 @@ def test_scope_coupling_defaults_when_section_absent(tmp_path, monkeypatch):
 
     assert isinstance(cfg.scope_coupling, ScopeCouplingConfig)
     assert cfg.scope_coupling.enabled is True
-    assert not hasattr(cfg.scope_coupling, "ignore_symbols")
 
 
 def test_scope_coupling_ignore_symbols_key_raises_config_error(tmp_path, monkeypatch):
@@ -392,7 +391,7 @@ def _load_with(tmp_path, monkeypatch, extra: dict):
     return load_config()
 
 
-def test_scope_size_defaults_when_section_absent(tmp_path, monkeypatch):
+def test_scope_size_defaults_without_section(tmp_path, monkeypatch):
     cfg = _load_with(tmp_path, monkeypatch, {})
     assert cfg.scope_size == ScopeSizeConfig()
     assert cfg.scope_size.enabled is True

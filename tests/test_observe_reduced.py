@@ -107,7 +107,7 @@ def _setup_failed_and_orphan(store: QueueStore, jobs: Path, monkeypatch) -> None
     monkeypatch.setattr("issuesmith.observe.load_dag_states", lambda *a, **k: states)
 
 
-def test_ac4_reduced_mode_detects_without_api(env, monkeypatch):
+def test_reduced_mode_detects_without_api(env, monkeypatch):
     store, jobs, config = env
     _setup_failed_and_orphan(store, jobs, monkeypatch)
 
@@ -128,7 +128,7 @@ def test_ac4_reduced_mode_detects_without_api(env, monkeypatch):
     assert {e.kind for e in events} == {"dag_terminated", "orphan_exec"}
 
 
-def test_ac4_reduced_mode_from_audit_when_brake_enabled(env, monkeypatch):
+def test_reduced_mode_from_audit_when_brake_enabled(env, monkeypatch):
     store, jobs, config = env
     _setup_failed_and_orphan(store, jobs, monkeypatch)
     _write_rate_limit(jobs, 100, _NOW + timedelta(minutes=30))
@@ -138,7 +138,7 @@ def test_ac4_reduced_mode_from_audit_when_brake_enabled(env, monkeypatch):
     assert {e.kind for e in events} == {"dag_terminated", "orphan_exec", "github_api_low"}
 
 
-def test_ac5_transition_events_fire_once(env):
+def test_transition_events_fire_once(env):
     store, jobs, config = env
     cfg = config(enabled=True)
     client = _CountingClient()
@@ -164,7 +164,7 @@ def test_ac5_transition_events_fire_once(env):
     assert api_events() == [GitHubApiLowEvent(remaining=100)]
 
 
-def test_ac6_disabled_brake_keeps_full_observe(env):
+def test_disabled_brake_keeps_full_observe(env):
     store, jobs, config = env
     store.add_in_flight(100, "claude", role="implementation")
     _write_rate_limit(jobs, 1, _NOW + timedelta(minutes=30))

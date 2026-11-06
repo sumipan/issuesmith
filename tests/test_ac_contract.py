@@ -228,7 +228,7 @@ def test_run_checks_references_symbol_fails_even_when_file_exists(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_run_checks_references_plain_string_pass_regression(tmp_path):
+def test_run_checks_references_plain_string_pass(tmp_path):
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "README.md").write_text("# doc\n", encoding="utf-8")
     contract = {"references_must_resolve": ["docs/README.md"]}
@@ -281,7 +281,7 @@ def test_run_checks_records_not_a_path_without_existence_check(tmp_path):
     assert "source file not found" not in r["detail"]
 
 
-def test_run_checks_references_dict_file_only_pass_regression(tmp_path):
+def test_run_checks_references_dict_file_only_pass(tmp_path):
     (tmp_path / "config.yaml").write_text("a: 1\n", encoding="utf-8")
     contract = {"references_must_resolve": [{"file": "config.yaml"}]}
     records = run_checks(contract, tmp_path)
