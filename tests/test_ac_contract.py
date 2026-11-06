@@ -288,6 +288,65 @@ def test_run_checks_references_dict_file_only_pass(tmp_path):
     assert records[0]["result"] == "PASS"
 
 
+def test_run_checks_references_key_path_glob_value_passes_when_matched(tmp_path):
+    conventions = tmp_path / "tests" / "conventions"
+    conventions.mkdir(parents=True)
+    (conventions / "known_a.txt").write_text("", encoding="utf-8")
+    (tmp_path / "config.yaml").write_text(
+        'ledger_globs:\n  - "tests/conventions/known_*.txt"\n',
+        encoding="utf-8",
+    )
+    contract = {
+        "references_must_resolve": [{"file": "config.yaml", "key_path": "ledger_globs"}]
+    }
+
+    records = run_checks(contract, tmp_path)
+
+    ref_records = [r for r in records if r["check"] == "references_must_resolve"]
+    assert len(ref_records) == 1
+    r = ref_records[0]
+    assert r["path"] == "config.yaml#ledger_globs=tests/conventions/known_*.txt"
+    assert r["result"] == "PASS"
+    assert r["detail"] == ""
+
+
+def test_run_checks_references_key_path_glob_value_fails_when_unmatched(tmp_path):
+    (tmp_path / "tests" / "conventions").mkdir(parents=True)
+    (tmp_path / "config.yaml").write_text(
+        'ledger_globs:\n  - "tests/conventions/known_*.txt"\n',
+        encoding="utf-8",
+    )
+    contract = {
+        "references_must_resolve": [{"file": "config.yaml", "key_path": "ledger_globs"}]
+    }
+
+    records = run_checks(contract, tmp_path)
+
+    ref_records = [r for r in records if r["check"] == "references_must_resolve"]
+    assert len(ref_records) == 1
+    r = ref_records[0]
+    assert r["path"] == "config.yaml#ledger_globs=tests/conventions/known_*.txt"
+    assert r["result"] == "FAIL"
+    assert r["detail"] == "reference not found: tests/conventions/known_*.txt"
+
+
+def test_run_checks_references_key_path_glob_value_matches_under_scripts(tmp_path):
+    tools = tmp_path / "scripts" / "tools"
+    tools.mkdir(parents=True)
+    (tools / "x.py").write_text("", encoding="utf-8")
+    (tmp_path / "config.yaml").write_text('ledger_globs:\n  - "tools/*.py"\n', encoding="utf-8")
+    contract = {
+        "references_must_resolve": [{"file": "config.yaml", "key_path": "ledger_globs"}]
+    }
+
+    records = run_checks(contract, tmp_path)
+
+    ref_records = [r for r in records if r["check"] == "references_must_resolve"]
+    assert len(ref_records) == 1
+    assert ref_records[0]["path"] == "config.yaml#ledger_globs=tools/*.py"
+    assert ref_records[0]["result"] == "PASS"
+
+
 def test_dual_gate_roots_runs_checks_on_both_materialized_roots(tmp_path, monkeypatch):
     primary = tmp_path / "primary"
     secondary = tmp_path / "secondary"

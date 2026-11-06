@@ -196,14 +196,14 @@ def _looks_like_file_path(value: str) -> bool:
 
 
 def _resolve_reference_path(repo_root: Path, value: str, source_file: str) -> bool:
-    candidates = [
-        repo_root / value,
-        repo_root / "scripts" / value,
-    ]
+    candidate_roots = [repo_root, repo_root / "scripts"]
     if "schedule.yaml" in source_file and not value.startswith("/"):
-        candidates.insert(0, repo_root / "scripts" / value)
-    for candidate in candidates:
-        if candidate.exists():
+        candidate_roots.insert(0, repo_root / "scripts")
+    for root in candidate_roots:
+        if _is_glob(value):
+            if _matching_paths(root, value):
+                return True
+        elif (root / value).exists():
             return True
     return False
 

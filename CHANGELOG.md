@@ -7,11 +7,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
-## 0.169.9 - 2026-11-06
+## 0.169.10 - 2026-11-06
 
 ### Changed
 
 - Tests: rename issue/AC-numbered tests and replace source pins and mock-call assertions with behaviour checks in top-level tests (test_ac_contract to test_p0_worktree).
+
+## 0.169.9 - 2026-11-06
+
+### Fixed
+
+- `references_must_resolve` expands glob values with the same `_matching_paths` logic as
+  `paths_must_exist`, so settings such as `ledger_globs: tests/conventions/known_*.txt`
+  no longer fail M2 when matching files exist (#5915).
 
 ## 0.169.7 - 2026-11-04
 
