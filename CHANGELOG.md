@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.169.12 - 2026-11-06
+
 ### Changed
 
 - Split the ten test modules over 1,000 lines into responsibility-scoped modules of at most 800 lines each, with no test added or removed (TESTING.md T8, nexus #5969).
