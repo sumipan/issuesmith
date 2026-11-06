@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.169.9 - 2026-11-06
+
 ### Fixed
 
 - `references_must_resolve` expands glob values with the same `_matching_paths` logic as
