@@ -70,7 +70,7 @@ def _commit(repo: Path, files: dict[str, str], message: str = "update") -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_ac1_preexisting_failure_is_nonblocking(tmp_path: Path) -> None:
+def test_preexisting_failure_is_nonblocking(tmp_path: Path) -> None:
     """test_old fails on main (preexisting); test_new fails only on PR -> 1 Violation."""
     origin, clone = _setup_repo(tmp_path)
 
@@ -98,7 +98,7 @@ def test_ac1_preexisting_failure_is_nonblocking(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_ac2_collection_error_is_fail_safe(tmp_path: Path) -> None:
+def test_collection_error_is_fail_safe(tmp_path: Path) -> None:
     """Import error in test file (rc=2) -> rule_id='tests.collection_error'."""
     _, clone = _setup_repo(tmp_path)
 
@@ -121,7 +121,7 @@ def test_ac2_collection_error_is_fail_safe(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_ac3_baseline_worktree_cleaned_up(tmp_path: Path) -> None:
+def test_baseline_worktree_cleaned_up(tmp_path: Path) -> None:
     """After check(), only the clone's main worktree remains in `git worktree list`."""
     origin, clone = _setup_repo(tmp_path)
 
@@ -148,7 +148,7 @@ def test_ac3_baseline_worktree_cleaned_up(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_ac5_all_pass_returns_empty(tmp_path: Path) -> None:
+def test_all_pass_returns_empty(tmp_path: Path) -> None:
     """All tests pass -> []."""
     _, clone = _setup_repo(tmp_path)
 
@@ -157,7 +157,7 @@ def test_ac5_all_pass_returns_empty(tmp_path: Path) -> None:
     assert TestsGate(clone, base_branch="main").check("", []) == []
 
 
-def test_ac5_only_preexisting_failures_returns_empty(tmp_path: Path) -> None:
+def test_only_preexisting_failures_returns_empty(tmp_path: Path) -> None:
     """All failures are preexisting on main -> []."""
     origin, clone = _setup_repo(tmp_path)
 
@@ -174,7 +174,7 @@ def test_ac5_only_preexisting_failures_returns_empty(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_ac6_two_new_failures_give_two_violations(tmp_path: Path) -> None:
+def test_two_new_failures_give_two_violations(tmp_path: Path) -> None:
     """Two independent new failures -> 2 Violations (gate runs without -x)."""
     _, clone = _setup_repo(tmp_path)
 
@@ -194,7 +194,7 @@ def test_ac6_two_new_failures_give_two_violations(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_ac7_no_origin_remote_baseline_unavailable(tmp_path: Path) -> None:
+def test_no_origin_remote_baseline_unavailable(tmp_path: Path) -> None:
     """No origin remote -> all failures get rule_id=pytest_failure and 'baseline unavailable'."""
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -222,7 +222,7 @@ def test_ac7_no_origin_remote_baseline_unavailable(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_ac8_parametrized_id_with_space_is_preexisting(tmp_path: Path) -> None:
+def test_parametrized_id_with_space_is_preexisting(tmp_path: Path) -> None:
     """Parametrized ID 'test_param[a b]' that fails on main is preexisting -> []."""
     origin, clone = _setup_repo(tmp_path)
 
@@ -252,7 +252,7 @@ def test_parse_failed_ids_space_in_param_is_single_id() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_ac9_worktree_gates_tests_passes_base_branch(tmp_path: Path) -> None:
+def test_worktree_gates_tests_passes_base_branch(tmp_path: Path) -> None:
     """WORKTREE_GATES['tests'](path, [], 'develop') returns TestsGate with _base='develop'."""
     gate = WORKTREE_GATES["tests"](tmp_path, [], "develop")
     assert isinstance(gate, TestsGate)

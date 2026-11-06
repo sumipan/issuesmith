@@ -15,6 +15,10 @@ _ALLOW = ["src/issuesmith/ops/publish.py", "CHANGELOG.md"]
 _BASE_CHANGELOG = "# Changelog\n\n## 0.43.0 - 2026-09-20\n- old entry\n"
 
 
+def _read(root: Path, rel: str) -> str:
+    return (root / rel).read_text(encoding="utf-8")
+
+
 def _git(cwd: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", "-C", str(cwd), *args],
@@ -109,15 +113,13 @@ def test_changelog_only_conflict_is_auto_resolved(tmp_path: Path) -> None:
     assert ancestor.returncode == 0
     assert not (wt / ".git" / "rebase-merge").exists()
     assert not (wt / ".git" / "rebase-apply").exists()
-    changelog = (wt / "CHANGELOG.md").read_text(encoding="utf-8")
+    changelog = _read(wt, "CHANGELOG.md")
     for marker in ("<<<<<<< ", "=======", ">>>>>>> "):
         assert marker not in changelog
     assert "- other PR's entry" in changelog
     assert "- our entry" in changelog
     assert "- old entry" in changelog
-    assert (wt / "src/issuesmith/ops/publish.py").read_text(encoding="utf-8") == (
-        "publish-v1-feat\n"
-    )
+    assert _read(wt, "src/issuesmith/ops/publish.py") == "publish-v1-feat\n"
     assert _git(wt, "status", "--porcelain").stdout == ""
 
 
@@ -136,7 +138,7 @@ def test_changelog_conflicts_across_multiple_commits_are_resolved(tmp_path: Path
 
     assert _ensure_rebased(wt, "main", _ALLOW) is None
 
-    changelog = (wt / "CHANGELOG.md").read_text(encoding="utf-8")
+    changelog = _read(wt, "CHANGELOG.md")
     assert "<<<<<<< " not in changelog
     assert "- other PR's entry" in changelog
     assert "- our follow-up" in changelog
@@ -184,7 +186,7 @@ def test_mixed_changelog_and_source_conflict_is_not_partially_resolved(tmp_path:
     assert "CHANGELOG.md" in result.stderr
     assert "src/issuesmith/ops/publish.py" in result.stderr
     _assert_rebase_aborted(wt, pre_head)
-    changelog = (wt / "CHANGELOG.md").read_text(encoding="utf-8")
+    changelog = _read(wt, "CHANGELOG.md")
     assert "- other PR's entry" not in changelog
 
 

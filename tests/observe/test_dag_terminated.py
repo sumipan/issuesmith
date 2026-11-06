@@ -1,4 +1,4 @@
-"""Tests for DagTerminatedEvent detection, evaluate, and execute (AC-1, AC-1b, AC-2, AC-7).
+"""Tests for DagTerminatedEvent detection, evaluate, and execute.
 
 Fix 1 (nexus #4137): DagTerminatedEvent retains in_flight and removes only the -running label.
 """
@@ -90,8 +90,8 @@ def _dag_deferred_states(issue_num: int) -> dict[int, DagState]:
     }
 
 
-def test_ac1_dag_terminated_retains_in_flight_and_removes_running_label(env):
-    """AC-1: failed DAG -> in_flight retained, running label removed, andon raised.
+def test_failed_dag_keeps_in_flight_and_removes_running_label(env):
+    """Failed DAG retains in_flight, removes running label, and raises andon.
 
     Fix 1 (nexus #4137): DagTerminatedEvent must NOT release in_flight.
     Only the -running label is removed so that the allow_paths lock is preserved
@@ -144,8 +144,8 @@ def test_ac1_dag_terminated_retains_in_flight_and_removes_running_label(env):
     assert f"dag_terminated:{key}" in open_andons[0].id
 
 
-def test_ac1b_second_observe_does_not_re_raise_andon(env):
-    """AC-1b: after release, second tick raises no new andon."""
+def test_second_observe_does_not_re_raise_andon(env):
+    """Second observe tick does not raise a duplicate andon."""
     store, client, tmp_path = env
     cfg = get_config()
     ns = cfg.label_namespace
@@ -206,8 +206,8 @@ def test_failed_and_deferred_dag_still_emits_terminated(env):
     assert isinstance(events[0], DagTerminatedEvent)
 
 
-def test_ac2_running_dag_not_released(env):
-    """AC-2: DAG with p1 running -> no DagTerminatedEvent, in_flight unchanged."""
+def test_running_dag_is_not_released(env):
+    """Running DAG does not emit DagTerminatedEvent or release in_flight."""
     store, client, tmp_path = env
     cfg = get_config()
     ns = cfg.label_namespace
@@ -225,8 +225,8 @@ def test_ac2_running_dag_not_released(env):
     assert any(e.get("issue") == issue_num for e in snap2.in_flight)
 
 
-def test_ac7_orphan_exec_not_raised_for_running_dag(env):
-    """AC-7: _detect_orphan_exec skips exec rows whose issue's DAG is running."""
+def test_orphan_exec_not_raised_for_running_dag(env):
+    """Orphan exec detection skips rows whose issue DAG is still running."""
     store, client, tmp_path = env
     cfg = get_config()
 
@@ -238,8 +238,8 @@ def test_ac7_orphan_exec_not_raised_for_running_dag(env):
     assert not any(isinstance(e, OrphanExecEvent) and e.issue == issue_num for e in orphans)
 
 
-def test_ac7_orphan_exec_still_raised_when_no_running_marker(env):
-    """AC-7: exec row without running marker IS flagged as orphan."""
+def test_orphan_exec_raised_without_running_marker(env):
+    """Exec row without a running marker is flagged as orphan."""
     store, client, tmp_path = env
     cfg = get_config()
     _, done_dir, running_dir = (None, *_make_dirs(tmp_path))
@@ -264,8 +264,8 @@ def test_ac7_orphan_exec_still_raised_when_no_running_marker(env):
     assert any(isinstance(e, OrphanExecEvent) and e.issue == issue_num for e in orphans)
 
 
-def test_ac1_end_to_end_with_real_done_markers(env):
-    """AC-1 via observe(): real exec.jsonl + done markers drive the release."""
+def test_observe_releases_failed_dag_from_done_markers(env):
+    """observe() with real exec.jsonl and done markers releases a failed DAG."""
     from dataclasses import replace
 
     from issuesmith.observe import observe
@@ -325,8 +325,8 @@ def test_ac1_end_to_end_with_real_done_markers(env):
     assert len(client.get_issue_comments(issue_num)) == len(comments_first)
 
 
-def test_regression_overlapping_develop_blocked_after_dag_terminated_with_open_pr(env):
-    """#3895 AC-3: M1 blocked + DAG terminated + open PR -> overlapping develop blocked."""
+def test_overlapping_develop_blocked_after_dag_terminated_with_open_pr(env):
+    """#3895: M1 blocked + DAG terminated + open PR blocks overlapping develop."""
     from issuesmith.queue import _allow_paths_conflict
 
     store, client, _tmp_path = env

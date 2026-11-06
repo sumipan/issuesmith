@@ -111,7 +111,7 @@ def _dispatch(qmod, store, client):
     )
 
 
-def test_ac1_low_budget_holds_dispatch(env):
+def test_low_budget_holds_dispatch(env):
     qmod, store, rid, jobs, configure, milestone_calls = env
     configure(enabled=True, min_remaining=800)
     reset = _NOW + timedelta(minutes=20)
@@ -130,7 +130,7 @@ def test_ac1_low_budget_holds_dispatch(env):
     assert rid in store.snapshot().active_order
 
 
-def test_ac2_past_reset_does_not_brake(env):
+def test_past_reset_does_not_brake(env):
     qmod, store, rid, jobs, configure, milestone_calls = env
     configure(enabled=True, min_remaining=800)
     _write_rate_limit(jobs, 10, _NOW.astimezone(timezone.utc) - timedelta(minutes=1))
@@ -143,7 +143,7 @@ def test_ac2_past_reset_does_not_brake(env):
     assert milestone_calls == [1]
 
 
-def test_ac3_missing_audit_does_not_brake(env):
+def test_missing_audit_does_not_brake(env):
     qmod, store, rid, jobs, configure, milestone_calls = env
     configure(enabled=True)
     client = _Client()
@@ -166,7 +166,7 @@ def test_enough_budget_does_not_brake(env):
     assert "issue_get" in client.calls
 
 
-def test_ac6_disabled_brake_ignores_low_budget(env):
+def test_disabled_brake_ignores_low_budget(env):
     qmod, store, rid, jobs, configure, milestone_calls = env
     configure(enabled=False)
     _write_rate_limit(jobs, 1, _NOW + timedelta(minutes=20))

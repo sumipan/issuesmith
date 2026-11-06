@@ -7,9 +7,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
-## 0.169.4 - 2026-11-04
+## 0.169.9 - 2026-11-06
+
+### Changed
 
 - Tests: rename issue/AC-numbered tests and replace source pins and mock-call assertions with behaviour checks in top-level tests (test_ac_contract to test_p0_worktree).
+
+## 0.169.7 - 2026-11-04
+
+### Changed
+
+- Align `tests/` subdirectory tests with TESTING.md T1-T5 (#5966).
+
+## 0.169.6 - 2026-11-04
+
+### Changed
+
+- Align root-level tests (second half of `tests/` alphabetically) with TESTING.md T1-T5 (#5965).
 
 ## 0.169.2 - 2026-11-01
 
