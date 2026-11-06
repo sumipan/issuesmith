@@ -13,6 +13,7 @@ from issuesmith.config import ConfigError, load_config, reset_config_cache
 from issuesmith.gates.worktree import (
     WORKTREE_GATES,
     TestsGate,
+    _baseline_ref,
     _func_id,
     _parse_failed_ids,
 )
@@ -167,6 +168,51 @@ def test_only_preexisting_failures_returns_empty(tmp_path: Path) -> None:
     _git(clone, "checkout", "-b", "feat")
 
     assert TestsGate(clone, base_branch="main").check("", []) == []
+
+
+def test_failure_fixed_on_advanced_origin_stays_preexisting(tmp_path: Path) -> None:
+    """Failing test fixed on origin after clone fetch-only stays preexisting (#5952)."""
+    origin, clone = _setup_repo(tmp_path)
+
+    _commit(origin, {"tests/test_old.py": "def test_old():\n    assert False\n"})
+    _git(clone, "fetch", "origin")
+    _git(clone, "merge", "origin/main")
+
+    _commit(origin, {"tests/test_old.py": "def test_old():\n    assert True\n"})
+    _git(clone, "fetch", "origin")
+
+    assert TestsGate(clone, base_branch="main").check("", []) == []
+
+
+def test_baseline_ref_is_merge_base_of_head(tmp_path: Path) -> None:
+    """Baseline ref is merge-base SHA, not the advanced origin/main tip (#5952)."""
+    origin, clone = _setup_repo(tmp_path)
+
+    _commit(origin, {"tests/test_old.py": "def test_old():\n    assert False\n"})
+    _git(clone, "fetch", "origin")
+    _git(clone, "merge", "origin/main")
+
+    _commit(origin, {"tests/test_old.py": "def test_old():\n    assert True\n"})
+    _git(clone, "fetch", "origin")
+
+    mb = _git(clone, "merge-base", "HEAD", "origin/main").stdout.strip()
+    tip = _git(clone, "rev-parse", "origin/main").stdout.strip()
+    assert mb
+    assert tip
+    assert mb != tip
+
+    assert _baseline_ref(clone, "main") == mb
+    assert _baseline_ref(clone, "main") != tip
+
+
+def test_baseline_ref_falls_back_to_origin_without_merge_base(tmp_path: Path) -> None:
+    """Orphan HEAD with no merge-base falls back to origin/main (#5952)."""
+    origin, clone = _setup_repo(tmp_path)
+    _git(clone, "checkout", "--orphan", "orphan")
+    _commit(clone, {"orphan.txt": "x"})
+
+    assert _git(clone, "merge-base", "HEAD", "origin/main").returncode != 0
+    assert _baseline_ref(clone, "main") == "origin/main"
 
 
 # ---------------------------------------------------------------------------
