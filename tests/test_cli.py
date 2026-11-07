@@ -194,8 +194,8 @@ def test_gate_design_lint_issue_form_routes_to_entry(monkeypatch) -> None:
 
 def test_gate_ac_complete_issue_form_routes_to_entry(monkeypatch) -> None:
     calls: list[list[str]] = []
-    import issuesmith.cli as cli_mod
     import issuesmith.ac_complete_entry as entry
+    import issuesmith.cli as cli_mod
 
     monkeypatch.setattr(entry, "main", lambda: calls.append(list(sys.argv)))
     assert cli_mod._cmd_gate(["ac_complete", "12"]) == 0
