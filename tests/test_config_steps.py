@@ -31,6 +31,29 @@ def _write_config(tmp_path, monkeypatch, payload: dict) -> None:
     reset_config_cache()
 
 
+def test_load_without_steps_yields_empty_mapping(tmp_path, monkeypatch):
+    _write_config(tmp_path, monkeypatch, {"repo": "example/app"})
+    assert get_config().steps == {}
+
+
+def test_andon_when_legacy_rule_id_warns_and_normalizes(tmp_path, monkeypatch):
+    import warnings
+
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "repo": "example/app",
+            "steps": {"x": {"andon_when": ["cp1.intentional_hold"]}},
+        },
+    )
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        cfg = load_config()
+    assert any(issubclass(item.category, DeprecationWarning) for item in caught)
+    assert cfg.steps["x"].andon_when == ("design_lint.intentional_hold",)
+
+
 def test_default_steps_has_no_m2_role_dispatch(tmp_path, monkeypatch):
     _write_config(tmp_path, monkeypatch, {"repo": "example/app"})
     cfg = load_config()

@@ -35,6 +35,7 @@ __all__ = [
     "check_scope",
     "check_pr_scope",
     "check_m2",
+    "check_ac_complete",
     "check_deps",
 ]
 
@@ -262,6 +263,7 @@ def resolve_gate(gate_id: str) -> GateEntry:
 
 
 # Import after registry is built to avoid circular-import issues.
+from issuesmith.gates.ac_complete import check_ac_complete  # noqa: E402
 from issuesmith.gates.dep import check_deps  # noqa: E402
 from issuesmith.gates.m2 import check_m2  # noqa: E402
 from issuesmith.gates.pr_scope import check_pr_scope  # noqa: E402
