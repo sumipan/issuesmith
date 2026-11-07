@@ -98,10 +98,10 @@ allow_paths:
 
 
 def test_normalized_fixture_has_no_sub_plan_missing():
-    """After normalize + relocate, no b1_milestone_subdesign.sub_plan_missing."""
+    """After normalize + relocate, no milestone_subdesign.sub_plan_missing."""
     normalized = relocate_sub_plan(normalize_sub_headers(_FIXTURE))
     vs = B1MilestoneSubdesignRules().check(normalized, ["scope:milestone"])
-    assert not any(v.rule_id == "b1_milestone_subdesign.sub_plan_missing" for v in vs)
+    assert not any(v.rule_id == "milestone_subdesign.sub_plan_missing" for v in vs)
 
 
 def test_registry_exposes_milestone_consistency():

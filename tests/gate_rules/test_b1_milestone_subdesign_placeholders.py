@@ -72,7 +72,7 @@ def test_r2_file_union_no_duplicate_when_parent_section_follows_last_sub():
     """Regression: parent ### Changed Files after last sub must not cause file_union_duplicate."""
     body = _body_with_parent_section_after_last_sub()
     violations = _check(body, MILESTONE_LABELS)
-    dup_violations = [v for v in violations if v.rule_id == "b1_milestone_subdesign.file_union_duplicate"]
+    dup_violations = [v for v in violations if v.rule_id == "milestone_subdesign.file_union_duplicate"]
     assert dup_violations == [], dup_violations
 
 
@@ -164,9 +164,9 @@ def _violation(rule_id: str, severity: str = "fail"):
 
 
 _PREV_REPORT = (
-    "VERIFY_FAILED_CHECKS: b1_milestone_subdesign.repo_mismatch"
-    " b1_milestone_subdesign.repo_mismatch scope_breadth.too_large\n"
-    "\n## b1_milestone_subdesign.repo_mismatch\nmsg\n"
+    "VERIFY_FAILED_CHECKS: milestone_subdesign.repo_mismatch"
+    " milestone_subdesign.repo_mismatch scope_breadth.too_large\n"
+    "\n## milestone_subdesign.repo_mismatch\nmsg\n"
 )
 
 
@@ -175,7 +175,7 @@ def test_parse_prev_counts_reads_the_report_header():
 
     counts = _parse_prev_counts(_PREV_REPORT)
     assert counts == {
-        "b1_milestone_subdesign.repo_mismatch": 2,
+        "milestone_subdesign.repo_mismatch": 2,
         "scope_breadth.too_large": 1,
     }
     assert _parse_prev_counts("VERIFY_FAILED_CHECKS: (none)\n") == {}
@@ -185,27 +185,37 @@ def test_parse_prev_counts_reads_the_report_header():
 def test_oscillation_detected_when_a_rule_count_grows():
     from issuesmith.b1_verify import detect_oscillation
 
-    current = [_violation("b1_milestone_subdesign.repo_mismatch")] * 3
+    current = [_violation("milestone_subdesign.repo_mismatch")] * 3
     v = detect_oscillation(current, _PREV_REPORT)
     assert v is not None
-    assert v.rule_id == "b1_verify.oscillation_detected"
+    assert v.rule_id == "step_verify.oscillation_detected"
     assert v.severity == "fail"
-    assert "b1_milestone_subdesign.repo_mismatch" in v.message
+    assert "milestone_subdesign.repo_mismatch" in v.message
 
 
 def test_no_oscillation_when_counts_shrink_or_stay():
     from issuesmith.b1_verify import detect_oscillation
 
-    current = [_violation("b1_milestone_subdesign.repo_mismatch")] * 2
+    current = [_violation("milestone_subdesign.repo_mismatch")] * 2
     assert detect_oscillation(current, _PREV_REPORT) is None
     assert detect_oscillation([], _PREV_REPORT) is None
 
 
 def test_main_prev_report_appends_oscillation(tmp_path, monkeypatch, capsys):
-    import sys
     import types
 
-    import issuesmith.b1_verify as b1_verify
+    import yaml
+
+    from issuesmith.config import reset_config_cache
+    from issuesmith.step_verify import main as step_verify_main
+
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "example/app", "steps": {"x": {"verify": "design_doc"}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
 
     prev = tmp_path / "prev.txt"
     prev.write_text(_PREV_REPORT, encoding="utf-8")
@@ -214,43 +224,42 @@ def test_main_prev_report_appends_oscillation(tmp_path, monkeypatch, capsys):
     )
     monkeypatch.setattr("ghdag.forge.get_forge", lambda: forge)
     monkeypatch.setattr(
-        b1_verify,
-        "collect_violations",
-        lambda body, labels: [_violation("b1_milestone_subdesign.repo_mismatch")] * 5,
+        "issuesmith.step_verify.collect_violations",
+        lambda body, labels, **kwargs: [_violation("milestone_subdesign.repo_mismatch")] * 5,
     )
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "b1_verify",
-            "4048",
-            "--no-apply-deterministic",
-            "--prev-report",
-            str(prev),
-        ],
+    rc = step_verify_main(
+        "x",
+        ["4048", "--no-apply-deterministic", "--prev-report", str(prev)],
     )
-    assert b1_verify.main() == 1
+    assert rc == 1
     out = capsys.readouterr().out
-    assert "b1_verify.oscillation_detected" in out.splitlines()[0]
+    assert "step_verify.oscillation_detected" in out.splitlines()[0]
 
 
-def test_main_without_prev_report_has_no_oscillation(monkeypatch, capsys):
-    import sys
+def test_main_without_prev_report_has_no_oscillation(tmp_path, monkeypatch, capsys):
     import types
 
-    import issuesmith.b1_verify as b1_verify
+    import yaml
+
+    from issuesmith.config import reset_config_cache
+    from issuesmith.step_verify import main as step_verify_main
+
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "example/app", "steps": {"x": {"verify": "design_doc"}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
 
     forge = types.SimpleNamespace(issue_get=lambda *_a, **_k: {"body": "x", "labels": []})
     monkeypatch.setattr("ghdag.forge.get_forge", lambda: forge)
     monkeypatch.setattr(
-        b1_verify,
-        "collect_violations",
-        lambda body, labels: [_violation("b1_milestone_subdesign.repo_mismatch")],
+        "issuesmith.step_verify.collect_violations",
+        lambda body, labels, **kwargs: [_violation("milestone_subdesign.repo_mismatch")],
     )
-    monkeypatch.setattr(
-        sys, "argv", ["b1_verify", "4048", "--no-apply-deterministic"]
-    )
-    assert b1_verify.main() == 1
+    rc = step_verify_main("x", ["4048", "--no-apply-deterministic"])
+    assert rc == 1
     assert "oscillation" not in capsys.readouterr().out
 
 

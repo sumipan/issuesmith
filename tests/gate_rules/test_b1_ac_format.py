@@ -1,4 +1,4 @@
-"""tests/gate_rules/test_b1_ac_format.py — unit tests for the b1_ac_format gate."""
+"""tests/gate_rules/test_ac_format.py — unit tests for the b1_ac_format gate."""
 from __future__ import annotations
 
 import issuesmith.gate_rules.b1_ac_format  # noqa: F401 — registers on import
@@ -132,7 +132,7 @@ def test_section_missing_violation():
     violations = _check(BODY_NO_AC_SECTION, MILESTONE_LABELS)
     assert len(violations) == 1
     v = violations[0]
-    assert v.rule_id == "b1_ac_format.section_missing"
+    assert v.rule_id == "ac_format.section_missing"
     assert v.severity == "fail"
     assert v.auto_fixable is False
 
@@ -146,7 +146,7 @@ def test_yaml_block_missing_violation():
     violations = _check(BODY_WITH_AC_NO_YAML, MILESTONE_LABELS)
     assert len(violations) == 1
     v = violations[0]
-    assert v.rule_id == "b1_ac_format.yaml_block_missing"
+    assert v.rule_id == "ac_format.yaml_block_missing"
     assert v.severity == "fail"
     assert v.auto_fixable is True
     assert v.fix_hint is not None
@@ -160,7 +160,7 @@ def test_yaml_block_missing_violation():
 def test_unknown_key_in_yaml_returns_invalid():
     violations = _check(BODY_WITH_INVALID_YAML, MILESTONE_LABELS)
     assert len(violations) == 1
-    assert violations[0].rule_id == "b1_ac_format.yaml_invalid"
+    assert violations[0].rule_id == "ac_format.yaml_invalid"
     assert violations[0].severity == "fail"
     assert violations[0].auto_fixable is False
 
@@ -168,7 +168,7 @@ def test_unknown_key_in_yaml_returns_invalid():
 def test_unparseable_yaml_returns_invalid():
     violations = _check(BODY_WITH_UNPARSEABLE_YAML, MILESTONE_LABELS)
     assert len(violations) == 1
-    assert violations[0].rule_id == "b1_ac_format.yaml_invalid"
+    assert violations[0].rule_id == "ac_format.yaml_invalid"
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +245,7 @@ def test_yaml_block_missing_fix_hint_derives_from_design_table():
     violations = _check(body, MILESTONE_LABELS)
     assert len(violations) == 1
     v = violations[0]
-    assert v.rule_id == "b1_ac_format.yaml_block_missing"
+    assert v.rule_id == "ac_format.yaml_block_missing"
     assert v.fix_hint == "```yaml\npaths_must_exist:\n  - tools/new_gate.py\n```"
 
 
@@ -256,7 +256,7 @@ def test_yaml_block_missing_fix_hint_derives_from_design_table():
 
 def test_migration_label_section_missing_violation():
     violations = _check(BODY_NO_AC_SECTION, ["scope:migration"])
-    assert [v.rule_id for v in violations] == ["b1_ac_format.section_missing"]
+    assert [v.rule_id for v in violations] == ["ac_format.section_missing"]
 
 
 def test_migration_label_with_valid_body_returns_empty():
@@ -302,7 +302,7 @@ def test_references_symbol_form_string_detected():
     violations = _check(_BODY_REFS_SYMBOL_STRING, MILESTONE_LABELS)
     assert len(violations) == 1
     v = violations[0]
-    assert v.rule_id == "b1_ac_format.reference_symbol_form"
+    assert v.rule_id == "ac_format.reference_symbol_form"
     assert v.severity == "fail"
     assert v.auto_fixable is True
     assert v.location == "references_must_resolve[0]"
@@ -314,7 +314,7 @@ def test_references_symbol_form_dict_detected():
     violations = _check(_BODY_REFS_SYMBOL_DICT, MILESTONE_LABELS)
     assert len(violations) == 1
     v = violations[0]
-    assert v.rule_id == "b1_ac_format.reference_symbol_form"
+    assert v.rule_id == "ac_format.reference_symbol_form"
     assert v.severity == "fail"
     assert v.auto_fixable is True
     assert v.location == "references_must_resolve[0]"
@@ -392,7 +392,7 @@ def test_references_entry_missing_file_key():
     violations = _check(_BODY_REFS_MISSING_FILE_KEY, MILESTONE_LABELS)
     assert len(violations) == 1
     v = violations[0]
-    assert v.rule_id == "b1_ac_format.reference_entry_invalid"
+    assert v.rule_id == "ac_format.reference_entry_invalid"
     assert v.severity == "fail"
     assert v.auto_fixable is False
     assert v.location == "references_must_resolve[0]"
@@ -402,7 +402,7 @@ def test_references_entry_extra_key_invalid():
     violations = _check(_BODY_REFS_EXTRA_KEY, MILESTONE_LABELS)
     assert len(violations) == 1
     v = violations[0]
-    assert v.rule_id == "b1_ac_format.reference_entry_invalid"
+    assert v.rule_id == "ac_format.reference_entry_invalid"
     assert v.location == "references_must_resolve[0]"
 
 
@@ -410,7 +410,7 @@ def test_references_entry_file_wrong_type():
     violations = _check(_BODY_REFS_FILE_WRONG_TYPE, MILESTONE_LABELS)
     assert len(violations) == 1
     v = violations[0]
-    assert v.rule_id == "b1_ac_format.reference_entry_invalid"
+    assert v.rule_id == "ac_format.reference_entry_invalid"
     assert v.location == "references_must_resolve[0]"
 
 
@@ -418,7 +418,7 @@ def test_references_entry_key_path_wrong_type():
     violations = _check(_BODY_REFS_KEY_PATH_WRONG_TYPE, MILESTONE_LABELS)
     assert len(violations) == 1
     v = violations[0]
-    assert v.rule_id == "b1_ac_format.reference_entry_invalid"
+    assert v.rule_id == "ac_format.reference_entry_invalid"
     assert v.location == "references_must_resolve[0]"
 
 
@@ -426,7 +426,7 @@ def test_references_not_a_list():
     violations = _check(_BODY_REFS_NOT_A_LIST, MILESTONE_LABELS)
     assert len(violations) == 1
     v = violations[0]
-    assert v.rule_id == "b1_ac_format.reference_entry_invalid"
+    assert v.rule_id == "ac_format.reference_entry_invalid"
     assert v.location == "references_must_resolve"
 
 
@@ -434,7 +434,7 @@ def test_references_mixed_valid_and_invalid_returns_each_violation():
     violations = _check(_BODY_REFS_MIXED, MILESTONE_LABELS)
     assert len(violations) == 2
     rule_ids = {v.rule_id for v in violations}
-    assert rule_ids == {"b1_ac_format.reference_symbol_form", "b1_ac_format.reference_entry_invalid"}
+    assert rule_ids == {"ac_format.reference_symbol_form", "ac_format.reference_entry_invalid"}
     locations = {v.location for v in violations}
     assert "references_must_resolve[1]" in locations
     assert "references_must_resolve[2]" in locations
@@ -443,19 +443,19 @@ def test_references_mixed_valid_and_invalid_returns_each_violation():
 def test_references_symbol_form_without_milestone_label():
     violations = _check(_BODY_REFS_SYMBOL_STRING, NON_MILESTONE_LABELS)
     assert len(violations) == 1
-    assert violations[0].rule_id == "b1_ac_format.reference_symbol_form"
+    assert violations[0].rule_id == "ac_format.reference_symbol_form"
 
 
 def test_references_symbol_form_without_labels():
     violations = _check(_BODY_REFS_SYMBOL_STRING, [])
     assert len(violations) == 1
-    assert violations[0].rule_id == "b1_ac_format.reference_symbol_form"
+    assert violations[0].rule_id == "ac_format.reference_symbol_form"
 
 
 def test_references_invalid_without_milestone_label_when_yaml_present():
     violations = _check(_BODY_REFS_MISSING_FILE_KEY, NON_MILESTONE_LABELS)
     assert len(violations) == 1
-    assert violations[0].rule_id == "b1_ac_format.reference_entry_invalid"
+    assert violations[0].rule_id == "ac_format.reference_entry_invalid"
 
 
 _BODY_REFS_ARROW = """\
@@ -481,7 +481,7 @@ def test_references_arrow_entry_is_auto_fixable_entry_invalid():
     violations = _check(_BODY_REFS_ARROW, MILESTONE_LABELS)
     assert len(violations) == 1
     v = violations[0]
-    assert v.rule_id == "b1_ac_format.reference_entry_invalid"
+    assert v.rule_id == "ac_format.reference_entry_invalid"
     assert v.severity == "fail"
     assert v.auto_fixable is True
     assert v.location == "references_must_resolve[0]"
@@ -494,20 +494,20 @@ def test_references_invalid_dict_stays_not_auto_fixable():
     violations = _check(_BODY_REFS_INVALID_DICT_EXTRA, MILESTONE_LABELS)
     assert len(violations) == 1
     v = violations[0]
-    assert v.rule_id == "b1_ac_format.reference_entry_invalid"
+    assert v.rule_id == "ac_format.reference_entry_invalid"
     assert v.auto_fixable is False
 
 
 def test_unknown_key_without_milestone_label_when_yaml_present():
     violations = _check(BODY_WITH_INVALID_YAML, NON_MILESTONE_LABELS)
     assert len(violations) == 1
-    assert violations[0].rule_id == "b1_ac_format.yaml_invalid"
+    assert violations[0].rule_id == "ac_format.yaml_invalid"
 
 
 def test_unparseable_yaml_without_milestone_label_when_yaml_present():
     violations = _check(BODY_WITH_UNPARSEABLE_YAML, NON_MILESTONE_LABELS)
     assert len(violations) == 1
-    assert violations[0].rule_id == "b1_ac_format.yaml_invalid"
+    assert violations[0].rule_id == "ac_format.yaml_invalid"
 
 
 def test_yaml_block_missing_fix_hint_reads_new_words_from_pack(tmp_path, monkeypatch):
@@ -546,7 +546,7 @@ def test_yaml_block_missing_fix_hint_reads_new_words_from_pack(tmp_path, monkeyp
 - [ ] check
 """
     violations = _check(body, MILESTONE_LABELS)
-    assert [v.rule_id for v in violations] == ["b1_ac_format.yaml_block_missing"]
+    assert [v.rule_id for v in violations] == ["ac_format.yaml_block_missing"]
     assert violations[0].fix_hint == "```yaml\npaths_must_exist:\n  - tools/created.py\n```"
 
 
@@ -570,7 +570,7 @@ def _path_entries_body(key: str) -> str:
 
 def test_paths_must_exist_invalid_entries_detected():
     violations = _check(_path_entries_body("paths_must_exist"), MILESTONE_LABELS)
-    assert [v.rule_id for v in violations] == ["b1_ac_format.path_entry_invalid"] * 4
+    assert [v.rule_id for v in violations] == ["ac_format.path_entry_invalid"] * 4
     assert [v.location for v in violations] == [
         "paths_must_exist[0]",
         "paths_must_exist[1]",
@@ -583,7 +583,7 @@ def test_paths_must_exist_invalid_entries_detected():
 
 def test_paths_must_not_exist_invalid_entries_detected():
     violations = _check(_path_entries_body("paths_must_not_exist"), MILESTONE_LABELS)
-    assert [v.rule_id for v in violations] == ["b1_ac_format.path_entry_invalid"] * 4
+    assert [v.rule_id for v in violations] == ["ac_format.path_entry_invalid"] * 4
     assert [v.location for v in violations] == [
         "paths_must_not_exist[0]",
         "paths_must_not_exist[1]",
@@ -601,7 +601,7 @@ def test_paths_must_exist_not_a_list():
     violations = _check(_paths_body("paths_must_exist", " a.py"), MILESTONE_LABELS)
     assert len(violations) == 1
     v = violations[0]
-    assert v.rule_id == "b1_ac_format.path_entry_invalid"
+    assert v.rule_id == "ac_format.path_entry_invalid"
     assert v.location == "paths_must_exist"
     assert v.message == "paths_must_exist must be a list"
 

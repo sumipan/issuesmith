@@ -1,4 +1,4 @@
-"""tests/gate_rules/test_b1_milestone_subdesign.py — unit tests for b1_milestone_subdesign gate."""
+"""tests/gate_rules/test_milestone_subdesign.py — unit tests for b1_milestone_subdesign gate."""
 from __future__ import annotations
 
 import pytest
@@ -172,7 +172,7 @@ def test_valid_body_passes():
 def test_sub_count_mismatch():
     body = _valid_body().replace("| 2 | bar | scope2 | 1 |", "")
     violations = _check(body, MILESTONE_LABELS)
-    assert any(v.rule_id == "b1_milestone_subdesign.sub_count_mismatch" for v in violations)
+    assert any(v.rule_id == "milestone_subdesign.sub_count_mismatch" for v in violations)
 
 
 def test_sub_count_mismatch_fix_hint_lists_required_subsections():
@@ -182,7 +182,7 @@ def test_sub_count_mismatch_fix_hint_lists_required_subsections():
     body = _valid_body().replace("| 2 | bar | scope2 | 1 |", "")
     violation = next(
         v for v in _check(body, MILESTONE_LABELS)
-        if v.rule_id == "b1_milestone_subdesign.sub_count_mismatch"
+        if v.rule_id == "milestone_subdesign.sub_count_mismatch"
     )
     assert violation.fix_hint is not None
     assert get_config().sections["design"] in violation.fix_hint
@@ -266,45 +266,45 @@ def test_subsection_missing():
     # ASCII fixture data.
     body = _valid_body().replace("**Design Policy**: Sub1 c306E_Design Policy", "")
     violations = _check(body, MILESTONE_LABELS)
-    assert any(v.rule_id == "b1_milestone_subdesign.subsection_missing" for v in violations)
+    assert any(v.rule_id == "milestone_subdesign.subsection_missing" for v in violations)
 
 
 def test_table_schema_three_columns():
     violations = _check(MILESTONE30_DRIFT_BODY, MILESTONE_LABELS)
-    assert any(v.rule_id == "b1_milestone_subdesign.table_schema" for v in violations)
+    assert any(v.rule_id == "milestone_subdesign.table_schema" for v in violations)
 
 
 def test_repo_mismatch_mltgnt():
     violations = _check(MILESTONE30_DRIFT_BODY, MILESTONE_LABELS)
-    assert any(v.rule_id == "b1_milestone_subdesign.repo_mismatch" for v in violations)
+    assert any(v.rule_id == "milestone_subdesign.repo_mismatch" for v in violations)
 
 
 def test_file_union_missing_in_parent():
     violations = _check(MILESTONE30_DRIFT_BODY, MILESTONE_LABELS)
     assert any(
-        v.rule_id == "b1_milestone_subdesign.file_union_missing_in_parent"
+        v.rule_id == "milestone_subdesign.file_union_missing_in_parent"
         for v in violations
     )
 
 
 def test_ac_vague_word():
     violations = _check(MILESTONE30_DRIFT_BODY, MILESTONE_LABELS)
-    assert any(v.rule_id == "b1_milestone_subdesign.ac_vague_word" for v in violations)
+    assert any(v.rule_id == "milestone_subdesign.ac_vague_word" for v in violations)
 
 
 def test_ac_count_too_few():
     violations = _check(MILESTONE30_DRIFT_BODY, MILESTONE_LABELS)
-    assert any(v.rule_id == "b1_milestone_subdesign.ac_count" for v in violations)
+    assert any(v.rule_id == "milestone_subdesign.ac_count" for v in violations)
 
 
 def test_impact_scope_pollution():
     violations = _check(MILESTONE30_DRIFT_BODY, MILESTONE_LABELS)
-    assert any(v.rule_id == "b1_milestone_subdesign.impact_scope_pollution" for v in violations)
+    assert any(v.rule_id == "milestone_subdesign.impact_scope_pollution" for v in violations)
 
 
 def test_repo_mismatch_auto_fixable():
     violations = _check(MILESTONE30_DRIFT_BODY, MILESTONE_LABELS)
-    repo_v = next(v for v in violations if v.rule_id == "b1_milestone_subdesign.repo_mismatch")
+    repo_v = next(v for v in violations if v.rule_id == "milestone_subdesign.repo_mismatch")
     assert repo_v.auto_fixable is True
     assert "target_repo:" in (repo_v.fix_hint or "")
 
@@ -317,12 +317,12 @@ def test_milestone30_drift_detects_multiple_categories():
     violations = _check(MILESTONE30_DRIFT_BODY, MILESTONE_LABELS)
     rule_ids = {v.rule_id for v in violations}
     expected = {
-        "b1_milestone_subdesign.table_schema",
-        "b1_milestone_subdesign.repo_mismatch",
-        "b1_milestone_subdesign.file_union_missing_in_parent",
-        "b1_milestone_subdesign.ac_vague_word",
-        "b1_milestone_subdesign.ac_count",
-        "b1_milestone_subdesign.impact_scope_pollution",
+        "milestone_subdesign.table_schema",
+        "milestone_subdesign.repo_mismatch",
+        "milestone_subdesign.file_union_missing_in_parent",
+        "milestone_subdesign.ac_vague_word",
+        "milestone_subdesign.ac_count",
+        "milestone_subdesign.impact_scope_pollution",
     }
     assert expected.issubset(rule_ids)
 
@@ -404,13 +404,13 @@ def test_two_repo_milestone_passes():
 
 def test_two_repo_milestone_has_no_repo_mismatch():
     violations = _check(_two_repo_body(with_parent_changed_files=False), MILESTONE_LABELS)
-    assert not any(v.rule_id == "b1_milestone_subdesign.repo_mismatch" for v in violations)
+    assert not any(v.rule_id == "milestone_subdesign.repo_mismatch" for v in violations)
 
 
 def test_file_union_falls_back_to_allow_paths_without_parent_changed_files():
     violations = _check(_two_repo_body(with_parent_changed_files=False), MILESTONE_LABELS)
     assert not any(
-        v.rule_id == "b1_milestone_subdesign.file_union_missing_in_parent" for v in violations
+        v.rule_id == "milestone_subdesign.file_union_missing_in_parent" for v in violations
     )
     assert violations == []
 
@@ -426,7 +426,7 @@ def test_file_union_fallback_still_reports_paths_outside_allow_paths():
 
 def test_repo_mismatch_fix_hint_adds_a_block_instead_of_rewriting():
     violations = _check(MILESTONE30_DRIFT_BODY, MILESTONE_LABELS)
-    repo_v = next(v for v in violations if v.rule_id == "b1_milestone_subdesign.repo_mismatch")
+    repo_v = next(v for v in violations if v.rule_id == "milestone_subdesign.repo_mismatch")
     hint = repo_v.fix_hint or ""
     assert "target_repo: sumipan/mltgnt" in hint
     assert "add" in hint.lower()
@@ -521,9 +521,9 @@ def test_ascii_pack_matches_en_decision(tmp_path, monkeypatch, make_body):
 
     assert ascii_ids == en_ids
     if make_body is _vague_ac_body:
-        assert "b1_milestone_subdesign.ac_vague_word" in en_ids
+        assert "milestone_subdesign.ac_vague_word" in en_ids
     if make_body is _bad_columns_body:
-        assert "b1_milestone_subdesign.table_schema" in en_ids
+        assert "milestone_subdesign.table_schema" in en_ids
 
 
 def test_ascii_pack_rejects_en_vocabulary(tmp_path, monkeypatch):
@@ -533,7 +533,7 @@ def test_ascii_pack_rejects_en_vocabulary(tmp_path, monkeypatch):
     _use_pack(tmp_path, monkeypatch, **_ASCII_PACK)
     body = _in_vocabulary(_valid_body(), "Sub", EN.change_table_columns, "")
     rule_ids = {v.rule_id for v in _check(body, MILESTONE_LABELS)}
-    assert "b1_milestone_subdesign.sub_count_mismatch" in rule_ids
+    assert "milestone_subdesign.sub_count_mismatch" in rule_ids
 
 
 def _rule_ids(violations) -> list[str]:
@@ -670,10 +670,10 @@ def test_root_file_only_sub_block_is_readable():
     assert _READABLE_RULE not in _rule_ids(_check(_root_file_body(), MILESTONE_LABELS))
 
 
-_READABLE_RULE = "b1_milestone_subdesign.change_paths_unreadable"
+_READABLE_RULE = "milestone_subdesign.change_paths_unreadable"
 _UNION_RULES = {
-    "b1_milestone_subdesign.file_union_missing_in_subs",
-    "b1_milestone_subdesign.file_union_missing_in_parent",
+    "milestone_subdesign.file_union_missing_in_subs",
+    "milestone_subdesign.file_union_missing_in_parent",
 }
 
 

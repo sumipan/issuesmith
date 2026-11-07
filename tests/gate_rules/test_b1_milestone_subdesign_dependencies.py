@@ -22,8 +22,8 @@ from tests.legacy_text import CHANGE_TYPE, DESCRIPTION, FILE_PATH, REPOSITORY, S
 
 # --- #4825: sibling new-file dependencies -------------------------------------------
 
-_DEP_MISSING = "b1_milestone_subdesign.sibling_new_file_unreferenced_dependency"
-_DEP_CYCLE = "b1_milestone_subdesign.dependency_cycle"
+_DEP_MISSING = "milestone_subdesign.sibling_new_file_unreferenced_dependency"
+_DEP_CYCLE = "milestone_subdesign.dependency_cycle"
 
 
 def _dep_ids(body: str) -> list[str]:
@@ -228,7 +228,7 @@ def test_dependency_vocabulary_comes_from_language_pack(tmp_path, monkeypatch):
 # #4818 — ordering sentence without a depends-on entry
 # ---------------------------------------------------------------------------
 
-_ORDER_RULE = "b1_milestone_subdesign.sub_order_without_dependency"
+_ORDER_RULE = "milestone_subdesign.sub_order_without_dependency"
 
 
 def _order_body(sub2_policy: str, dep: str, *, sub2_ac: str = "Sub2 gamma") -> str:

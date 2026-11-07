@@ -107,7 +107,7 @@ def test_diff_gate_rejects_llm_version_edit_after_publish_bump():
     with patch("issuesmith.ops.publish._run_git", side_effect=router):
         result = _check_commit_diff_gates(Path("/tmp/wt"), "main")
     assert result is not None and result.status == "P3_GATE_FAILED"
-    assert "cp1.version_line_in_diff" in result.stderr
+    assert "design_lint.version_line_in_diff" in result.stderr
 
 
 def test_diff_gate_passes_when_bump_at_head_using_cumulative_diff():

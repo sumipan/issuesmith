@@ -16,7 +16,7 @@ from typing import NamedTuple
 from ghdag.forge import get_forge
 
 from issuesmith.config import get_config
-from issuesmith.gate_rules.cp1 import (
+from issuesmith.gate_rules.design_lint_rules import (
     check_test_version_exact_assert,
     check_version_line_in_diff,
 )

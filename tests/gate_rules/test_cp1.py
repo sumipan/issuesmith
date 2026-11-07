@@ -1,4 +1,4 @@
-"""test_cp1.py — Cp1Rules unit tests"""
+"""test_design_lint.py — Cp1Rules unit tests"""
 
 from __future__ import annotations
 
@@ -6,16 +6,16 @@ import subprocess
 from pathlib import Path
 
 from issuesmith.gate_rules import GATE_REGISTRY
-from issuesmith.gate_rules.cp1 import Cp1Rules, _pytest_module_name
+from issuesmith.gate_rules.design_lint_rules import Cp1Rules, _pytest_module_name
 from tests import legacy_text
 
 
 def test_tbd_returns_violation():
-    """AC: TBD yields a cp1.forbidden_word.tbd Violation."""
+    """AC: TBD yields a design_lint.forbidden_word.tbd Violation."""
     # ASCII fixture data.
     violations = Cp1Rules().check("c672C_c6587_c306B TBD c304C_c6B8B_c3063_c3066_c3044_c308B", [])
-    assert any(v.rule_id == "cp1.forbidden_word.tbd" for v in violations)
-    v = next(v for v in violations if v.rule_id == "cp1.forbidden_word.tbd")
+    assert any(v.rule_id == "design_lint.forbidden_word.tbd" for v in violations)
+    v = next(v for v in violations if v.rule_id == "design_lint.forbidden_word.tbd")
     assert v.severity == "fail"
     assert v.auto_fixable is True
     assert v.location is None
@@ -24,30 +24,30 @@ def test_tbd_returns_violation():
 def test_todo_returns_violation():
     # ASCII fixture data.
     violations = Cp1Rules().check("TODO: c5F8C_c3067_c5BFE_c5FDC", [])
-    assert any(v.rule_id == "cp1.forbidden_word.todo" for v in violations)
-    v = next(v for v in violations if v.rule_id == "cp1.forbidden_word.todo")
+    assert any(v.rule_id == "design_lint.forbidden_word.todo" for v in violations)
+    v = next(v for v in violations if v.rule_id == "design_lint.forbidden_word.todo")
     assert v.severity == "fail"
     assert v.auto_fixable is True
 
 
 def test_youkakunin_returns_violation():
     rule_ids = {item[1] for item in Cp1Rules.FAIL_PATTERNS}
-    assert "cp1.forbidden_word.youkakunin" in rule_ids
+    assert "design_lint.forbidden_word.youkakunin" in rule_ids
 
 
 def test_mitei_returns_violation():
     rule_ids = {item[1] for item in Cp1Rules.FAIL_PATTERNS}
-    assert "cp1.forbidden_word.mitei" in rule_ids
+    assert "design_lint.forbidden_word.mitei" in rule_ids
 
 
 def test_kentouchuu_returns_violation():
     rule_ids = {item[1] for item in Cp1Rules.FAIL_PATTERNS}
-    assert "cp1.forbidden_word.kentouchuu" in rule_ids
+    assert "design_lint.forbidden_word.kentouchuu" in rule_ids
 
 
 def test_user_confirm_returns_violation():
     rule_ids = {item[1] for item in Cp1Rules.FAIL_PATTERNS}
-    assert "cp1.forbidden_word.user_confirm" in rule_ids
+    assert "design_lint.forbidden_word.user_confirm" in rule_ids
 
 
 _VALID_YAML_HEAD = (
@@ -70,7 +70,7 @@ def test_code_block_excluded():
     # ASCII fixture data.
     body = "c901A_c5E38_c30C6_c30AD_c30B9_c30C8\n\n```python\n# TODO: remove\nFAIL_PATTERNS = []\n```\n"
     violations = Cp1Rules().check(body, [])
-    assert not any(v.rule_id == "cp1.forbidden_word.todo" for v in violations)
+    assert not any(v.rule_id == "design_lint.forbidden_word.todo" for v in violations)
 
 
 def test_inline_code_excluded():
@@ -84,8 +84,8 @@ def test_cp1_must_fail_true_returns_intentional_hold():
     # ASCII fixture data.
     body = "```yaml\ncp1_must_fail: true\n```\n\n## c6982_c8981\nc901A_c5E38_c306E_c5185_c5BB9\n"
     violations = Cp1Rules().check(body, [])
-    assert any(v.rule_id == "cp1.intentional_hold" for v in violations)
-    v = next(v for v in violations if v.rule_id == "cp1.intentional_hold")
+    assert any(v.rule_id == "design_lint.intentional_hold" for v in violations)
+    v = next(v for v in violations if v.rule_id == "design_lint.intentional_hold")
     assert v.severity == "fail"
     assert v.auto_fixable is False
     assert v.fix_hint is None
@@ -96,30 +96,30 @@ def test_cp1_must_fail_false_passes():
     # ASCII fixture data.
     body = "```yaml\ncp1_must_fail: false\n```\n\n## c6982_c8981\nc5185_c5BB9\n"
     violations = Cp1Rules().check(body, [])
-    assert not any(v.rule_id == "cp1.intentional_hold" for v in violations)
+    assert not any(v.rule_id == "design_lint.intentional_hold" for v in violations)
 
 
 def test_miteigi_not_flagged():
     """The Japanese word for 'undefined' must not be false-positive-flagged as 'undecided'."""
     # ASCII fixture data.
     violations = Cp1Rules().check("c672A_c5B9A_c7FA9_c5909_c6570_c3092_c53C2_c7167_c3057_c3066_c3044_c307E_c3059", [])
-    assert not any(v.rule_id == "cp1.forbidden_word.mitei" for v in violations)
+    assert not any(v.rule_id == "design_lint.forbidden_word.mitei" for v in violations)
 
 
 def test_labels_param_ignored():
     """labels parameter is accepted but does not affect behavior."""
     violations = Cp1Rules().check("TBD", ["some-label", "other-label"])
-    assert any(v.rule_id == "cp1.forbidden_word.tbd" for v in violations)
+    assert any(v.rule_id == "design_lint.forbidden_word.tbd" for v in violations)
 
 
 def test_gate_registry_registered():
-    import issuesmith.gate_rules.cp1  # noqa: F401 — ensure module loaded
+    import issuesmith.gate_rules.design_lint_rules  # noqa: F401 — ensure module loaded
     assert GATE_REGISTRY.get("design_lint") is Cp1Rules
 
 
 def test_fix_hint_present_for_forbidden_words():
     violations = Cp1Rules().check("TBD", [])
-    v = next(v for v in violations if v.rule_id == "cp1.forbidden_word.tbd")
+    v = next(v for v in violations if v.rule_id == "design_lint.forbidden_word.tbd")
     assert v.fix_hint is not None
 
 
@@ -130,8 +130,8 @@ def test_yaml_missing_target_repo_is_auto_fixable():
     # ASCII fixture data.
     body = "```yaml\nbase_branch: main\nallow_paths:\n  - src/**\n```\n\n## c6982_c8981\nc5185_c5BB9\n"
     violations = Cp1Rules().check(body, [])
-    v = next((v for v in violations if v.rule_id == "cp1.yaml_contract.missing_required"), None)
-    assert v is not None, "cp1.yaml_contract.missing_required should be detected"
+    v = next((v for v in violations if v.rule_id == "design_lint.yaml_contract.missing_required"), None)
+    assert v is not None, "design_lint.yaml_contract.missing_required should be detected"
     assert v.auto_fixable is True
     assert v.fix_hint is not None
     assert "target_repo" in v.fix_hint
@@ -142,7 +142,7 @@ def test_yaml_annotation_in_path_is_auto_fixable():
     # ASCII fixture data.
     body = "```yaml\ntarget_repo: sumipan/ghdag\nallow_paths:\n  - (ghdag c30EA_c30DD) src/**\n```\n"
     violations = Cp1Rules().check(body, [])
-    v = next((v for v in violations if v.rule_id == "cp1.yaml_contract.annotation_in_path"), None)
+    v = next((v for v in violations if v.rule_id == "design_lint.yaml_contract.annotation_in_path"), None)
     assert v is not None
     assert v.auto_fixable is True
     assert v.fix_hint is not None
@@ -152,7 +152,7 @@ def test_yaml_invalid_path_format_is_auto_fixable():
     """allow_paths containing /var/tmp/ → auto_fixable=True."""
     body = "```yaml\ntarget_repo: sumipan/ghdag\nallow_paths:\n  - /var/tmp/ghdag/\n```\n"
     violations = Cp1Rules().check(body, [])
-    v = next((v for v in violations if v.rule_id == "cp1.yaml_contract.invalid_path_format"), None)
+    v = next((v for v in violations if v.rule_id == "design_lint.yaml_contract.invalid_path_format"), None)
     assert v is not None
     assert v.auto_fixable is True
     assert v.fix_hint is not None
@@ -163,7 +163,7 @@ def test_yaml_unsupported_repo_is_not_auto_fixable():
     # ASCII fixture data.
     body = "```yaml\ntarget_repo: sumipan/unknown-repo\n```\n\n## c6982_c8981\nc5185_c5BB9\n"
     violations = Cp1Rules().check(body, [])
-    v = next((v for v in violations if v.rule_id == "cp1.yaml_contract.unsupported_repo"), None)
+    v = next((v for v in violations if v.rule_id == "design_lint.yaml_contract.unsupported_repo"), None)
     assert v is not None
     assert v.auto_fixable is False
 
@@ -173,7 +173,7 @@ def test_missing_yaml_block_is_fail_with_fix_hint():
     # ASCII fixture data.
     violations = Cp1Rules().check("## c6982_c8981\nyaml None\n", [])
     by_id = {v.rule_id: v for v in violations}
-    v = by_id["cp1.yaml_contract.missing_block"]
+    v = by_id["design_lint.yaml_contract.missing_block"]
     assert v.severity == "fail"
     assert v.auto_fixable is True
     assert "allow_paths" in (v.fix_hint or "")
@@ -194,10 +194,10 @@ def test_scope_gate_over_hard_max_returns_violation():
     )
     violations = Cp1Rules().check(body, [])
     assert any(
-        v.rule_id == "cp1.yaml_contract.scope_gate_over_hard_max" for v in violations
+        v.rule_id == "design_lint.yaml_contract.scope_gate_over_hard_max" for v in violations
     )
     v = next(
-        v for v in violations if v.rule_id == "cp1.yaml_contract.scope_gate_over_hard_max"
+        v for v in violations if v.rule_id == "design_lint.yaml_contract.scope_gate_over_hard_max"
     )
     assert v.severity == "fail"
     assert v.auto_fixable is True
@@ -218,7 +218,7 @@ def test_scope_gate_within_hard_max_is_ok():
     )
     violations = Cp1Rules().check(body, [])
     assert not any(
-        v.rule_id == "cp1.yaml_contract.scope_gate_over_hard_max" for v in violations
+        v.rule_id == "design_lint.yaml_contract.scope_gate_over_hard_max" for v in violations
     )
 
 
@@ -226,10 +226,10 @@ def test_broken_yaml_block_is_missing_block():
     # ASCII fixture data.
     body = "```yaml\n: : broken [\n```\n\n## c6982_c8981\nc672C_c6587\n"
     violations = Cp1Rules().check(body, [])
-    assert any(v.rule_id == "cp1.yaml_contract.missing_block" for v in violations)
+    assert any(v.rule_id == "design_lint.yaml_contract.missing_block" for v in violations)
 
 
-# --- Issue #5105: pytest test basename collision (cp1.test_basename_collision) ---
+# --- Issue #5105: pytest test basename collision (design_lint.test_basename_collision) ---
 
 _CHANGE_TABLE_HEADER = (
     f"| {legacy_text.REPOSITORY} | {legacy_text.FILE_PATH} | "
@@ -292,11 +292,11 @@ def _commit(repo: Path, message: str = "init") -> None:
 
 def _collision_violations(body: str, repo: Path, monkeypatch) -> list:
     monkeypatch.setattr(
-        "issuesmith.gate_rules.cp1.resolve_scope_root",
+        "issuesmith.gate_rules.design_lint_rules.resolve_scope_root",
         lambda metadata, cfg: repo,
     )
     all_v = Cp1Rules().check(body, [])
-    return [v for v in all_v if v.rule_id == "cp1.test_basename_collision"]
+    return [v for v in all_v if v.rule_id == "design_lint.test_basename_collision"]
 
 
 def test_pytest_module_name_unit():
@@ -495,11 +495,11 @@ def test_resolve_scope_root_none_skips(monkeypatch):
         ("tests/b/test_x.py", "new"),
     ])
     monkeypatch.setattr(
-        "issuesmith.gate_rules.cp1.resolve_scope_root",
+        "issuesmith.gate_rules.design_lint_rules.resolve_scope_root",
         lambda metadata, cfg: None,
     )
     all_v = Cp1Rules().check(body, [])
-    assert [v for v in all_v if v.rule_id == "cp1.test_basename_collision"] == []
+    assert [v for v in all_v if v.rule_id == "design_lint.test_basename_collision"] == []
 
 
 def test_no_test_candidates_skips_resolve(monkeypatch):
@@ -510,7 +510,7 @@ def test_no_test_candidates_skips_resolve(monkeypatch):
         calls += 1
         raise AssertionError("resolve_scope_root should not run")
 
-    monkeypatch.setattr("issuesmith.gate_rules.cp1.resolve_scope_root", _boom)
+    monkeypatch.setattr("issuesmith.gate_rules.design_lint_rules.resolve_scope_root", _boom)
     body = _collision_body([("src/foo.py", "new")])
     assert Cp1Rules().check(body, []) == []
     assert calls == 0

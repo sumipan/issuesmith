@@ -49,7 +49,7 @@ def test_check_commit_diff_gates_rejects_exact_assert():
     assert result is not None
     assert result.status == "P3_GATE_FAILED"
     assert result.exit_code == 1
-    assert "cp1.test_version_exact_assert" in result.stderr
+    assert "design_lint.test_version_exact_assert" in result.stderr
 
 
 def test_check_commit_diff_gates_rejects_version_line():
@@ -60,7 +60,7 @@ def test_check_commit_diff_gates_rejects_version_line():
         result = _check_commit_diff_gates(worktree, "main")
     assert result is not None
     assert result.status == "P3_GATE_FAILED"
-    assert "cp1.version_line_in_diff" in result.stderr
+    assert "design_lint.version_line_in_diff" in result.stderr
 
 
 def test_check_commit_diff_gates_passes_clean_diff():
@@ -88,7 +88,7 @@ def test_check_commit_diff_gates_passes_when_only_base_advanced():
 
 def test_two_dot_base_advanced_diff_would_fail_but_three_dot_empty_passes():
     """Measured two-dot diff violates version, but the gate uses three-dot so it passes."""
-    from issuesmith.gate_rules.cp1 import check_version_line_in_diff
+    from issuesmith.gate_rules.design_lint_rules import check_version_line_in_diff
 
     assert check_version_line_in_diff(_BASE_ADVANCED_TWO_DOT_DIFF)
     worktree = Path("/tmp/fake-wt")
@@ -107,7 +107,7 @@ def test_check_commit_diff_gates_still_rejects_real_branch_version_change():
         result = _check_commit_diff_gates(worktree, "main")
     assert result is not None
     assert result.status == "P3_GATE_FAILED"
-    assert "cp1.version_line_in_diff" in result.stderr
+    assert "design_lint.version_line_in_diff" in result.stderr
 
 
 def test_ensure_rebased_noop_when_ancestor():

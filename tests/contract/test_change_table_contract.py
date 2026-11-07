@@ -78,7 +78,7 @@ def _row() -> PlanRow:
 def test_bold_label_table_is_read_by_gate_and_sub1_alike() -> None:
     body = _parent(_table("sumipan/issuesmith", _CHILD_PATHS))
     gate_ids = [v.rule_id for v in B1MilestoneSubdesignRules().check(body, ["scope:milestone"])]
-    assert "b1_milestone_subdesign.change_paths_unreadable" not in gate_ids
+    assert "milestone_subdesign.change_paths_unreadable" not in gate_ids
     got = allow_paths_for_row(body, _row())
     assert got == _CHILD_PATHS
     assert not set(got) & set(_PARENT_ALLOW)
@@ -100,13 +100,13 @@ def test_unreadable_table_fails_gate_and_yields_no_paths() -> None:
     gate_ids = [v.rule_id for v in B1MilestoneSubdesignRules().check(body, ["scope:milestone"])]
     # gate reports the repo it *could* read and SUB1's repo agree on "unreadable for issuesmith"
     assert change_paths_for_repo(body, "sumipan/issuesmith") == []
-    assert "b1_milestone_subdesign.repo_mismatch" in gate_ids or gate_ids  # repo column mismatch surfaces at B1
+    assert "milestone_subdesign.repo_mismatch" in gate_ids or gate_ids  # repo column mismatch surfaces at B1
 
 
 def test_missing_table_is_a_gate_violation() -> None:
     body = _parent("(no table here)\n")
     gate_ids = [v.rule_id for v in B1MilestoneSubdesignRules().check(body, ["scope:milestone"])]
-    assert "b1_milestone_subdesign.change_paths_unreadable" in gate_ids
+    assert "milestone_subdesign.change_paths_unreadable" in gate_ids
     assert allow_paths_for_row(body, _row()) == []
 
 
@@ -188,5 +188,5 @@ def test_repo_root_file_is_returned_from_four_column_table() -> None:
 def test_root_only_sub_block_is_readable_by_gate() -> None:
     body = _parent(_table("sumipan/issuesmith", ["issuesmith.yaml", "pyproject.toml"]))
     gate_ids = [v.rule_id for v in B1MilestoneSubdesignRules().check(body, ["scope:milestone"])]
-    assert "b1_milestone_subdesign.change_paths_unreadable" not in gate_ids
+    assert "milestone_subdesign.change_paths_unreadable" not in gate_ids
     assert allow_paths_for_row(body, _row()) == ["issuesmith.yaml", "pyproject.toml"]
