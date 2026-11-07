@@ -13,7 +13,8 @@ from zoneinfo import ZoneInfo
 
 from ghdag.metrics.models import FailureClass
 
-from issuesmith.config import IssuesmithConfig
+from issuesmith.config import ConfigError, IssuesmithConfig
+from issuesmith.rule_ids import normalize_rule_id
 
 _TRANSIENT_FAILURES = frozenset(
     {
@@ -114,7 +115,12 @@ def _basename_template(value: Any) -> str:
 
 
 def resolve_cause_target(cause: str, cause_targets: Mapping[str, str]) -> str | None:
-    matches = [(prefix, target) for prefix, target in cause_targets.items() if cause.startswith(prefix)]
+    norm_cause = normalize_rule_id(cause)
+    matches = [
+        (prefix, target)
+        for prefix, target in cause_targets.items()
+        if norm_cause.startswith(prefix)
+    ]
     if not matches:
         return None
     return max(matches, key=lambda item: len(item[0]))[1]
@@ -306,6 +312,10 @@ def compute(
     since: date | datetime | None = None,
     issue_filter: int | None = None,
 ) -> dict[str, Any]:
+    if not config.metrics.done_step:
+        raise ConfigError(
+            "metrics.done_step must be set in issuesmith.yaml metrics section"
+        )
     tz = ZoneInfo(config.timezone)
     since_dt: datetime | None = None
     if since is not None:
@@ -776,13 +786,17 @@ def main(argv: list[str] | None = None) -> int:
             print(f"metrics rework: {exc}", file=sys.stderr)
             return 1
 
-    result = compute(
-        metrics_path,
-        audit_path=args.audit,
-        config=cfg,
-        since=since_dt,
-        issue_filter=args.issue,
-    )
+    try:
+        result = compute(
+            metrics_path,
+            audit_path=args.audit,
+            config=cfg,
+            since=since_dt,
+            issue_filter=args.issue,
+        )
+    except ConfigError as exc:
+        print(f"metrics rework: {exc}", file=sys.stderr)
+        return 1
     if args.as_json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:

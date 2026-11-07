@@ -6,7 +6,7 @@ paths_must_not_exist / references_must_resolve against the repository.
 
 Callers:
 - scripts/milestone-postcheck.py (CLI, with schema validation)
-- issuesmith.m2_gate (M2 close gate, fail-open)
+- issuesmith.ac_complete_entry (AC-complete close gate, fail-open)
 """
 from __future__ import annotations
 

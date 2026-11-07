@@ -642,3 +642,37 @@ def test_non_repairable_rule_ids_and_pr_scope_repairable() -> None:
     assert is_non_repairable_rule_id("pr_diff_scope.forbidden_path") is True
     assert is_non_repairable_rule_id("review.cp2.engine_error") is True
     assert is_non_repairable_rule_id("review.cp2") is False
+
+
+def test_legacy_gate_modules_are_shims() -> None:
+    import issuesmith.ac_complete_entry as ac_complete
+    import issuesmith.cp1_gate as cp1
+    import issuesmith.design_lint_entry as design_lint
+    import issuesmith.gates.ac_complete as gates_ac
+    import issuesmith.gates.m2 as gates_m2
+    import issuesmith.m2_gate as m2
+
+    assert cp1 is design_lint
+    assert m2 is ac_complete
+    assert gates_m2.check_m2 is gates_ac.check_ac_complete
+
+    from issuesmith.gates.m2 import check_m2  # noqa: F401
+    from issuesmith.m2_gate import (  # noqa: F401
+        check_gate,
+        get_unchecked_count,
+        synthesize_contract_failures,
+    )
+
+
+def test_m2_shim_check_gate_is_patchable() -> None:
+    gate_result = {
+        "action": "proceed",
+        "unchecked_count": 0,
+        "has_section": True,
+        "has_migration_label": False,
+        "contract_failures": [],
+    }
+    with patch("issuesmith.gates.m2.check_gate", return_value=gate_result):
+        result = check_m2("## Acceptance Criteria\n- [x] done\n", [])
+    assert isinstance(result, Verdict)
+    assert result.passed is True

@@ -44,9 +44,8 @@ def _minimal_config(tmp_path: Path, monkeypatch, **metrics_kwargs) -> None:
         "repo": "example/app",
         "timezone": "Asia/Tokyo",
         "phases": _MINIMAL_PHASES,
+        "metrics": {"done_step": "m2", **metrics_kwargs},
     }
-    if metrics_kwargs:
-        payload["metrics"] = metrics_kwargs
     _write_config(tmp_path, monkeypatch, payload)
 
 
@@ -250,11 +249,32 @@ class TestCauseTargets:
 
 class TestConfig:
     def test_defaults_when_metrics_section_missing(self, tmp_path, monkeypatch):
-        _minimal_config(tmp_path, monkeypatch)
+        _write_config(tmp_path, monkeypatch, {"repo": "example/app"})
         cfg = load_config()
-        assert cfg.metrics.done_step == "m2"
+        assert cfg.metrics.done_step is None
         assert cfg.metrics.repair_templates == ()
         assert cfg.metrics.cause_targets == {}
+
+    def test_compute_requires_declared_done_step(self, tmp_path, monkeypatch):
+        _write_config(tmp_path, monkeypatch, {"repo": "example/app"})
+        from issuesmith.config import get_config
+
+        with pytest.raises(ConfigError, match="metrics.done_step"):
+            compute(METRICS_FIXTURE, config=get_config())
+
+    def test_cause_targets_normalize_legacy_prefix(self, tmp_path, monkeypatch):
+        _minimal_config(
+            tmp_path,
+            monkeypatch,
+            cause_targets={"cp1.": "Design gate"},
+        )
+        from issuesmith.config import get_config
+        from issuesmith.metrics_rework import resolve_cause_target
+
+        cfg = get_config()
+        assert cfg.metrics.cause_targets == {"design_lint.": "Design gate"}
+        assert resolve_cause_target("cp1.foo", cfg.metrics.cause_targets) == "Design gate"
+        assert resolve_cause_target("design_lint.foo", cfg.metrics.cause_targets) == "Design gate"
 
     def test_unknown_metrics_key_raises(self, tmp_path, monkeypatch):
         _write_config(tmp_path, monkeypatch, {"repo": "example/app", "metrics": {"extra": 1}})

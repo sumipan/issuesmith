@@ -16,6 +16,7 @@ from typing import Any, Literal, Mapping
 import yaml
 
 from issuesmith.language import EN, LanguagePack, load_language_pack
+from issuesmith.rule_ids import normalize_rule_id
 
 
 class ConfigError(ValueError):
@@ -23,6 +24,22 @@ class ConfigError(ValueError):
 
 _CONFIG_ENV = "ISSUESMITH_CONFIG"
 _CONFIG_FILENAME = "issuesmith.yaml"
+
+
+def _warn_normalized_rule_id(*, field: str, before: str, after: str) -> None:
+    if before == after:
+        return
+    warnings.warn(
+        f"{field}: legacy rule id {before!r} is deprecated; use {after!r}",
+        DeprecationWarning,
+        stacklevel=5,
+    )
+
+
+def _normalize_config_rule_id(value: str, *, field: str) -> str:
+    after = normalize_rule_id(value)
+    _warn_normalized_rule_id(field=field, before=value, after=after)
+    return after
 
 # src/issuesmith/config.py → parents[2] == sumipan/issuesmith repo root
 _PACKAGE_FILE = Path(__file__).resolve()
@@ -212,9 +229,7 @@ class StepConfig:
     verify: Literal["design_doc"] | None = None
 
 
-_DEFAULT_STEPS: dict[str, StepConfig] = {
-    "p1": StepConfig(andon_when=("external_leak.target_unknown",)),
-}
+_DEFAULT_STEPS: dict[str, StepConfig] = {}
 
 # PR diff scope gate defaults (#3178). Mirrored in issuesmith.yaml.
 _DEFAULT_FORBIDDEN_PR_PATHS: tuple[str, ...] = (
@@ -278,7 +293,7 @@ class ScopeSizeConfig:
 class MetricsConfig:
     """Rework metrics options (``issuesmith.yaml`` ``metrics:`` section, #4431)."""
 
-    done_step: str = "m2"
+    done_step: str | None = None
     repair_templates: tuple[str, ...] = ()
     cause_targets: Mapping[str, str] = field(default_factory=dict)
 
@@ -971,7 +986,10 @@ def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
             andon_raw = conf["andon_when"]
             if not isinstance(andon_raw, list):
                 raise ConfigError(f"steps.{step_id}.andon_when must be a list")
-            andon_when = tuple(str(x) for x in andon_raw)
+            andon_when = tuple(
+                _normalize_config_rule_id(str(x), field=f"steps.{step_id}.andon_when")
+                for x in andon_raw
+            )
 
         repair = _build_repair(conf.get("repair"), str(step_id))
         review = _build_review(conf.get("review"), str(step_id))
@@ -1149,7 +1167,10 @@ def _build_metrics(raw: Mapping[str, Any] | None) -> MetricsConfig:
         raise ConfigError(
             f"metrics supports only {sorted(allowed)}; unknown keys: {unknown}"
         )
-    done_step = str(raw.get("done_step", defaults.done_step)).strip() or defaults.done_step
+    if "done_step" in raw:
+        done_step = str(raw.get("done_step")).strip() or None
+    else:
+        done_step = defaults.done_step
     if "repair_templates" in raw:
         templates_raw = raw["repair_templates"]
         if not isinstance(templates_raw, list) or not all(isinstance(x, str) for x in templates_raw):
@@ -1160,7 +1181,10 @@ def _build_metrics(raw: Mapping[str, Any] | None) -> MetricsConfig:
     targets_raw = raw.get("cause_targets", {})
     if not isinstance(targets_raw, Mapping):
         raise ConfigError("metrics.cause_targets must be a mapping")
-    cause_targets = {str(k): str(v) for k, v in targets_raw.items()}
+    cause_targets = {
+        _normalize_config_rule_id(str(k), field="metrics.cause_targets"): str(v)
+        for k, v in targets_raw.items()
+    }
     return MetricsConfig(
         done_step=done_step,
         repair_templates=repair_templates,
@@ -1343,7 +1367,13 @@ def _build_andon(raw: Mapping[str, Any] | None) -> AndonConfig:
                 raise ConfigError(
                     f"andon.auto_answer[{name!r}].match: unknown key {key_s!r}"
                 )
-            match[key_s] = str(value)
+            if key_s == "rule_id":
+                match[key_s] = _normalize_config_rule_id(
+                    str(value),
+                    field=f"andon.auto_answer[{name!r}].match.rule_id",
+                )
+            else:
+                match[key_s] = str(value)
         action = str(item.get("action") or "").strip()
         if not action:
             raise ConfigError(f"andon.auto_answer[{name!r}].action is required")
