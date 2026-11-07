@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 import sys
 from dataclasses import asdict
 from typing import Any, Sequence
@@ -161,8 +162,18 @@ def _cmd_engine(argv: list[str]) -> int:
 
 def _cmd_dispatch(argv: list[str]) -> int:
     from issuesmith.ops.dispatch import main as dispatch_main
+    from issuesmith.worktree import CALLER_STEP_ENV_VAR
 
-    return int(dispatch_main(argv))
+    prior = os.environ.get(CALLER_STEP_ENV_VAR)
+    if argv:
+        os.environ[CALLER_STEP_ENV_VAR] = argv[0]
+    try:
+        return int(dispatch_main(argv))
+    finally:
+        if prior is None:
+            os.environ.pop(CALLER_STEP_ENV_VAR, None)
+        else:
+            os.environ[CALLER_STEP_ENV_VAR] = prior
 
 
 def _cmd_publish(argv: list[str]) -> int:

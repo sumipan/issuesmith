@@ -232,6 +232,23 @@ def test_plan_to_json_roundtrip() -> None:
     assert data["required_labels"] == []
 
 
+_RECOVER_REMOVAL_PR = "https://github.com/sumipan/issuesmith/pull/318"
+_RECOVER_REMOVAL_COMMIT = "7f79f2dbb5219c67f65110888d1aac892d9821ec"
+
+
+def test_recover_cli_removal_regression_checklist() -> None:
+    """Breaking removal (#6127): recover CLI gone; resume --from is the only recovery path."""
+    from argparse import ArgumentError
+
+    from issuesmith import cli, recovery
+
+    assert "recover" not in cli._HANDLERS
+    with pytest.raises((ArgumentError, SystemExit)):
+        recovery.build_parser().parse_args(["recover", "1"])
+    assert _RECOVER_REMOVAL_PR.startswith("https://github.com/sumipan/issuesmith/pull/")
+    assert len(_RECOVER_REMOVAL_COMMIT) == 40
+
+
 def test_redispatch_blocked_exits_without_label_changes(monkeypatch) -> None:
     from issuesmith.recovery import cmd_redispatch
 

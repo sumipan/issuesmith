@@ -290,7 +290,9 @@ issuesmith is pre-1.0 and follows `0.Y.Z`: a `Y` bump may change or remove publi
 
 | Item | Replacement |
 |---|---|
+| `recover` command (**removed** in 0.173.0; was deprecated with `FutureWarning`) | `resume <issue> --from <step>` (see https://github.com/sumipan/issuesmith/pull/318) |
 | `redispatch` command (emits `FutureWarning`) | `resume <issue> --phase <phase>` |
+| `P0_FETCH_LOCK_WAIT` | `ISSUESMITH_FETCH_LOCK_WAIT` |
 | `paths.brake_state` for engine pause / quota dispatch | `paths.quota_state` (legacy `halt*` fields are converted on read and not written back) |
 | `apply` / `ingest-review` commands (exit 2) | The host's `tools/stash/` scripts |
 | `issuesmith.yaml` keys `sections`, `sub_design_subsections`, `scope_size.delete_words` / `new_words` / `sub_plan_header` / `no_deps_word` (emit `DeprecationWarning`) | `language_pack` |
@@ -299,7 +301,6 @@ issuesmith is pre-1.0 and follows `0.Y.Z`: a `Y` bump may change or remove publi
 | `issuesmith.gate_rules.m2` | `issuesmith.gate_rules.ac_complete` (deprecated shim) |
 | `issuesmith.gate_rules.cp1` | `issuesmith.gate_rules.design_lint` (deprecated shim) |
 | `issuesmith.b1_verify` (verify recovery naming) | `issuesmith.step_verify` (deprecated shim of gate bundle) |
-| Legacy P0 base-fetch lock wait env var | `ISSUESMITH_FETCH_LOCK_WAIT` |
 
 ## Architecture
 

@@ -182,6 +182,24 @@ def test_recover_not_in_handlers() -> None:
     assert "recover" not in _HANDLERS
 
 
+def test_dispatch_sets_caller_step_env_for_python_steps(monkeypatch) -> None:
+    import os
+
+    from issuesmith.cli import _cmd_dispatch
+    from issuesmith.worktree import CALLER_STEP_ENV_VAR
+
+    seen: list[str | None] = []
+
+    def fake_dispatch(argv: list[str]) -> int:
+        seen.append(os.environ.get(CALLER_STEP_ENV_VAR))
+        return 0
+
+    monkeypatch.setattr("issuesmith.ops.dispatch.main", fake_dispatch)
+    assert _cmd_dispatch(["p0", "issue_number=1"]) == 0
+    assert seen == ["p0"]
+    assert os.environ.get(CALLER_STEP_ENV_VAR) is None
+
+
 def test_gate_design_lint_issue_form_routes_to_entry(monkeypatch) -> None:
     calls: list[list[str]] = []
     import issuesmith.cli as cli_mod

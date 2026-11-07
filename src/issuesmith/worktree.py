@@ -18,6 +18,7 @@ from ghdag.forge import ForgePort, get_forge
 from issuesmith.contract import Andon, StepResult
 
 _TRANSIENT_FETCH_MARKERS = ("cannot lock ref", "unable to update local ref")
+CALLER_STEP_ENV_VAR = "ISSUESMITH_CALLER_STEP"
 
 
 class WorktreeError(Exception):
@@ -472,6 +473,10 @@ def ensure_base_included(
     caller_step: str | None = None,
 ) -> StepResult | None:
     """Return ``None`` when HEAD includes origin/*base_branch*; rebase or fail otherwise."""
+    if caller_step is None:
+        from_env = os.environ.get(CALLER_STEP_ENV_VAR, "").strip()
+        if from_env:
+            caller_step = from_env
     rev_parse = subprocess.run(
         ["git", "-C", str(worktree_dir), "rev-parse", f"origin/{base_branch}"],
         capture_output=True,

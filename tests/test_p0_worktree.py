@@ -571,8 +571,109 @@ def test_ensure_base_included_rebase_success_returns_none(
 
 
 def test_ensure_base_included_rebase_conflict_returns_andon_decision(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from dataclasses import replace
+
+    from issuesmith.config import PhaseConfig, get_config
+
+    cfg = replace(
+        get_config(),
+        phases=[
+            PhaseConfig(
+                name="develop",
+                role="implementation",
+                entry_step="prepare",
+                handler="impl",
+                steps=("prepare", "implement"),
+            )
+        ],
+    )
+    monkeypatch.setattr("issuesmith.config.get_config", lambda: cfg)
+    repo, stale_branch = _make_repo_with_diverged_branch(tmp_path)
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", stale_branch],
+        check=True,
+        capture_output=True,
+    )
+    (repo / "README").write_text("conflict\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "README"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-m", "stale conflict"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", "main"],
+        check=True,
+        capture_output=True,
+    )
+    (repo / "README").write_text("main conflict\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "README"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-m", "main conflict"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "fetch", "origin", "main"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", stale_branch],
+        check=True,
+        capture_output=True,
+    )
+    client = MagicMock()
+    result = wt.ensure_base_included(
+        repo,
+        "main",
+        client,
+        3408,
+        stale_base_comment_template=_STALE_BASE_COMMENT_TEMPLATE,
+        caller_step="prepare",
+    )
+    assert result is not None
+    assert result.status == "andon"
+    assert result.andon is not None
+    assert result.andon.kind == "decision"
+    assert result.andon.rule_id == "p0.base_rebase_conflict"
+    assert result.andon.options == [
+        "manual_rebase_then_resume_implement",
+        "discard_branch_then_restart_prepare",
+    ]
+    assert "README" in result.andon.summary
+    assert "git rebase origin/main" in result.andon.summary
+    assert "issuesmith resume 3408" in result.andon.summary
+    assert "--from implement" in result.andon.summary
+    assert "p1" not in result.andon.summary
+    client.issue_comment.assert_not_called()
+    err = capsys.readouterr().err
+    assert "STALE_BASE" in err
+
+
+def test_ensure_base_included_reads_caller_step_env_on_conflict(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+
+    from issuesmith.config import PhaseConfig, get_config
+
+    cfg = replace(
+        get_config(),
+        phases=[
+            PhaseConfig(
+                name="develop",
+                role="implementation",
+                entry_step="prepare",
+                handler="impl",
+                steps=("prepare", "implement"),
+            )
+        ],
+    )
+    monkeypatch.setattr("issuesmith.config.get_config", lambda: cfg)
+    monkeypatch.setenv(wt.CALLER_STEP_ENV_VAR, "prepare")
     repo, stale_branch = _make_repo_with_diverged_branch(tmp_path)
     subprocess.run(
         ["git", "-C", str(repo), "checkout", stale_branch],
@@ -617,20 +718,8 @@ def test_ensure_base_included_rebase_conflict_returns_andon_decision(
         stale_base_comment_template=_STALE_BASE_COMMENT_TEMPLATE,
     )
     assert result is not None
-    assert result.status == "andon"
-    assert result.andon is not None
-    assert result.andon.kind == "decision"
-    assert result.andon.rule_id == "p0.base_rebase_conflict"
-    assert result.andon.options == [
-        "manual_rebase_then_resume",
-        "discard_branch_then_restart_p0",
-    ]
-    assert "README" in result.andon.summary
-    assert "git rebase origin/main" in result.andon.summary
-    assert "issuesmith resume 3408" in result.andon.summary
-    client.issue_comment.assert_not_called()
-    err = capsys.readouterr().err
-    assert "STALE_BASE" in err
+    assert "--from implement" in (result.andon.summary if result.andon else "")
+    capsys.readouterr()
 
 
 def test_ensure_base_included_rev_parse_fails_returns_none(tmp_path: Path) -> None:

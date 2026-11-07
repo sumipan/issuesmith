@@ -25,7 +25,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
-**BREAKING:** Drop the `recover` CLI and `issuesmith.recovery recover` subcommand (`resume --from` is the only path). Remove `run_sub1_create`, CP1 hold-comment scraping, `B1_RECOVERY:` markers, and unused `language` dead keys.
+**BREAKING:** Drop the `recover` CLI and `issuesmith.recovery recover` subcommand (`resume --from` is the only path). Remove `run_sub1_create`, CP1 hold-comment scraping, `B1_RECOVERY:` markers, and unused `language` dead keys. Callers migrated on the prior `FutureWarning` path (`resume` registered in #3566; see https://github.com/sumipan/issuesmith/pull/318, commit `7f79f2dbb5219c67f65110888d1aac892d9821ec`). Host step modules should use `issuesmith dispatch <step>` (sets `ISSUESMITH_CALLER_STEP` for STALE_BASE hints) or pass `caller_step` to `ensure_base_included`.
 
 ## 0.170.0 - 2026-11-07
 
