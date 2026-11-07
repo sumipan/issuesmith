@@ -169,7 +169,7 @@ def test_dispatch_event_not_called_on_answer():
 # FutureWarning on recover / redispatch CLI
 # ---------------------------------------------------------------------------
 
-def test_cli_recover_emits_future_warning():
+def test_cli_resume_help_documents_from_flag():
     import os
     import sys
     from pathlib import Path
@@ -177,7 +177,7 @@ def test_cli_recover_emits_future_warning():
     src_path = str(repo_root / "src")
     env = {**os.environ, "PYTHONPATH": src_path}
     result = __import__("subprocess").run(
-        [sys.executable, "-W", "all", "-m", "issuesmith", "recover", "--help"],
+        [sys.executable, "-m", "issuesmith", "resume", "--help"],
         cwd=str(repo_root),
         capture_output=True,
         text=True,
@@ -185,7 +185,8 @@ def test_cli_recover_emits_future_warning():
         check=False,
     )
     combined = result.stdout + result.stderr
-    assert "DeprecationWarning" in combined or "FutureWarning" in combined or result.returncode in (0, 1, 2)
+    assert result.returncode == 0
+    assert "--from" in combined
 
 
 def test_cli_redispatch_emits_future_warning():

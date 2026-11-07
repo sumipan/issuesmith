@@ -7,6 +7,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Added
+
+- `rule_ids` normalization helpers and concept-name gate entry modules (`design_lint_entry`, `ac_complete_entry`); `check_ac_complete` in `issuesmith.gates`.
+
+### Changed
+
+- **BREAKING:** `engine.check_state` validates workflow shell/bash alignment for `steps.<id>.module` declarations instead of a fixed `IMPLEMENTATION_STEP_IDS` set.
+- **BREAKING:** `recovery.plan` recovery hints use `issuesmith resume --from <step>` (not `recover`).
+- **BREAKING:** STALE_BASE operator text derives the `--from` step from the phase `steps` list after the failing step.
+- Removed implicit default done/recover step ids from engine dispatch configuration; hosts declare steps in `issuesmith.yaml`.
+
+### Deprecated
+
+- Compatibility shims `issuesmith.m2_gate`, `issuesmith.cp1_gate`, `issuesmith.gates.m2`, `issuesmith.gate_rules.m2`, `issuesmith.gate_rules.cp1`, and `issuesmith.b1_verify` (use concept-name modules; removed next minor).
+- `P0_FETCH_LOCK_WAIT` (use `ISSUESMITH_FETCH_LOCK_WAIT`).
+
+### Removed
+
+**BREAKING:** Drop the `recover` CLI and `issuesmith.recovery recover` subcommand (`resume --from` is the only path). Remove `run_sub1_create`, CP1 hold-comment scraping, `B1_RECOVERY:` markers, and unused `language` dead keys.
+
 ## 0.170.0 - 2026-11-07
 
 ### Removed

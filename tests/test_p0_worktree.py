@@ -404,6 +404,46 @@ def test_prepare_cross_repo_worktree_reuses_existing_clone(tmp_path: Path) -> No
     assert _git(worktree_dir, "branch", "--show-current") == "feat/issue-cross"
 
 
+def test_lock_wait_seconds_prefers_issuesmith_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ISSUESMITH_FETCH_LOCK_WAIT", "5")
+    monkeypatch.delenv("P0_FETCH_LOCK_WAIT", raising=False)
+    assert wt._lock_wait_seconds() == 5
+
+
+def test_lock_wait_seconds_legacy_env_emits_deprecation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ISSUESMITH_FETCH_LOCK_WAIT", raising=False)
+    monkeypatch.setenv("P0_FETCH_LOCK_WAIT", "5")
+    with pytest.warns(DeprecationWarning, match="ISSUESMITH_FETCH_LOCK_WAIT"):
+        assert wt._lock_wait_seconds() == 5
+
+
+def test_stale_base_resume_hint_uses_next_step_in_phase(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+
+    from issuesmith.config import PhaseConfig, get_config
+
+    cfg = replace(
+        get_config(),
+        phases=[
+            PhaseConfig(
+                name="develop",
+                role="implementation",
+                entry_step="prepare",
+                handler="impl",
+                steps=("prepare", "implement"),
+            )
+        ],
+    )
+    monkeypatch.setattr("issuesmith.config.get_config", lambda: cfg)
+    cmd, _options = wt._stale_base_resume_command(42, "prepare")
+    assert "--from implement" in cmd
+    assert "p1" not in cmd
+
+
 def test_transient_fetch_markers_detected() -> None:
     assert wt._is_transient_fetch_error(CANNOT_LOCK_REF_STDERR) is True
     assert wt._is_transient_fetch_error("network down") is False
@@ -582,7 +622,7 @@ def test_ensure_base_included_rebase_conflict_returns_andon_decision(
     assert result.andon.kind == "decision"
     assert result.andon.rule_id == "p0.base_rebase_conflict"
     assert result.andon.options == [
-        "manual_rebase_then_resume_p1",
+        "manual_rebase_then_resume",
         "discard_branch_then_restart_p0",
     ]
     assert "README" in result.andon.summary
