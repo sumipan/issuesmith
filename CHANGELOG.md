@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.170.0 - 2026-11-07
+
 ### Removed
 
 **BREAKING:** Drop deprecated CLI aliases `cp1-gate`, `m2-gate`, and `b1-verify`; undeclared `tier` / `verify` no longer fall back to `issuesmith.<id>_tier` / `issuesmith.<id>_verify`. Remove gate registry ids `cp1`, `m2`, `b1_ac_format`, `b1_migration`, and `b1_milestone_subdesign` (use `design_lint`, `ac_complete`, `ac_format`, `migration_plan`, and `milestone_subdesign`). Remove `issuesmith.b1_tier` and `issuesmith.cp2_tier` modules (sumipan/nexus#6073).
