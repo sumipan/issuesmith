@@ -132,8 +132,8 @@ src/issuesmith/targets.py
 | 項目 | 現在の定義箇所 | 設定化キー名案 | 既定値 | 参照する消費者モジュール |
 |---|---|---|---|---|
 | 受け入れ条件（H2） | `ac_contract.py` L95; `gate_rules/m2.py` L10/L16; `gate_rules/b1_ac_format.py` L13 | `section_names.acceptance_criteria` | `受け入れ条件` | `ac_contract.py`, `m2_gate.py`, `targets.py`, `gate_rules/b1_migration.py`, `gate_rules/cp1.py`, `steps/m2_finalize.py` |
-| 設計（H2） | `step_tier.py`; `gate_rules/b1_ac_format.py` L28; `gate_rules/b1_milestone_subdesign.py` L45 | `section_names.design` | `設計` | `step_tier.py`, `gate_rules/b1_ac_format.py`, `gate_rules/b1_milestone_subdesign.py` |
-| 背景・目的（H2） | `step_tier.py` | `section_names.background` | `背景・目的` | `step_tier.py` |
+| Design (H2) | `step_tier.py`; `gate_rules/b1_ac_format.py` L28; `gate_rules/b1_milestone_subdesign.py` L45 | `section_names.design` | H2 heading (Japanese literal in `step_tier.py`) | `step_tier.py`, `gate_rules/b1_ac_format.py`, `gate_rules/b1_milestone_subdesign.py` |
+| Background and purpose (H2) | `step_tier.py` | `section_names.background` | H2 heading (Japanese literal in `step_tier.py`) | `step_tier.py` |
 | 変更対象ファイル | `milestone.py` L46; `gate_rules/b1_milestone_subdesign.py` L9/L87/L128; `gate_rules/cp1.py` L238 | `section_names.change_files` | `変更対象ファイル` | `milestone.py`, `gate_rules/b1_milestone_subdesign.py`, `gate_rules/b1_ac_format.py`, `gate_rules/cp1.py` |
 | やらないこと（H2） | `context_hook.py` L294 | `section_names.out_of_scope` | `やらないこと` | `context_hook.py` |
 | 依存（先行）（H2） | `dep_extractor.py` L80–81; `milestone.py` L233 | `section_names.dependencies` | `依存（先行）` | `dep_extractor.py`, `milestone.py` |
