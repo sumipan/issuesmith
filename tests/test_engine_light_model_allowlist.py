@@ -76,8 +76,7 @@ def test_check_state_includes_default_light_allowlist_errors(monkeypatch, codex_
     monkeypatch.setattr(engine.shutil, "which", lambda cmd: "/bin/true")
     monkeypatch.setattr(engine, "_load_workflow", lambda: {"handlers": {}})
     monkeypatch.setattr(engine, "_iter_steps", lambda wf: [])
-    # Empty set to avoid IMPLEMENTATION_STEP_IDS missing errors
-    monkeypatch.setattr(engine, "IMPLEMENTATION_STEP_IDS", frozenset())
+    monkeypatch.setattr(engine, "_module_declared_step_ids", lambda: frozenset())
     errors = engine.check_state()
     assert any("engines.design.light_model.codex" in e for e in errors)
 
@@ -121,6 +120,44 @@ def test_resolve_cli_prints_allowlist_valid_false_with_reason(
     assert "allowlist_valid: false" in out
     assert "reason:" in out
     assert "gpt-5.4-mini" in out
+
+
+def test_check_state_workflow_drift_for_module_step(monkeypatch, codex_allowlist):
+    monkeypatch.setattr(engine, "load_state", lambda: _state())
+    monkeypatch.setattr(
+        engine, "resolve", lambda role, tier=None: engine.RoleSelection("codex", "gpt-5.6-sol")
+    )
+    monkeypatch.setattr(engine.shutil, "which", lambda cmd: "/bin/true")
+    monkeypatch.setattr(engine, "_module_declared_step_ids", lambda: frozenset({"implement"}))
+    monkeypatch.setattr(
+        engine,
+        "_iter_steps",
+        lambda wf: [
+            ("impl", {"id": "implement", "engine": "claude", "model": "opus"}),
+        ],
+    )
+    monkeypatch.setattr(engine, "_load_workflow", lambda: {})
+    errors = engine.check_state()
+    assert any("workflow drift" in e and "implement" in e for e in errors)
+
+
+def test_check_state_skips_steps_without_module(monkeypatch, codex_allowlist):
+    monkeypatch.setattr(engine, "load_state", lambda: _state())
+    monkeypatch.setattr(
+        engine, "resolve", lambda role, tier=None: engine.RoleSelection("codex", "gpt-5.6-sol")
+    )
+    monkeypatch.setattr(engine.shutil, "which", lambda cmd: "/bin/true")
+    monkeypatch.setattr(engine, "_module_declared_step_ids", lambda: frozenset({"implement"}))
+    monkeypatch.setattr(
+        engine,
+        "_iter_steps",
+        lambda wf: [
+            ("impl", {"id": "design", "engine": "claude", "model": "opus"}),
+            ("impl", {"id": "implement", "engine": "shell", "model": "bash"}),
+        ],
+    )
+    monkeypatch.setattr(engine, "_load_workflow", lambda: {})
+    assert not any("design" in e for e in engine.check_state())
 
 
 def test_execute_engine_override_falls_back_when_light_not_allowed(

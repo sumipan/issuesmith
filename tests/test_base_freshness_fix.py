@@ -83,7 +83,7 @@ def test_check_succeeds_after_transient_fetch_then_success(tmp_path: Path, monke
     repo = tmp_path / "wt"
     _init_git_repo(repo)
     gate = wt.BaseFreshnessGate(repo, "main")
-    monkeypatch.setenv("P0_FETCH_LOCK_WAIT", "0")
+    monkeypatch.setenv("ISSUESMITH_FETCH_LOCK_WAIT", "0")
     monkeypatch.setattr(wt_mod, "_sleep", lambda _s: None)
     fetch_side = _worktree_subprocess_side_effect(
         repo,
@@ -104,7 +104,7 @@ def test_check_returns_transient_exhausted_violation(tmp_path: Path, monkeypatch
     repo = tmp_path / "wt"
     _init_git_repo(repo)
     gate = wt.BaseFreshnessGate(repo, "main")
-    monkeypatch.setenv("P0_FETCH_LOCK_WAIT", "0")
+    monkeypatch.setenv("ISSUESMITH_FETCH_LOCK_WAIT", "0")
     monkeypatch.setattr(wt_mod, "_sleep", lambda _s: None)
     fetch_side = _worktree_subprocess_side_effect(
         repo,
@@ -123,7 +123,7 @@ def test_check_returns_fetch_failed_for_non_transient(tmp_path: Path, monkeypatc
     repo = tmp_path / "wt"
     _init_git_repo(repo)
     gate = wt.BaseFreshnessGate(repo, "main")
-    monkeypatch.setenv("P0_FETCH_LOCK_WAIT", "0")
+    monkeypatch.setenv("ISSUESMITH_FETCH_LOCK_WAIT", "0")
     fetch_side = _worktree_subprocess_side_effect(
         repo,
         fetch_results=[(1, "fatal: could not read Username")],
@@ -152,7 +152,7 @@ def test_m1_check_matches_base_freshness_fetch_outcomes(tmp_path: Path, monkeypa
         capture_output=True,
     )
     gate = VersionBehindBaseGate(repo, "main")
-    monkeypatch.setenv("P0_FETCH_LOCK_WAIT", "0")
+    monkeypatch.setenv("ISSUESMITH_FETCH_LOCK_WAIT", "0")
     monkeypatch.setattr(wt_mod, "_sleep", lambda _s: None)
 
     fetch_side = _worktree_subprocess_side_effect(

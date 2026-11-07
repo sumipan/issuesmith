@@ -23,7 +23,7 @@ commands:
   queue  deps  tier  comments  gh
   engine  dispatch  publish  labels  doctor  smoke  gen-live  version-bump
   resume --from <step> | --phase <phase>
-  recover  redispatch  convert-to-milestone
+  redispatch  convert-to-milestone
   milestone  status / resume / prune / consolidate <child> --into <sibling>
   config show
   observe [--apply] [--json]
@@ -51,12 +51,10 @@ def _run_gate_preflight(argv: list[str]) -> int:
     return 0
 
 
-def _legacy_gate_module(gate_id: str):
-    mod_name = f"issuesmith.{gate_id}_gate"
-    try:
-        return importlib.import_module(mod_name)
-    except ImportError:
-        return None
+_ISSUE_GATE_ENTRIES = {
+    "design_lint": "issuesmith.design_lint_entry",
+    "ac_complete": "issuesmith.ac_complete_entry",
+}
 
 
 def _cmd_gate(argv: list[str]) -> int:
@@ -70,15 +68,17 @@ def _cmd_gate(argv: list[str]) -> int:
         return _run_gate_preflight(["--gate", gate_name, *rest])
 
     if rest and not rest[0].startswith("-"):
-        legacy = _legacy_gate_module(gate_name)
-        if legacy is None:
+        mod_name = _ISSUE_GATE_ENTRIES.get(gate_name)
+        if mod_name is None:
             print(
-                f"gate {gate_name}: no gate module issuesmith.{gate_name}_gate",
+                f"gate {gate_name}: issue-number form supports: "
+                f"{', '.join(sorted(_ISSUE_GATE_ENTRIES))}",
                 file=sys.stderr,
             )
             return 2
-        sys.argv = [f"issuesmith.{gate_name}_gate", *rest]
-        legacy.main()
+        gate_mod = importlib.import_module(mod_name)
+        sys.argv = [mod_name, *rest]
+        gate_mod.main()
         return 0
 
     # Explicit preflight-style flags after gate name
@@ -273,18 +273,6 @@ def _cmd_resume(argv: list[str]) -> int:
             return 2
         kwargs["force"] = True
     return _cmd_resume_fn(args.issue, **kwargs)
-
-
-def _cmd_recover(argv: list[str]) -> int:
-    import warnings
-    warnings.warn(
-        "issuesmith recover is deprecated; use 'issuesmith resume --from <step>' instead",
-        FutureWarning,
-        stacklevel=2,
-    )
-    from issuesmith.recovery import main as recovery_main
-
-    return int(recovery_main(["recover", *argv]))
 
 
 def _cmd_redispatch(argv: list[str]) -> int:
@@ -607,7 +595,6 @@ _HANDLERS = {
     "gen-live": _cmd_gen_live,
     "version-bump": _cmd_version_bump,
     "resume": _cmd_resume,
-    "recover": _cmd_recover,
     "redispatch": _cmd_redispatch,
     "convert-to-milestone": _cmd_convert_to_milestone,
     "milestone": _cmd_milestone,

@@ -74,8 +74,10 @@ def test_plan_returns_recover_when_prerequisites_intact(repo_layout: Path, monke
     assert plan.action == "recover"
     assert plan.blocked_by is None
     assert plan.required_labels == frozenset()
-    assert "recover" in plan.command
+    assert "resume" in plan.command
+    assert "--from" in plan.command
     assert "cp2" in plan.command
+    assert "recover" not in plan.command
 
 
 def test_plan_returns_redispatch_when_worktree_missing(repo_layout: Path, monkeypatch) -> None:
@@ -220,7 +222,7 @@ def test_plan_to_json_roundtrip() -> None:
     plan = recovery.Plan(
         action="recover",
         reason="test",
-        command="issuesmith recover 1 --from cp2",
+        command="python3 -m issuesmith resume 1 --from cp2",
         required_labels=frozenset(),
         blocked_by=None,
     )

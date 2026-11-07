@@ -216,7 +216,7 @@ def _prerequisites_intact(issue: int, handler: str) -> tuple[bool, str]:
 
 
 def _recover_command(issue: int, failed_step: str) -> str:
-    return f"python3 -m issuesmith recover {issue} --from {failed_step}"
+    return f"python3 -m issuesmith resume {issue} --from {failed_step}"
 
 
 def _redispatch_command(issue: int, phase: str, reason: str | None = None) -> str:
@@ -355,39 +355,6 @@ def _run_ghdag_recover(
     return int(proc.returncode)
 
 
-def cmd_recover(
-    issue: int,
-    *,
-    from_step: str | None = None,
-    dry_run: bool = False,
-    as_json: bool = False,
-    labels: set[str] | None = None,
-) -> int:
-    import warnings
-    warnings.warn(
-        "issuesmith recover is deprecated; use 'issuesmith resume --from <step>' instead",
-        FutureWarning,
-        stacklevel=2,
-    )
-    if dry_run or as_json:
-        # dry-run / json paths do not perform recovery; keep existing behaviour
-        label_set = labels or set()
-        failed_step = from_step or "cp2"
-        plan_obj = plan(issue, failed_step, label_set)
-        if as_json:
-            print(plan_to_json(plan_obj))
-            if dry_run:
-                for step in list_recover_steps(issue, failed_step, from_step=from_step):
-                    print(step)
-            return 0
-        steps = list_recover_steps(issue, failed_step, from_step=from_step)
-        for step in steps:
-            print(step)
-        return 0
-    from issuesmith.resume import resume
-    return resume(issue, from_step=from_step or "cp2")
-
-
 def cmd_redispatch(
     issue: int,
     *,
@@ -452,12 +419,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="issuesmith.recovery")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_recover = sub.add_parser("recover")
-    p_recover.add_argument("issue", type=int)
-    p_recover.add_argument("--from", dest="from_step", default=None)
-    p_recover.add_argument("--dry-run", action="store_true")
-    p_recover.add_argument("--json", action="store_true")
-
     p_redispatch = sub.add_parser("redispatch")
     p_redispatch.add_argument("issue", type=int)
     p_redispatch.add_argument(
@@ -474,13 +435,6 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.command == "recover":
-        return cmd_recover(
-            args.issue,
-            from_step=args.from_step,
-            dry_run=args.dry_run,
-            as_json=args.json,
-        )
     if args.command == "redispatch":
         return cmd_redispatch(
             args.issue,
