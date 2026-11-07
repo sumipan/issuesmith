@@ -220,7 +220,7 @@ Ledger keys: `lanes` (lane name to Issue numbers), `hold`, `backlog`, `auto_lane
 | `issuesmith.scope_gate` | `ScopeMeasure`, `ScopeVerdict`, `evaluate`, `format_comment`, `measure_scope`, `override_from_metadata`, `parse_allow_paths_from_ctx`, `record_p0_trip_metric`, `resolve_scope_root` |
 | `issuesmith.pr_scope` | `DEFAULT_FORBIDDEN_PR_PATHS`, `DIFF_LINES_FALLBACK`, `DerivedAllowPathsError`, `allow_paths_from_issue_body`, `check_pr_diff_scope`, `check_pr_scope_with_derived`, `derived_allow_paths_from_result`, `filenames_from_pr_files`, `find_pr_for_branch`, `normalize_allow_path`, `pr_diff_lines`, `unchecked_ac_count` |
 | `issuesmith.ac_contract` | `GateMaterializationError`, `materialize_gate_root`, `cleanup_gate_root`, `dual_gate_roots`, `extract_contract_from_body`, `run_checks`, `contract_failures`, `pending_manual_checks`, `is_invalid_contract_path`, `normalize_reference_entry`, `extract_key_path_values`, `manual_check_description`, `KNOWN_POST_MERGE_KINDS`, `POST_MERGE_REQUIRED_FIELDS` |
-| `issuesmith.gate_rules.b1_milestone_subdesign` | `B1MilestoneSubdesignRules`, `extract_sub_blocks`, `infer_sub_dependencies`, `find_dependency_cycles`, `apply_inferred_dependency_fixes`, `apply_sub_plan_dep_format_fixes`, `change_rows_with_content` |
+| `issuesmith.gate_rules.milestone_subdesign_rules` | `MilestoneSubdesignRules` (legacy alias `B1MilestoneSubdesignRules`; legacy module `gate_rules.b1_milestone_subdesign`), `extract_sub_blocks`, `infer_sub_dependencies`, `find_dependency_cycles`, `apply_inferred_dependency_fixes`, `apply_sub_plan_dep_format_fixes`, `change_rows_with_content` |
 
 Gate ids usable in `steps.*.requires`: `ac_complete`, `ac_contract`, `ac_format`, `allow_paths_forbidden`, `base_freshness`, `deps`, `deps_format`, `design_lint`, `external_leak`, `importer_import`, `lint`, `migration_plan`, `milestone_consistency`, `milestone_subdesign`, `pin_bump`, `pr_scope`, `scope`, `scope_breadth`, `scope_coupling`, `scope_size`, `tests` (`GATE_REGISTRY`), plus `review` (`STEP_BOUND_GATES`; needs `steps.<id>.review`). A `module.path:attr` reference loads an external gate.
 
@@ -304,7 +304,7 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/__init__.py` | Package marker; empty `__all__` |
 | `issuesmith/__main__.py` | `python3 -m issuesmith`: handles `andon` and `labels`, then calls `cli.main` |
 | `issuesmith/ac_contract.py` | Extract and run the acceptance-criteria YAML contract |
-| `issuesmith/ac_complete_entry.py` | `ac_complete` gate CLI and library entry (delegates to `gate_rules/m2.py`) |
+| `issuesmith/ac_complete_entry.py` | `ac_complete` gate CLI and library entry (rules in `gate_rules/ac_complete_rules.py`) |
 | `issuesmith/andon.py` | Andons (typed stop-the-line signals in Issue comments) and auto-answer rules |
 | `issuesmith/b1_verify.py` | Deterministic Verify of B1 output and deterministic recovery |
 | `issuesmith/body_editor.py` | Issue body editing (ghdag `body_editor` plus milestone normalizers) |
@@ -315,7 +315,7 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/contract.py` | Step contract types and Issue-body section parsers |
 | `issuesmith/convert_to_milestone.py` | Move an Issue back to the milestone path |
 | `issuesmith/cp1_gate.py` | Compatibility shim re-exporting `design_lint_entry` |
-| `issuesmith/design_lint_entry.py` | `design_lint` gate CLI and library entry (delegates to `gate_rules/cp1.py`) |
+| `issuesmith/design_lint_entry.py` | `design_lint` gate CLI and library entry (rules in `gate_rules/design_lint_rules.py`) |
 | `issuesmith/dep_extractor.py` | Dependency extraction and checks |
 | `issuesmith/engine.py` | LLM role switcher, `run-guarded`, `run-verified`, rate-limit pause and engine wait |
 | `issuesmith/forge_api.py` | Typed raw REST calls on forge clients |
@@ -346,7 +346,7 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/gates/base.py` | `Gate` protocol and `ContractInput` |
 | `issuesmith/gates/dep.py` | Dependency gate |
 | `issuesmith/gates/m1.py` | M1 version-behind-base gate |
-| `issuesmith/gates/m2.py` | M2 gate |
+| `issuesmith/gates/m2.py` | Compatibility shim for `gates/ac_complete.py` |
 | `issuesmith/gates/pr_scope.py` | PR scope gate |
 | `issuesmith/gates/review.py` | `review` gate: runs `steps.<id>.review` through `run-guarded` and maps its problems to violations |
 | `issuesmith/gates/scope.py` | Scope gate |
