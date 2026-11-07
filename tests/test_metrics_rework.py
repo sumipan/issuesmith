@@ -262,6 +262,12 @@ class TestConfig:
         with pytest.raises(ConfigError, match="metrics.done_step"):
             compute(METRICS_FIXTURE, config=get_config())
 
+    def test_null_done_step_is_undeclared(self, tmp_path, monkeypatch):
+        _write_config(
+            tmp_path, monkeypatch, {"repo": "example/app", "metrics": {"done_step": None}}
+        )
+        assert load_config().metrics.done_step is None
+
     def test_cause_targets_normalize_legacy_prefix(self, tmp_path, monkeypatch):
         _minimal_config(
             tmp_path,

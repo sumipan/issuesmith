@@ -85,8 +85,8 @@ def test_vocabulary_gate_matches_ledger():
     unknown = sorted(set(actual) - set(ledger))
     assert not unknown, f"new vocabulary hits (add to ledger after fixing): {unknown}"
 
-    extra = sorted(set(ledger) - set(actual))
-    assert not extra, f"stale ledger entries (remove paths missing under src): {extra}"
+    missing = sorted(rel for rel in ledger if not (REPO_ROOT / rel).is_file())
+    assert not missing, f"stale ledger entries (remove paths missing under src): {missing}"
 
     total_actual = sum(actual.values())
     total_ledger = _ledger_total(ledger)

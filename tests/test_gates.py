@@ -654,6 +654,7 @@ def test_legacy_gate_modules_are_shims() -> None:
 
     assert cp1 is design_lint
     assert m2 is ac_complete
+    assert gates_m2 is gates_ac
     assert gates_m2.check_m2 is gates_ac.check_ac_complete
 
     from issuesmith.gates.m2 import check_m2  # noqa: F401

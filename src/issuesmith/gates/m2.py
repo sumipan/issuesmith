@@ -1,10 +1,9 @@
-"""M2 gate shim — re-exports ac-complete gate under legacy module path."""
+"""gates/m2.py — compatibility shim for issuesmith.gates.ac_complete."""
 
 from __future__ import annotations
 
-from issuesmith.ac_complete_entry import check_gate
-from issuesmith.gates.ac_complete import check_ac_complete
+import sys
 
-check_m2 = check_ac_complete
+import issuesmith.gates.ac_complete as _entry
 
-__all__ = ["check_m2", "check_ac_complete", "check_gate"]
+sys.modules[__name__] = _entry

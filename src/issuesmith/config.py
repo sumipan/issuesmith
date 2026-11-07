@@ -1168,7 +1168,8 @@ def _build_metrics(raw: Mapping[str, Any] | None) -> MetricsConfig:
             f"metrics supports only {sorted(allowed)}; unknown keys: {unknown}"
         )
     if "done_step" in raw:
-        done_step = str(raw.get("done_step")).strip() or None
+        done_raw = raw.get("done_step")
+        done_step = None if done_raw is None else (str(done_raw).strip() or None)
     else:
         done_step = defaults.done_step
     if "repair_templates" in raw:
