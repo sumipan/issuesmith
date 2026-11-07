@@ -7,31 +7,31 @@ issuesmith is a toolkit for GitHub Issue workflows driven by labels, built on [g
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.169.2-blue)
+![version](https://img.shields.io/badge/version-v0.172.0-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.169.2** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.172.0** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.169.2"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.172.0"
 ```
 
 The gates, forge access, `observe`, `andon`, `lanes` and `metrics` import ghdag, so install the `ghdag` extra unless another package already provides ghdag. The base package alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.169.2"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.172.0"
 ```
 
 | Item | Value |
 |---|---|
 | Python | `>=3.10` (tested on 3.10, 3.11, 3.12) |
 | Runtime dependencies | `pyyaml`, `ruamel.yaml`, `packaging`, `python-dotenv` |
-| `[ghdag]` extra | `ghdag @ git+https://github.com/sumipan/ghdag.git@v0.106.2` |
-| `[dev]` extra | `pytest`, `pytest-cov`, `mypy`, `ruff`, ghdag `v0.106.2` |
+| `[ghdag]` extra | `ghdag @ git+https://github.com/sumipan/ghdag.git@v0.112.0` |
+| `[dev]` extra | `pytest`, `pytest-cov`, `mypy`, `ruff`, ghdag `v0.112.0` |
 | Console script | `issuesmith` (`issuesmith.cli:main`) |
 
 See [TESTING.md](./TESTING.md) for what tests should and should not pin.
@@ -200,7 +200,7 @@ Ledger keys: `lanes` (lane name to Issue numbers), `hold`, `backlog`, `auto_lane
 
 | Module | Symbols |
 |---|---|
-| `issuesmith.gates` | `Verdict`, `GateBuildContext`, `GateBuildError`, `GateEntry`, `RequiresGate`, `GATE_REGISTRY`, `resolve_gate`, `validate_step_requires`, `check_scope`, `check_pr_scope`, `check_m2`, `check_deps` |
+| `issuesmith.gates` | `Verdict`, `GateBuildContext`, `GateBuildError`, `GateEntry`, `RequiresGate`, `GATE_REGISTRY`, `NON_REPAIRABLE_RULE_IDS`, `is_non_repairable_rule_id`, `resolve_gate`, `validate_step_requires`, `check_scope`, `check_pr_scope`, `check_m2`, `check_ac_complete`, `check_deps` |
 | `issuesmith.gates.ac_contract` | `AcContractGate` |
 | `issuesmith.gates.base` | `ContractInput`, `Gate` |
 | `issuesmith.gates.dep` | `check_deps`, `DepsGate`, `dependents_of`, `on_dep_merge_done` |
@@ -209,8 +209,13 @@ Ledger keys: `lanes` (lane name to Issue numbers), `hold`, `backlog`, `auto_lane
 | `issuesmith.gates.pr_scope` | `check_pr_scope`, `PrScopeGate` |
 | `issuesmith.gates.review` | `ReviewGate`, `build_review_gate` |
 | `issuesmith.gates.scope` | `check_scope`, `ScopeGate` |
+| `issuesmith.gates.ac_complete` | `check_ac_complete`, `check_m2` |
 | `issuesmith.gates.worktree` | `LintGate`, `TestsGate`, `ExternalLeakGate`, `BaseFreshnessGate`, `WORKTREE_GATES`, `changed_files`, `derive_static_test_allow_paths`, `derive_static_ledger_allow_paths`, `derive_test_allow_paths`, `derive_ledger_allow_paths`, `check_derived_test_guard`, `line_has_cjk`, `cjk_added_lines`, `external_target_state`, `is_external_target` |
-| `issuesmith.m2_gate` | `has_acceptance_criteria_section`, `get_unchecked_count`, `check_gate`, `check_gate_multi_root`, `synthesize_contract_failures`, `main` |
+| `issuesmith.ac_complete_entry` | `has_acceptance_criteria_section`, `get_unchecked_count`, `check_gate`, `check_gate_multi_root`, `synthesize_contract_failures`, `main` |
+| `issuesmith.m2_gate` | Compatibility shim (same symbols as `ac_complete_entry`) |
+| `issuesmith.design_lint_entry` | `check_gate`, `main` |
+| `issuesmith.cp1_gate` | Compatibility shim (same symbols as `design_lint_entry`) |
+| `issuesmith.rule_ids` | `RULE_ID_ALIASES`, `normalize_rule_id`, `rule_id_matches` |
 | `issuesmith.repair` | `RequiresResult`, `evaluate_requires`, `apply_auto_fixes`, `record_metrics` |
 | `issuesmith.scope_gate` | `ScopeMeasure`, `ScopeVerdict`, `evaluate`, `format_comment`, `measure_scope`, `override_from_metadata`, `parse_allow_paths_from_ctx`, `record_p0_trip_metric`, `resolve_scope_root` |
 | `issuesmith.pr_scope` | `DEFAULT_FORBIDDEN_PR_PATHS`, `DIFF_LINES_FALLBACK`, `DerivedAllowPathsError`, `allow_paths_from_issue_body`, `check_pr_diff_scope`, `check_pr_scope_with_derived`, `derived_allow_paths_from_result`, `filenames_from_pr_files`, `find_pr_for_branch`, `normalize_allow_path`, `pr_diff_lines`, `unchecked_ac_count` |
@@ -299,6 +304,7 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/__init__.py` | Package marker; empty `__all__` |
 | `issuesmith/__main__.py` | `python3 -m issuesmith`: handles `andon` and `labels`, then calls `cli.main` |
 | `issuesmith/ac_contract.py` | Extract and run the acceptance-criteria YAML contract |
+| `issuesmith/ac_complete_entry.py` | `ac_complete` gate CLI and library entry (delegates to `gate_rules/m2.py`) |
 | `issuesmith/andon.py` | Andons (typed stop-the-line signals in Issue comments) and auto-answer rules |
 | `issuesmith/b1_verify.py` | Deterministic Verify of B1 output and deterministic recovery |
 | `issuesmith/body_editor.py` | Issue body editing (ghdag `body_editor` plus milestone normalizers) |
@@ -308,27 +314,34 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/context_hook.py` | ghdag context hook and Issue YAML metadata parsing |
 | `issuesmith/contract.py` | Step contract types and Issue-body section parsers |
 | `issuesmith/convert_to_milestone.py` | Move an Issue back to the milestone path |
-| `issuesmith/cp1_gate.py` | CP1 pattern gate entry point |
+| `issuesmith/cp1_gate.py` | Compatibility shim re-exporting `design_lint_entry` |
+| `issuesmith/design_lint_entry.py` | `design_lint` gate CLI and library entry (delegates to `gate_rules/cp1.py`) |
 | `issuesmith/dep_extractor.py` | Dependency extraction and checks |
 | `issuesmith/engine.py` | LLM role switcher, `run-guarded`, `run-verified`, rate-limit pause and engine wait |
 | `issuesmith/forge_api.py` | Typed raw REST calls on forge clients |
 | `issuesmith/forge_guard.py` | Label-write guard for step dispatch |
 | `issuesmith/gate_rules/__init__.py` | Imports every rule module to fill ghdag's gate registry |
 | `issuesmith/gate_rules/README.md` | GateRule protocol, Violation shape and host extension guide |
+| `issuesmith/gate_rules/ac_complete_rules.py` | `ac_complete` gate rules (M2 merge readiness) |
+| `issuesmith/gate_rules/ac_format_rules.py` | `ac_format` gate rules |
 | `issuesmith/gate_rules/allow_paths_forbidden.py` | allow_paths vs forbidden_pr_paths overlap (pre-LLM) |
-| `issuesmith/gate_rules/b1_ac_format.py` | Acceptance-criteria YAML format rules |
-| `issuesmith/gate_rules/b1_migration.py` | Migration plan rules |
-| `issuesmith/gate_rules/b1_milestone_subdesign.py` | Milestone sub-design rules and dependency inference |
+| `issuesmith/gate_rules/b1_ac_format.py` | Compatibility shim for `ac_format_rules` |
+| `issuesmith/gate_rules/b1_migration.py` | Compatibility shim for `migration_plan_rules` |
+| `issuesmith/gate_rules/b1_milestone_subdesign.py` | Compatibility shim for `milestone_subdesign_rules` |
 | `issuesmith/gate_rules/change_table_scope.py` | Change-table path scope vs allow_paths / host_allow_paths |
-| `issuesmith/gate_rules/cp1.py` | CP1 design rules |
+| `issuesmith/gate_rules/cp1.py` | Compatibility shim for `design_lint_rules` |
 | `issuesmith/gate_rules/deps_format.py` | Dependencies section format: unparsed `#N` refs without forge calls |
-| `issuesmith/gate_rules/m2.py` | M2 merge rules |
+| `issuesmith/gate_rules/design_lint_rules.py` | `design_lint` / CP1 design rules |
+| `issuesmith/gate_rules/m2.py` | Compatibility shim for `ac_complete_rules` |
+| `issuesmith/gate_rules/migration_plan_rules.py` | `migration_plan` gate rules |
+| `issuesmith/gate_rules/milestone_subdesign_rules.py` | `milestone_subdesign` gate rules and dependency inference |
 | `issuesmith/gate_rules/milestone_consistency.py` | Split plan without the `scope:milestone` label |
 | `issuesmith/gate_rules/pin_bump.py` | Reject dependency pin changes in feature Issues |
 | `issuesmith/gate_rules/scope_breadth.py` | allow_paths breadth rules |
 | `issuesmith/gate_rules/scope_coupling.py` | Caller / test coupling and deletion reference rules |
 | `issuesmith/gate_rules/scope_size.py` | Issue size rules and promotion of oversized Issues to sub plans |
 | `issuesmith/gates/__init__.py` | Unified gate API: `GATE_REGISTRY`, `resolve_gate`, `validate_step_requires` |
+| `issuesmith/gates/ac_complete.py` | `check_ac_complete` wrapper around `ac_complete_entry.check_gate` |
 | `issuesmith/gates/ac_contract.py` | Worktree gate: acceptance contract `paths_must_exist` / `paths_must_not_exist` |
 | `issuesmith/gates/base.py` | `Gate` protocol and `ContractInput` |
 | `issuesmith/gates/dep.py` | Dependency gate |
@@ -342,7 +355,7 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/lanes.py` | Lane ledger planning: capacity, candidates, enqueue and patrol report |
 | `issuesmith/lang/en.yaml` | English messages for `context_hook` metadata validation |
 | `issuesmith/language.py` | Language packs |
-| `issuesmith/m2_gate.py` | M2 acceptance-criteria gate entry point |
+| `issuesmith/m2_gate.py` | Compatibility shim re-exporting `ac_complete_entry` |
 | `issuesmith/merge.py` | PR merge and verification helpers |
 | `issuesmith/metrics_events.py` | Metrics JSONL event writers |
 | `issuesmith/metrics_rework.py` | Rework metrics (`metrics rework`) |
@@ -374,6 +387,7 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/recovery.py` | Deprecated `recover` / `redispatch` |
 | `issuesmith/repair.py` | `requires` evaluation and repair orchestration |
 | `issuesmith/resume.py` | `resume` entry point |
+| `issuesmith/rule_ids.py` | Legacy rule id alias normalization (`cp1`→`design_lint`, `m2`→`ac_complete`, …) |
 | `issuesmith/scope_gate.py` | allow_paths scope measurement |
 | `issuesmith/step_tier.py` | Config-driven tier CLI backend for `steps.<id>.tier` |
 | `issuesmith/step_verify.py` | Config-driven verify CLI backend for `steps.<id>.verify: design_doc` |
