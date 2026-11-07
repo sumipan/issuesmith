@@ -100,19 +100,6 @@ def test_main_undeclared_step_returns_rc2(tmp_path, monkeypatch):
     assert "not declared" in err.getvalue()
 
 
-def test_b1_tier_module_still_delegates():
-    from issuesmith.b1_tier import determine_b1_tier
-
-    assert determine_b1_tier("## Design\n\nx\n") == "heavy"
-
-
-def test_cp2_tier_module_still_delegates():
-    from issuesmith.cp2_tier import determine_cp2_tier
-
-    assert determine_cp2_tier(199, 0, True) == "light"
-    assert determine_cp2_tier(200, 0, True) == "heavy"
-
-
 def test_config_unknown_tier_kind_raises(tmp_path, monkeypatch):
     _write_config(
         tmp_path,
@@ -126,7 +113,7 @@ def test_config_unknown_tier_kind_raises(tmp_path, monkeypatch):
         load_config()
 
 
-def test_legacy_tier_cli_emits_deprecation(tmp_path, monkeypatch):
+def test_cli_tier_undeclared_returns_rc2_without_deprecation(tmp_path, monkeypatch):
     body_file = tmp_path / "body.md"
     body_file.write_text("## Overview\n", encoding="utf-8")
     _write_config(
@@ -146,6 +133,6 @@ def test_legacy_tier_cli_emits_deprecation(tmp_path, monkeypatch):
         check=False,
         warn_default=True,
     )
-    assert "deprecated" in proc.stderr.lower()
-    assert proc.returncode == 0
-    assert proc.stdout.strip() == "light"
+    assert proc.returncode == 2
+    assert "not declared" in proc.stderr
+    assert "DeprecationWarning" not in proc.stderr

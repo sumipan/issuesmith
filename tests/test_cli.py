@@ -108,9 +108,9 @@ def test_gate_alias_matches_gate_preflight(tmp_path: Path) -> None:
     cfg_env = {"ISSUESMITH_CONFIG": str(_subprocess_config_path(tmp_path))}
 
     old = _run_module(
-        "gate-preflight", "--gate", "cp1", "--body-file", str(body), extra_env=cfg_env
+        "gate-preflight", "--gate", "design_lint", "--body-file", str(body), extra_env=cfg_env
     )
-    new = _run_module("gate", "cp1", "--body-file", str(body), extra_env=cfg_env)
+    new = _run_module("gate", "design_lint", "--body-file", str(body), extra_env=cfg_env)
     assert old.returncode == 0, old.stderr
     assert new.returncode == 0, new.stderr
     assert json.loads(old.stdout) == json.loads(new.stdout)
@@ -169,34 +169,16 @@ def test_resume_in_usage() -> None:
     standalone = [ln for ln in lines if "resume" in ln and "milestone" not in ln]
     assert standalone, "resume not listed as standalone command in _USAGE"
 
-def test_cp1_gate_alias_emits_deprecation(tmp_path: Path) -> None:
+def test_cli_verify_undeclared_returns_rc2_without_deprecation(tmp_path: Path) -> None:
     cfg_env = {"ISSUESMITH_CONFIG": str(_subprocess_config_path(tmp_path))}
     proc = _run_module(
-        "cp1-gate",
+        "verify",
+        "b1",
         "1",
         extra_env=cfg_env,
         check=False,
         warn_default=True,
     )
-    assert "deprecated" in proc.stderr.lower()
-    assert proc.returncode in (0, 1, 2)
-
-
-def test_legacy_cp2_tier_matches_declared_path(tmp_path: Path) -> None:
-    cfg_env = {"ISSUESMITH_CONFIG": str(_subprocess_config_path(tmp_path))}
-    proc = _run_module(
-        "tier",
-        "cp2",
-        "--diff-lines",
-        "10",
-        "--unchecked-ac",
-        "0",
-        "--p2-all-pass",
-        "true",
-        extra_env=cfg_env,
-        check=False,
-        warn_default=True,
-    )
-    assert "deprecated" in proc.stderr.lower()
-    assert proc.returncode == 0
-    assert proc.stdout.strip() == "light"
+    assert proc.returncode == 2
+    assert "not declared" in proc.stderr
+    assert "DeprecationWarning" not in proc.stderr

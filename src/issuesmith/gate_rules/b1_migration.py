@@ -282,4 +282,4 @@ class B1MigrationRules:
         return violations
 
 
-GATE_REGISTRY["b1_migration"] = B1MigrationRules
+GATE_REGISTRY["migration_plan"] = B1MigrationRules

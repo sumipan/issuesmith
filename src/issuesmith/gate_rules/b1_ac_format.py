@@ -225,4 +225,4 @@ class B1AcFormatRules:
         return violations
 
 
-GATE_REGISTRY["b1_ac_format"] = B1AcFormatRules
+GATE_REGISTRY["ac_format"] = B1AcFormatRules

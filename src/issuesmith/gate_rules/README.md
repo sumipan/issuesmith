@@ -45,7 +45,7 @@ Hosts decide on `rule_id`; `message` and `fix_hint` are English literals. Text a
 GATE_REGISTRY: dict[str, type[GateRule]] = {}
 ```
 
-Keys are gate names (`"cp1"`, `"m2"`, ...); values are classes implementing `GateRule` (the class itself, not an instance).
+Keys are gate names (`"design_lint"`, `"ac_complete"`, ...); values are classes implementing `GateRule` (the class itself, not an instance).
 
 The end of `gate_rules/__init__.py` imports every gate module; registration in `GATE_REGISTRY` happens as an import side effect.
 

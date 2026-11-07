@@ -99,7 +99,7 @@ def test_labels_param_not_used():
 
 def test_gate_registry_registered():
     import issuesmith.gate_rules.m2  # noqa: F401 — ensure module loaded
-    assert GATE_REGISTRY.get("m2") is M2Rules
+    assert GATE_REGISTRY.get("ac_complete") is M2Rules
 
 
 def test_messages_name_the_configured_section():

@@ -33,15 +33,15 @@ _verify_issue_number: contextvars.ContextVar[int | None] = contextvars.ContextVa
 )
 
 _GATES = (
-    "cp1",
+    "design_lint",
     "deps_format",
-    "b1_ac_format",
-    "b1_migration",
+    "ac_format",
+    "migration_plan",
     "milestone_consistency",
     "scope_breadth",
     "scope_coupling",
     "scope_size",
-    "b1_milestone_subdesign",
+    "milestone_subdesign",
     "pin_bump",
     "change_table_scope",
     "allow_paths_forbidden",

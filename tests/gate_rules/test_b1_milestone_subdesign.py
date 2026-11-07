@@ -14,7 +14,7 @@ _TABLE_HEADER = f"{REPOSITORY} | {FILE_PATH} | {CHANGE_TYPE} | {DESCRIPTION}"
 
 
 def _check(body: str, labels: list[str]):
-    gate = GATE_REGISTRY["b1_milestone_subdesign"]()
+    gate = GATE_REGISTRY["milestone_subdesign"]()
     return gate.check(body, labels)
 
 
@@ -310,7 +310,7 @@ def test_repo_mismatch_auto_fixable():
 
 
 def test_registered_in_gate_registry():
-    assert "b1_milestone_subdesign" in GATE_REGISTRY
+    assert "milestone_subdesign" in GATE_REGISTRY
 
 
 def test_milestone30_drift_detects_multiple_categories():

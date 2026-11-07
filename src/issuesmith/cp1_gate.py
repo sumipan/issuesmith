@@ -67,7 +67,7 @@ def check_gate(body: str, labels: list[str] | None = None) -> dict:
 
 
 def main() -> None:
-    """CLI: python -m issuesmith cp1-gate <issue_number>"""
+    """CLI: python -m issuesmith gate cp1 <issue_number>"""
     issue_number = int(sys.argv[1])
 
     forge = get_forge()

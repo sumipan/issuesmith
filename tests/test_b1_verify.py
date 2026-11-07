@@ -116,7 +116,7 @@ _PROMOTED_MILESTONE_BODY = _VALID_BODY + (
 def test_milestone_subdesign_gate_is_registered():
     from issuesmith.b1_verify import _GATES
 
-    assert "b1_milestone_subdesign" in _GATES
+    assert "milestone_subdesign" in _GATES
 
 
 def test_pin_bump_gate_is_registered():
@@ -491,7 +491,13 @@ def test_verify_b1_cli_applies_deterministic_recovery_by_default(
 
     cfg_path = tmp_path / "issuesmith.yaml"
     cfg_path.write_text(
-        yaml.safe_dump({"repo": "sumipan/nexus", "scope_gate": {"enabled": False}}),
+        yaml.safe_dump(
+            {
+                "repo": "sumipan/nexus",
+                "scope_gate": {"enabled": False},
+                "steps": {"b1": {"verify": "design_doc"}},
+            }
+        ),
         encoding="utf-8",
     )
     monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))

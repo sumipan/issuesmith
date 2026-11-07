@@ -101,11 +101,10 @@ Run a command as `python3 -m issuesmith <command>` or through the `issuesmith` c
 | `gate <name> --body-file F` | Same as `gate-preflight --gate <name> --body-file F` |
 | `gate cp1 <issue>` / `gate m2 <issue>` | Run the CP1 / M2 gate entry points on an Issue |
 | `gate-preflight` | ghdag gate runner (`ghdag.workflow.gates`) with the issuesmith rules registered |
-| `cp1-gate` / `m2-gate` | CP1 pattern gate / M2 acceptance-criteria gate |
-| `verify <step_id>` / `b1-verify` | Deterministic Verify for a step with `steps.<id>.verify: design_doc` (`VERIFY_RECOVERY:` markers; `--prev-report FILE` adds oscillation detection) |
+| `verify <step_id>` | Deterministic Verify for a step with `steps.<id>.verify: design_doc` (`VERIFY_RECOVERY:` markers; `--prev-report FILE` adds oscillation detection) |
 | `queue <subcommand>` | Request queue (see [`queue`](#queue-subcommands)) |
 | `deps` | Extract and check Issue dependencies |
-| `tier <step_id>` | Pick light or heavy model tier when `steps.<id>.tier` is set (`design_doc` or `pr_diff`); legacy `issuesmith.<id>_tier` modules still work with a deprecation warning |
+| `tier <step_id>` | Pick light or heavy model tier when `steps.<id>.tier` is set (`design_doc` or `pr_diff`) |
 | `comments` | Pipeline comment filter |
 | `gh` | Issue / PR helpers on the ghdag forge client, with label and target guards (does not shell out to the `gh` CLI) |
 | `engine <subcommand>` | LLM role switcher and runner (see [`engine`](#engine-subcommands)) |
@@ -218,7 +217,7 @@ Ledger keys: `lanes` (lane name to Issue numbers), `hold`, `backlog`, `auto_lane
 | `issuesmith.ac_contract` | `GateMaterializationError`, `materialize_gate_root`, `cleanup_gate_root`, `dual_gate_roots`, `extract_contract_from_body`, `run_checks`, `contract_failures`, `pending_manual_checks`, `is_invalid_contract_path`, `normalize_reference_entry`, `extract_key_path_values`, `manual_check_description`, `KNOWN_POST_MERGE_KINDS`, `POST_MERGE_REQUIRED_FIELDS` |
 | `issuesmith.gate_rules.b1_milestone_subdesign` | `B1MilestoneSubdesignRules`, `extract_sub_blocks`, `infer_sub_dependencies`, `find_dependency_cycles`, `apply_inferred_dependency_fixes`, `apply_sub_plan_dep_format_fixes`, `change_rows_with_content` |
 
-Gate ids usable in `steps.*.requires`: `ac_complete`, `ac_contract`, `ac_format`, `allow_paths_forbidden`, `b1_ac_format`, `b1_migration`, `b1_milestone_subdesign`, `base_freshness`, `cp1`, `deps`, `deps_format`, `design_lint`, `external_leak`, `importer_import`, `lint`, `m2`, `migration_plan`, `milestone_consistency`, `milestone_subdesign`, `pin_bump`, `pr_scope`, `scope`, `scope_breadth`, `scope_coupling`, `scope_size`, `tests` (`GATE_REGISTRY`), plus `review` (`STEP_BOUND_GATES`; needs `steps.<id>.review`). A `module.path:attr` reference loads an external gate. Prefer the concept names (`design_lint`, `ac_complete`, …); old ids remain as deprecated aliases.
+Gate ids usable in `steps.*.requires`: `ac_complete`, `ac_contract`, `ac_format`, `allow_paths_forbidden`, `base_freshness`, `deps`, `deps_format`, `design_lint`, `external_leak`, `importer_import`, `lint`, `migration_plan`, `milestone_consistency`, `milestone_subdesign`, `pin_bump`, `pr_scope`, `scope`, `scope_breadth`, `scope_coupling`, `scope_size`, `tests` (`GATE_REGISTRY`), plus `review` (`STEP_BOUND_GATES`; needs `steps.<id>.review`). A `module.path:attr` reference loads an external gate.
 
 ### Contract, projection and labels
 
@@ -287,10 +286,6 @@ issuesmith is pre-1.0 and follows `0.Y.Z`: a `Y` bump may change or remove publi
 |---|---|
 | `recover` command (emits `FutureWarning`) | `resume <issue> --from <step>` |
 | `redispatch` command (emits `FutureWarning`) | `resume <issue> --phase <phase>` |
-| `cp1-gate` / `m2-gate` CLI (emit `DeprecationWarning`) | `issuesmith gate cp1` / `issuesmith gate m2` |
-| `b1-verify` CLI (emit `DeprecationWarning`) | `issuesmith verify b1` (with `steps.b1.verify: design_doc`) |
-| Gate ids `cp1`, `m2`, `b1_ac_format`, `b1_migration`, `b1_milestone_subdesign` in `steps.*.requires` | `design_lint`, `ac_complete`, `ac_format`, `migration_plan`, `milestone_subdesign` (removed in the next minor) |
-| `issuesmith tier <id>` / `verify <id>` via undeclared `issuesmith.<id>_tier` / `issuesmith.<id>_verify` modules (emit `DeprecationWarning`) | Declare `steps.<id>.tier` / `steps.<id>.verify` in `issuesmith.yaml` and use `issuesmith tier` / `issuesmith verify` |
 | `paths.brake_state` for engine pause / quota dispatch | `paths.quota_state` (legacy `halt*` fields are converted on read and not written back) |
 | `apply` / `ingest-review` commands (exit 2) | The host's `tools/stash/` scripts |
 | `issuesmith.yaml` keys `sections`, `sub_design_subsections`, `scope_size.delete_words` / `new_words` / `sub_plan_header` / `no_deps_word` (emit `DeprecationWarning`) | `language_pack` |
@@ -305,7 +300,6 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/__main__.py` | `python3 -m issuesmith`: handles `andon` and `labels`, then calls `cli.main` |
 | `issuesmith/ac_contract.py` | Extract and run the acceptance-criteria YAML contract |
 | `issuesmith/andon.py` | Andons (typed stop-the-line signals in Issue comments) and auto-answer rules |
-| `issuesmith/b1_tier.py` | B1 model tier selection |
 | `issuesmith/b1_verify.py` | Deterministic Verify of B1 output and deterministic recovery |
 | `issuesmith/body_editor.py` | Issue body editing (ghdag `body_editor` plus milestone normalizers) |
 | `issuesmith/branch_reuse.py` | Find and record reusable branches from earlier runs |
@@ -315,7 +309,6 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/contract.py` | Step contract types and Issue-body section parsers |
 | `issuesmith/convert_to_milestone.py` | Move an Issue back to the milestone path |
 | `issuesmith/cp1_gate.py` | CP1 pattern gate entry point |
-| `issuesmith/cp2_tier.py` | CP2 tier from diff size, AC completion and P2 status |
 | `issuesmith/dep_extractor.py` | Dependency extraction and checks |
 | `issuesmith/engine.py` | LLM role switcher, `run-guarded`, `run-verified`, rate-limit pause and engine wait |
 | `issuesmith/forge_api.py` | Typed raw REST calls on forge clients |
@@ -403,19 +396,14 @@ Gate ids in `GATE_REGISTRY` (usable in `steps.*.requires`). `input_kind` is the 
 | `ac_contract` | worktree | no | yes | Enforce acceptance-contract `paths_must_exist` / `paths_must_not_exist` on the worktree diff |
 | `ac_format` | issue | no | yes | Acceptance-criteria YAML format in the Issue body |
 | `allow_paths_forbidden` | issue | yes | no | allow_paths / host_allow_paths overlap with `forbidden_pr_paths` (no repair loop) |
-| `b1_ac_format` | issue | no | yes | Deprecated alias of `ac_format` |
-| `b1_migration` | issue | no | yes | Deprecated alias of `migration_plan` |
-| `b1_milestone_subdesign` | issue | no | yes | Deprecated alias of `milestone_subdesign` |
 | `base_freshness` | worktree | yes | yes | Worktree includes the configured base branch (P0 fetch / rebase) |
 | `change_table_scope` | issue | no | yes | Change-table paths (target / host rows) stay within allow_paths / host_allow_paths |
-| `cp1` | issue | no | yes | Deprecated alias of `design_lint` |
 | `deps` | issue | no | yes | Declared Issue dependencies are satisfied |
 | `deps_format` | issue | no | yes | Dependencies section lists `#N` refs in table/list form, not prose-only |
 | `design_lint` | issue | no | yes | CP1 design rules |
 | `external_leak` | worktree | no | yes | Persona / CJK leak checks on external `target_repo` branches |
 | `importer_import` | worktree | no | yes | Changed modules remain importable (importer smoke) |
 | `lint` | worktree | no | yes | `ruff check` on changed files (safe auto-fix may narrow scope) |
-| `m2` | issue | no | yes | Deprecated alias of `ac_complete` |
 | `migration_plan` | issue | no | yes | Migration plan rules for B1 |
 | `milestone_consistency` | issue | no | yes | Split plan present without the `scope:milestone` label |
 | `milestone_subdesign` | issue | no | yes | Milestone sub-design blocks, dependency inference and fixes |
