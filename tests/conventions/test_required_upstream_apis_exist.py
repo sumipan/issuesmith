@@ -73,11 +73,11 @@ def test_detects_missing_quota_gate_read_state():
     assert missing == ["ghdag.quota.QuotaGate.read_state"]
 
 
-def test_pyproject_ghdag_pins_v0_114_1():
-    """Pin expectations for sumipan/nexus#6165 (ghdag v0.114.1)."""
+def test_pyproject_ghdag_pins_v0_115_0():
+    """Pin expectations for sumipan/nexus#6172 (ghdag v0.115.0)."""
     pyproject = Path(get_config().root) / "pyproject.toml"
     pins = _GHDAG_PIN_RE.findall(pyproject.read_text(encoding="utf-8"))
-    assert pins == ["0.114.1", "0.114.1"]
+    assert pins == ["0.115.0", "0.115.0"]
 
 
 def test_detects_pinned_ghdag_without_defer():
