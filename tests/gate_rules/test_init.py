@@ -76,12 +76,12 @@ def test_gate_rule_protocol_compliance():
 
 
 def test_legacy_rule_classes_are_aliases_of_concept_rules():
+    from issuesmith.gate_rules.ac_complete_rules import AcCompleteRules, get_unchecked_count
     from issuesmith.gate_rules.b1_milestone_subdesign import (
         B1MilestoneSubdesignRules,
         _sub_plan_dependencies,
         parse_table_rows,
     )
-    from issuesmith.gate_rules.ac_complete_rules import AcCompleteRules, get_unchecked_count
     from issuesmith.gate_rules.cp1 import Cp1Rules
     from issuesmith.gate_rules.design_lint_rules import DesignLintRules
     from issuesmith.gate_rules.m2 import M2Rules

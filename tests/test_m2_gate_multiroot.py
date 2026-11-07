@@ -2,11 +2,11 @@
 
 from pathlib import Path
 
-from issuesmith.ac_contract import run_checks
 from issuesmith.ac_complete_entry import (
     check_gate_multi_root,
     synthesize_contract_failures,
 )
+from issuesmith.ac_contract import run_checks
 
 # ASCII fixture data.
 BODY_ALL_CHECKED = """\

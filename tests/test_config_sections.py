@@ -10,12 +10,12 @@ import yaml
 from issuesmith.ac_contract import extract_contract_from_body
 from issuesmith.config import get_config, load_config, reset_config_cache
 from issuesmith.dep_extractor import extract_dependencies
-from issuesmith.gate_rules.b1_ac_format import get_ac_section
-from issuesmith.gate_rules.b1_milestone_subdesign import B1MilestoneSubdesignRules
 from issuesmith.gate_rules.ac_complete_rules import (
     get_unchecked_count,
     has_acceptance_criteria_section,
 )
+from issuesmith.gate_rules.b1_ac_format import get_ac_section
+from issuesmith.gate_rules.b1_milestone_subdesign import B1MilestoneSubdesignRules
 from issuesmith.m2_gate import has_acceptance_criteria_section as m2_gate_has_section
 from issuesmith.step_tier import design_doc_tier as determine_b1_tier
 
