@@ -19,7 +19,6 @@ from issuesmith.gate_rules.m2 import (
     get_unchecked_count,
     has_acceptance_criteria_section,
 )
-from issuesmith.rule_ids import rule_id_matches
 from issuesmith.targets import targets_from_issue
 
 __all__ = [
@@ -148,9 +147,9 @@ def check_gate_multi_root(
     violations = M2Rules().check(body, labels)
     rule_ids = {v.rule_id for v in violations}
 
-    if any(rule_id_matches(rid, "ac_complete.ac_section_missing") for rid in rule_ids):
+    if "m2.ac_section_missing" in rule_ids:
         base = _proceed_or_contract_retry(body, False, has_migration_label)
-    elif not any(rule_id_matches(rid, "ac_complete.unchecked_ac") for rid in rule_ids):
+    elif "m2.unchecked_ac" not in rule_ids:
         base = _proceed_or_contract_retry(body, True, has_migration_label)
     elif has_migration_label:
         return {
@@ -206,10 +205,10 @@ def check_gate(body: str, labels: list[str], repo_root: Path | None = None) -> d
 
     rule_ids = {v.rule_id for v in violations}
 
-    if any(rule_id_matches(rid, "ac_complete.ac_section_missing") for rid in rule_ids):
+    if "m2.ac_section_missing" in rule_ids:
         return _proceed_or_contract_retry(body, False, has_migration_label, repo_root=repo_root)
 
-    if not any(rule_id_matches(rid, "ac_complete.unchecked_ac") for rid in rule_ids):
+    if "m2.unchecked_ac" not in rule_ids:
         return _proceed_or_contract_retry(body, True, has_migration_label, repo_root=repo_root)
 
     unchecked = get_unchecked_count(body)
