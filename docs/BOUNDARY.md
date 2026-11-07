@@ -26,7 +26,6 @@ nexus ポリシーの典型例: (a) `sumipan/*` リポジトリ名のハード�
 | `__init__.py` | 基盤 | — | パッケージ説明のみ |
 | `__main__.py` | 基盤 | — | CLI エントリ |
 | `ac_contract.py` | 混在 | L95: `受け入れ条件` セクション抽出 regex | 契約実行（paths_must_exist 等）は基盤。見出し文字列の設定化が必要 |
-| `b1_tier.py` | nexus ポリシー | L14: `## 背景・目的` / `## 設計` | ファイル全体が見出しリテラル依存。設定化容易 |
 | `b1_verify.py` | 基盤 | — | gate レジストリのオーケストレーションのみ（`milestone_consistency` 含む） |
 | `body_editor.py` | 基盤 | — | ghdag shim。`normalize_sub_headers` / `relocate_sub_plan` は決定論正規化（#3077） |
 | `cli.py` | 基盤 | — | サブコマンド配線（`convert-to-milestone` 含む） |
@@ -34,7 +33,6 @@ nexus ポリシーの典型例: (a) `sumipan/*` リポジトリ名のハード�
 | `context_hook.py` | 混在 | L294: `## やらないこと` 参照; L16 docstring / worktree パス組み立ては config 経由 | diary / cross-repo 文脈は nexus 寄り。パス自体は config 化済み |
 | `convert_to_milestone.py` | 混在 | develop/sub ラベル名・`scope:milestone`・`NNNN-YYYYMMDD` milestone タイトル | 復旧 CLI。DAG cancel / ラベル / milestone / in_flight / redispatch（#3077） |
 | `cp1_gate.py` | 基盤 | — | `gate_rules.cp1` / `b1_migration` / `milestone_consistency` への薄ラッパ |
-| `cp2_tier.py` | 基盤 | — | diff 行数・AC 未チェック数の閾値判定（見出し非依存） |
 | `dep_extractor.py` | 混在 | L80–81: `依存（先行）` セクション名 | 依存グラフ抽出ロジックは基盤 |
 | `engine.py` | 基盤 | — | LLM role switcher。L47 コメントの `jobs/metrics.jsonl` は説明のみ（実パスは config） |
 | `github_api.py` | 混在 | L8: `draft\|develop\|merge`-ready 禁止 regex; L24: Issue 作成を nexus のみ許可 | ghdag CLI ラッパ。作成先制限は組織ポリシー |
@@ -71,7 +69,6 @@ nexus ポリシーの典型例: (a) `sumipan/*` リポジトリ名のハード�
 src/issuesmith/__init__.py
 src/issuesmith/__main__.py
 src/issuesmith/ac_contract.py
-src/issuesmith/b1_tier.py
 src/issuesmith/b1_verify.py
 src/issuesmith/body_editor.py
 src/issuesmith/cli.py
@@ -79,7 +76,6 @@ src/issuesmith/config.py
 src/issuesmith/context_hook.py
 src/issuesmith/convert_to_milestone.py
 src/issuesmith/cp1_gate.py
-src/issuesmith/cp2_tier.py
 src/issuesmith/dep_extractor.py
 src/issuesmith/engine.py
 src/issuesmith/gate_rules/__init__.py
@@ -136,8 +132,8 @@ src/issuesmith/targets.py
 | 項目 | 現在の定義箇所 | 設定化キー名案 | 既定値 | 参照する消費者モジュール |
 |---|---|---|---|---|
 | 受け入れ条件（H2） | `ac_contract.py` L95; `gate_rules/m2.py` L10/L16; `gate_rules/b1_ac_format.py` L13 | `section_names.acceptance_criteria` | `受け入れ条件` | `ac_contract.py`, `m2_gate.py`, `targets.py`, `gate_rules/b1_migration.py`, `gate_rules/cp1.py`, `steps/m2_finalize.py` |
-| 設計（H2） | `b1_tier.py` L14; `gate_rules/b1_ac_format.py` L28; `gate_rules/b1_milestone_subdesign.py` L45 | `section_names.design` | `設計` | `b1_tier.py`, `gate_rules/b1_ac_format.py`, `gate_rules/b1_milestone_subdesign.py` |
-| 背景・目的（H2） | `b1_tier.py` L14 | `section_names.background` | `背景・目的` | `b1_tier.py` |
+| 設計（H2） | `step_tier.py`; `gate_rules/b1_ac_format.py` L28; `gate_rules/b1_milestone_subdesign.py` L45 | `section_names.design` | `設計` | `step_tier.py`, `gate_rules/b1_ac_format.py`, `gate_rules/b1_milestone_subdesign.py` |
+| 背景・目的（H2） | `step_tier.py` | `section_names.background` | `背景・目的` | `step_tier.py` |
 | 変更対象ファイル | `milestone.py` L46; `gate_rules/b1_milestone_subdesign.py` L9/L87/L128; `gate_rules/cp1.py` L238 | `section_names.change_files` | `変更対象ファイル` | `milestone.py`, `gate_rules/b1_milestone_subdesign.py`, `gate_rules/b1_ac_format.py`, `gate_rules/cp1.py` |
 | やらないこと（H2） | `context_hook.py` L294 | `section_names.out_of_scope` | `やらないこと` | `context_hook.py` |
 | 依存（先行）（H2） | `dep_extractor.py` L80–81; `milestone.py` L233 | `section_names.dependencies` | `依存（先行）` | `dep_extractor.py`, `milestone.py` |

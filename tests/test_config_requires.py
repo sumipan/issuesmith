@@ -41,20 +41,62 @@ def _write_config(tmp_path, monkeypatch, payload: dict) -> None:
 
 
 def test_gate_registry_has_known_ids() -> None:
-    assert "m2" in GATE_REGISTRY
+    assert "ac_complete" in GATE_REGISTRY
     assert "deps" in GATE_REGISTRY
     assert "scope" in GATE_REGISTRY
     assert "pr_scope" in GATE_REGISTRY
 
 
 def test_gate_registry_issue_kinds() -> None:
-    assert GATE_REGISTRY["m2"].input_kind == "issue"
+    assert GATE_REGISTRY["ac_complete"].input_kind == "issue"
     assert GATE_REGISTRY["deps"].input_kind == "issue"
 
 
 def test_gate_registry_worktree_kinds() -> None:
     assert GATE_REGISTRY["scope"].input_kind == "worktree"
     assert GATE_REGISTRY["pr_scope"].input_kind == "worktree"
+
+
+def test_old_gate_id_requires_raises_config_error(tmp_path, monkeypatch) -> None:
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "repo": "example/app",
+            "steps": {
+                "my-step": {
+                    "module": "issuesmith.steps.foo",
+                    "requires": ["cp1"],
+                    "input_kind": "issue",
+                },
+            },
+        },
+    )
+    with pytest.raises(ConfigError, match="unknown gate ids"):
+        validate_step_requires(load_config().steps)
+
+
+def test_new_gate_id_requires_no_warning(tmp_path, monkeypatch) -> None:
+    import warnings
+
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "repo": "example/app",
+            "steps": {
+                "my-step": {
+                    "module": "issuesmith.steps.foo",
+                    "requires": ["design_lint", "ac_complete"],
+                    "input_kind": "issue",
+                },
+            },
+        },
+    )
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", DeprecationWarning)
+        validate_step_requires(load_config().steps)
+    assert not caught
 
 
 # ---------------------------------------------------------------------------
@@ -75,10 +117,10 @@ def test_step_config_default_input_kind_issue() -> None:
 def test_step_config_with_requires_and_input_kind() -> None:
     s = StepConfig(
         module="issuesmith.steps.foo",
-        requires=("m2", "deps"),
+        requires=("ac_complete", "deps"),
         input_kind="issue",
     )
-    assert s.requires == ("m2", "deps")
+    assert s.requires == ("ac_complete", "deps")
     assert s.input_kind == "issue"
 
 
@@ -143,7 +185,7 @@ def test_artifact_step_with_issue_gate_raises_config_error(tmp_path, monkeypatch
             "steps": {
                 "artifact-step": {
                     "module": "issuesmith.steps.my_step",
-                    "requires": ["m2"],
+                    "requires": ["ac_complete"],
                     "input_kind": "artifact",
                 },
             },
@@ -162,14 +204,14 @@ def test_issue_step_with_issue_gate_is_valid(tmp_path, monkeypatch) -> None:
             "steps": {
                 "issue-step": {
                     "module": "issuesmith.steps.my_step",
-                    "requires": ["m2", "deps"],
+                    "requires": ["ac_complete", "deps"],
                     "input_kind": "issue",
                 },
             },
         },
     )
     cfg = load_config()
-    assert cfg.steps["issue-step"].requires == ("m2", "deps")
+    assert cfg.steps["issue-step"].requires == ("ac_complete", "deps")
     assert cfg.steps["issue-step"].input_kind == "issue"
 
 
@@ -204,14 +246,14 @@ def test_worktree_step_with_issue_gate_is_valid(tmp_path, monkeypatch) -> None:
             "steps": {
                 "wt-step": {
                     "module": "issuesmith.steps.my_step",
-                    "requires": ["m2"],
+                    "requires": ["ac_complete"],
                     "input_kind": "worktree",
                 },
             },
         },
     )
     cfg = load_config()
-    assert cfg.steps["wt-step"].requires == ("m2",)
+    assert cfg.steps["wt-step"].requires == ("ac_complete",)
     assert cfg.steps["wt-step"].input_kind == "worktree"
 
 
@@ -226,7 +268,7 @@ def test_validate_requires_chain_ok_when_all_present() -> None:
     steps = {
         "my-step": StepConfig(
             module="issuesmith.steps.foo",
-            requires=("m2",),
+            requires=("ac_complete",),
             input_kind="issue",
         ),
     }
@@ -264,7 +306,7 @@ def test_doctor_requires_chain_ok(tmp_path, monkeypatch, capsys) -> None:
     steps = {
         "valid-step": StepConfig(
             module="issuesmith.steps.foo",
-            requires=("m2",),
+            requires=("ac_complete",),
             input_kind="issue",
         ),
     }
@@ -299,7 +341,7 @@ def test_worktree_step_with_mixed_gates_is_valid(tmp_path, monkeypatch) -> None:
                 "wt-step": {
                     "module": "issuesmith.steps.my_step",
                     "requires": [
-                        "cp1", "scope_breadth", "base_freshness",
+                        "design_lint", "scope_breadth", "base_freshness",
                         "lint", "external_leak", "scope_coupling", "milestone_consistency",
                     ],
                     "input_kind": "worktree",
@@ -308,7 +350,7 @@ def test_worktree_step_with_mixed_gates_is_valid(tmp_path, monkeypatch) -> None:
         },
     )
     cfg = load_config()
-    assert "cp1" in cfg.steps["wt-step"].requires
+    assert "design_lint" in cfg.steps["wt-step"].requires
     assert "base_freshness" in cfg.steps["wt-step"].requires
 
 

@@ -1465,4 +1465,4 @@ class B1MilestoneSubdesignRules:
         ]
 
 
-GATE_REGISTRY["b1_milestone_subdesign"] = B1MilestoneSubdesignRules
+GATE_REGISTRY["milestone_subdesign"] = B1MilestoneSubdesignRules

@@ -56,4 +56,4 @@ class M2Rules:
         )]
 
 
-GATE_REGISTRY["m2"] = M2Rules
+GATE_REGISTRY["ac_complete"] = M2Rules

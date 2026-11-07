@@ -772,4 +772,4 @@ class Cp1Rules:
         return violations
 
 
-GATE_REGISTRY["cp1"] = Cp1Rules
+GATE_REGISTRY["design_lint"] = Cp1Rules

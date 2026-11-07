@@ -48,7 +48,7 @@ def test_all_worktree_gate_classes_in_registry() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("gate_id", ["deps", "scope", "pr_scope", "m2"])
+@pytest.mark.parametrize("gate_id", ["deps", "scope", "pr_scope", "ac_complete"])
 def test_core_gate_ids_present(gate_id: str) -> None:
     assert gate_id in GATE_REGISTRY, f"core gate {gate_id!r} missing from GATE_REGISTRY"
 

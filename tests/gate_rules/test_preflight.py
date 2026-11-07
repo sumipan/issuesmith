@@ -36,7 +36,7 @@ def test_unknown_gate_exits_1():
 
 
 def test_nonexistent_body_file_exits_1():
-    result = run_preflight_subprocess("--gate", "cp1", "--body-file", "/nonexistent/path")
+    result = run_preflight_subprocess("--gate", "design_lint", "--body-file", "/nonexistent/path")
     assert result.returncode == 1
     assert result.stderr
 

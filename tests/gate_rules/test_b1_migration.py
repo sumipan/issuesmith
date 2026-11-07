@@ -24,7 +24,7 @@ test -f <target file> && echo "OK: file exists"
 
 
 def _check(body: str, labels: list[str]):
-    gate = GATE_REGISTRY["b1_migration"]()
+    gate = GATE_REGISTRY["migration_plan"]()
     return gate.check(body, labels)
 
 
@@ -192,7 +192,7 @@ def test_tools_scoped_tests_path_satisfies_contract():
 
 
 def test_registered_in_gate_registry():
-    assert "b1_migration" in GATE_REGISTRY
+    assert "migration_plan" in GATE_REGISTRY
 
 
 BODY_MISSING_POST_MERGE = """\

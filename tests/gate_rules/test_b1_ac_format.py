@@ -6,7 +6,7 @@ from issuesmith.gate_rules import GATE_REGISTRY
 
 
 def _check(body: str, labels: list[str]):
-    gate = GATE_REGISTRY["b1_ac_format"]()
+    gate = GATE_REGISTRY["ac_format"]()
     return gate.check(body, labels)
 
 
@@ -219,7 +219,7 @@ def test_design_table_body_returns_empty():
 
 
 def test_registered_in_gate_registry():
-    assert "b1_ac_format" in GATE_REGISTRY
+    assert "ac_format" in GATE_REGISTRY
 
 
 # ---------------------------------------------------------------------------

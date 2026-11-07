@@ -38,8 +38,31 @@ def test_gate_registry_is_dict():
     assert isinstance(GATE_REGISTRY, dict)
 
 
-def test_gate_registry_has_cp1():
-    assert "cp1" in GATE_REGISTRY
+def test_gate_registry_has_design_lint():
+    assert "design_lint" in GATE_REGISTRY
+
+
+def test_registry_has_only_concept_ids():
+    import issuesmith.gates  # noqa: F401
+
+    old_ids = (
+        "cp1",
+        "m2",
+        "b1_ac_format",
+        "b1_migration",
+        "b1_milestone_subdesign",
+    )
+    new_ids = (
+        "design_lint",
+        "ac_complete",
+        "ac_format",
+        "migration_plan",
+        "milestone_subdesign",
+    )
+    for gate_id in old_ids:
+        assert gate_id not in GATE_REGISTRY
+    for gate_id in new_ids:
+        assert gate_id in GATE_REGISTRY
 
 
 def test_gate_rule_protocol_compliance():

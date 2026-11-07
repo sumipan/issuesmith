@@ -114,7 +114,7 @@ def test_labels_param_ignored():
 
 def test_gate_registry_registered():
     import issuesmith.gate_rules.cp1  # noqa: F401 — ensure module loaded
-    assert GATE_REGISTRY.get("cp1") is Cp1Rules
+    assert GATE_REGISTRY.get("design_lint") is Cp1Rules
 
 
 def test_fix_hint_present_for_forbidden_words():
