@@ -167,7 +167,7 @@ def test_resume_phase_prints_request_id(capsys):
 
 
 # ---------------------------------------------------------------------------
-# recovery.cmd_recover / cmd_redispatch emit FutureWarning and delegate to resume
+# recovery.cmd_redispatch emits FutureWarning and delegates to resume
 # ---------------------------------------------------------------------------
 
 def _mock_unblocked_plan():
@@ -179,21 +179,6 @@ def _mock_unblocked_plan():
         required_labels=frozenset(),
         blocked_by=None,
     )
-
-
-def test_cmd_recover_emits_future_warning():
-    import warnings
-
-    from issuesmith.recovery import cmd_recover
-    with (
-        patch("issuesmith.recovery._generation_keys_available", return_value=False),
-    ):
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            # dry_run avoids subprocess calls
-            cmd_recover(123, from_step="cp2", dry_run=True)
-    categories = [str(x.category.__name__) for x in w]
-    assert "FutureWarning" in categories
 
 
 def test_cmd_redispatch_emits_future_warning():

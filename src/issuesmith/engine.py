@@ -162,7 +162,12 @@ DEFAULT_LIGHT_MODELS: dict[tuple[str, str], str] = {
 
 TIERS = frozenset({"light", "heavy"})
 
-IMPLEMENTATION_STEP_IDS = frozenset({"p1", "p3", "m2", "mg1", "sub1"})
+
+def _module_declared_step_ids() -> frozenset[str]:
+    """Step ids with a declared ``steps.<id>.module`` (config-driven shell steps)."""
+    steps = get_config().steps
+    return frozenset(sid for sid, step in steps.items() if step.module)
+
 
 # Guard against runaway agent sessions: 3-5x the observed wall time (a few hundred seconds).
 DEFAULT_TIMEOUTS: dict[str, float] = {
@@ -626,20 +631,24 @@ def check_state() -> list[str]:
                         f"implementation: unavailable Cursor model: {implementation.model}"
                     )
 
+    module_steps = _module_declared_step_ids()
     workflow = _load_workflow()
     found: set[str] = set()
     for handler_name, step in _iter_steps(workflow):
-        if step["id"] not in IMPLEMENTATION_STEP_IDS:
+        step_id = str(step["id"])
+        if step_id not in module_steps:
             continue
-        found.add(str(step["id"]))
+        found.add(step_id)
         if step.get("engine") != "shell" or step.get("model") != "bash":
             errors.append(
-                f"workflow drift: {handler_name}.{step['id']}="
+                f"workflow drift: {handler_name}.{step_id}="
                 f"{step.get('engine')}/{step.get('model')} expected shell/bash"
             )
-    missing = sorted(IMPLEMENTATION_STEP_IDS - found)
+    missing = sorted(module_steps - found)
     if missing:
-        errors.append(f"implementation steps missing from workflow: {', '.join(missing)}")
+        errors.append(
+            f"module-declared steps missing from workflow: {', '.join(missing)}"
+        )
     return errors
 
 

@@ -47,25 +47,26 @@ supported_repos:
 phases:
   - name: draft
     role: design
-    entry_step: b1
+    entry_step: design
     handler: brushup
     writes_files: false
     advance_when: [deps_terminal]
   - name: develop
     role: implementation
-    entry_step: cp2
+    entry_step: implement
     handler: impl
-    steps: [p0, p1, p3, cp2]
+    steps: [prepare, implement, report, review]
     preconditions: [draft-done]
     advance_when: [deps_terminal]
   - name: merge
     role: implementation
-    entry_step: m2
+    entry_step: merge
     handler: merge
-    steps: [m1, m2]
+    steps: [finalize, merge]
     advance_when: [deps_terminal, closing_pr_exists]
 steps:
-  p1:
+  implement:
+    module: issuesmith.steps.implement
     requires: [lint, tests, pr_scope]
     input_kind: worktree
 ```
@@ -82,11 +83,11 @@ python3 -m issuesmith engine show
 3. Run a gate on an Issue body, queue an Issue, and resume a stopped run:
 
 ```bash
-python3 -m issuesmith gate cp1 --body-file body.md
+python3 -m issuesmith gate design_lint --body-file body.md
 python3 -m issuesmith queue enqueue --issue 123 --phase draft --source cli \
   --actor-kind human --priority normal --requested-by me
 python3 -m issuesmith queue tick
-python3 -m issuesmith resume 123 --from p1
+python3 -m issuesmith resume 123 --from implement
 ```
 
 Day-to-day operation uses `python3 -m issuesmith andon list`, `python3 -m issuesmith observe --json`, `python3 -m issuesmith lanes check --json` and `python3 -m issuesmith metrics rework --since 2026-10-01`.
@@ -99,7 +100,7 @@ Run a command as `python3 -m issuesmith <command>` or through the `issuesmith` c
 |---|---|
 | `context` / `context_hook` / `context-hook` | ghdag context hook: Issue YAML metadata and step context |
 | `gate <name> --body-file F` | Same as `gate-preflight --gate <name> --body-file F` |
-| `gate cp1 <issue>` / `gate m2 <issue>` | Run the CP1 / M2 gate entry points on an Issue |
+| `gate design_lint <issue>` / `gate ac_complete <issue>` | Run the design-lint / AC-complete gate entry points on an Issue |
 | `gate-preflight` | ghdag gate runner (`ghdag.workflow.gates`) with the issuesmith rules registered |
 | `verify <step_id>` | Deterministic Verify for a step with `steps.<id>.verify: design_doc` (`VERIFY_RECOVERY:` markers; `--prev-report FILE` adds oscillation detection) |
 | `queue <subcommand>` | Request queue (see [`queue`](#queue-subcommands)) |
@@ -116,7 +117,7 @@ Run a command as `python3 -m issuesmith <command>` or through the `issuesmith` c
 | `gen-live` | Generate shell step trampoline templates |
 | `version-bump --worktree W --base B` | Deterministic `pyproject.toml` bump and CHANGELOG fold (see below) |
 | `resume <issue> --from <step>` / `resume <issue> --phase <phase>` | Resume a workflow; `--workflow`, `--handler`, `--mark-done STEP` (repeatable) and `--force` apply to `--from` |
-| `recover` / `redispatch` | Deprecated (see [Deprecated API](#deprecated-api)) |
+| `redispatch` | Deprecated (see [Deprecated API](#deprecated-api)) |
 | `convert-to-milestone <issue> [--dry-run]` | Move an Issue that entered the develop path back to the milestone path |
 | `milestone <subcommand>` | Milestone chain (see [`milestone`](#milestone-subcommands)) |
 | `config show` | Print the resolved configuration as JSON and validate `steps.*.requires` (exit 1 when invalid) |
@@ -289,11 +290,16 @@ issuesmith is pre-1.0 and follows `0.Y.Z`: a `Y` bump may change or remove publi
 
 | Item | Replacement |
 |---|---|
-| `recover` command (emits `FutureWarning`) | `resume <issue> --from <step>` |
 | `redispatch` command (emits `FutureWarning`) | `resume <issue> --phase <phase>` |
 | `paths.brake_state` for engine pause / quota dispatch | `paths.quota_state` (legacy `halt*` fields are converted on read and not written back) |
 | `apply` / `ingest-review` commands (exit 2) | The host's `tools/stash/` scripts |
 | `issuesmith.yaml` keys `sections`, `sub_design_subsections`, `scope_size.delete_words` / `new_words` / `sub_plan_header` / `no_deps_word` (emit `DeprecationWarning`) | `language_pack` |
+| `issuesmith.m2_gate` | `issuesmith.ac_complete_entry` (deprecated shim) |
+| `issuesmith.cp1_gate` | `issuesmith.design_lint_entry` (deprecated shim) |
+| `issuesmith.gate_rules.m2` | `issuesmith.gate_rules.ac_complete` (deprecated shim) |
+| `issuesmith.gate_rules.cp1` | `issuesmith.gate_rules.design_lint` (deprecated shim) |
+| `issuesmith.b1_verify` (verify recovery naming) | `issuesmith.step_verify` (deprecated shim of gate bundle) |
+| Legacy P0 base-fetch lock wait env var | `ISSUESMITH_FETCH_LOCK_WAIT` |
 
 ## Architecture
 
@@ -384,7 +390,7 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/queue_store.py` | Queue store: JSONL requests, state and lock |
 | `issuesmith/queue_triage.py` | Deterministic checks and LLM triage for the queue |
 | `issuesmith/quota_gate.py` | GitHub API rate-limit brake |
-| `issuesmith/recovery.py` | Deprecated `recover` / `redispatch` |
+| `issuesmith/recovery.py` | `plan`, `list_recover_steps`, deprecated `redispatch` CLI |
 | `issuesmith/repair.py` | `requires` evaluation and repair orchestration |
 | `issuesmith/resume.py` | `resume` entry point |
 | `issuesmith/rule_ids.py` | Legacy rule id alias normalization (`cp1`→`design_lint`, `m2`→`ac_complete`, …) |
@@ -457,7 +463,7 @@ A file that is not found is treated as empty, which fails validation because `re
 | `ISSUESMITH_PYTEST_TIMEOUT_SEC` | `1500` | Timeout of one pytest run in the `tests` gate |
 | `ISSUESMITH_REPAIR_ACTIVE` | (unset) | Set internally during a repair run to stop nested repairs |
 | `METRICS_JSONL_PATH` | `paths.metrics` | Engine metrics JSONL path |
-| `P0_FETCH_LOCK_WAIT` | `30` | Seconds to wait for the P0 base-fetch lock |
+| `ISSUESMITH_FETCH_LOCK_WAIT` | `30` | Seconds to wait for the base-fetch lock (legacy P0 env name emits `DeprecationWarning`) |
 | `GHDAG_TASK_UUID` | (set by ghdag) | Current DAG task UUID, recorded as `parent_uuid` in metrics and dispatch |
 | `AGENT_SKILLS_DIR` | `~/.agents/skills` | Skills directory checked by `doctor` |
 
