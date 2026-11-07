@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from issuesmith.ac_complete_entry import (
+from issuesmith.gate_rules.ac_complete_rules import (
     check_gate,
     get_unchecked_count,
     has_acceptance_criteria_section,
