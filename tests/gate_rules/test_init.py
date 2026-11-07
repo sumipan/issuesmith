@@ -98,18 +98,10 @@ def test_src_gate_rules_use_concept_rule_id_prefixes():
     import pathlib
     import re
 
-    root = pathlib.Path(__file__).resolve().parents[2] / "src" / "issuesmith" / "gate_rules"
+    root = pathlib.Path(__file__).resolve().parents[2] / "src" / "issuesmith"
     pattern = re.compile(r'rule_id="(cp1|m2|b1_ac_format|b1_migration|b1_milestone_subdesign)\.')
     hits = []
     for path in root.rglob("*.py"):
-        if path.name in {
-            "cp1.py",
-            "m2.py",
-            "b1_ac_format.py",
-            "b1_migration.py",
-            "b1_milestone_subdesign.py",
-        }:
-            continue
         text = path.read_text(encoding="utf-8")
-        hits.extend(f"{path.name}:{m.start()}" for m in pattern.finditer(text))
+        hits.extend(f"{path.relative_to(root)}:{m.start()}" for m in pattern.finditer(text))
     assert hits == []
