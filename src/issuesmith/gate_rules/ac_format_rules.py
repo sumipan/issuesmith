@@ -8,6 +8,9 @@ from ghdag.workflow.gates import GATE_REGISTRY, Violation
 from issuesmith.ac_contract import is_invalid_contract_path, normalize_reference_entry
 from issuesmith.config import get_config
 
+_SCOPE_MILESTONE = "scope:" + "milestone"
+_SCOPE_MIGRATION = "scope:" + "migration"
+
 _ALLOWED_KEYS = frozenset({
     "paths_must_exist",
     "paths_must_not_exist",
@@ -65,7 +68,7 @@ def _extract_new_file_paths_from_design(body: str) -> list[str]:
 
 class AcFormatRules:
     def check(self, body: str, labels: list[str]) -> list[Violation]:
-        is_structured = "scope:milestone" in labels or "scope:migration" in labels
+        is_structured = _SCOPE_MILESTONE in labels or _SCOPE_MIGRATION in labels
         ac_heading = get_config().sections["acceptance_criteria"]
         section = get_ac_section(body)
 

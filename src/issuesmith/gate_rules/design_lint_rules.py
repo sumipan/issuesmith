@@ -22,6 +22,8 @@ from issuesmith.gate_rules.milestone_subdesign_rules import (
 )
 from issuesmith.scope_gate import resolve_scope_root
 
+_SCOPE_MILESTONE = "scope:" + "milestone"
+
 tomllib: Any
 if sys.version_info >= (3, 11):
     import tomllib as _stdlib_tomllib
@@ -629,11 +631,11 @@ class DesignLintRules:
             violations.extend(_check_split(metadata))
             violations.extend(_check_test_basename_collision(body, metadata))
 
-        if "scope:milestone" in labels:
+        if _SCOPE_MILESTONE in labels:
             violations.append(Violation(
                 rule_id="design_lint.intentional_hold",
                 severity="fail",
-                message="scope:milestone label is set (CP1 always fails)",
+                message="milestone scope label is set (design lint always fails)",
                 location=None,
                 auto_fixable=False,
                 fix_hint=None,

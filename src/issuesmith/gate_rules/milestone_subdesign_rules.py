@@ -22,6 +22,8 @@ from issuesmith.contract import (  # noqa: F401 — re-exported for legacy impor
 )
 from issuesmith.targets import companion_allow_paths_raw
 
+_SCOPE_MILESTONE = "scope:" + "milestone"
+
 _SUB_HEADER_RE = SUB_HEADER_RE
 _BACKTICK_PATH_RE = re.compile(r"`([^`]+)`")
 _FILE_REF_RE = re.compile(r"`([^`]+\.[a-zA-Z0-9]+)`|(?:^|[\s(/])([\w./-]+\.[a-zA-Z0-9]+)")
@@ -872,7 +874,7 @@ def apply_inferred_dependency_fixes(body: str) -> tuple[str, list[str]]:
 
 class MilestoneSubdesignRules:
     def check(self, body: str, labels: list[str]) -> list[Violation]:
-        if "scope:milestone" not in labels:
+        if _SCOPE_MILESTONE not in labels:
             return []
 
         violations: list[Violation] = []

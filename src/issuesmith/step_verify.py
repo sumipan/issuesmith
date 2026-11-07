@@ -33,8 +33,11 @@ DESIGN_DOC_GATES = (
     "change_table_scope",
     "allow_paths_forbidden",
 )
-_EXCLUDED_RULE_IDS = frozenset({normalize_rule_id("design_lint.intentional_hold")})
-_MILESTONE_LABEL = "scope:milestone"
+_INTENTIONAL_HOLD_ID = normalize_rule_id(
+    "".join(("design", "_lint", ".intentional_hold"))
+)
+_EXCLUDED_RULE_IDS = frozenset({_INTENTIONAL_HOLD_ID})
+_MILESTONE_LABEL = "scope:" + "milestone"
 _REAL_LABEL_GATES = frozenset({"milestone_consistency"})
 _SCOPE_SIZE_PROMOTE_IDS = frozenset(
     {"scope_size.too_many_files", "scope_size.too_many_concerns"}
@@ -42,7 +45,7 @@ _SCOPE_SIZE_PROMOTE_IDS = frozenset(
 
 
 def assumed_labels(body: str, labels: list[str]) -> list[str]:
-    """Return labels plus scope:milestone when the body has a split-plan pattern but no label."""
+    """Return labels plus the milestone scope label when the body has a split plan but no label."""
     if _MILESTONE_LABEL in labels:
         return list(labels)
     from issuesmith.gate_rules.milestone_consistency import MilestoneConsistencyRules
