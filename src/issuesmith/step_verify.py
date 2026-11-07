@@ -33,9 +33,7 @@ DESIGN_DOC_GATES = (
     "change_table_scope",
     "allow_paths_forbidden",
 )
-_INTENTIONAL_HOLD_ID = normalize_rule_id(
-    "".join(("design", "_lint", ".intentional_hold"))
-)
+_INTENTIONAL_HOLD_ID = normalize_rule_id("design_lint.intentional_hold")
 _EXCLUDED_RULE_IDS = frozenset({_INTENTIONAL_HOLD_ID})
 _MILESTONE_LABEL = "scope:" + "milestone"
 _REAL_LABEL_GATES = frozenset({"milestone_consistency"})

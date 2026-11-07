@@ -56,9 +56,27 @@ paths_must_not_exist:
 ```
 """
 
+BODY_ONE_UNCHECKED = """\
+## Acceptance Criteria
+
+- [ ] foo
+"""
+
 
 def _records(contract: dict, root: Path) -> list[dict]:
     return run_checks(contract, root)
+
+
+def test_check_gate_multi_root_unchecked_ac_returns_retry(tmp_path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    result = check_gate_multi_root(
+        BODY_ONE_UNCHECKED,
+        [],
+        {"sumipan/issuesmith": root},
+    )
+    assert result["action"] == "retry"
+    assert result["unchecked_count"] == 1
 
 
 def test_synthesize_or_paths_must_exist_either_root_passes(tmp_path):
