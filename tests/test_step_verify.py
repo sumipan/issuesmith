@@ -140,3 +140,27 @@ def test_config_unknown_verify_raises(tmp_path, monkeypatch):
     )
     with pytest.raises(ConfigError, match="verify must be"):
         load_config()
+
+
+def test_parse_prev_counts_normalizes_legacy_rule_ids():
+    from issuesmith.step_verify import _parse_prev_counts
+
+    report = (
+        "VERIFY_FAILED_CHECKS: b1_milestone_subdesign.repo_mismatch"
+        " b1_milestone_subdesign.repo_mismatch scope_breadth.too_large\n"
+    )
+    assert _parse_prev_counts(report) == {
+        "milestone_subdesign.repo_mismatch": 2,
+        "scope_breadth.too_large": 1,
+    }
+
+
+def test_collect_violations_excludes_legacy_and_concept_intentional_hold():
+    from issuesmith.rule_ids import normalize_rule_id
+    from issuesmith.step_verify import _EXCLUDED_RULE_IDS, collect_violations
+
+    hold_body = _HOLD_ONLY_BODY
+    violations = collect_violations(hold_body, ["scope:milestone"])
+    assert not any(v.rule_id == "design_lint.intentional_hold" for v in violations)
+    for legacy in ("cp1.intentional_hold", "design_lint.intentional_hold"):
+        assert normalize_rule_id(legacy) in _EXCLUDED_RULE_IDS

@@ -1,4 +1,4 @@
-"""test_b1_verify.py — unit tests for B1 deterministic Verify (#2541)."""
+"""test_step_verify.py — unit tests for B1 deterministic Verify (#2541)."""
 from __future__ import annotations
 
 from issuesmith.b1_verify import _GATES, collect_violations, format_report
@@ -40,18 +40,18 @@ def test_collect_violations_self_issue_skips_self_unparsed():
 
 def test_missing_yaml_is_reported():
     violations = collect_violations("## Overview\nno yaml\n", [])
-    assert any(v.rule_id == "cp1.yaml_contract.missing_block" for v in violations)
+    assert any(v.rule_id == "design_lint.yaml_contract.missing_block" for v in violations)
 
 
 def test_intentional_hold_is_excluded():
     """scope:milestone intentional_hold is not a B1 artifact defect; exclude it"""
     violations = collect_violations(_VALID_BODY, ["scope:milestone"])
-    assert not any(v.rule_id == "cp1.intentional_hold" for v in violations)
+    assert not any(v.rule_id == "design_lint.intentional_hold" for v in violations)
 
 
 def test_migration_rules_are_included():
     violations = collect_violations(_VALID_BODY, ["scope:migration"])
-    assert any(v.rule_id.startswith("b1_migration.") for v in violations)
+    assert any(v.rule_id.startswith("migration_plan.") for v in violations)
 
 
 def test_complete_migration_body_satisfies_ac_format_and_migration_gates():
@@ -59,14 +59,14 @@ def test_complete_migration_body_satisfies_ac_format_and_migration_gates():
     from tests.gate_rules.test_b1_migration import BODY_COMPLETE
 
     rule_ids = {v.rule_id for v in collect_violations(_VALID_BODY + "\n" + BODY_COMPLETE, ["scope:migration"])}
-    assert not {r for r in rule_ids if r.startswith(("b1_ac_format.", "b1_migration."))}, rule_ids
+    assert not {r for r in rule_ids if r.startswith(("ac_format.", "migration_plan."))}, rule_ids
 
 
 def test_format_report_shape():
     violations = collect_violations("## Overview\nno yaml\n", [])
     report = format_report(violations)
     assert report.startswith("VERIFY_FAILED_CHECKS: ")
-    assert "## cp1.yaml_contract.missing_block" in report
+    assert "## design_lint.yaml_contract.missing_block" in report
     assert "FIX_HINT:" in report
 
 
@@ -253,20 +253,20 @@ def test_pin_bump_collected_for_feature_pin_change(tmp_path, monkeypatch):
 def test_promoted_milestone_without_sub_blocks_fails_verify():
     """Regression (nexus #4002): 3 plan rows vs 0 sub blocks must not reach draft-done."""
     rule_ids = {v.rule_id for v in collect_violations(_PROMOTED_MILESTONE_BODY, ["scope:milestone"])}
-    assert "b1_milestone_subdesign.sub_count_mismatch" in rule_ids
+    assert "milestone_subdesign.sub_count_mismatch" in rule_ids
 
 
 def test_non_milestone_verify_shows_label_missing_and_subdesign_together():
     """R1: split-plan body without scope:milestone label shows both label_missing and sub_count_mismatch."""
     rule_ids = {v.rule_id for v in collect_violations(_PROMOTED_MILESTONE_BODY, [])}
     assert "milestone_consistency.label_missing" in rule_ids, rule_ids
-    assert "b1_milestone_subdesign.sub_count_mismatch" in rule_ids, rule_ids
+    assert "milestone_subdesign.sub_count_mismatch" in rule_ids, rule_ids
 
 
 def test_no_split_plan_body_ignores_milestone_subdesign():
     """R1: body without a split-plan pattern does not produce milestone violations without a label."""
     rule_ids = {v.rule_id for v in collect_violations(_VALID_BODY, [])}
-    milestone_ids = {r for r in rule_ids if r.startswith(("b1_milestone_subdesign.", "cp1.milestone."))}
+    milestone_ids = {r for r in rule_ids if r.startswith(("milestone_subdesign.", "design_lint.milestone."))}
     assert not milestone_ids, milestone_ids
 
 
@@ -305,16 +305,16 @@ def test_assumed_labels_does_not_mutate_input():
 
 
 def test_cp1_intentional_hold_excluded_with_assumed_labels():
-    """R1: cp1.intentional_hold must not appear even when scope:milestone is assumed."""
+    """R1: design_lint.intentional_hold must not appear even when scope:milestone is assumed."""
     rule_ids = {v.rule_id for v in collect_violations(_PROMOTED_MILESTONE_BODY, [])}
-    assert "cp1.intentional_hold" not in rule_ids
+    assert "design_lint.intentional_hold" not in rule_ids
 
 
 def test_complete_milestone_body_passes_milestone_subdesign():
     from tests.gate_rules.test_b1_milestone_subdesign import _valid_body
 
     rule_ids = {v.rule_id for v in collect_violations(_valid_body(), ["scope:milestone"])}
-    assert not {r for r in rule_ids if r.startswith("b1_milestone_subdesign.")}, rule_ids
+    assert not {r for r in rule_ids if r.startswith("milestone_subdesign.")}, rule_ids
 
 
 class _FakeForge:
@@ -433,7 +433,7 @@ def test_deterministic_recovery_promotes_oversized_issue_in_one_pass(tmp_path, m
         v.rule_id == "milestone_consistency.label_missing" for v in result.remaining
     )
     placeholder = [
-        v for v in result.remaining if v.rule_id == "b1_milestone_subdesign.placeholder_design"
+        v for v in result.remaining if v.rule_id == "milestone_subdesign.placeholder_design"
     ]
     assert len(placeholder) >= 3
     assert all(not v.auto_fixable for v in placeholder)
@@ -441,7 +441,7 @@ def test_deterministic_recovery_promotes_oversized_issue_in_one_pass(tmp_path, m
     assert result.unresolved_reason is not None
     assert "promoted sub designs need LLM design" in result.unresolved_reason
     assert any(
-        v.rule_id == "b1_milestone_subdesign.placeholder_design"
+        v.rule_id == "milestone_subdesign.placeholder_design"
         for v in result.llm_violations
     )
 
@@ -647,8 +647,8 @@ def test_deterministic_recovery_reports_unresolved_when_same_rule_remains(
 
     assert result.can_done is False
     assert result.unresolved_reason is not None
-    assert "cp1.yaml_contract.missing_block" in result.unresolved_reason
-    assert any(v.rule_id == "cp1.yaml_contract.missing_block" for v in result.remaining)
+    assert "design_lint.yaml_contract.missing_block" in result.unresolved_reason
+    assert any(v.rule_id == "design_lint.yaml_contract.missing_block" for v in result.remaining)
 
 
 def _setup_contract_repo(tmp_path):
@@ -838,8 +838,8 @@ def test_check_paths_must_not_exist_validity_wrapper(tmp_path, monkeypatch):
 
 # nexus #4825: inferred sibling dependencies are written by deterministic recovery.
 
-_DEP_MISSING = "b1_milestone_subdesign.sibling_new_file_unreferenced_dependency"
-_DEP_CYCLE = "b1_milestone_subdesign.dependency_cycle"
+_DEP_MISSING = "milestone_subdesign.sibling_new_file_unreferenced_dependency"
+_DEP_CYCLE = "milestone_subdesign.dependency_cycle"
 
 
 def _recover(tmp_path, monkeypatch, body: str, runs: int = 1):

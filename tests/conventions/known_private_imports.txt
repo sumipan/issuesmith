@@ -3,7 +3,8 @@
 issuesmith.config _DEFAULT_FORBIDDEN_PR_PATHS
 issuesmith.contract _normalize_path
 issuesmith.convert_to_milestone _ensure_milestone
-issuesmith.gate_rules.b1_milestone_subdesign _extract_paths_from_change_table
+issuesmith.gate_rules.milestone_subdesign_rules _extract_paths_from_change_table
+issuesmith.step_verify _parse_prev_counts
 issuesmith.ops.labels _exec_records_from_labels
 issuesmith.ops.labels _is_managed_label
 issuesmith.ops.labels _ns

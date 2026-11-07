@@ -5,29 +5,23 @@ from __future__ import annotations
 import fnmatch
 import functools
 import re
-import subprocess
 import sys
-import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from ghdag.forge import ForgePort, get_forge
 
 from issuesmith.body_editor import (
-    count_heading,
     filter_section_by_paths,
     get_section,
     get_section_by_keyword,
     get_subsections,
 )
-from issuesmith.config import IssuesmithConfig, MilestoneChainConfig, StepConfig, get_config
+from issuesmith.config import IssuesmithConfig, MilestoneChainConfig, get_config
 from issuesmith.context_hook import parse_issue_metadata
 from issuesmith.contract import (
     PLAN_DEP_REF_RE,
-    StepContext,
-    StepResult,
     change_paths_for_repo,
     parse_table_rows,
     sub_block,
@@ -179,21 +173,6 @@ def _consolidated_into(client: ForgePort, issue: int) -> int | None:
         for match in _CONSOLIDATED_RE.finditer(str(comment.get("body") or "")):
             found = int(match.group(1))
     return found
-
-
-def _has_cp1_intentional_hold(comments: list[dict[str, Any]]) -> bool:
-    brushup_idx = -1
-    for idx, comment in enumerate(comments):
-        body = str(comment.get("body") or "")
-        if "PIPELINE_STATUS: BRUSHUP_DONE" in body:
-            brushup_idx = idx
-    for comment in comments[brushup_idx + 1 :]:
-        body = str(comment.get("body") or "")
-        if "## CP1 " not in body and "CP1_STATUS:" not in body:
-            continue
-        if "INTENTIONAL_HOLD: true" in body:
-            return True
-    return False
 
 
 # Canonical extractors live in issuesmith.contract (R1).
@@ -350,7 +329,7 @@ def ensure_sub1_binding(client: ForgePort, parent_number: int, child_number: int
     _ensure_parent_comment(
         client,
         parent_number,
-        _msg("sub1_no_milestone_no_link", child=child_number),
+        _msg("child_no_milestone_no_link", child=child_number),
         "<!-- issuesmith:sub1:no-milestone-no-sub-link -->",
     )
     return False
@@ -769,25 +748,20 @@ def advance_milestone_chains(
         if _MILESTONE_LABEL not in labels:
             continue
 
-        # C1: design-phase done + CP1 intentional hold → enqueue sub.
+        # C1: design-phase done → enqueue sub (creation is host phase responsibility).
         if (
             DONE_LABEL["draft"] in labels
             and not has_sub_labels(labels)
             and not _has_request(store, snap, parent_num, "sub")
         ):
-            try:
-                comments = client.get_issue_comments(parent_num)
-            except Exception:
-                comments = []
-            if isinstance(comments, list) and _has_cp1_intentional_hold(comments):
-                _enqueue_chain(
-                    store,
-                    issue=parent_num,
-                    phase="sub",
-                    priority=chain_cfg.child_priority,
-                )
-                store.update_milestone_chain(parent_num, {"stage": "sub_enqueued"})
-                snap = store.snapshot()
+            _enqueue_chain(
+                store,
+                issue=parent_num,
+                phase="sub",
+                priority=chain_cfg.child_priority,
+            )
+            store.update_milestone_chain(parent_num, {"stage": "sub_enqueued"})
+            snap = store.snapshot()
 
         labels = label_names(parent)
         if DONE_LABEL["sub"] not in labels:
@@ -997,12 +971,6 @@ def _format_chain_waiting_line(
         rid = _active_req(parent, "sub")
         if rid:
             return f"chain: {stage} (sub request {rid} active, waiting for sub-done)"
-        try:
-            comments = client.get_issue_comments(parent)
-        except Exception:
-            comments = []
-        if not isinstance(comments, list) or not _has_cp1_intentional_hold(comments):
-            return f"chain: {stage} (hold comment missing, waiting for CP1 intentional hold)"
         return f"chain: {stage} (no sub request yet, waiting to enqueue sub)"
 
     children = _list_chain_children(client, parent, parent_issue)
@@ -1561,450 +1529,6 @@ def prevalidate_child_body(
         failures.extend(_dependency_refs_unresolved(body))
     return failures
 
-
-def _sub1_check_cp1_gate(comments: list[dict[str, Any]]) -> str:
-    def _ts(comment: dict[str, Any]) -> datetime:
-        raw = str(comment.get("createdAt") or comment.get("created_at") or "")
-        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
-
-    cp1_comments = [c for c in comments if "CP1_STATUS:" in str(c.get("body") or "")]
-    brushup = [
-        c for c in comments if "PIPELINE_STATUS: BRUSHUP_DONE" in str(c.get("body") or "")
-    ]
-    if not brushup:
-        return "PASS"
-    latest_brushup = max(_ts(c) for c in brushup)
-    fresh = [c for c in cp1_comments if _ts(c) > latest_brushup]
-    if not fresh:
-        return "CP1_NOT_READY"
-    latest = sorted(fresh, key=_ts)[-1]
-    body = str(latest.get("body") or "")
-    if "CP1_STATUS: FAIL" in body and "INTENTIONAL_HOLD: true" not in body:
-        return "BLOCK"
-    return "PASS"
-
-
-def _sub1_parent_design_gate(body: str) -> str | None:
-    lang = _lang()
-    design_name = lang.sections["design"]
-    ac_name = lang.sections["acceptance_criteria"]
-    if count_heading(body, design_name) > 1:
-        return _msg("sub1_dup_design", design=design_name)
-    design = get_section(body, design_name)
-    ac = get_section(body, ac_name) or get_section_by_keyword(body, ac_name)
-    if not design or not design.strip() or not ac or not ac.strip():
-        return _msg("sub1_missing_design_ac", design=design_name, acceptance_criteria=ac_name)
-    if not get_subsections(body, design_name, f"#### {lang.sub_header_prefix}"):
-        return _msg("sub1_no_sub_blocks", design=design_name, sub_prefix=lang.sub_header_prefix)
-    return None
-
-
-def resolve_sub1_template(step: StepConfig | None) -> str | None:
-    if step is not None and step.template:
-        return step.template
-    cfg_step = get_config().steps.get("sub1")
-    if cfg_step is not None and cfg_step.template:
-        return cfg_step.template
-    template_dir = get_config().paths.template_dir
-    candidate = template_dir / _DEFAULT_SUB1_TEMPLATE
-    if candidate.is_file():
-        return _DEFAULT_SUB1_TEMPLATE
-    return None
-
-
-def run_guarded_sub1_body(
-    ctx: StepContext,
-    *,
-    row: PlanRow,
-    body_path: Path,
-    template_name: str,
-) -> int:
-    from issuesmith.engine import resolve, run_guarded
-
-    template = str(get_config().paths.template_dir / template_name)
-    selection = resolve("implementation")
-    variables = [
-        f"issue_number={ctx.issue_number}",
-        f"row_num={row.row_num}",
-        f"row_title={row.title}",
-        f"row_repo={row.repo}",
-        f"sub_body_path={body_path}",
-        f"target_repo={ctx.target_repo}",
-        f"model={selection.model}",
-        f"execution_constraints={ctx.execution_constraints}",
-    ]
-    return run_guarded(
-        "implementation",
-        template,
-        variables,
-        success_statuses=["SUB_BODY_READY", "SUB_CREATED"],
-        failure_status="SUB_BODY_FAILED",
-    )
-
-
-def _sub1_fail(
-    client: ForgePort, issue_number: int, comment: str, status: str = "IMPL_FAILED"
-) -> StepResult:
-    if "PIPELINE_STATUS:" not in comment:
-        comment = comment.rstrip() + f"\n\nPIPELINE_STATUS: {status}\n"
-    try:
-        client.issue_comment(issue_number, comment)
-    except Exception as exc:
-        print(f"WARN: comment failed: {exc}", file=sys.stderr)
-    return StepResult(exit_code=1, pipeline_status=status)
-
-
-def run_sub1_create(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
-    """Execute SUB1: parse plan, pre-validate, create children, post-validate."""
-    issue_number = int(ctx.issue_number)
-    client = get_forge()
-    parent = client.issue_get(
-        issue_number,
-        fields=["number", "body", "labels", "milestone", "comments", "title"],
-    )
-    parent_body = str(parent.get("body") or "")
-    labels = sorted(label_names(parent))
-    comments = parent.get("comments") or []
-    if not isinstance(comments, list):
-        comments = []
-
-    if "scope:milestone" not in labels:
-        return _sub1_fail(
-            client,
-            issue_number,
-            _msg("sub1_not_milestone"),
-        )
-
-    cp1 = _sub1_check_cp1_gate([c for c in comments if isinstance(c, dict)])
-    if cp1 == "CP1_NOT_READY":
-        return _sub1_fail(
-            client,
-            issue_number,
-            _msg("sub1_cp1_not_ready"),
-        )
-    if cp1 == "BLOCK":
-        return _sub1_fail(
-            client,
-            issue_number,
-            _msg("sub1_cp1_blocked"),
-        )
-
-    milestone_number = _milestone_number(parent)
-    if milestone_number is None:
-        from issuesmith.convert_to_milestone import _ensure_milestone
-
-        try:
-            created_title = _ensure_milestone(client, issue_number, dry_run=False)
-            parent = client.issue_get(
-                issue_number,
-                fields=["number", "body", "labels", "milestone", "comments", "title"],
-            )
-            milestone_number = _milestone_number(parent)
-            client.issue_comment(
-                issue_number,
-                _msg("sub1_milestone_created", title=created_title, number=milestone_number),
-            )
-        except Exception as exc:
-            try:
-                client.issue_comment(
-                    issue_number,
-                    _msg("sub1_milestone_create_failed", error=exc),
-                )
-            except Exception:
-                pass
-
-    design_err = _sub1_parent_design_gate(parent_body)
-    if design_err:
-        return _sub1_fail(client, issue_number, design_err)
-
-    parent_meta = _sub1_safe_metadata(parent_body)
-    parent_target_repo = str(parent_meta.get("target_repo") or "").strip()
-    plan_rows, has_repo_col = parse_split_plan(
-        parent_body, parent_target_repo=parent_target_repo
-    )
-    if not plan_rows:
-        return _sub1_fail(
-            client,
-            issue_number,
-            _msg("sub1_no_plan"),
-        )
-    if not has_repo_col and not parent_target_repo:
-        return _sub1_fail(
-            client,
-            issue_number,
-            _msg("sub1_no_target_repo", issue=issue_number),
-        )
-
-    supported = get_config().supported_repos
-    existing: dict[str, int] = {}
-    for item in _list_chain_children(client, issue_number, parent):
-        title = str(item.get("title") or "")
-        number = item.get("number")
-        if title and isinstance(number, int):
-            existing[title] = number
-
-    state = Sub1State()
-    table_row_count = len(plan_rows)
-    template_name = resolve_sub1_template(step)
-    skip_count = 0
-    skipped_existing = False
-    sub_prefix = _lang().sub_header_prefix
-
-    for row in plan_rows:
-        if has_repo_col and not row.repo:
-            state.validation_failures.append(
-                _msg("sub1_row_repo_empty", sub_prefix=sub_prefix, row=row.row_num)
-            )
-            continue
-
-        if row.title in existing:
-            child_num = existing[row.title]
-            state.row_to_issue[row.row_num] = child_num
-            if not ensure_sub1_binding(client, issue_number, child_num):
-                return _sub1_fail(
-                    client,
-                    issue_number,
-                    _msg("sub1_existing_link_failed", child=child_num),
-                )
-            state.created_issues.append(
-                _msg("sub1_existing_skipped", child=child_num, title=row.title)
-            )
-            skipped_existing = True
-            continue
-
-        resolved_dep = resolve_dependencies(
-            row.dep_raw,
-            table_row_count=table_row_count,
-            row_to_issue=state.row_to_issue,
-            client=client,
-            state=state,
-        )
-        row_allow_paths = allow_paths_for_row(parent_body, row)
-        if not row_allow_paths:
-            state.validation_failures.append(
-                _msg("sub1_no_row_paths", sub_prefix=sub_prefix, row=row.row_num, repo=row.repo)
-            )
-            continue
-        body = build_child_body(
-            parent_body=parent_body,
-            parent_number=issue_number,
-            row=row,
-            resolved_dep=resolved_dep,
-            client=client,
-            parent_labels=labels,
-            allow_paths=row_allow_paths,
-        )
-        draft_body = body
-        body_was_polished = False
-
-        if template_name:
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".md", delete=False, encoding="utf-8"
-            ) as tmp:
-                tmp.write(body)
-                tmp_path = Path(tmp.name)
-            try:
-                rc = run_guarded_sub1_body(
-                    ctx, row=row, body_path=tmp_path, template_name=template_name
-                )
-                if rc == 0 and tmp_path.is_file():
-                    generated = tmp_path.read_text(encoding="utf-8")
-                    if generated.strip():
-                        body = generated
-                        body_was_polished = True
-            except (ValueError, KeyError) as exc:
-                print(
-                    f"PIPELINE_STATUS: SUB1_BODY_INIT_ERROR\n{exc}",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-            except subprocess.TimeoutExpired as exc:
-                print("PIPELINE_STATUS: SUB1_BODY_POLISH_TIMEOUT", file=sys.stderr)
-                print(
-                    f"{sub_prefix}{row.row_num}: {row.title} ({exc.timeout}s)",
-                    file=sys.stderr,
-                )
-                return _sub1_fail(
-                    client,
-                    issue_number,
-                    _msg(
-                        "sub1_polish_timeout",
-                        sub_prefix=sub_prefix,
-                        row=row.row_num,
-                        title=row.title,
-                        timeout=exc.timeout,
-                    ),
-                    status="SUB1_BODY_POLISH_TIMEOUT",
-                )
-            except subprocess.CalledProcessError as exc:
-                print(f"WARN: run-guarded body skipped: {exc}", file=sys.stderr)
-                skip_count += 1
-            finally:
-                tmp_path.unlink(missing_ok=True)
-
-        from issuesmith.gate_rules.cp1 import Cp1Rules
-
-        def _sub1_cp1_hits(text: str) -> list:
-            return [
-                v
-                for v in Cp1Rules().check(text, [])
-                if getattr(v, "rule_id", "") != "cp1.intentional_hold"
-            ]
-
-        cp1_hits = _sub1_cp1_hits(body)
-        if cp1_hits:
-            detail = "\n".join(f"{v.rule_id}: {v.message}" for v in cp1_hits)
-            try:
-                client.issue_comment(
-                    issue_number,
-                    _msg("sub1_cp1_forbidden", sub_prefix=sub_prefix, row=row.row_num, detail=detail)
-                    + "\nPIPELINE_STATUS: SUB1_CP1_BLOCKED\n",
-                )
-            except Exception:
-                pass
-            state.validation_failures.append(
-                _msg("sub1_cp1_forbidden_item", sub_prefix=sub_prefix, row=row.row_num)
-            )
-            continue
-
-        pre_fail = prevalidate_child_body(
-            body=body,
-            row_repo=row.repo,
-            parent_issue_number=issue_number,
-            resolved_dep=resolved_dep,
-            client=client,
-            supported=supported,
-        )
-        if pre_fail and body_was_polished:
-            v6_on_polished = check_v6_dependency_refs(body, resolved_dep)
-            if v6_on_polished and any(item in pre_fail for item in v6_on_polished):
-                draft_cp1 = _sub1_cp1_hits(draft_body)
-                if not draft_cp1:
-                    draft_pre_fail = prevalidate_child_body(
-                        body=draft_body,
-                        row_repo=row.repo,
-                        parent_issue_number=issue_number,
-                        resolved_dep=resolved_dep,
-                        client=client,
-                        supported=supported,
-                    )
-                    if not draft_pre_fail:
-                        print(
-                            "WARN: polished body failed V6, falling back to draft "
-                            f"({sub_prefix}{row.row_num})",
-                            file=sys.stderr,
-                        )
-                        body = draft_body
-                        pre_fail = []
-        if pre_fail:
-            state.validation_failures.append(
-                _msg(
-                    "sub1_prefail_item",
-                    sub_prefix=sub_prefix,
-                    row=row.row_num,
-                    failures="\n".join(pre_fail),
-                )
-            )
-            continue
-
-        scope_labels = [
-            lab for lab in labels if lab.startswith("scope:") and lab != "scope:milestone"
-        ]
-        create_labels = ["issuesmith:draft-done", *scope_labels]
-        try:
-            new_number = int(
-                client.issue_create(
-                    row.title, body, labels=create_labels, milestone=milestone_number
-                )
-            )
-        except Exception as exc:
-            return _sub1_fail(
-                client,
-                issue_number,
-                _msg("sub1_create_failed", sub_prefix=sub_prefix, row=row.row_num, error=exc),
-            )
-
-        try:
-            client.issue_update(
-                new_number, labels_add=["issuesmith:draft-done", *scope_labels]
-            )
-        except Exception as exc:
-            print(f"WARN: label update failed for #{new_number}: {exc}", file=sys.stderr)
-
-        if not ensure_sub1_binding(client, issue_number, new_number):
-            return _sub1_fail(
-                client,
-                issue_number,
-                _msg("sub1_new_link_failed", child=new_number),
-            )
-
-        state.row_to_issue[row.row_num] = new_number
-        state.created_issues.append(
-            _msg("sub1_created_item", child=new_number, title=row.title, repo=row.repo)
-        )
-        state.created_children.append(
-            {
-                "number": new_number,
-                "title": row.title,
-                "body": body,
-                "milestone": {"number": milestone_number} if milestone_number else None,
-                "labels": [{"name": lab} for lab in create_labels],
-            }
-        )
-
-    if template_name and skip_count == table_row_count and table_row_count >= 1:
-        print("PIPELINE_STATUS: SUB1_BODY_INIT_ERROR", file=sys.stderr)
-        sys.exit(1)
-
-    if state.validation_failures and not state.created_children and not skipped_existing:
-        fail_body = "\n".join(f"- {entry}" for entry in state.validation_failures)
-        return _sub1_fail(
-            client,
-            issue_number,
-            _msg("sub1_all_prevalidation_failed", failures=fail_body),
-        )
-
-    if state.validation_failures:
-        fail_body = "\n".join(f"- {entry}" for entry in state.validation_failures)
-        try:
-            client.issue_comment(
-                issue_number,
-                _msg("sub1_partial_validation", failures=fail_body),
-            )
-        except Exception:
-            pass
-
-    if state.created_children:
-        post = validate_children(parent, state.created_children, client=client)
-        if not post.passed:
-            details = []
-            for child in post.results:
-                if not child.passed:
-                    details.append(f"#{child.issue}: " + "; ".join(child.failures))
-            return _sub1_fail(
-                client,
-                issue_number,
-                _msg("sub1_post_validate_failed", details="\n".join(details)),
-            )
-
-    created_block = "\n".join(f"- {line}" for line in state.created_issues) or _msg("none_item")
-    extra_logs = []
-    extra_logs.extend(state.resolved_logs)
-    extra_logs.extend(state.excluded_milestone_logs)
-    extra_logs.extend(state.unresolved_forward_logs)
-    log_block = ("\n" + "\n".join(extra_logs) + "\n") if extra_logs else "\n"
-    ms = str(milestone_number) if milestone_number is not None else _msg("no_milestone")
-    try:
-        client.issue_comment(
-            issue_number,
-            _msg("sub1_done", created=created_block, milestone=ms, logs=log_block),
-        )
-    except Exception as exc:
-        print(f"WARN: completion comment failed: {exc}", file=sys.stderr)
-
-    if not state.created_issues:
-        return StepResult(exit_code=1, pipeline_status="IMPL_FAILED")
-    return StepResult(exit_code=0, pipeline_status="SUB_CREATED")
 
 
 def main(argv: list[str] | None = None) -> int:

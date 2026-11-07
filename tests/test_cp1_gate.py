@@ -2,8 +2,8 @@
 
 import pytest
 
-from issuesmith.cp1_gate import check_gate
-from issuesmith.gate_rules.cp1 import Cp1Rules
+from issuesmith.design_lint_entry import check_gate
+from issuesmith.gate_rules.design_lint_rules import Cp1Rules
 from tests.legacy_text import ADD, CHANGE_TYPE, DESCRIPTION, FILE_PATH, REPOSITORY, SUB
 
 _TABLE_HEADER = f"{REPOSITORY} | {FILE_PATH} | {CHANGE_TYPE} | {DESCRIPTION}"
@@ -53,7 +53,7 @@ def test_tbd_in_body_fails():
 def test_youkakunin_in_body_fails():
     """#3 FAIL when body contains the needs-confirmation CJK placeholder"""
     # ASCII fixture data.
-    assert "cp1.forbidden_word.youkakunin" in {item[1] for item in Cp1Rules.FAIL_PATTERNS}
+    assert "design_lint.forbidden_word.youkakunin" in {item[1] for item in Cp1Rules.FAIL_PATTERNS}
 
 
 def test_todo_inside_code_block_passes():
@@ -120,19 +120,19 @@ def test_cp1_must_fail_false_passes():
 def test_miteii_in_body_fails():
     """FAIL when body contains the undecided CJK placeholder"""
     # ASCII fixture data.
-    assert "cp1.forbidden_word.mitei" in {item[1] for item in Cp1Rules.FAIL_PATTERNS}
+    assert "design_lint.forbidden_word.mitei" in {item[1] for item in Cp1Rules.FAIL_PATTERNS}
 
 
 def test_kentouchuu_in_body_fails():
     """FAIL when body contains the under-consideration CJK placeholder"""
     # ASCII fixture data.
-    assert "cp1.forbidden_word.kentouchuu" in {item[1] for item in Cp1Rules.FAIL_PATTERNS}
+    assert "design_lint.forbidden_word.kentouchuu" in {item[1] for item in Cp1Rules.FAIL_PATTERNS}
 
 
 def test_user_confirm_in_body_fails():
     """FAIL when body contains the ask-the-user CJK phrase"""
     # ASCII fixture data.
-    assert "cp1.forbidden_word.user_confirm" in {item[1] for item in Cp1Rules.FAIL_PATTERNS}
+    assert "design_lint.forbidden_word.user_confirm" in {item[1] for item in Cp1Rules.FAIL_PATTERNS}
 
 
 def test_tbd_inside_code_block_passes():
@@ -178,7 +178,7 @@ def test_miteigi_in_body_passes():
 def test_miteii_placeholder_still_fails():
     """AC-2: undecided CJK placeholder still FAILs"""
     # ASCII fixture data.
-    assert "cp1.forbidden_word.mitei" in {item[1] for item in Cp1Rules.FAIL_PATTERNS}
+    assert "design_lint.forbidden_word.mitei" in {item[1] for item in Cp1Rules.FAIL_PATTERNS}
 
 
 def test_miteigi_multiple_occurrences_passes():

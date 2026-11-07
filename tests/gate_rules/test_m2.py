@@ -1,7 +1,7 @@
-"""test_m2.py — M2Rules unit tests"""
+"""test_ac_complete.py — M2Rules unit tests"""
 
 from issuesmith.gate_rules import GATE_REGISTRY
-from issuesmith.gate_rules.m2 import M2Rules
+from issuesmith.gate_rules.ac_complete_rules import M2Rules
 
 BODY_WITH_UNCHECKED = """\
 ## Acceptance Criteria
@@ -41,11 +41,11 @@ BODY_MULTIPLE_UNCHECKED = """\
 
 
 def test_unchecked_returns_fail_violation():
-    """AC: unchecked checkbox yields m2.unchecked_ac severity=fail."""
+    """AC: unchecked checkbox yields ac_complete.unchecked_ac severity=fail."""
     violations = M2Rules().check(BODY_WITH_UNCHECKED, [])
     assert len(violations) == 1
     v = violations[0]
-    assert v.rule_id == "m2.unchecked_ac"
+    assert v.rule_id == "ac_complete.unchecked_ac"
     assert v.severity == "fail"
     assert v.auto_fixable is False
     assert "1" in v.message
@@ -58,21 +58,21 @@ def test_all_checked_returns_empty():
 
 
 def test_no_ac_section_returns_warn_violation():
-    """AC: missing acceptance-criteria section → m2.ac_section_missing severity=warn."""
+    """AC: missing acceptance-criteria section → ac_complete.ac_section_missing severity=warn."""
     violations = M2Rules().check(BODY_NO_AC_SECTION, [])
     assert len(violations) == 1
     v = violations[0]
-    assert v.rule_id == "m2.ac_section_missing"
+    assert v.rule_id == "ac_complete.ac_section_missing"
     assert v.severity == "warn"
     assert v.auto_fixable is False
 
 
 def test_empty_body_returns_warn_violation():
-    """AC: empty body → m2.ac_section_missing severity=warn (edge case)."""
+    """AC: empty body → ac_complete.ac_section_missing severity=warn (edge case)."""
     violations = M2Rules().check("", [])
     assert len(violations) == 1
     v = violations[0]
-    assert v.rule_id == "m2.ac_section_missing"
+    assert v.rule_id == "ac_complete.ac_section_missing"
     assert v.severity == "warn"
 
 
@@ -85,7 +85,7 @@ def test_ac_section_no_checkboxes_returns_empty():
 def test_unchecked_count_in_message():
     """Unchecked count is included in the message."""
     violations = M2Rules().check(BODY_MULTIPLE_UNCHECKED, [])
-    v = next(v for v in violations if v.rule_id == "m2.unchecked_ac")
+    v = next(v for v in violations if v.rule_id == "ac_complete.unchecked_ac")
     assert "3" in v.message
 
 
@@ -98,7 +98,7 @@ def test_labels_param_not_used():
 
 
 def test_gate_registry_registered():
-    import issuesmith.gate_rules.m2  # noqa: F401 — ensure module loaded
+    import issuesmith.gate_rules.ac_complete_rules  # noqa: F401 — ensure module loaded
     assert GATE_REGISTRY.get("ac_complete") is M2Rules
 
 

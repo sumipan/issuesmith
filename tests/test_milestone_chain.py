@@ -305,7 +305,7 @@ class TestChainRules:
         assert result.dispatched is False
         assert store.snapshot().in_flight == []
 
-    def test_c1_enqueues_sub_after_intentional_hold(self, tmp_path):
+    def test_c1_enqueues_sub_after_draft_done_without_hold_comment(self, tmp_path):
         store = _store(tmp_path)
         client = FakeClient(
             issues={
@@ -321,12 +321,7 @@ class TestChainRules:
                     "milestone": {"number": 1},
                 }
             },
-            comments={
-                100: [
-                    {"body": "PIPELINE_STATUS: BRUSHUP_DONE"},
-                    {"body": "## CP1 checkpoint\nINTENTIONAL_HOLD: true\nCP1_STATUS: FAIL"},
-                ]
-            },
+            comments={100: []},
         )
         advance_milestone_chains(store, client, _chain_config())
         snap = store.snapshot()
@@ -334,6 +329,7 @@ class TestChainRules:
         req = snap.requests[snap.active_order[0]]
         assert req.phase == "sub"
         assert req.source == "milestone-chain"
+        assert store.get_milestone_chain(100).get("stage") == "sub_enqueued"
 
     def test_c2_zero_children_halts(self, tmp_path):
         store = _store(tmp_path)
@@ -616,3 +612,23 @@ def test_dependency_table_bare_plan_ref_is_still_unresolved():
 
     body = "## Dependencies\n\n| # | Dependency_c5148 |\n|---|---|\n| 1 | Sub1 |\n"
     assert _dependency_refs_unresolved(body) == ["unresolved plan ref #1 in dependency table"]
+
+
+def test_milestone_public_api_exports_without_sub1_create():
+    import importlib
+
+    milestone = importlib.import_module("issuesmith.milestone")
+    for name in (
+        "PlanRow",
+        "Sub1State",
+        "_list_chain_children",
+        "allow_paths_for_row",
+        "build_child_body",
+        "ensure_sub1_binding",
+        "parse_split_plan",
+        "prevalidate_child_body",
+        "resolve_dependencies",
+        "validate_children",
+    ):
+        assert hasattr(milestone, name), name
+    assert not hasattr(milestone, "run_sub1_create")

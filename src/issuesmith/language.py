@@ -225,72 +225,13 @@ _EN_MESSAGES: dict[str, str] = {
         " `issuesmith:develop-ready`.\n"
     ),
     "scope_gate.no_rows": "| (none) | 0 |",
-    # steps/p0_worktree
-    "p0_worktree.milestone_blocked": (
-        "## P0 stopped: scope:milestone issue\n"
-        "This issue is design-only. Automatic implementation via develop-ready is not allowed."
-    ),
-    "p0_worktree.stale_base": (
-        "## P0 stopped: base_branch sync failed (rebase conflict)\n\n"
-        "Rebasing onto `origin/{base_branch}` hit conflicts.\n"
-        "Resolve the conflicts manually, then dispatch again.\n\n"
-        "**Conflicting files:**\n```\n{conflict_files}\n```"
-    ),
-    # steps/m1_merge
-    "m1_merge.companion_not_ready": (
-        "## M1: companion PR not approved or CI not passing\n\n"
-        "Re-run after companion PR (#{pr}, base branch: {branch}) is approved and CI passes."
-    ),
-    "m1_merge.m2_gate_blocked": (
-        "## M1 stopped: M2 gate not passed\n\n"
-        "The pre-merge M2 gate check found unresolved problems:\n\n{items}\n\n"
-        "Check every acceptance criterion, then re-run."
-    ),
-    # steps/m2_finalize
-    "m2_finalize.migrate": (
-        "## M2: acceptance criteria incomplete\n\n"
-        "Unchecked acceptance criteria remain. Add `issuesmith:migrate-ready` after the"
-        " migration completes."
-    ),
-    "m2_finalize.contract_failed_detail": (
-        "Acceptance criteria YAML contract check failed:\n{failures}"
-    ),
-    "m2_finalize.contract_failed_step1": (
-        "1. Make the files listed in `paths_must_exist` exist on {base_branch}"
-        " (add the missing files or fix the contract)"
-    ),
-    "m2_finalize.unchecked_detail": "Unchecked acceptance criteria remain.",
-    "m2_finalize.unchecked_step1": "1. Check every acceptance criterion",
-    "m2_finalize.retry_impl": (
-        "## M2: acceptance criteria incomplete\n\n{detail}\n\n"
-        "Recovery (impl context):\n{step1}\n"
-        "2. Run `python3 -m issuesmith queue enqueue --issue {issue} --phase merge"
-        " --source recovery --actor-kind human --priority high --requested-by <login> --force`\n"
-        "   Note: the impl idempotency key is consumed but the merge key is unused,"
-        " so no reset is needed"
-    ),
-    "m2_finalize.retry": (
-        "## M2: acceptance criteria incomplete\n\n{detail}\n\n"
-        "Recovery:\n{step1}\n"
-        "2. Add the `issuesmith:reset` label to reset\n"
-        "3. Wait for ghdag to process the reset on its next cycle (about 30s)\n"
-        "4. Re-enqueue with `python3 -m issuesmith queue enqueue --issue {issue} --phase merge"
-        " --source recovery --actor-kind human --priority high --requested-by <login> --force`"
-    ),
-    "m2_finalize.compaction_failed": (
-        "## M2 compaction failed\n\n"
-        "The compaction LLM step failed with exit code {rc}"
-        " (possibly a provider refusal or timeout).\n"
-        "The PR merge is already complete. Compact the source document manually.\n"
-        "Target: `{source}`"
-    ),
     # ops/publish (PR title / body; callers append the ``Refs`` line)
     "publish.pr_title_cross_repo": "Implement {issue_repo}#{issue}",
     "publish.pr_title": "Implement Issue #{issue}",
     "publish.pr_body": "Auto-generated from the P1/P2 result.",
     # milestone (parent comments and SUB1 results)
-    "milestone.sub1_no_milestone_no_link": (
-        "## SUB1 error: no milestone and sub-issue link failed\n\n"
+    "milestone.child_no_milestone_no_link": (
+        "## Child link error: no milestone and sub-issue link failed\n\n"
         "The parent Issue has no milestone and linking child #{child} as a sub-issue also failed."
     ),
     "milestone.chain_no_children": "No child Issues were created. Check the SUB1 result.",
@@ -304,78 +245,6 @@ _EN_MESSAGES: dict[str, str] = {
     "milestone.consolidated_into": "Consolidated into #{sibling}.",
     "milestone.chain_all_done_closed": "All sub-issues done ({children})",
     "milestone.chain_all_done_manual": "All sub-issues done. A human closes the parent.",
-    "milestone.sub1_dup_design": "## SUB1 error: duplicate `## {design}` section",
-    "milestone.sub1_missing_design_ac": (
-        "## SUB1 error: design or acceptance criteria missing\n\n"
-        "The parent issue needs both `## {design}` and `## {acceptance_criteria}`."
-    ),
-    "milestone.sub1_no_sub_blocks": (
-        "## SUB1 error: sub-issue designs not generated (B1 may be incomplete)\n\n"
-        "The parent's `## {design}` has no `#### {sub_prefix}N` subsections."
-    ),
-    "milestone.sub1_not_milestone": (
-        "## SUB1 error: no scope:milestone\n\n"
-        "`issuesmith:sub-ready` can only be used on Issues labeled `scope:milestone`."
-    ),
-    "milestone.sub1_cp1_not_ready": (
-        "## SUB1 error: CP1 not finished\n\n"
-        "The CP1 gate after the B1 brush-up has not completed yet."
-    ),
-    "milestone.sub1_cp1_blocked": (
-        "## SUB1 error: CP1 not passed\n\n"
-        "The parent Issue's CP1 gate is FAIL (not an intentional_hold)."
-    ),
-    "milestone.sub1_milestone_created": (
-        "## SUB1: milestone created automatically\n\n"
-        "The parent Issue had no milestone, so `{title}` (#{number}) was created and attached.\n"
-    ),
-    "milestone.sub1_milestone_create_failed": (
-        "## SUB1 warning: automatic milestone creation failed\n\n"
-        "The parent Issue has no milestone and automatic creation failed ({error})."
-        " Continuing with sub-issue links.\n"
-    ),
-    "milestone.sub1_no_plan": "## SUB1 error: sub-issue plan not found",
-    "milestone.sub1_no_target_repo": (
-        "## SUB1 error: parent YAML has no target_repo\n\n"
-        "The YAML block of parent Issue #{issue} needs a `target_repo` field."
-    ),
-    "milestone.sub1_row_repo_empty": (
-        "{sub_prefix}{row}: target repo is empty in the 5-column table"
-    ),
-    "milestone.sub1_existing_link_failed": (
-        "## SUB1 error: failed to link existing child #{child} as a sub-issue"
-    ),
-    "milestone.sub1_existing_skipped": "Existing: #{child} / {title} (skipped)",
-    "milestone.sub1_no_row_paths": (
-        "{sub_prefix}{row}: no {repo} paths could be extracted from the changed-files table,"
-        " so no child is created (parent allow_paths are not inherited)"
-    ),
-    "milestone.sub1_cp1_forbidden": (
-        "## SUB1 error: CP1 forbidden words remain in {sub_prefix}{row} body\n\n{detail}\n"
-    ),
-    "milestone.sub1_cp1_forbidden_item": "{sub_prefix}{row}: CP1 forbidden words",
-    "milestone.sub1_prefail_item": "{sub_prefix}{row}:\n{failures}",
-    "milestone.sub1_create_failed": (
-        "## SUB1 error: Issue creation failed ({sub_prefix}{row})\n\n{error}"
-    ),
-    "milestone.sub1_new_link_failed": "## SUB1 error: failed to link child #{child} as a sub-issue",
-    "milestone.sub1_created_item": "#{child} / {title} / {repo}",
-    "milestone.sub1_all_prevalidation_failed": (
-        "## SUB1 error: child Issue body validation failed\n\n"
-        "No Issues were created because pre-creation validation (V1-V5) failed for these"
-        " rows:\n\n{failures}\n"
-    ),
-    "milestone.sub1_partial_validation": (
-        "## SUB1 warning: validation failed for some rows\n\n{failures}\n"
-    ),
-    "milestone.sub1_post_validate_failed": (
-        "## SUB1 error: validate_children failed after creation\n\n{details}"
-    ),
-    "milestone.sub1_done": (
-        "## SUB1 sub-issues created\n\nCreated sub-issues:\n{created}\n\n"
-        "milestone: {milestone}\n{logs}\n"
-        "The queue enqueues the validated child develop requests in dependency order.\n"
-    ),
     "milestone.none_item": "- (none)",
     "milestone.no_milestone": "none (sub-issue links only)",
     "milestone.log_resolved": "Resolved plan ref: row {row} -> {target}",
@@ -387,12 +256,6 @@ _EN_MESSAGES: dict[str, str] = {
     "milestone.v5_dep_self": "V5: dependency points to the parent Issue itself (#{issue})",
     "milestone.v5_dep_milestone": "V5: dependency points to a scope:milestone Issue (#{issue})",
     "milestone.v6_dep_line_unresolved": "V6: dependency line does not carry #{issue}",
-    "milestone.sub1_polish_timeout": (
-        "## SUB1 error: body polish timed out\n\n"
-        "{sub_prefix}{row}: {title} (timeout {timeout}s). "
-        "No child was created for this row or later rows. "
-        "Re-run SUB1 with resume --from sub1."
-    ),
     # milestone (child Issue body written by SUB1)
     "milestone.child_from_parent_ac": "- [ ] (from parent)",
     "milestone.child_cross_repo_note": (

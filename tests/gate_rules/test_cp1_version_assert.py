@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from issuesmith.gate_rules.cp1 import check_test_version_exact_assert
+from issuesmith.gate_rules.design_lint_rules import check_test_version_exact_assert
 
 _FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "version_exact_assert"
-_RULE_ID = "cp1.test_version_exact_assert"
+_RULE_ID = "design_lint.test_version_exact_assert"
 def _exact_assert_diff() -> str:
     return (_FIXTURES / "mltgnt_exact_assert.diff").read_text(encoding="utf-8")
 

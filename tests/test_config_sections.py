@@ -12,7 +12,7 @@ from issuesmith.config import get_config, load_config, reset_config_cache
 from issuesmith.dep_extractor import extract_dependencies
 from issuesmith.gate_rules.b1_ac_format import get_ac_section
 from issuesmith.gate_rules.b1_milestone_subdesign import B1MilestoneSubdesignRules
-from issuesmith.gate_rules.m2 import (
+from issuesmith.gate_rules.ac_complete_rules import (
     get_unchecked_count,
     has_acceptance_criteria_section,
 )
@@ -212,7 +212,7 @@ def test_sub_design_subsections_default_and_custom(tmp_path, monkeypatch):
     )
     # custom subsections complete → no subsection_missing
     v = B1MilestoneSubdesignRules().check(body, ["scope:milestone"])
-    missing = [x for x in v if x.rule_id == "b1_milestone_subdesign.subsection_missing"]
+    missing = [x for x in v if x.rule_id == "milestone_subdesign.subsection_missing"]
     assert missing == []
 
 

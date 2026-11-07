@@ -1,4 +1,4 @@
-"""tests/gate_rules/test_b1_migration.py — unit tests for the b1_migration gate."""
+"""tests/gate_rules/test_migration_plan.py — unit tests for the b1_migration gate."""
 from __future__ import annotations
 
 import issuesmith.gate_rules.b1_migration  # noqa: F401 — registers on import
@@ -141,7 +141,7 @@ def test_migration_label_with_complete_body_returns_empty():
 def test_migration_label_without_section_returns_procedure_violation():
     violations = _check(BODY_WITHOUT_MIGRATION_PROCEDURE, MIGRATION_LABELS)
     by_id = {v.rule_id: v for v in violations}
-    v = by_id["b1_migration.migration_procedure_missing"]
+    v = by_id["migration_plan.migration_procedure_missing"]
     assert v.severity == "fail"
     assert v.auto_fixable is True
     assert v.fix_hint.startswith("## Migration Steps")
@@ -150,19 +150,19 @@ def test_migration_label_without_section_returns_procedure_violation():
 
 def test_missing_everything_returns_all_five_violations():
     assert _rule_ids(BODY_WITHOUT_MIGRATION_PROCEDURE, MIGRATION_LABELS) == {
-        "b1_migration.migration_procedure_missing",
-        "b1_migration.state_survey_missing",
-        "b1_migration.verification_test_missing",
-        "b1_migration.post_merge_missing",
-        "b1_migration.removed_trees_missing",
+        "migration_plan.migration_procedure_missing",
+        "migration_plan.state_survey_missing",
+        "migration_plan.verification_test_missing",
+        "migration_plan.post_merge_missing",
+        "migration_plan.removed_trees_missing",
     }
 
 
 def test_missing_state_survey_returns_violation_with_skeleton():
     violations = _check(BODY_MISSING_STATE_SURVEY, MIGRATION_LABELS)
     by_id = {v.rule_id: v for v in violations}
-    assert set(by_id) == {"b1_migration.state_survey_missing"}
-    v = by_id["b1_migration.state_survey_missing"]
+    assert set(by_id) == {"migration_plan.state_survey_missing"}
+    v = by_id["migration_plan.state_survey_missing"]
     assert v.auto_fixable is True
     assert "Runtime State Survey" in v.fix_hint
     assert v.fix_hint.count("**") >= 8
@@ -173,14 +173,14 @@ def test_empty_state_survey_section_is_violation():
         "some impact analysis",
         "some impact analysis\n\n### Runtime State Survey\n",
     )
-    assert "b1_migration.state_survey_missing" in _rule_ids(body, MIGRATION_LABELS)
+    assert "migration_plan.state_survey_missing" in _rule_ids(body, MIGRATION_LABELS)
 
 
 def test_missing_test_contract_returns_violation():
     violations = _check(BODY_MISSING_TEST_CONTRACT, MIGRATION_LABELS)
     by_id = {v.rule_id: v for v in violations}
-    assert set(by_id) == {"b1_migration.verification_test_missing"}
-    assert "paths_must_exist" in by_id["b1_migration.verification_test_missing"].fix_hint
+    assert set(by_id) == {"migration_plan.verification_test_missing"}
+    assert "paths_must_exist" in by_id["migration_plan.verification_test_missing"].fix_hint
 
 
 def test_tools_scoped_tests_path_satisfies_contract():
@@ -247,8 +247,8 @@ post_merge:
 def test_missing_post_merge_returns_violation():
     violations = _check(BODY_MISSING_POST_MERGE, MIGRATION_LABELS)
     by_id = {v.rule_id: v for v in violations}
-    assert "b1_migration.post_merge_missing" in by_id
-    v = by_id["b1_migration.post_merge_missing"]
+    assert "migration_plan.post_merge_missing" in by_id
+    v = by_id["migration_plan.post_merge_missing"]
     assert v.severity == "fail"
     assert v.auto_fixable is True
     assert "post_merge" in v.fix_hint
@@ -257,8 +257,8 @@ def test_missing_post_merge_returns_violation():
 def test_missing_removed_trees_returns_violation():
     violations = _check(BODY_MISSING_REMOVED_TREES, MIGRATION_LABELS)
     by_id = {v.rule_id: v for v in violations}
-    assert "b1_migration.removed_trees_missing" in by_id
-    v = by_id["b1_migration.removed_trees_missing"]
+    assert "migration_plan.removed_trees_missing" in by_id
+    v = by_id["migration_plan.removed_trees_missing"]
     assert v.severity == "fail"
     assert v.auto_fixable is True
     assert "removed_trees" in v.fix_hint
@@ -285,8 +285,8 @@ def test_post_merge_free_text_item_is_schema_violation():
     )
     violations = _check(body, MIGRATION_LABELS)
     by_id = {v.rule_id: v for v in violations}
-    assert set(by_id) == {"b1_migration.post_merge_schema"}
-    v = by_id["b1_migration.post_merge_schema"]
+    assert set(by_id) == {"migration_plan.post_merge_schema"}
+    v = by_id["migration_plan.post_merge_schema"]
     assert v.severity == "fail"
     assert v.auto_fixable is False
     assert "post_merge[0]" in v.message
@@ -319,8 +319,8 @@ def test_post_merge_unknown_kind_lists_allowed_kinds():
     )
     violations = _check(body, MIGRATION_LABELS)
     by_id = {v.rule_id: v for v in violations}
-    assert set(by_id) == {"b1_migration.post_merge_schema"}
-    v = by_id["b1_migration.post_merge_schema"]
+    assert set(by_id) == {"migration_plan.post_merge_schema"}
+    v = by_id["migration_plan.post_merge_schema"]
     assert "unknown kind: manual" in v.message
     assert "allowed: stable_install, tag, restart" in v.message
     for kind in ("stable_install", "tag", "restart"):
@@ -337,7 +337,7 @@ def test_post_merge_missing_required_field_is_violation():
         + _AC_REMOVED
     )
     v = {x.rule_id: x for x in _check(body, MIGRATION_LABELS)}[
-        "b1_migration.post_merge_schema"
+        "migration_plan.post_merge_schema"
     ]
     assert "kind stable_install: missing required field: path" in v.message
     assert "kind restart: missing required field: processes" in v.message
@@ -345,8 +345,8 @@ def test_post_merge_missing_required_field_is_violation():
 
 def test_post_merge_schema_not_reported_when_key_missing():
     ids = _rule_ids(BODY_MISSING_POST_MERGE, MIGRATION_LABELS)
-    assert "b1_migration.post_merge_missing" in ids
-    assert "b1_migration.post_merge_schema" not in ids
+    assert "migration_plan.post_merge_missing" in ids
+    assert "migration_plan.post_merge_schema" not in ids
 
 
 def test_removed_trees_non_string_item_is_schema_violation():
@@ -363,8 +363,8 @@ def test_removed_trees_non_string_item_is_schema_violation():
     )
     violations = _check(body, MIGRATION_LABELS)
     by_id = {v.rule_id: v for v in violations}
-    assert set(by_id) == {"b1_migration.removed_trees_schema"}
-    v = by_id["b1_migration.removed_trees_schema"]
+    assert set(by_id) == {"migration_plan.removed_trees_schema"}
+    v = by_id["migration_plan.removed_trees_schema"]
     assert v.severity == "fail"
     assert v.auto_fixable is False
     assert "removed_trees items must be strings, got dict" in v.message
@@ -373,8 +373,8 @@ def test_removed_trees_non_string_item_is_schema_violation():
 
 def test_removed_trees_schema_not_reported_when_key_missing():
     ids = _rule_ids(BODY_MISSING_REMOVED_TREES, MIGRATION_LABELS)
-    assert "b1_migration.removed_trees_missing" in ids
-    assert "b1_migration.removed_trees_schema" not in ids
+    assert "migration_plan.removed_trees_missing" in ids
+    assert "migration_plan.removed_trees_schema" not in ids
 
 
 def test_post_merge_manual_check_passes():
@@ -394,10 +394,10 @@ def test_post_merge_manual_check_without_description_is_violation():
     )
     violations = _check(body, MIGRATION_LABELS)
     by_id = {v.rule_id: v for v in violations}
-    assert set(by_id) == {"b1_migration.post_merge_schema"}
+    assert set(by_id) == {"migration_plan.post_merge_schema"}
     assert (
         "kind manual_check: missing required field: description"
-        in by_id["b1_migration.post_merge_schema"].message
+        in by_id["migration_plan.post_merge_schema"].message
     )
 
 
@@ -410,14 +410,14 @@ def test_post_merge_manual_check_empty_description_is_violation():
         + _AC_REMOVED
     )
     v = {x.rule_id: x for x in _check(body, MIGRATION_LABELS)}[
-        "b1_migration.post_merge_schema"
+        "migration_plan.post_merge_schema"
     ]
     assert "description must be a non-empty string" in v.message
 
 
 def test_post_merge_skeleton_lists_manual_check():
     v = {x.rule_id: x for x in _check(BODY_MISSING_POST_MERGE, MIGRATION_LABELS)}[
-        "b1_migration.post_merge_missing"
+        "migration_plan.post_merge_missing"
     ]
     assert "kind: manual_check" in v.fix_hint
 
@@ -479,18 +479,18 @@ def test_custom_pack_default_headings_fail_with_same_rules(tmp_path, monkeypatch
     violations = _check(_migration_body(EN.sections), MIGRATION_LABELS)
     by_id = {v.rule_id: v for v in violations}
     assert set(by_id) == {
-        "b1_migration.migration_procedure_missing",
-        "b1_migration.state_survey_missing",
-        "b1_migration.verification_test_missing",
-        "b1_migration.post_merge_missing",
-        "b1_migration.removed_trees_missing",
+        "migration_plan.migration_procedure_missing",
+        "migration_plan.state_survey_missing",
+        "migration_plan.verification_test_missing",
+        "migration_plan.post_merge_missing",
+        "migration_plan.removed_trees_missing",
     }
-    assert by_id["b1_migration.migration_procedure_missing"].fix_hint.startswith(
+    assert by_id["migration_plan.migration_procedure_missing"].fix_hint.startswith(
         f"## {sections['migration']}\n"
     )
     assert f"### {sections['migration_state_survey']}" in (
-        by_id["b1_migration.state_survey_missing"].fix_hint
+        by_id["migration_plan.state_survey_missing"].fix_hint
     )
     assert f"## {sections['acceptance_criteria']}" in (
-        by_id["b1_migration.post_merge_missing"].message
+        by_id["migration_plan.post_merge_missing"].message
     )

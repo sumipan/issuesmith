@@ -353,7 +353,7 @@ def pr_diff_lines(
 
 def unchecked_ac_count(body: str) -> int:
     """Count unchecked ``- [ ]`` items inside the configured AC section."""
-    from issuesmith.gate_rules.m2 import get_unchecked_count
+    from issuesmith.gate_rules.ac_complete_rules import get_unchecked_count
 
     return get_unchecked_count(body)
 

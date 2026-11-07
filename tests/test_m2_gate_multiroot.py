@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from issuesmith.ac_contract import run_checks
-from issuesmith.m2_gate import (
+from issuesmith.ac_complete_entry import (
     check_gate_multi_root,
     synthesize_contract_failures,
 )

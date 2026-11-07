@@ -387,3 +387,11 @@ def test_order_after_words_en_value_and_fallback():
     data = _pack_dict()
     del data["order_after_words"]
     assert language_pack_from_mapping(data).order_after_words == EN.order_after_words
+
+
+def test_default_messages_omit_legacy_step_and_sub1_keys():
+    for key in EN.messages:
+        assert not key.startswith("p0_worktree.")
+        assert not key.startswith("m1_merge.")
+        assert not key.startswith("m2_finalize.")
+        assert not key.startswith("milestone.sub1_")

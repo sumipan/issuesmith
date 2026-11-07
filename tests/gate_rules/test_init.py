@@ -20,14 +20,14 @@ def test_violation_instantiation():
 
 def test_violation_with_all_fields():
     v = Violation(
-        rule_id="cp1.forbidden_word.tbd",
+        rule_id="design_lint.forbidden_word.tbd",
         severity="warn",
         message="TBD still present",
         location="line 5",
         auto_fixable=True,
         fix_hint="Replace with a concrete policy",
     )
-    assert v.rule_id == "cp1.forbidden_word.tbd"
+    assert v.rule_id == "design_lint.forbidden_word.tbd"
     assert v.severity == "warn"
     assert v.location == "line 5"
     assert v.auto_fixable is True
@@ -73,3 +73,43 @@ def test_gate_rule_protocol_compliance():
     rule = DummyRule()
     result = rule.check("body text", ["label1"])
     assert result == []
+
+
+def test_legacy_rule_classes_are_aliases_of_concept_rules():
+    from issuesmith.gate_rules.b1_milestone_subdesign import (
+        B1MilestoneSubdesignRules,
+        _sub_plan_dependencies,
+        parse_table_rows,
+    )
+    from issuesmith.gate_rules.ac_complete_rules import AcCompleteRules, get_unchecked_count
+    from issuesmith.gate_rules.cp1 import Cp1Rules
+    from issuesmith.gate_rules.design_lint_rules import DesignLintRules
+    from issuesmith.gate_rules.m2 import M2Rules
+
+    assert Cp1Rules is DesignLintRules
+    assert M2Rules is AcCompleteRules
+    assert callable(get_unchecked_count)
+    assert callable(parse_table_rows)
+    assert callable(_sub_plan_dependencies)
+    assert B1MilestoneSubdesignRules is not None
+
+
+def test_src_gate_rules_use_concept_rule_id_prefixes():
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[2] / "src" / "issuesmith" / "gate_rules"
+    pattern = re.compile(r'rule_id="(cp1|m2|b1_ac_format|b1_migration|b1_milestone_subdesign)\.')
+    hits = []
+    for path in root.rglob("*.py"):
+        if path.name in {
+            "cp1.py",
+            "m2.py",
+            "b1_ac_format.py",
+            "b1_migration.py",
+            "b1_milestone_subdesign.py",
+        }:
+            continue
+        text = path.read_text(encoding="utf-8")
+        hits.extend(f"{path.name}:{m.start()}" for m in pattern.finditer(text))
+    assert hits == []

@@ -10,7 +10,11 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from issuesmith.m2_gate import check_gate, get_unchecked_count, has_acceptance_criteria_section
+from issuesmith.ac_complete_entry import (
+    check_gate,
+    get_unchecked_count,
+    has_acceptance_criteria_section,
+)
 
 BODY_NO_SECTION = """\
 ## Background
@@ -277,7 +281,7 @@ class TestMainRepoRootCli:
             "labels": [],
         }
         monkeypatch.setattr(
-            "issuesmith.m2_gate.get_forge",
+            "issuesmith.ac_complete_entry.get_forge",
             lambda: mock_client,
         )
         monkeypatch.setattr(

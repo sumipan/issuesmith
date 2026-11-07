@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from issuesmith import merge as merge_api
-from issuesmith.m2_gate import _proceed_or_contract_retry
+from issuesmith.ac_complete_entry import _proceed_or_contract_retry
 
 # ASCII fixture data.
 BODY_WITH_POST_MERGE = """\

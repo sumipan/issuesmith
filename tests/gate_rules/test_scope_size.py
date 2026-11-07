@@ -642,8 +642,8 @@ def test_promote_merges_mutually_dependent_concerns():
     deps = infer_sub_dependencies(blocks)
     assert find_dependency_cycles(deps) == []
     ids = {v.rule_id for v in B1MilestoneSubdesignRules().check(promoted, ["scope:milestone"])}
-    assert "b1_milestone_subdesign.dependency_cycle" not in ids
-    assert "b1_milestone_subdesign.sibling_new_file_unreferenced_dependency" not in ids
+    assert "milestone_subdesign.dependency_cycle" not in ids
+    assert "milestone_subdesign.sibling_new_file_unreferenced_dependency" not in ids
 
 
 @pytest.mark.parametrize("rows", [_ONE_WAY_ROWS, _CYCLE_ROWS], ids=["one_way", "cycle"])
@@ -726,7 +726,7 @@ def test_corklab_style_promotion_uses_three_slices():
     ]
     for path in step_files:
         rows.append((path, _MODIFY, "step change"))
-    for name in ("b1.md", "cp1.md", "develop.md"):
+    for name in ("b1.md", "design_lint.md", "develop.md"):
         rows.append((f"workflows/corklab/{name}", _MODIFY, "workflow doc"))
     rows += [
         ("workflows/corklab.yml", _MODIFY, "pipeline"),

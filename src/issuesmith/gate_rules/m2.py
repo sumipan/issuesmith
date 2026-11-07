@@ -1,59 +1,9 @@
+"""Compatibility shim — implementation lives in ac_complete_rules."""
+
 from __future__ import annotations
 
-import re
+import sys
 
-from ghdag.workflow.gates import GATE_REGISTRY, Violation
+import issuesmith.gate_rules.ac_complete_rules as _impl
 
-from issuesmith.config import get_config
-
-
-def has_acceptance_criteria_section(body: str) -> bool:
-    """Return whether the acceptance criteria section exists."""
-    heading = get_config().sections["acceptance_criteria"]
-    return bool(
-        re.search(rf"^##\s+{re.escape(heading)}", body, re.MULTILINE)
-    )
-
-
-def get_unchecked_count(body: str) -> int:
-    """Return the number of unchecked checkboxes in the acceptance criteria section."""
-    heading = get_config().sections["acceptance_criteria"]
-    match = re.search(
-        rf"^##\s+{re.escape(heading)}\s*\n(.*?)(?=^##|\Z)",
-        body,
-        re.MULTILINE | re.DOTALL,
-    )
-    if not match:
-        return 0
-    section = match.group(1)
-    return len(re.findall(r"^\s*-\s+\[ \]", section, re.MULTILINE))
-
-
-class M2Rules:
-    def check(self, body: str, labels: list[str]) -> list[Violation]:
-        ac = get_config().sections["acceptance_criteria"]
-        if not has_acceptance_criteria_section(body):
-            return [Violation(
-                rule_id="m2.ac_section_missing",
-                severity="warn",
-                message=f"## {ac} section not found",
-                location=None,
-                auto_fixable=False,
-                fix_hint=None,
-            )]
-
-        unchecked = get_unchecked_count(body)
-        if unchecked == 0:
-            return []
-
-        return [Violation(
-            rule_id="m2.unchecked_ac",
-            severity="fail",
-            message=f"{unchecked} unchecked item(s) remain in ## {ac}",
-            location=None,
-            auto_fixable=False,
-            fix_hint=None,
-        )]
-
-
-GATE_REGISTRY["ac_complete"] = M2Rules
+sys.modules[__name__] = _impl

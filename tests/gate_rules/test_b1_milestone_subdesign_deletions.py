@@ -23,9 +23,9 @@ from tests.legacy_text import SUB
 # #4518 — milestone splits that P1 cannot implement
 # ---------------------------------------------------------------------------
 
-_ORPHAN_RULE = "b1_milestone_subdesign.deletion_reference_orphan"
-_SIBLING_TEST_RULE = "b1_milestone_subdesign.behavior_test_in_sibling"
-_CONTRADICTION_RULE = "b1_milestone_subdesign.sub_ac_contradiction"
+_ORPHAN_RULE = "milestone_subdesign.deletion_reference_orphan"
+_SIBLING_TEST_RULE = "milestone_subdesign.behavior_test_in_sibling"
+_CONTRADICTION_RULE = "milestone_subdesign.sub_ac_contradiction"
 
 _STANDALONE_IMPORT_ERROR = "This sub alone raises ImportError in test collection."
 _PARENT_FULL_PASS = "The full test pass is checked by the parent."
@@ -383,8 +383,8 @@ def test_behavior_test_in_sibling_deletion_no_false_positive_other_dir():
 # #5750 — deletion AC consistency and sibling referrer dependencies
 # ---------------------------------------------------------------------------
 
-_DELETED_IN_EXIST = "b1_milestone_subdesign.deleted_path_in_paths_must_exist"
-_REFERRER_DEP = "b1_milestone_subdesign.deletion_referrer_in_sibling_without_dependency"
+_DELETED_IN_EXIST = "milestone_subdesign.deleted_path_in_paths_must_exist"
+_REFERRER_DEP = "milestone_subdesign.deletion_referrer_in_sibling_without_dependency"
 
 
 def _sub_with_structured_ac(
