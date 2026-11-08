@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.174.1 - 2026-11-09
+
 ### Added
 
 - T13 wall-clock convention ratchet (`tests/conventions/test_no_wallclock_in_tests.py`, `known_wallclock_tests.txt`) and a suite-wide pytest timeout of 300 seconds via `pytest-timeout`.
