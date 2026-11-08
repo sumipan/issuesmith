@@ -18,6 +18,7 @@ from ghdag.forge import ForgePort, get_forge
 from issuesmith.contract import Andon, StepResult
 
 _TRANSIENT_FETCH_MARKERS = ("cannot lock ref", "unable to update local ref")
+CALLER_STEP_ENV_VAR = "ISSUESMITH_CALLER_STEP"
 
 
 class WorktreeError(Exception):
@@ -88,7 +89,20 @@ def _git_common_dir(repo_dir: Path) -> Path:
 
 
 def _lock_wait_seconds() -> int:
-    raw = os.environ.get("P0_FETCH_LOCK_WAIT", "30")
+    import warnings
+
+    raw = os.environ.get("ISSUESMITH_FETCH_LOCK_WAIT")
+    if raw is None:
+        legacy = os.environ.get("P0_FETCH_LOCK_WAIT")
+        if legacy is not None:
+            warnings.warn(
+                "P0_FETCH_LOCK_WAIT is deprecated; use ISSUESMITH_FETCH_LOCK_WAIT",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            raw = legacy
+        else:
+            raw = "30"
     try:
         return max(0, int(raw))
     except ValueError:
@@ -402,6 +416,53 @@ def handle_milestone(
     return StepResult(exit_code=1, pipeline_status="WORKTREE_FAILED")
 
 
+def _stale_base_resume_command(issue_number: int, caller_step: str | None) -> tuple[str, list[str]]:
+    """Resume CLI hint and andon option keys after a STALE_BASE rebase conflict."""
+    from issuesmith.config import get_config
+    from issuesmith.projection import phase_for_step, phase_steps
+
+    base = f"issuesmith resume {issue_number}"
+    if not caller_step:
+        return f"{base} --force", [
+            "manual_rebase_then_resume",
+            "discard_branch_then_restart_p0",
+        ]
+    cfg = get_config()
+    phase_name = phase_for_step(caller_step, cfg)
+    if phase_name is None:
+        return f"{base} --force", [
+            "manual_rebase_then_resume",
+            "discard_branch_then_restart_p0",
+        ]
+    phase = next((p for p in cfg.phases if p.name == phase_name), None)
+    if phase is None:
+        return f"{base} --force", [
+            "manual_rebase_then_resume",
+            "discard_branch_then_restart_p0",
+        ]
+    steps = phase_steps(phase)
+    try:
+        idx = steps.index(caller_step)
+    except ValueError:
+        return f"{base} --force", [
+            "manual_rebase_then_resume",
+            "discard_branch_then_restart_p0",
+        ]
+    if idx + 1 >= len(steps):
+        return f"{base} --force", [
+            "manual_rebase_then_resume",
+            "discard_branch_then_restart_p0",
+        ]
+    next_step = steps[idx + 1]
+    return (
+        f"{base} --from {next_step} --force",
+        [
+            f"manual_rebase_then_resume_{next_step}",
+            f"discard_branch_then_restart_{caller_step}",
+        ],
+    )
+
+
 def ensure_base_included(
     worktree_dir: Path,
     base_branch: str,
@@ -409,8 +470,13 @@ def ensure_base_included(
     issue_number: int,
     *,
     stale_base_comment_template: str,
+    caller_step: str | None = None,
 ) -> StepResult | None:
     """Return ``None`` when HEAD includes origin/*base_branch*; rebase or fail otherwise."""
+    if caller_step is None:
+        from_env = os.environ.get(CALLER_STEP_ENV_VAR, "").strip()
+        if from_env:
+            caller_step = from_env
     rev_parse = subprocess.run(
         ["git", "-C", str(worktree_dir), "rev-parse", f"origin/{base_branch}"],
         capture_output=True,
@@ -458,11 +524,11 @@ def ensure_base_included(
     )
 
     worktree = str(worktree_dir)
+    resume_cmd, options = _stale_base_resume_command(issue_number, caller_step)
     summary = (
         f"P0 rebase onto origin/{base_branch} conflicted in: {conflict_files}.\n"
         f"Option 1: In {worktree}, run `git rebase origin/{base_branch}`, resolve "
-        f"conflicts, then `issuesmith resume {issue_number} --from p1 --force` to "
-        f"resume this generation.\n"
+        f"conflicts, then `{resume_cmd}` to resume this generation.\n"
         f"Option 2: If discarding this branch's work, recreate the worktree/branch "
         f"and restart from P0."
     )
@@ -473,10 +539,7 @@ def ensure_base_included(
             kind="decision",
             rule_id="p0.base_rebase_conflict",
             summary=summary,
-            options=[
-                "manual_rebase_then_resume_p1",
-                "discard_branch_then_restart_p0",
-            ],
+            options=options,
         ),
     )
 

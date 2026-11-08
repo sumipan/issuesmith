@@ -169,6 +169,57 @@ def test_resume_in_usage() -> None:
     standalone = [ln for ln in lines if "resume" in ln and "milestone" not in ln]
     assert standalone, "resume not listed as standalone command in _USAGE"
 
+
+def test_recover_unknown_subcommand_exits_nonzero(tmp_path: Path) -> None:
+    cfg_env = {"ISSUESMITH_CONFIG": str(_subprocess_config_path(tmp_path))}
+    proc = _run_module("recover", "1", extra_env=cfg_env, check=False)
+    assert proc.returncode != 0
+
+
+def test_recover_not_in_handlers() -> None:
+    from issuesmith.cli import _HANDLERS
+
+    assert "recover" not in _HANDLERS
+
+
+def test_dispatch_sets_caller_step_env_for_python_steps(monkeypatch) -> None:
+    import os
+
+    from issuesmith.cli import _cmd_dispatch
+    from issuesmith.worktree import CALLER_STEP_ENV_VAR
+
+    seen: list[str | None] = []
+
+    def fake_dispatch(argv: list[str]) -> int:
+        seen.append(os.environ.get(CALLER_STEP_ENV_VAR))
+        return 0
+
+    monkeypatch.setattr("issuesmith.ops.dispatch.main", fake_dispatch)
+    assert _cmd_dispatch(["p0", "issue_number=1"]) == 0
+    assert seen == ["p0"]
+    assert os.environ.get(CALLER_STEP_ENV_VAR) is None
+
+
+def test_gate_design_lint_issue_form_routes_to_entry(monkeypatch) -> None:
+    calls: list[list[str]] = []
+    import issuesmith.cli as cli_mod
+    import issuesmith.design_lint_entry as entry
+
+    monkeypatch.setattr(entry, "main", lambda: calls.append(list(sys.argv)))
+    assert cli_mod._cmd_gate(["design_lint", "99"]) == 0
+    assert calls and calls[0][-1] == "99"
+
+
+def test_gate_ac_complete_issue_form_routes_to_entry(monkeypatch) -> None:
+    calls: list[list[str]] = []
+    import issuesmith.ac_complete_entry as entry
+    import issuesmith.cli as cli_mod
+
+    monkeypatch.setattr(entry, "main", lambda: calls.append(list(sys.argv)))
+    assert cli_mod._cmd_gate(["ac_complete", "12"]) == 0
+    assert calls and calls[0][-1] == "12"
+
+
 def test_cli_verify_undeclared_returns_rc2_without_deprecation(tmp_path: Path) -> None:
     cfg_env = {"ISSUESMITH_CONFIG": str(_subprocess_config_path(tmp_path))}
     proc = _run_module(

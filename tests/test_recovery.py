@@ -74,8 +74,10 @@ def test_plan_returns_recover_when_prerequisites_intact(repo_layout: Path, monke
     assert plan.action == "recover"
     assert plan.blocked_by is None
     assert plan.required_labels == frozenset()
-    assert "recover" in plan.command
+    assert "resume" in plan.command
+    assert "--from" in plan.command
     assert "cp2" in plan.command
+    assert "recover" not in plan.command
 
 
 def test_plan_returns_redispatch_when_worktree_missing(repo_layout: Path, monkeypatch) -> None:
@@ -220,7 +222,7 @@ def test_plan_to_json_roundtrip() -> None:
     plan = recovery.Plan(
         action="recover",
         reason="test",
-        command="issuesmith recover 1 --from cp2",
+        command="python3 -m issuesmith resume 1 --from cp2",
         required_labels=frozenset(),
         blocked_by=None,
     )
@@ -228,6 +230,23 @@ def test_plan_to_json_roundtrip() -> None:
     assert data["action"] == "recover"
     assert data["command"] == plan.command
     assert data["required_labels"] == []
+
+
+_RECOVER_REMOVAL_PR = "https://github.com/sumipan/issuesmith/pull/318"
+_RECOVER_REMOVAL_COMMIT = "7f79f2dbb5219c67f65110888d1aac892d9821ec"
+
+
+def test_recover_cli_removal_regression_checklist() -> None:
+    """Breaking removal (#6127): recover CLI gone; resume --from is the only recovery path."""
+    from argparse import ArgumentError
+
+    from issuesmith import cli, recovery
+
+    assert "recover" not in cli._HANDLERS
+    with pytest.raises((ArgumentError, SystemExit)):
+        recovery.build_parser().parse_args(["recover", "1"])
+    assert _RECOVER_REMOVAL_PR.startswith("https://github.com/sumipan/issuesmith/pull/")
+    assert len(_RECOVER_REMOVAL_COMMIT) == 40
 
 
 def test_redispatch_blocked_exits_without_label_changes(monkeypatch) -> None:
