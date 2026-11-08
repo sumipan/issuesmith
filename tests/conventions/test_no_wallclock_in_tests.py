@@ -209,4 +209,4 @@ def test_pytest_suite_timeout_is_configured() -> None:
     assert any(str(dep).startswith("pytest-timeout") for dep in dev)
     ini = data["tool"]["pytest"]["ini_options"]
     timeout = ini.get("timeout")
-    assert timeout == 300 or timeout == "300", f"expected suite timeout 300, got {timeout!r}"
+    assert isinstance(timeout, int) and timeout == 300, f"expected integer suite timeout 300, got {timeout!r}"
