@@ -299,6 +299,8 @@ _POST_BUMP_TESTS_TIMEOUT = 600
 _POST_BUMP_TESTS_TAIL_LINES = 40
 # :(glob) so ``**`` also matches zero directories (tests/test_x.py).
 _POST_BUMP_TESTS_PATHSPEC = ":(glob)tests/**/*.py"
+# Tests reading release metadata the bump rewrites (#6236).
+_POST_BUMP_TESTS_PATTERN = "CHANGELOG|README|pyproject"
 
 
 def _post_bump_tests_failed(message: str) -> PublishResult:
@@ -318,8 +320,8 @@ def _output_tail(stdout: str | bytes | None, stderr: str | bytes | None) -> str:
     return "\n".join(lines[-_POST_BUMP_TESTS_TAIL_LINES:])
 
 
-def _has_folded_bump_commit(worktree: Path, base_branch: str) -> bool | PublishResult:
-    """True when a publish bump commit in range changed CHANGELOG.md (read from Git, #5128)."""
+def _has_bump_commit(worktree: Path, base_branch: str) -> bool | PublishResult:
+    """True when a publish bump commit is in range (read from Git, #5128 / #6236)."""
     log = _run_git(
         worktree, "log", "--format=%H %s", f"origin/{base_branch}..HEAD", check=False
     )
@@ -330,43 +332,35 @@ def _has_folded_bump_commit(worktree: Path, base_branch: str) -> bool | PublishR
         )
     for line in log.stdout.splitlines():
         sha, _, subject = line.partition(" ")
-        if not subject.startswith(_BUMP_SUBJECT_PREFIX):
-            continue
-        files = _run_git(
-            worktree, "diff-tree", "--no-commit-id", "--name-only", "-r", sha, check=False
-        )
-        if files.returncode != 0:
-            return _post_bump_tests_failed(
-                f"git diff-tree {sha} exited {files.returncode}: "
-                f"{(files.stderr or '').strip()}"
-            )
-        if "CHANGELOG.md" in files.stdout.splitlines():
+        if subject.startswith(_BUMP_SUBJECT_PREFIX):
             return True
     return False
 
 
 def _post_bump_tests(worktree: Path, base_branch: str) -> PublishResult | None:
-    """Re-run CHANGELOG-reading tests when a bump commit folded CHANGELOG.md (#5128).
+    """Re-run release-metadata tests when a bump commit is in range (#5128 / #6236).
 
-    The fold empties ``## Unreleased``; downstream tests that read it can turn red only
-    after the bump. Runs on every publish while a folded bump commit is in range, so a
+    The bump rewrites the pyproject version, may fold ``## Unreleased`` and syncs
+    README version references; tests reading CHANGELOG / README / pyproject can turn
+    red only after it. Runs on every publish while a bump commit is in range, so a
     re-run with fix commits stacked on top re-verifies the current tree before push.
     """
-    folded = _has_folded_bump_commit(worktree, base_branch)
-    if isinstance(folded, PublishResult):
-        return folded
-    if not folded:
+    bumped = _has_bump_commit(worktree, base_branch)
+    if isinstance(bumped, PublishResult):
+        return bumped
+    if not bumped:
         return None
 
     grep = _run_git(
-        worktree, "grep", "-l", "-E", "CHANGELOG", "--", _POST_BUMP_TESTS_PATHSPEC,
+        worktree, "grep", "-l", "-E", _POST_BUMP_TESTS_PATTERN, "--",
+        _POST_BUMP_TESTS_PATHSPEC,
         check=False,
     )
     if grep.returncode == 1:
         return None
     if grep.returncode != 0:
         return _post_bump_tests_failed(
-            f"git grep for CHANGELOG-reading tests exited {grep.returncode}: "
+            f"git grep for release-metadata tests exited {grep.returncode}: "
             f"{(grep.stderr or '').strip()}"
         )
     files = [f for f in grep.stdout.splitlines() if f]
@@ -385,14 +379,14 @@ def _post_bump_tests(worktree: Path, base_branch: str) -> PublishResult | None:
         )
     except subprocess.TimeoutExpired as exc:
         return _post_bump_tests_failed(
-            f"pytest timeout after {_POST_BUMP_TESTS_TIMEOUT}s on CHANGELOG-reading "
-            f"tests after the CHANGELOG fold\ntargets: {targets}\n"
+            f"pytest timeout after {_POST_BUMP_TESTS_TIMEOUT}s on release-metadata "
+            f"tests after the version bump\ntargets: {targets}\n"
             f"{_output_tail(exc.stdout, exc.stderr)}"
         )
     if proc.returncode != 0:
         return _post_bump_tests_failed(
-            f"pytest exited {proc.returncode} on CHANGELOG-reading tests after the "
-            f"CHANGELOG fold\ntargets: {targets}\n"
+            f"pytest exited {proc.returncode} on release-metadata tests after the "
+            f"version bump\ntargets: {targets}\n"
             f"{_output_tail(proc.stdout, proc.stderr)}"
         )
     print(f"post-bump tests passed: {targets}")
