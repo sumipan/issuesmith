@@ -496,6 +496,31 @@ def ensure_base_included(
     if ancestor.returncode == 0:
         return None
 
+    from issuesmith.bump_commits import BumpCommitsError, drop_bump_commits_before_rebase
+
+    try:
+        drop_bump_commits_before_rebase(worktree_dir, base_branch)
+    except BumpCommitsError as exc:
+        return _stale_base_rebase_conflict_andon(
+            worktree_dir,
+            base_branch,
+            issue_number,
+            caller_step,
+            f"bump commit removal failed: {exc}",
+        )
+
+    ancestor = subprocess.run(
+        ["git", "-C", str(worktree_dir), "merge-base", "--is-ancestor", base_sha, "HEAD"],
+        capture_output=True,
+        check=False,
+    )
+    if ancestor.returncode == 0:
+        print(
+            f"P0_REBASE: auto-synced with origin/{base_branch}",
+            file=sys.stderr,
+        )
+        return None
+
     rebase = subprocess.run(
         ["git", "-C", str(worktree_dir), "rebase", f"origin/{base_branch}"],
         capture_output=True,
@@ -509,6 +534,22 @@ def ensure_base_included(
         )
         return None
 
+    return _stale_base_rebase_conflict_andon(
+        worktree_dir,
+        base_branch,
+        issue_number,
+        caller_step,
+        None,
+    )
+
+
+def _stale_base_rebase_conflict_andon(
+    worktree_dir: Path,
+    base_branch: str,
+    issue_number: int,
+    caller_step: str | None,
+    detail: str | None,
+) -> StepResult:
     conflict_proc = subprocess.run(
         ["git", "-C", str(worktree_dir), "diff", "--name-only", "--diff-filter=U"],
         capture_output=True,
@@ -516,6 +557,8 @@ def ensure_base_included(
         check=False,
     )
     conflict_files = (conflict_proc.stdout or "").strip() or "(unavailable)"
+    if detail:
+        conflict_files = f"{detail}; conflicts: {conflict_files}"
 
     subprocess.run(
         ["git", "-C", str(worktree_dir), "rebase", "--abort"],

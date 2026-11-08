@@ -21,7 +21,7 @@ _ALL_LINE = re.compile(r"""^([+-])__all__\s*=\s*\[(.*)\]\s*$""")
 _CC_BREAKING_SUBJECT = re.compile(r"^[a-z]+(?:\([^)]+\))?!:")
 # BREAKING CHANGE: or BREAKING-CHANGE: footer trailer
 _CC_BREAKING_FOOTER = re.compile(r"^BREAKING[- ]CHANGE:", re.MULTILINE)
-# Subjects of publish-made bump commits (same value as publish._BUMP_SUBJECT_PREFIX;
+# Subjects of publish-made bump commits (same value as issuesmith.bump_commits.BUMP_SUBJECT_PREFIX;
 # defined here because this module also runs as a standalone script).
 _BUMP_COMMIT_PREFIX = "chore: bump version to "
 _ENTRY_SECTION = re.compile(

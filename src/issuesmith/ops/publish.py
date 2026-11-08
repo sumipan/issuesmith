@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import os
-import re
 import subprocess
 import sys
 import time
@@ -15,6 +14,16 @@ from typing import NamedTuple
 
 from ghdag.forge import get_forge
 
+from issuesmith.bump_commits import (
+    BUMP_SUBJECT_PREFIX as _BUMP_SUBJECT_PREFIX,
+)
+from issuesmith.bump_commits import (
+    BumpCommitsError,
+    bump_versions_in_range,
+)
+from issuesmith.bump_commits import (
+    strip_bump_version_lines as _strip_bump_version_lines,
+)
 from issuesmith.config import get_config
 from issuesmith.gate_rules.design_lint_rules import (
     check_test_version_exact_assert,
@@ -228,73 +237,12 @@ def _run_version_bump(worktree: Path, base_branch: str) -> subprocess.CompletedP
 run_version_bump = _run_version_bump
 
 
-_BUMP_SUBJECT_PREFIX = "chore: bump version to "
-_PLUS_VERSION_VALUE_RE = re.compile(r"""^\+\s*version\s*=\s*["']([^"']+)["']""")
-_MINUS_VERSION_LINE_RE = re.compile(r"""^-\s*version\s*=\s*["']""")
-
-
 def _bump_versions_in_range(worktree: Path, base_branch: str) -> list[str]:
-    """Publish-made bump versions anywhere in ``origin/<base>..HEAD`` (newest first).
-
-    CP2 FAIL → P1 re-run can stack implementation commits above an earlier bump commit.
-    Range-wide detection keeps diff gates and idempotent bumping correct (#3922 / #4351).
-    """
-    log = _run_git(
-        worktree, "log", "--format=%s", f"origin/{base_branch}..HEAD", check=False
-    ).stdout.splitlines()
-    versions: list[str] = []
-    for subject in log:
-        if not subject or not subject.startswith(_BUMP_SUBJECT_PREFIX):
-            continue
-        rest = subject[len(_BUMP_SUBJECT_PREFIX) :]
-        token = rest.split(None, 1)[0] if rest.split(None, 1) else ""
-        if token:
-            versions.append(token)
-    return versions
-
-
-def _section_is_pyproject(section: list[str]) -> bool:
-    for line in section:
-        if line.startswith("diff --git "):
-            if re.search(r"[ab]/(?:.+/)?pyproject\.toml\b", line):
-                return True
-        elif line.startswith("+++ b/"):
-            if line[6:].rstrip().endswith("pyproject.toml"):
-                return True
-    return False
-
-
-def _strip_bump_version_lines(diff: str, versions: list[str]) -> str:
-    """Drop publish bump ``version =`` hunks from a unified diff before CP1 gates."""
-    if not versions:
-        return diff
-    allowed = set(versions)
-    sections: list[list[str]] = []
-    current: list[str] = []
-    for line in diff.splitlines(keepends=True):
-        if line.startswith("diff --git ") and current:
-            sections.append(current)
-            current = []
-        current.append(line)
-    if current:
-        sections.append(current)
-
-    out: list[str] = []
-    for section in sections:
-        if not _section_is_pyproject(section):
-            out.extend(section)
-            continue
-        plus_remove: set[int] = set()
-        minus_indices: list[int] = []
-        for idx, line in enumerate(section):
-            plus_match = _PLUS_VERSION_VALUE_RE.match(line.rstrip("\r\n"))
-            if plus_match and plus_match.group(1) in allowed:
-                plus_remove.add(idx)
-            elif _MINUS_VERSION_LINE_RE.match(line.rstrip("\r\n")):
-                minus_indices.append(idx)
-        remove = plus_remove | set(minus_indices[: len(plus_remove)])
-        out.extend(line for idx, line in enumerate(section) if idx not in remove)
-    return "".join(out)
+    """Publish wrapper: git log failure degrades to an empty list (legacy publish tests)."""
+    try:
+        return bump_versions_in_range(worktree, base_branch)
+    except BumpCommitsError:
+        return []
 
 
 def _maybe_bump_version(

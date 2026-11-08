@@ -189,8 +189,13 @@ def test_fix_fast_forward_success_does_not_rebase(tmp_path: Path):
 
 def test_fix_diverged_branch_rebases_onto_base(tmp_path: Path):
     gate = wt.BaseFreshnessGate(tmp_path, "main")
-    with patch.object(wt.subprocess, "run", side_effect=[_proc(128, "fatal: Not possible to fast-forward"), _proc(0)]) as run:
-        gate.fix(MagicMock())
+    with patch("issuesmith.bump_commits.drop_bump_commits_before_rebase", return_value=()):
+        with patch.object(
+            wt.subprocess,
+            "run",
+            side_effect=[_proc(128, "fatal: Not possible to fast-forward"), _proc(0)],
+        ) as run:
+            gate.fix(MagicMock())
     assert _calls(run) == [
         ["git", "merge", "--ff-only", "origin/main"],
         ["git", "rebase", "origin/main"],
@@ -200,9 +205,10 @@ def test_fix_diverged_branch_rebases_onto_base(tmp_path: Path):
 def test_fix_rebase_conflict_aborts_and_raises(tmp_path: Path):
     gate = wt.BaseFreshnessGate(tmp_path, "main")
     seq = [_proc(128, "fatal: Not possible to fast-forward"), _proc(1, "CONFLICT (content): CHANGELOG.md"), _proc(0)]
-    with patch.object(wt.subprocess, "run", side_effect=seq) as run:
-        with pytest.raises(RuntimeError, match="base_freshness auto-fix failed"):
-            gate.fix(MagicMock())
+    with patch("issuesmith.bump_commits.drop_bump_commits_before_rebase", return_value=()):
+        with patch.object(wt.subprocess, "run", side_effect=seq) as run:
+            with pytest.raises(RuntimeError, match="base_freshness auto-fix failed"):
+                gate.fix(MagicMock())
     assert _calls(run)[-1] == ["git", "rebase", "--abort"]
 
 
@@ -222,3 +228,51 @@ def test_pytest_timeout_env_override(monkeypatch):
     assert wt._pytest_timeout_sec() == 42.0
     monkeypatch.setenv(wt._PYTEST_TIMEOUT_ENV, "not-a-number")
     assert wt._pytest_timeout_sec() == wt._PYTEST_TIMEOUT_DEFAULT_SEC
+
+
+def _make_bump_behind_base_repo(tmp_path: Path) -> Path:
+    from tests.test_p0_worktree import _make_bump_stale_base_repo
+
+    return _make_bump_stale_base_repo(tmp_path)
+
+
+def test_fix_drops_bump_before_rebase(tmp_path: Path) -> None:
+    """#6177: BaseFreshnessGate drops publish bumps before rebasing onto origin/main."""
+    from issuesmith.gates.base import ContractInput
+    from tests.test_p0_worktree import _git
+
+    repo = _make_bump_behind_base_repo(tmp_path)
+    gate = wt.BaseFreshnessGate(repo, "main")
+    behind = gate.check("", [])
+    assert behind and behind[0].rule_id == "base_freshness.behind_base"
+    gate.fix(ContractInput(body=""))
+    subjects = _git(repo, "log", "--format=%s", "origin/main..HEAD")
+    assert "chore: bump version to" not in subjects
+    assert gate.check("", []) == []
+
+
+def test_fix_bump_drop_failure_aborts_and_raises(tmp_path: Path) -> None:
+    from issuesmith.bump_commits import BumpCommitsError
+    from issuesmith.gates.base import ContractInput
+
+    repo = _make_bump_behind_base_repo(tmp_path)
+    head_before = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    gate = wt.BaseFreshnessGate(repo, "main")
+    with patch(
+        "issuesmith.bump_commits.drop_bump_commits_before_rebase",
+        side_effect=BumpCommitsError("simulated drop failure"),
+    ):
+        with pytest.raises(RuntimeError, match="bump commit removal failed"):
+            gate.fix(ContractInput(body=""))
+    head_after = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert head_after == head_before

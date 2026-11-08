@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Changed
+
+- Share publish bump commit detection across `PrScopeGate`, P0 / P1 base sync, and publish via `issuesmith.bump_commits` (#6177).
+
 ## 0.173.0 - 2026-11-08
 
 ### Added

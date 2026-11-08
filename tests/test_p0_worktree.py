@@ -737,6 +737,71 @@ def test_ensure_base_included_rev_parse_fails_returns_none(tmp_path: Path) -> No
     client.issue_comment.assert_not_called()
 
 
+def _make_bump_stale_base_repo(tmp_path: Path) -> Path:
+    """Feature branch with impl + publish bump while origin/main also bumped version."""
+    origin = tmp_path / "origin.git"
+    subprocess.run(
+        ["git", "init", "--bare", "-b", "main", str(origin)],
+        check=True,
+        capture_output=True,
+    )
+    seed = tmp_path / "seed"
+    _clone(origin, seed)
+    (seed / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\nversion = "0.1.0"\n', encoding="utf-8"
+    )
+    _git(seed, "add", "pyproject.toml")
+    _git(seed, "commit", "-q", "-m", "init")
+    _git(seed, "push", "-q", "origin", "HEAD:main")
+
+    wt = tmp_path / "wt"
+    _clone(origin, wt)
+    _git(wt, "checkout", "-q", "-b", "feat/issue")
+    (wt / "src").mkdir(parents=True)
+    (wt / "src" / "feat.py").write_text("x = 1\n", encoding="utf-8")
+    _git(wt, "add", "src/feat.py")
+    _git(wt, "commit", "-q", "-m", "feat: implementation")
+    (wt / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\nversion = "0.2.0"\n', encoding="utf-8"
+    )
+    _git(wt, "commit", "-q", "-am", "chore: bump version to 0.2.0 (Z: Z)")
+
+    _git(seed, "fetch", "-q", "origin")
+    _git(seed, "checkout", "-q", "main")
+    (seed / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\nversion = "0.2.0"\n', encoding="utf-8"
+    )
+    _git(seed, "commit", "-q", "-am", "chore: bump version to 0.2.0 (Z: Z)")
+    _git(seed, "push", "-q", "origin", "HEAD:main")
+
+    _git(wt, "fetch", "-q", "origin", "main:refs/remotes/origin/main")
+    return wt
+
+
+def test_ensure_base_included_drops_bump_before_rebase(tmp_path: Path) -> None:
+    """#6177: stale base sync drops publish bump commits and keeps implementation."""
+    repo = _make_bump_stale_base_repo(tmp_path)
+    client = MagicMock()
+    result = wt.ensure_base_included(
+        repo,
+        "main",
+        client,
+        6177,
+        stale_base_comment_template=_STALE_BASE_COMMENT_TEMPLATE,
+    )
+    assert result is None
+    subjects = _git(repo, "log", "--format=%s", "origin/main..HEAD")
+    assert "chore: bump version to" not in subjects
+    assert "feat: implementation" in subjects
+    assert (repo / "src" / "feat.py").read_text(encoding="utf-8") == "x = 1\n"
+    merge = subprocess.run(
+        ["git", "-C", str(repo), "merge-base", "--is-ancestor", "origin/main", "HEAD"],
+        capture_output=True,
+        check=False,
+    )
+    assert merge.returncode == 0
+
+
 def test_assert_jobs_clean_raises_when_dirty(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     repo = tmp_path / "repo"
     _git_init_with_main(repo)
