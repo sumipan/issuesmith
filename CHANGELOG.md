@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.173.0 - 2026-11-08
+
 ### Added
 
 - `rule_ids` normalization helpers and concept-name gate entry modules (`design_lint_entry`, `ac_complete_entry`); `check_ac_complete` in `issuesmith.gates`.
