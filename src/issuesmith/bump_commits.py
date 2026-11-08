@@ -154,13 +154,18 @@ def _reset_hard(worktree: Path, ref: str) -> None:
 
 
 def drop_bump_commits_before_rebase(worktree: Path, base_branch: str) -> tuple[str, ...]:
-    """Drop publish bump commits (oldest first) before rebasing onto the base branch."""
+    """Drop publish bump commits before rebasing onto the base branch.
+
+    Returns the original SHAs oldest first. Commits are removed newest first so the
+    remaining (older) SHAs stay in history, and chained bumps (0.2.0 -> 0.3.0) do not
+    conflict on the ``version =`` line.
+    """
     original_head = _rev_parse(worktree, "HEAD")
     shas = _bump_shas_oldest_first(worktree, base_branch)
     if not shas:
         return ()
     removed: list[str] = []
-    for sha in shas:
+    for sha in reversed(shas):
         proc = subprocess.run(
             ["git", "-C", str(worktree), "rebase", "--onto", f"{sha}^", sha],
             capture_output=True,
@@ -173,7 +178,7 @@ def drop_bump_commits_before_rebase(worktree: Path, base_branch: str) -> tuple[s
             detail = (proc.stderr or proc.stdout or "").strip()
             raise BumpCommitsError(detail or f"failed to drop bump commit {sha[:7]}")
         removed.append(sha)
-    return tuple(removed)
+    return tuple(reversed(removed))
 
 
 __all__ = [

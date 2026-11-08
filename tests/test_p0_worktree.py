@@ -802,6 +802,29 @@ def test_ensure_base_included_drops_bump_before_rebase(tmp_path: Path) -> None:
     assert merge.returncode == 0
 
 
+def test_drop_bump_commits_handles_chained_bumps(tmp_path: Path) -> None:
+    """#6177: two chained bumps (0.2.0 -> 0.3.0) are both dropped without conflict."""
+    from issuesmith.bump_commits import drop_bump_commits_before_rebase
+
+    repo = _make_bump_stale_base_repo(tmp_path)
+    (repo / "src" / "fix.py").write_text("y = 1\n", encoding="utf-8")
+    _git(repo, "add", "src/fix.py")
+    _git(repo, "commit", "-q", "-m", "fix: follow-up")
+    (repo / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\nversion = "0.3.0"\n', encoding="utf-8"
+    )
+    _git(repo, "commit", "-q", "-am", "chore: bump version to 0.3.0 (Z: Z)")
+    bumps = _git(repo, "log", "--reverse", "--format=%H", "--grep=^chore: bump version to ", "origin/main..HEAD")
+
+    removed = drop_bump_commits_before_rebase(repo, "main")
+
+    assert list(removed) == bumps.split()
+    subjects = _git(repo, "log", "--format=%s", "origin/main..HEAD")
+    assert "chore: bump version to" not in subjects
+    assert "feat: implementation" in subjects and "fix: follow-up" in subjects
+    assert (repo / "src" / "fix.py").read_text(encoding="utf-8") == "y = 1\n"
+
+
 def test_assert_jobs_clean_raises_when_dirty(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     repo = tmp_path / "repo"
     _git_init_with_main(repo)
