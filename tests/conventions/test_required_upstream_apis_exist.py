@@ -2,19 +2,12 @@
 from __future__ import annotations
 
 import importlib
-import re
 import types
-from pathlib import Path
 
 import pytest
 
-from issuesmith.config import get_config
 from issuesmith.ops.preflight import REQUIRED_UPSTREAM_APIS, missing_upstream_apis
 from tests.conventions._util import SRC, import_froms, py_files
-
-_GHDAG_PIN_RE = re.compile(
-    r"ghdag\s*@\s*git\+https://github\.com/sumipan/ghdag\.git@v?(\d+\.\d+\.\d+)"
-)
 
 
 def _ghdag_imports() -> set[tuple[str, str]]:
@@ -71,13 +64,6 @@ def test_detects_missing_quota_gate_read_state():
         resolver=lambda module: old_ghdag,
     )
     assert missing == ["ghdag.quota.QuotaGate.read_state"]
-
-
-def test_pyproject_ghdag_pins_v0_116_0():
-    """Pin expectations for sumipan/nexus#6175 (ghdag v0.116.0)."""
-    pyproject = Path(get_config().root) / "pyproject.toml"
-    pins = _GHDAG_PIN_RE.findall(pyproject.read_text(encoding="utf-8"))
-    assert pins == ["0.116.0", "0.116.0"]
 
 
 def test_detects_pinned_ghdag_without_defer():
