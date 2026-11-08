@@ -1302,6 +1302,14 @@ class BaseFreshnessGate:
         )
         if ff.returncode == 0:
             return inp
+        from issuesmith.bump_commits import BumpCommitsError, drop_bump_commits_before_rebase
+
+        try:
+            drop_bump_commits_before_rebase(self._root, self._base)
+        except BumpCommitsError as exc:
+            raise RuntimeError(
+                f"base_freshness auto-fix failed: bump commit removal failed: {exc}"
+            ) from exc
         rebase = subprocess.run(
             ["git", "rebase", f"origin/{self._base}"],
             capture_output=True, text=True, check=False,

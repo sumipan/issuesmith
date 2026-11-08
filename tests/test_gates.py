@@ -677,3 +677,95 @@ def test_m2_shim_check_gate_is_patchable() -> None:
         result = check_m2("## Acceptance Criteria\n- [x] done\n", [])
     assert isinstance(result, Verdict)
     assert result.passed is True
+
+
+# ---------------------------------------------------------------------------
+# PrScopeGate publish bump pyproject (#6177)
+# ---------------------------------------------------------------------------
+
+
+def _pr_scope_pyproject_repo(tmp_path: Path) -> Path:
+    """Bare origin, feature branch, and origin/main ref on the worktree."""
+    import subprocess
+
+    origin = tmp_path / "origin.git"
+    subprocess.run(
+        ["git", "init", "--bare", "-b", "main", str(origin)],
+        check=True,
+        capture_output=True,
+    )
+    seed = tmp_path / "seed"
+    subprocess.run(
+        ["git", "clone", "-q", str(origin), str(seed)],
+        check=True,
+        capture_output=True,
+    )
+    _git(seed, "config", "user.email", "t@t.com")
+    _git(seed, "config", "user.name", "T")
+    (seed / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\nversion = "0.1.0"\n', encoding="utf-8"
+    )
+    _git(seed, "add", "pyproject.toml")
+    _git(seed, "commit", "-q", "-m", "init")
+    _git(seed, "push", "-q", "origin", "HEAD:main")
+
+    wt = tmp_path / "wt"
+    subprocess.run(
+        ["git", "clone", "-q", str(origin), str(wt)],
+        check=True,
+        capture_output=True,
+    )
+    _git(wt, "config", "user.email", "t@t.com")
+    _git(wt, "config", "user.name", "T")
+    _git(wt, "checkout", "-q", "-b", "feat")
+    _git(wt, "fetch", "-q", "origin", "main:refs/remotes/origin/main")
+    return wt
+
+
+def test_pr_scope_gate_allows_publish_bump_only_pyproject(tmp_path: Path) -> None:
+    """#6177: publish bump-only pyproject diff is in scope without allow_paths entry."""
+    from issuesmith.gates.pr_scope import PrScopeGate
+
+    wt = _pr_scope_pyproject_repo(tmp_path)
+    (wt / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\nversion = "0.2.0"\n', encoding="utf-8"
+    )
+    _git(wt, "commit", "-q", "-am", "chore: bump version to 0.2.0 (Z: Z)")
+    gate = PrScopeGate(wt, ["src/**"], "main")
+    assert gate.check("", []) == []
+
+
+def test_pr_scope_gate_rejects_pyproject_non_version_change_after_bump(tmp_path: Path) -> None:
+    """#6177: mixed pyproject edits stay out of allow after a publish bump."""
+    from issuesmith.gates.pr_scope import PrScopeGate
+
+    wt = _pr_scope_pyproject_repo(tmp_path)
+    (wt / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\nversion = "0.2.0"\n', encoding="utf-8"
+    )
+    _git(wt, "commit", "-q", "-am", "chore: bump version to 0.2.0 (Z: Z)")
+    (wt / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\nversion = "0.2.0"\ndependencies = ["httpx"]\n',
+        encoding="utf-8",
+    )
+    _git(wt, "commit", "-q", "-am", "feat: add dependency")
+    gate = PrScopeGate(wt, ["src/**"], "main")
+    violations = gate.check("", [])
+    assert len(violations) == 1
+    assert violations[0].rule_id == "pr_scope.out_of_allow"
+    assert violations[0].location == "pyproject.toml"
+
+
+def test_pr_scope_gate_rejects_version_change_without_publish_bump(tmp_path: Path) -> None:
+    """#6177: hand-edited version without a publish bump commit is out of allow."""
+    from issuesmith.gates.pr_scope import PrScopeGate
+
+    wt = _pr_scope_pyproject_repo(tmp_path)
+    (wt / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\nversion = "0.2.0"\n', encoding="utf-8"
+    )
+    _git(wt, "commit", "-q", "-am", "fix: bump version by hand")
+    gate = PrScopeGate(wt, ["src/**"], "main")
+    violations = gate.check("", [])
+    assert len(violations) == 1
+    assert violations[0].rule_id == "pr_scope.out_of_allow"

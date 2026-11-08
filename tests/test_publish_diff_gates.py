@@ -43,7 +43,9 @@ def test_check_commit_diff_gates_rejects_exact_assert():
     worktree = Path("/tmp/fake-wt")
     mock_result = MagicMock()
     mock_result.stdout = _EXACT_DIFF
-    with patch("issuesmith.ops.publish._run_git", return_value=mock_result) as run_git:
+    with patch("issuesmith.ops.publish._bump_versions_in_range", return_value=[]), patch(
+        "issuesmith.ops.publish._run_git", return_value=mock_result
+    ) as run_git:
         result = _check_commit_diff_gates(worktree, "main")
     run_git.assert_any_call(worktree, "diff", "origin/main...HEAD")
     assert result is not None
@@ -56,7 +58,9 @@ def test_check_commit_diff_gates_rejects_version_line():
     worktree = Path("/tmp/fake-wt")
     mock_result = MagicMock()
     mock_result.stdout = _VERSION_LINE_DIFF
-    with patch("issuesmith.ops.publish._run_git", return_value=mock_result):
+    with patch("issuesmith.ops.publish._bump_versions_in_range", return_value=[]), patch(
+        "issuesmith.ops.publish._run_git", return_value=mock_result
+    ):
         result = _check_commit_diff_gates(worktree, "main")
     assert result is not None
     assert result.status == "P3_GATE_FAILED"
@@ -72,7 +76,9 @@ def test_check_commit_diff_gates_passes_clean_diff():
         "+++ b/src/pkg/foo.py\n"
         "+x = 1\n"
     )
-    with patch("issuesmith.ops.publish._run_git", return_value=mock_result):
+    with patch("issuesmith.ops.publish._bump_versions_in_range", return_value=[]), patch(
+        "issuesmith.ops.publish._run_git", return_value=mock_result
+    ):
         assert _check_commit_diff_gates(worktree, "main") is None
 
 
@@ -81,7 +87,9 @@ def test_check_commit_diff_gates_passes_when_only_base_advanced():
     worktree = Path("/tmp/fake-wt")
     mock_result = MagicMock()
     mock_result.stdout = ""  # git diff origin/main...HEAD — measured: no diff
-    with patch("issuesmith.ops.publish._run_git", return_value=mock_result) as run_git:
+    with patch("issuesmith.ops.publish._bump_versions_in_range", return_value=[]), patch(
+        "issuesmith.ops.publish._run_git", return_value=mock_result
+    ) as run_git:
         assert _check_commit_diff_gates(worktree, "main") is None
     run_git.assert_any_call(worktree, "diff", "origin/main...HEAD")
 
@@ -94,7 +102,9 @@ def test_two_dot_base_advanced_diff_would_fail_but_three_dot_empty_passes():
     worktree = Path("/tmp/fake-wt")
     mock_result = MagicMock()
     mock_result.stdout = ""  # three-dot: empty
-    with patch("issuesmith.ops.publish._run_git", return_value=mock_result):
+    with patch("issuesmith.ops.publish._bump_versions_in_range", return_value=[]), patch(
+        "issuesmith.ops.publish._run_git", return_value=mock_result
+    ):
         assert _check_commit_diff_gates(worktree, "main") is None
 
 
@@ -103,7 +113,9 @@ def test_check_commit_diff_gates_still_rejects_real_branch_version_change():
     worktree = Path("/tmp/fake-wt")
     mock_result = MagicMock()
     mock_result.stdout = _VERSION_LINE_DIFF
-    with patch("issuesmith.ops.publish._run_git", return_value=mock_result):
+    with patch("issuesmith.ops.publish._bump_versions_in_range", return_value=[]), patch(
+        "issuesmith.ops.publish._run_git", return_value=mock_result
+    ):
         result = _check_commit_diff_gates(worktree, "main")
     assert result is not None
     assert result.status == "P3_GATE_FAILED"
