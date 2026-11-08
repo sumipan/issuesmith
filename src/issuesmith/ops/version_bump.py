@@ -339,6 +339,33 @@ def fold_unreleased(text: str, version: str, today: date) -> str | None:
     return "".join(lines)
 
 
+def sync_readme_version(text: str, old: str, new: str) -> tuple[str, int]:
+    """Replace current-version references ``v<old>`` / `` `<old>` `` with ``<new>`` (#6236).
+
+    Lines containing ``since v<old>`` are history and stay as-is. Neighbouring digits
+    or dots block a match, so ``0.1.3`` never hits ``0.1.30`` or ``10.1.3``.
+    """
+    esc = re.escape(old)
+    pattern = re.compile(rf"(?<![\w.])(v){esc}(?![\d.]*\d)|(`){esc}(`)")
+    since = f"since v{old}"
+    count = 0
+    out: list[str] = []
+    for line in text.splitlines(keepends=True):
+        if since in line:
+            out.append(line)
+            continue
+
+        def _sub(m: re.Match[str]) -> str:
+            nonlocal count
+            count += 1
+            if m.group(1):
+                return f"v{new}"
+            return f"`{new}`"
+
+        out.append(pattern.sub(_sub, line))
+    return "".join(out), count
+
+
 def run_bump(worktree: Path, base: str) -> int:
     pyproject = worktree / "pyproject.toml"
     if not pyproject.is_file():
@@ -371,6 +398,14 @@ def run_bump(worktree: Path, base: str) -> int:
         if folded is not None:
             changelog.write_text(folded, encoding="utf-8")
             to_add.append("CHANGELOG.md")
+    readme = worktree / "README.md"
+    synced = 0
+    if readme.is_file():
+        readme_text = readme.read_text(encoding="utf-8")
+        new_readme, synced = sync_readme_version(readme_text, old_ver, new_ver)
+        if synced:
+            readme.write_text(new_readme, encoding="utf-8")
+            to_add.append("README.md")
     add = _run_git(worktree, "add", *to_add)
     if add.returncode != 0:
         print(add.stderr, file=sys.stderr)
@@ -382,8 +417,10 @@ def run_bump(worktree: Path, base: str) -> int:
         return 1
     print(f"pyproject.toml: {decision.bump_type}-bumped {old_ver} → {new_ver}")
     if folded is not None:
-        # publish re-runs CHANGELOG-reading tests after a fold (#5128).
+        # publish re-runs release-metadata tests after a bump (#5128 / #6236).
         print(f"CHANGELOG_FOLDED: {new_ver}")
+    if synced:
+        print(f"README_VERSION_SYNCED: {old_ver} -> {new_ver} ({synced})")
     return 0
 
 

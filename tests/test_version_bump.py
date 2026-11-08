@@ -120,3 +120,45 @@ def test_run_bump_without_changelog_commits_only_pyproject(tmp_path: Path):
     files = _git(repo, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD").split()
     assert files == ["pyproject.toml"]
     assert not (repo / "CHANGELOG.md").exists()
+
+
+_README = """# pkg
+
+Status: `v0.1.0`, current release `0.1.0`.
+
+pip install "pkg @ git+https://example.test/pkg.git@v0.1.0"
+
+- `flag` added since v0.1.0.
+- Older: v0.0.9, not a prefix match: v0.1.01 and 0.1.0.5 and `0.1.00`.
+"""
+
+
+def test_run_bump_syncs_readme_current_version(tmp_path: Path, capsys):
+    repo = _init_repo(tmp_path)
+    _commit(repo, "README.md", _README, "docs: readme")
+    _point_origin_main_at_head(repo)
+    _commit(repo, "src/pkg/mod.py", "def api():\n    return 3\n", "fix: tweak internals")
+
+    assert run_bump(repo, "origin/main") == 0
+
+    files = _git(repo, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD").split()
+    assert sorted(files) == ["README.md", "pyproject.toml"]
+    text = (repo / "README.md").read_text(encoding="utf-8")
+    assert "Status: `v0.1.1`, current release `0.1.1`." in text
+    assert "@v0.1.1\"" in text
+    assert "- `flag` added since v0.1.0." in text
+    assert "- Older: v0.0.9, not a prefix match: v0.1.01 and 0.1.0.5 and `0.1.00`." in text
+    assert "README_VERSION_SYNCED: 0.1.0 -> 0.1.1 (3)" in capsys.readouterr().out
+
+
+def test_run_bump_readme_without_old_version_is_untouched(tmp_path: Path, capsys):
+    repo = _init_repo(tmp_path)
+    _commit(repo, "README.md", "# pkg\n\nNo versions here, v0.0.9 only.\n", "docs: readme")
+    _point_origin_main_at_head(repo)
+    _commit(repo, "src/pkg/mod.py", "def api():\n    return 3\n", "fix: tweak internals")
+
+    assert run_bump(repo, "origin/main") == 0
+
+    files = _git(repo, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD").split()
+    assert files == ["pyproject.toml"]
+    assert "README_VERSION_SYNCED" not in capsys.readouterr().out

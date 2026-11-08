@@ -1,4 +1,4 @@
-"""publish re-runs CHANGELOG-reading tests after a bump folded CHANGELOG.md (#5128)."""
+"""publish re-runs release-metadata tests after a version bump (#5128 / #6236)."""
 from __future__ import annotations
 
 import subprocess
@@ -137,19 +137,45 @@ def test_publish_runs_only_changelog_tests_then_continues(tmp_path: Path):
     client.pr_create.assert_called_once()
 
 
-def test_no_fold_bump_skips_pytest(tmp_path: Path):
+_README_CONTRACT_TEST = '''import re
+from pathlib import Path
+
+
+def test_readme_release_metadata_matches_pyproject():
+    root = Path(__file__).resolve().parents[1]
+    version = re.search(r'version = "([^"]+)"', (root / "pyproject.toml").read_text()).group(1)
+    assert f"v{version}" in (root / "README.md").read_text()
+'''
+
+
+def test_no_fold_bump_still_runs_pytest(tmp_path: Path):
     empty = "# Changelog\n\n## [Unreleased]\n\n## 0.71.0 - 2026-09-24\n\n- old\n"
-    repo = make_folded_repo(tmp_path, _FAILING_TEST, changelog=empty)
+    test_body = _PASSING_TEST.replace('"alpha"', '"old"')
+    repo = make_folded_repo(tmp_path, test_body, changelog=empty)
     with patch("issuesmith.ops.publish.subprocess.run", wraps=subprocess.run) as run:
         assert _post_bump_tests(repo, "main") is None
-    assert not any("pytest" in c.args[0] for c in run.call_args_list)
+    assert any("pytest" in c.args[0] for c in run.call_args_list)
 
 
-def test_no_changelog_skips_pytest(tmp_path: Path):
-    repo = make_folded_repo(tmp_path, _FAILING_TEST, changelog=None)
-    with patch("issuesmith.ops.publish.subprocess.run", wraps=subprocess.run) as run:
-        assert _post_bump_tests(repo, "main") is None
-    assert not any("pytest" in c.args[0] for c in run.call_args_list)
+def test_readme_contract_red_after_bump_stops_publish(tmp_path: Path):
+    """#6183 shape: README pins the old version and the contract test lacks 'CHANGELOG'."""
+    repo = make_folded_repo(tmp_path, None)
+    (repo / "tests" / "test_readme_contract.py").write_text(
+        _README_CONTRACT_TEST, encoding="utf-8"
+    )
+    # README version written in a form the bump does not sync (no leading v / backticks).
+    (repo / "README.md").write_text("Release 0.71.1-pending\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "docs: readme")
+
+    result, push, client, _ = run_publish(repo)
+
+    assert result.status == "P3_GATE_FAILED"
+    assert result.stderr.startswith("[publish.post_bump_tests]")
+    assert "tests/test_readme_contract.py" in result.stderr
+    assert "after the version bump" in result.stderr
+    push.assert_not_called()
+    client.pr_create.assert_not_called()
 
 
 def test_no_bump_commit_in_range_skips_pytest():
@@ -162,17 +188,12 @@ def test_no_bump_commit_in_range_skips_pytest():
     run.assert_not_called()
 
 
-def _git_router(*, log_rc=0, tree_rc=0, grep_rc=0, grep_out="tests/test_changelog.py\n"):
+def _git_router(*, log_rc=0, grep_rc=0, grep_out="tests/test_changelog.py\n"):
     def _run(worktree, *args, check=True):
         if args[0] == "log":
             return MagicMock(
                 returncode=log_rc, stdout="abc123 chore: bump version to 0.71.1 (Z: Z)\n",
                 stderr="fatal: bad revision" if log_rc else "",
-            )
-        if args[0] == "diff-tree":
-            return MagicMock(
-                returncode=tree_rc, stdout="CHANGELOG.md\npyproject.toml\n",
-                stderr="fatal: bad object" if tree_rc else "",
             )
         if args[0] == "grep":
             return MagicMock(
@@ -201,7 +222,7 @@ def test_git_grep_error_fails_closed():
 
 
 def test_history_error_fails_closed():
-    for router in (_git_router(log_rc=128), _git_router(tree_rc=128)):
+    for router in (_git_router(log_rc=128),):
         with patch("issuesmith.ops.publish._run_git", side_effect=router), \
              patch("issuesmith.ops.publish.subprocess.run") as run:
             result = _post_bump_tests(Path("/tmp/wt"), "main")

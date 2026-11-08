@@ -7,6 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Fixed
+
+- Publish version bump now syncs current-version references in `README.md` (`v<old>`, `@v<old>`, `` `<old>` ``; `since v<old>` lines kept) and commits them with the bump (#6236).
+- `publish.post_bump_tests` runs after every bump commit (not only CHANGELOG folds) and re-runs tests mentioning `CHANGELOG`, `README` or `pyproject` (#6236).
+
 ## 0.174.1 - 2026-11-09
 
 ### Added
