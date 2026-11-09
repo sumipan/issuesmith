@@ -14,9 +14,9 @@ from issuesmith.queue import dispatch_one, plan
 from issuesmith.queue_store import QueueStore
 from tests.test_queue import _VALID_BODY, _ProdShapeClient
 
-_NOW = datetime.now(timezone.utc).isoformat()
 _JST = ZoneInfo("Asia/Tokyo")
 _PLAN_NOW = datetime(2026, 11, 9, 12, 0, tzinfo=_JST)
+_NOW = _PLAN_NOW.astimezone(timezone.utc).isoformat()
 
 
 def _store(tmp_path: Path) -> QueueStore:
