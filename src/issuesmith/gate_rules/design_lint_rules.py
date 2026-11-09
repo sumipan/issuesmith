@@ -73,6 +73,9 @@ _VERSION_ASSIGN_LINE = re.compile(r"^\s*version\s*=")
 _VERSION_EXACT_ASSERT = re.compile(r'version["\]\s]*\s*==\s*["\'][0-9]+\.[0-9]+')
 _GIT_PIN_EXACT = re.compile(r"git\+https://[^\"']*@v[0-9]+\.[0-9]")
 _COUNT_EQ_ONE = re.compile(r"count\s*\(.*\)\s*==\s*1")
+_VERSIONED_TEST_DEF = re.compile(r"^\s*def\s+test_\w+_v\d+_\d+(?:_\d+)?\s*\(")
+_SEMVER_QUOTED = re.compile(r'^["\'](\d+\.\d+(?:\.\d+)?)["\']\s*$')
+_SEMVER_IN_QUOTES = re.compile(r'["\'](\d+\.\d+(?:\.\d+)?)["\']')
 _TEST_VERSION_ASSERT_HINT = (
     "check versions / pins with a lower bound (`>=`) or do not test them;"
     " publish bumps them deterministically"
@@ -82,6 +85,25 @@ _TEST_VERSION_ASSERT_HINT = (
 def _is_tests_path(path: str) -> bool:
     normalized = path.strip().lstrip("b/").lstrip("a/")
     return normalized.startswith("tests/") or "/tests/" in normalized
+
+
+def _rhs_pins_exact_version(content: str) -> bool:
+    """True when ``==`` RHS is a quoted semver or a list/tuple of quoted semvers (#6203)."""
+    if "==" not in content:
+        return False
+    pos = content.find("==")
+    rhs = content[pos + 2 :].strip()
+    if not rhs:
+        return False
+    if re.match(r"Version\s*\(", rhs):
+        return False
+    if _SEMVER_QUOTED.match(rhs):
+        return True
+    if rhs[0] not in "[(":
+        return False
+    if not (rhs.rstrip().endswith("]") or rhs.rstrip().endswith(")")):
+        return False
+    return bool(_SEMVER_IN_QUOTES.search(rhs))
 
 
 def check_version_line_in_diff(diff: str) -> list[Violation]:
@@ -129,6 +151,8 @@ def check_test_version_exact_assert(diff: str) -> list[Violation]:
 
     Pattern a: ``version == "X.Y.Z"`` / ``project["version"] == "..."``
     Pattern b: ``git+https://...@vX.Y.Z`` checked with ``==`` / ``count(...) == 1``
+    Pattern c: ``def test_*_v<major>_<minor>[_<patch>]`` under tests/
+    Pattern d: ``==`` RHS is a semver string or list/tuple of semver strings (#6203)
     """
     in_tests = False
     file_has_count_eq_one = False
@@ -174,7 +198,13 @@ def check_test_version_exact_assert(diff: str) -> list[Violation]:
                 return _violation()
             continue
 
+        if _VERSIONED_TEST_DEF.match(content):
+            return _violation()
+
         if _VERSION_EXACT_ASSERT.search(content):
+            return _violation()
+
+        if _rhs_pins_exact_version(content):
             return _violation()
 
         has_git_pin = bool(_GIT_PIN_EXACT.search(content))
