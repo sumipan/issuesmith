@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.175.0 - 2026-11-09
+
 ### Added
 
 - Metrics JSONL: `serialize_violations`, optional `violations` on `requires_repair`, and per-try `verify_check` events from design-doc verify (`step_verify`). Rework aggregation recognizes but does not count `verify_check` (#6207).
