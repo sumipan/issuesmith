@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.174.2 - 2026-11-09
+
 ### Fixed
 
 - Publish version bump now syncs current-version references in `README.md` (`v<old>`, `@v<old>`, `` `<old>` ``; `since v<old>` lines kept) and commits them with the bump (#6236).
