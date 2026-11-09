@@ -764,3 +764,34 @@ class TestRequiresRepairMetricsViolations:
         assert row["rule_ids"] == ["pr_scope.out_of_allow", "tests.pytest_failure"]
         assert [v["location"] for v in row["violations"]] == ["tools/extra.py", None]
         assert row["violations"][1]["message"] == "assert 0"
+
+    def test_safe_record_metrics_skips_violations_for_legacy_recorder(self, tmp_path, monkeypatch):
+        from issuesmith.ops import dispatch as dispatch_mod
+
+        calls: list[tuple] = []
+
+        def legacy_record_metrics(path, event, step_id, issue_num, rule_ids=None, *, origin=None):
+            calls.append((event, step_id, issue_num, rule_ids, origin))
+
+        monkeypatch.setattr("issuesmith.repair.record_metrics", legacy_record_metrics)
+        cfg_obj = replace(
+            get_config(), paths=replace(get_config().paths, metrics=tmp_path / "m.jsonl")
+        )
+        monkeypatch.setattr(dispatch_mod, "get_config", lambda: cfg_obj)
+        v = Violation(
+            rule_id="pr_scope.out_of_allow",
+            severity="fail",
+            message="outside",
+            location="tools/extra.py",
+            auto_fixable=False,
+            fix_hint=None,
+        )
+        dispatch_mod._safe_record_metrics(
+            "requires_repair",
+            "p1",
+            42,
+            rule_ids=["pr_scope.out_of_allow"],
+            origin="accepts",
+            violations=[v],
+        )
+        assert calls == [("requires_repair", "p1", 42, ["pr_scope.out_of_allow"], "accepts")]

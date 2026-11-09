@@ -124,13 +124,13 @@ Run a command as `python3 -m issuesmith <command>` or through the `issuesmith` c
 | `observe [--apply] [--json]` | Collect observe events; `--apply` also runs the policy actions |
 | `lanes <subcommand>` | Lane ledger planning (see [`lanes`](#lanes-subcommands)) |
 | `metrics rework [--since YYYY-MM-DD] [--issue N] [--audit PATH] [--json]` | Rework report from `paths.metrics` and an optional ghdag audit JSONL; `--since` uses `timezone` |
+| `main-health` | Run `observe.main_health.command` on the base branch; writes `issuesmith-main-health.json` and command log `issuesmith-main-health.log` next to queue state (exit 2 on `MainHealthError`) |
+| `apply` / `ingest-review` | Moved to the host's `tools/stash/`; print a notice and exit 2 |
 
 `paths.metrics` JSONL contracts (backward compatible additions):
 
 - `requires_repair` may include optional `violations`: a list of `{"rule_id", "location", "message"}` objects (same shape as `serialize_violations`).
 - `verify_check` is written by design-doc verify (`issuesmith verify <step> <issue>`): `event`, `step`, `issue`, `rule_ids`, and `violations` (empty lists on PASS). Rework aggregation ignores `verify_check` rows.
-| `main-health` | Run `observe.main_health.command` on the base branch; writes `issuesmith-main-health.json` and command log `issuesmith-main-health.log` next to queue state (exit 2 on `MainHealthError`) |
-| `apply` / `ingest-review` | Moved to the host's `tools/stash/`; print a notice and exit 2 |
 
 `version-bump` prints `VERSION_BUMP_TYPE` and `VERSION_BUMP_REASON`, then commits `chore: bump version to <new>`. It bumps Y (minor) when the diff adds or removes a public `def` / `class`, an `__all__` entry or a `[project.scripts]` / entry-point key, or when a commit carries a Conventional Commits breaking marker (`type!:` or `BREAKING CHANGE:`); otherwise it bumps Z (patch). It never changes X (major). When `CHANGELOG.md` has a non-empty `## Unreleased` section, the bump inserts the new release heading under it, so the Unreleased entries become the release notes of the bumped version (`ops.version_bump.fold_unreleased`).
 

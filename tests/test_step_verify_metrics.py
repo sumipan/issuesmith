@@ -50,6 +50,17 @@ def _metrics_cfg(tmp_path, monkeypatch):
     return metrics_path
 
 
+def _run_capture(argv: list[str]) -> tuple[int, str]:
+    buf = StringIO()
+    old_stdout = sys.stdout
+    sys.stdout = buf
+    try:
+        rc = main("b1", argv)
+    finally:
+        sys.stdout = old_stdout
+    return rc, buf.getvalue()
+
+
 def test_verify_pass_appends_verify_check(tmp_path, monkeypatch):
     _write_config(
         tmp_path,
@@ -113,10 +124,34 @@ def test_dry_run_does_not_append_metrics(tmp_path, monkeypatch):
     fake.issue_get.return_value = {"body": _VALID_BODY, "labels": [], "milestone": None}
     monkeypatch.setattr("ghdag.forge.get_forge", lambda: fake)
 
-    rc_normal = main("b1", ["42", "--no-apply-deterministic"])
+    rc_normal, out_normal = _run_capture(["42", "--no-apply-deterministic"])
     lines_after_normal = metrics_path.read_text().count("\n")
-    rc_dry = main("b1", ["42", "--no-apply-deterministic", "--dry-run"])
+    rc_dry, out_dry = _run_capture(["42", "--no-apply-deterministic", "--dry-run"])
     assert rc_normal == rc_dry == 0
+    assert out_normal == out_dry
+    assert metrics_path.read_text().count("\n") == lines_after_normal
+
+
+def test_dry_run_fail_does_not_append_metrics(tmp_path, monkeypatch):
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {"repo": "example/app", "steps": {"b1": {"verify": "design_doc"}}},
+    )
+    metrics_path = _metrics_cfg(tmp_path, monkeypatch)
+    fake = MagicMock()
+    fake.issue_get.return_value = {
+        "body": "## Overview\nno yaml\n",
+        "labels": [],
+        "milestone": None,
+    }
+    monkeypatch.setattr("ghdag.forge.get_forge", lambda: fake)
+
+    rc_normal, out_normal = _run_capture(["42", "--no-apply-deterministic"])
+    lines_after_normal = metrics_path.read_text().count("\n")
+    rc_dry, out_dry = _run_capture(["42", "--no-apply-deterministic", "--dry-run"])
+    assert rc_normal == rc_dry == 1
+    assert out_normal == out_dry
     assert metrics_path.read_text().count("\n") == lines_after_normal
 
 
@@ -135,17 +170,14 @@ def test_metrics_write_failure_preserves_rc_and_stdout(tmp_path, monkeypatch):
     }
     monkeypatch.setattr("ghdag.forge.get_forge", lambda: fake)
 
+    rc_normal, out_normal = _run_capture(["99", "--no-apply-deterministic"])
+
     def _boom(path, event):
         raise OSError("disk full")
 
     monkeypatch.setattr("issuesmith.metrics_events.append_event", _boom)
 
-    buf = StringIO()
-    old_stdout = sys.stdout
-    sys.stdout = buf
-    try:
-        rc = main("b1", ["99", "--no-apply-deterministic"])
-    finally:
-        sys.stdout = old_stdout
-    assert rc == 1
-    assert "VERIFY_FAILED_CHECKS:" in buf.getvalue()
+    rc, out = _run_capture(["99", "--no-apply-deterministic"])
+    assert rc == rc_normal == 1
+    assert "VERIFY_FAILED_CHECKS:" in out
+    assert out == out_normal
