@@ -15,6 +15,7 @@ because they need the same raise_andon / RetrySignal machinery.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -115,15 +116,18 @@ def record_metrics(
     rule_ids: list[str] | None = None,
     *,
     origin: str | None = None,
+    violations: Sequence | None = None,
 ) -> None:
     """Append a requires_check or requires_repair event to the metrics file."""
-    from issuesmith.metrics_events import append_event
+    from issuesmith.metrics_events import append_event, serialize_violations
 
     payload: dict = {"event": event, "step": step_id, "issue": issue_num}
     if rule_ids is not None:
         payload["rule_ids"] = rule_ids
     if origin is not None:
         payload["origin"] = origin
+    if violations is not None:
+        payload["violations"] = serialize_violations(violations)
     append_event(path, payload)
 
 

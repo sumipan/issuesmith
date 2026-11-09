@@ -124,6 +124,11 @@ Run a command as `python3 -m issuesmith <command>` or through the `issuesmith` c
 | `observe [--apply] [--json]` | Collect observe events; `--apply` also runs the policy actions |
 | `lanes <subcommand>` | Lane ledger planning (see [`lanes`](#lanes-subcommands)) |
 | `metrics rework [--since YYYY-MM-DD] [--issue N] [--audit PATH] [--json]` | Rework report from `paths.metrics` and an optional ghdag audit JSONL; `--since` uses `timezone` |
+
+`paths.metrics` JSONL contracts (backward compatible additions):
+
+- `requires_repair` may include optional `violations`: a list of `{"rule_id", "location", "message"}` objects (same shape as `serialize_violations`).
+- `verify_check` is written by design-doc verify (`issuesmith verify <step> <issue>`): `event`, `step`, `issue`, `rule_ids`, and `violations` (empty lists on PASS). Rework aggregation ignores `verify_check` rows.
 | `main-health` | Run `observe.main_health.command` on the base branch; writes `issuesmith-main-health.json` and command log `issuesmith-main-health.log` next to queue state (exit 2 on `MainHealthError`) |
 | `apply` / `ingest-review` | Moved to the host's `tools/stash/`; print a notice and exit 2 |
 
@@ -259,7 +264,7 @@ Built-in phase predicates: `deps_terminal`, `closing_pr_exists` (`issuesmith.pre
 | `issuesmith.milestone` | `milestone_status`, `milestone_resume`, `milestone_prune`, `milestone_consolidate`, `advance_milestone_chains`, `parse_split_plan`, `plan_section`, `build_child_body`, `prevalidate_child_body`, `validate_children`, `check_v6_dependency_refs`, `run_sub1_create`, `main` and further SUB1 helpers |
 | `issuesmith.ops.publish` | `PublishResult`, `publish`, `run_version_bump`, `main` |
 | `issuesmith.ops.version_bump` | `BumpDecision`, `decide_bump`, `apply_bump`, `fold_unreleased`, `run_bump`, `main` |
-| `issuesmith.metrics_events` | `append_event`, `record_step_started` |
+| `issuesmith.metrics_events` | `append_event`, `record_step_started`, `serialize_violations` |
 | `issuesmith.metrics_rework` | `compute`, `format_text`, `load_jsonl`, `parse_since`, `resolve_cause_target`, `main` |
 | `issuesmith.quota_gate` | `GitHubApiState`, `read_github_api_state`, `is_github_api_low`, `read_github_api_notified`, `write_github_api_notified` |
 | `issuesmith.observe` | `observe`, `ObserveSnapshot`, `github_api_status` |

@@ -5,17 +5,18 @@ gate-exception→broken / preexisting-non-blocking.
 """
 from __future__ import annotations
 
+import json
 import sys
 import types
 from contextlib import contextmanager
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from unittest.mock import MagicMock, patch
 
 import pytest
 from ghdag.workflow.gates import Violation
 
 from issuesmith.andon import from_comment as _andon_from_comment_body
-from issuesmith.config import reset_config_cache
+from issuesmith.config import StepConfig, get_config, reset_config_cache
 from issuesmith.gates.base import ContractInput
 from issuesmith.repair import (
     RequiresResult,
@@ -712,3 +713,54 @@ class TestDerivedAllowPaths:
             "Do not touch files outside allow_paths.\n"
             "- tests.pytest_failure: test violation"
         )
+
+
+class TestRequiresRepairMetricsViolations:
+    """Blocking violations are serialized on requires_repair (#6207)."""
+
+    def test_requires_repair_records_all_blocking_details(self, tmp_path, monkeypatch):
+        from issuesmith.ops import dispatch as dispatch_mod
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        metrics_path = tmp_path / "metrics.jsonl"
+        cfg_obj = replace(get_config(), paths=replace(get_config().paths, metrics=metrics_path))
+        monkeypatch.setattr(dispatch_mod, "get_config", lambda: cfg_obj)
+
+        loc_v = Violation(
+            rule_id="pr_scope.out_of_allow",
+            severity="fail",
+            message="outside",
+            location="tools/extra.py",
+            auto_fixable=False,
+            fix_hint=None,
+        )
+        msg_v = Violation(
+            rule_id="tests.pytest_failure",
+            severity="fail",
+            message="assert 0",
+            location=None,
+            auto_fixable=False,
+            fix_hint=None,
+        )
+
+        class _MultiGate:
+            def check(self, body, labels):
+                return [loc_v, msg_v]
+
+        step_cfg = StepConfig(module="issuesmith.steps.test", requires=("tests",))
+        with patch(
+            "issuesmith.ops.dispatch._build_requires_gates",
+            return_value={"tests": _MultiGate()},
+        ):
+            with patch("issuesmith.ops.dispatch.get_forge"):
+                with patch("issuesmith.ops.dispatch._run_repair_step", return_value=1):
+                    run_requires_loop(step_cfg, "p1", _make_ctx(), origin="requires")
+
+        lines = [json.loads(ln) for ln in metrics_path.read_text().splitlines() if ln.strip()]
+        repair_lines = [ln for ln in lines if ln.get("event") == "requires_repair"]
+        assert len(repair_lines) == 1
+        row = repair_lines[0]
+        assert row["origin"] == "requires"
+        assert row["rule_ids"] == ["pr_scope.out_of_allow", "tests.pytest_failure"]
+        assert [v["location"] for v in row["violations"]] == ["tools/extra.py", None]
+        assert row["violations"][1]["message"] == "assert 0"
