@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.175.3 - 2026-11-10
+
+### Fixed
+
+- `scope_coupling.deletion_reference_uncovered` matches the parent-package module key only when the import names the deleted module, so importers of sibling modules are no longer reported as referrers (#6233).
+
 ## 0.175.2 - 2026-11-10
 
 ### Fixed
