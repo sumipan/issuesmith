@@ -128,6 +128,22 @@ def test_constructor_version_literal_passes():
     assert vs == []
 
 
+def test_constructor_version_literal_in_collection_passes():
+    """Issue #6203: constructor args are not direct list/tuple elements."""
+    vs = check_test_version_exact_assert(
+        _tests_hunk('assert parsed == [Version("0.152.0")]')
+    )
+    assert vs == []
+
+
+def test_version_literal_inside_fixture_string_passes():
+    """Issue #6203: comparison-like fixture text is not a Python comparison."""
+    vs = check_test_version_exact_assert(
+        _tests_hunk('write_text(\'assert tag == "0.152.0"\')')
+    )
+    assert vs == []
+
+
 def test_removed_new_patterns_pass():
     """Issue #6203: deletion-only lines do not trigger new patterns."""
     diff = f"""\
