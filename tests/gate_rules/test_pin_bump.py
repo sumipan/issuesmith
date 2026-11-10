@@ -98,7 +98,7 @@ host_allow_paths:
 
 ## Design
 
-Requires issuesmith v0.133.1 after the bump workflow lands.
+Raise the issuesmith pin to v0.133.1.
 """
     violations = _check(body, [])
     assert len(violations) == 1
@@ -359,7 +359,7 @@ allow_paths:
 
 ## Design
 
-Requires issuesmith v0.133.1 after the bump workflow lands.
+Raise the issuesmith pin to v0.133.1.
 
 ### Change targets
 
@@ -398,3 +398,55 @@ Pin-only table with invalid self requires_pins.
     violations = _check(body, [])
     assert len(violations) == 1
     assert violations[0].rule_id == "pin_bump.self_requires_pin"
+
+
+_VERSION_MENTION_BODY = """\
+```yaml
+target_repo: sumipan/issuesmith
+base_branch: main
+allow_paths:
+  - pyproject.toml
+  - src/issuesmith/body_editor.py
+```
+
+## Design
+
+- Keep the behavior of ghdag `src/ghdag/markdown/body_editor.py` v0.120.2.
+- Port the inputs and expectations of ghdag `tests/test_body_editor.py` v0.120.2.
+- Drop the ghdag ownership note from the README and raise the `pyproject.toml` version to `0.176.0`.
+{extra}
+### Change targets
+
+| @REPO@ | @FILE@ | @TYPE@ | @DESC@ |
+|---|---|---|---|
+| `sumipan/issuesmith` | `src/issuesmith/body_editor.py` | modify | own the implementation |
+| `sumipan/issuesmith` | `pyproject.toml` | modify | version |
+""".replace("@REPO@", lt.REPOSITORY).replace("@FILE@", lt.FILE_PATH).replace(
+    "@TYPE@", lt.CHANGE_TYPE
+).replace("@DESC@", lt.DESCRIPTION)
+
+
+def test_dependency_version_mention_without_pin_word_passes():
+    """nexus#6325: citing the ported-from version is not a pin change."""
+    assert _check(_VERSION_MENTION_BODY.format(extra=""), []) == []
+
+
+def test_pin_change_next_to_version_mentions_still_fails():
+    body = _VERSION_MENTION_BODY.format(extra="- Raise the ghdag pin to v0.121.0.\n")
+    violations = _check(body, [])
+    assert [v.rule_id for v in violations] == ["pin_bump.in_feature_issue"]
+
+
+def test_direct_reference_line_counts_as_pin_change():
+    body = _VERSION_MENTION_BODY.format(
+        extra='- `"ghdag @ git+https://github.com/sumipan/ghdag.git@v0.121.0"`\n'
+    )
+    assert [v.rule_id for v in _check(body, [])] == ["pin_bump.in_feature_issue"]
+
+
+def test_fix_hint_keeps_pyproject_when_change_table_edits_it():
+    """The hint must not send recovery into file_union_missing_in_parent."""
+    body = _VERSION_MENTION_BODY.format(extra="- Raise the ghdag pin to v0.121.0.\n")
+    hint = _check(body, [])[0].fix_hint or ""
+    assert "Keep pyproject.toml in allow_paths" in hint
+    assert "remove pyproject.toml" not in hint
