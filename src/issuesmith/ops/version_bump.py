@@ -417,7 +417,6 @@ def run_bump(worktree: Path, base: str) -> int:
         return 1
     print(f"pyproject.toml: {decision.bump_type}-bumped {old_ver} → {new_ver}")
     if folded is not None:
-        # publish re-runs release-metadata tests after a bump (#5128 / #6236).
         print(f"CHANGELOG_FOLDED: {new_ver}")
     if synced:
         print(f"README_VERSION_SYNCED: {old_ver} -> {new_ver} ({synced})")
