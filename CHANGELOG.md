@@ -7,11 +7,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
-## 0.176.2 - 2026-11-10
+## 0.176.4 - 2026-11-10
 
 ### Changed
 
 - observe policy: `issue_stall` and `orphan_exec` emit `WaitAction` only (no andon); suppress `dag_terminated` observe andons when the same issue already has an open pipeline (non-`observe:`) andon (#6328).
+
+## 0.176.3 - 2026-11-10
+
+### Fixed
+
+- `pin_bump.in_feature_issue` matches design clauses that name a dependency and a mismatched version together; clauses that cite only the `requires_pins` version, or put the package name and version in separate clauses, no longer count as pin changes (nexus#6330).
+
+## 0.176.2 - 2026-11-10
+
+### Fixed
+
+- `pin_bump.in_feature_issue` fires only on design lines that name the pin itself (the word `pin` / `pins` / `pinned`, or a `<pkg> @ git+...` reference) next to a version. A dependency name next to a version number (the version a design ports from, or the repo's own version on the same line) no longer counts as a pin change (nexus#6325).
+- The `pin_bump.in_feature_issue` fix hint no longer tells recovery to remove `pyproject.toml` from `allow_paths` when the change table edits `pyproject.toml`; that advice made recovery oscillate with `milestone_subdesign.file_union_missing_in_parent`.
 
 ## 0.176.1 - 2026-11-10
 

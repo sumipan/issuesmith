@@ -6,10 +6,10 @@ import pytest
 import yaml
 
 import issuesmith.gate_rules.pin_bump  # noqa: F401 — registers on import
-from issuesmith.step_verify import collect_violations
 from issuesmith.config import reset_config_cache
 from issuesmith.gate_rules import GATE_REGISTRY
 from issuesmith.gate_rules.pin_bump import _self_package
+from issuesmith.step_verify import collect_violations
 from tests import legacy_text as lt
 
 _INSTALLS = {
@@ -98,7 +98,7 @@ host_allow_paths:
 
 ## Design
 
-Requires issuesmith v0.133.1 after the bump workflow lands.
+Raise the issuesmith pin to v0.133.1.
 """
     violations = _check(body, [])
     assert len(violations) == 1
@@ -359,7 +359,7 @@ allow_paths:
 
 ## Design
 
-Requires issuesmith v0.133.1 after the bump workflow lands.
+Raise the issuesmith pin to v0.133.1.
 
 ### Change targets
 
@@ -398,3 +398,166 @@ Pin-only table with invalid self requires_pins.
     violations = _check(body, [])
     assert len(violations) == 1
     assert violations[0].rule_id == "pin_bump.self_requires_pin"
+
+
+_VERSION_MENTION_BODY = """\
+```yaml
+target_repo: sumipan/issuesmith
+base_branch: main
+allow_paths:
+  - pyproject.toml
+  - src/issuesmith/body_editor.py
+```
+
+## Design
+
+- Keep the behavior of ghdag `src/ghdag/markdown/body_editor.py` v0.120.2.
+- Port the inputs and expectations of ghdag `tests/test_body_editor.py` v0.120.2.
+- Drop the ghdag ownership note from the README and raise the `pyproject.toml` version to `0.176.0`.
+{extra}
+### Change targets
+
+| @REPO@ | @FILE@ | @TYPE@ | @DESC@ |
+|---|---|---|---|
+| `sumipan/issuesmith` | `src/issuesmith/body_editor.py` | modify | own the implementation |
+| `sumipan/issuesmith` | `pyproject.toml` | modify | version |
+""".replace("@REPO@", lt.REPOSITORY).replace("@FILE@", lt.FILE_PATH).replace(
+    "@TYPE@", lt.CHANGE_TYPE
+).replace("@DESC@", lt.DESCRIPTION)
+
+
+def test_dependency_version_mention_without_pin_word_passes():
+    """nexus#6325: citing the ported-from version is not a pin change."""
+    assert _check(_VERSION_MENTION_BODY.format(extra=""), []) == []
+
+
+def test_pin_change_next_to_version_mentions_still_fails():
+    body = _VERSION_MENTION_BODY.format(extra="- Raise the ghdag pin to v0.121.0.\n")
+    violations = _check(body, [])
+    assert [v.rule_id for v in violations] == ["pin_bump.in_feature_issue"]
+
+
+def test_direct_reference_line_counts_as_pin_change():
+    body = _VERSION_MENTION_BODY.format(
+        extra='- `"ghdag @ git+https://github.com/sumipan/ghdag.git@v0.121.0"`\n'
+    )
+    assert [v.rule_id for v in _check(body, [])] == ["pin_bump.in_feature_issue"]
+
+
+def test_fix_hint_keeps_pyproject_when_change_table_edits_it():
+    """The hint must not send recovery into file_union_missing_in_parent."""
+    body = _VERSION_MENTION_BODY.format(extra="- Raise the ghdag pin to v0.121.0.\n")
+    hint = _check(body, [])[0].fix_hint or ""
+    assert "Keep pyproject.toml in allow_paths" in hint
+    assert "remove pyproject.toml" not in hint
+
+
+def test_pin_bump_ignores_package_and_version_in_separate_clauses():
+    body = """\
+```yaml
+target_repo: sumipan/issuesmith
+base_branch: main
+allow_paths:
+  - pyproject.toml
+```
+
+## Design
+
+Remove ghdag-owned text from README.md, and bump pyproject.toml version to 0.177.0.
+"""
+    assert _check(body, []) == []
+
+
+@pytest.mark.parametrize("required_version", ["0.120.2", "v0.120.2"])
+def test_pin_bump_ignores_reference_to_required_version(required_version: str):
+    body = f"""\
+```yaml
+target_repo: sumipan/issuesmith
+base_branch: main
+allow_paths:
+  - pyproject.toml
+requires_pins:
+  ghdag: {required_version}
+```
+
+## Design
+
+Do not change ghdag v0.120.2 behavior.
+"""
+    assert _check(body, []) == []
+
+
+def test_pin_bump_fails_on_version_outside_requires_pins():
+    body = """\
+```yaml
+target_repo: sumipan/issuesmith
+base_branch: main
+allow_paths:
+  - pyproject.toml
+requires_pins:
+  ghdag: 0.120.2
+```
+
+## Design
+
+Bump the ghdag pin to v0.121.0.
+"""
+    violations = _check(body, [])
+    assert len(violations) == 1
+    assert violations[0].rule_id == "pin_bump.in_feature_issue"
+
+
+def test_pin_bump_fails_when_clause_mixes_required_and_other_version():
+    body = """\
+```yaml
+target_repo: sumipan/issuesmith
+base_branch: main
+allow_paths:
+  - pyproject.toml
+requires_pins:
+  ghdag: 0.120.2
+```
+
+## Design
+
+Bump the ghdag pin from 0.120.2 to 0.121.0.
+"""
+    violations = _check(body, [])
+    assert len(violations) == 1
+    assert violations[0].rule_id == "pin_bump.in_feature_issue"
+
+
+@pytest.mark.parametrize("delimiter", [lt._text(0x3001), lt._text(0x3002), ",", ";", "|"])
+def test_pin_bump_splits_clauses_on_a_line_with_the_pin_word(delimiter: str):
+    body = f"""\
+```yaml
+target_repo: sumipan/issuesmith
+base_branch: main
+allow_paths:
+  - pyproject.toml
+```
+
+## Design
+
+Remove the ghdag pin note from README.md{delimiter} set the pyproject.toml version to 0.177.0.
+"""
+    assert _check(body, []) == []
+
+
+@pytest.mark.parametrize("required_version", ["0.120.2", "v0.120.2"])
+def test_pin_bump_ignores_required_version_on_a_line_with_the_pin_word(required_version: str):
+    body = f"""\
+```yaml
+target_repo: sumipan/issuesmith
+base_branch: main
+allow_paths:
+  - pyproject.toml
+requires_pins:
+  ghdag: {required_version}
+```
+
+## Design
+
+Keep the ghdag pin at v0.120.2.
+"""
+    assert _check(body, []) == []

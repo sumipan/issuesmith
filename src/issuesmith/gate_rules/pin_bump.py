@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from pathlib import Path
 
 from ghdag.workflow.gates import GATE_REGISTRY, Violation
@@ -13,13 +14,32 @@ from issuesmith.contract import extract_change_table_rows
 from issuesmith.pr_scope import normalize_allow_path
 
 _VERSION_TOKEN = re.compile(r"v?\d+\.\d+\.\d+")
+_IDEO_COMMA = bytes.fromhex("e38081").decode("utf-8")
+_IDEO_PERIOD = bytes.fromhex("e38082").decode("utf-8")
+_CLAUSE_DELIMS = _IDEO_COMMA + _IDEO_PERIOD + ",;|"
+_CLAUSE_SPLIT = re.compile("[" + re.escape(_CLAUSE_DELIMS) + "]")
+# A clause states a pin change only when it names the pin itself: the word
+# "pin" (pin / pins / pinned / requires_pins) or a direct reference
+# ("<pkg> @ git+...").  A dependency name next to a version number is not
+# enough: designs cite the version they port from or verified against.
+_PIN_WORD = re.compile(r"(?<![A-Za-z])pin(?:s|ned)?(?![A-Za-z])|@\s*git\+", re.IGNORECASE)
 
-_IN_FEATURE_FIX_HINT = (
-    "pins are raised by the bump workflow; put the required version"
-    " in requires_pins and remove pyproject.toml from allow_paths."
+_SELF_PIN_NOTE = (
     " Do not put the target_repo's own package in requires_pins"
     " (pins_landed reads dependency pins from that repo's pyproject.toml;"
     " a self pin never lands)."
+)
+_IN_FEATURE_FIX_HINT = (
+    "pins are raised by the bump workflow; put the required version"
+    " in requires_pins and remove pyproject.toml from allow_paths."
+    + _SELF_PIN_NOTE
+)
+_IN_FEATURE_FIX_HINT_KEEP_PYPROJECT = (
+    "pins are raised by the bump workflow; put the required version"
+    " in requires_pins and drop the pin change from the design."
+    " Keep pyproject.toml in allow_paths: the change table edits it"
+    " for another reason (for example the repo's own version)."
+    + _SELF_PIN_NOTE
 )
 
 
@@ -79,18 +99,55 @@ def _is_pin_only_issue(body: str, target_repo: str) -> bool:
     return True
 
 
-def _pin_change_lines(body: str, package_names: frozenset[str]) -> list[str]:
+def _change_table_has_pyproject(body: str) -> bool:
+    for _repo, path, _change_type in extract_change_table_rows(body):
+        try:
+            if normalize_allow_path(path) == "pyproject.toml":
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def _normalize_pin_version(raw: str) -> str:
+    value = raw.strip()
+    if value[:1].lower() == "v":
+        value = value[1:]
+    return value
+
+
+def _pin_change_lines(
+    body: str,
+    package_names: frozenset[str],
+    required_pins: Mapping[str, object],
+) -> list[str]:
     if not package_names:
         return []
     section = _design_section(body)
     hits: list[str] = []
     for line in section.splitlines():
-        if not _VERSION_TOKEN.search(line):
-            continue
-        for pkg in package_names:
-            if pkg in line:
-                hits.append(line)
+        for raw_clause in _CLAUSE_SPLIT.split(line):
+            clause = raw_clause.strip()
+            if not clause:
+                continue
+            versions = _VERSION_TOKEN.findall(clause)
+            if not versions:
+                continue
+            clause_hit = False
+            for pkg in package_names:
+                if pkg not in clause:
+                    continue
+                required = required_pins.get(pkg)
+                if required is not None:
+                    req_norm = _normalize_pin_version(str(required))
+                    if all(_normalize_pin_version(v) == req_norm for v in versions):
+                        continue
+                if not _PIN_WORD.search(clause):
+                    continue
+                clause_hit = True
                 break
+            if clause_hit:
+                hits.append(clause)
     return hits
 
 
@@ -144,7 +201,8 @@ class PinBumpRules:
         package_names = frozenset(cfg.installs) | pkg_names
         if self_package is not None:
             package_names = package_names - {self_package}
-        hits = _pin_change_lines(body, package_names)
+        required_pins = required if isinstance(required, dict) else {}
+        hits = _pin_change_lines(body, package_names, required_pins)
         if not hits:
             return []
 
@@ -159,7 +217,11 @@ class PinBumpRules:
                 message=f"feature Issue changes the {pkg} pin in pyproject.toml",
                 location=None,
                 auto_fixable=False,
-                fix_hint=_IN_FEATURE_FIX_HINT,
+                fix_hint=(
+                    _IN_FEATURE_FIX_HINT_KEEP_PYPROJECT
+                    if _change_table_has_pyproject(body)
+                    else _IN_FEATURE_FIX_HINT
+                ),
             )
         ]
 
