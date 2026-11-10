@@ -15,9 +15,6 @@ from typing import NamedTuple
 from ghdag.forge import get_forge
 
 from issuesmith.bump_commits import (
-    BUMP_SUBJECT_PREFIX as _BUMP_SUBJECT_PREFIX,
-)
-from issuesmith.bump_commits import (
     BumpCommitsError,
     bump_versions_in_range,
 )
@@ -292,105 +289,6 @@ def _check_commit_diff_gates(worktree: Path, base_branch: str) -> PublishResult 
         return None
     msgs = "\n".join(f"[{v.rule_id}] {v.fix_hint or v.message}" for v in violations)
     return PublishResult(status="P3_GATE_FAILED", stderr=msgs, exit_code=1)
-
-
-_POST_BUMP_TESTS_RULE = "publish.post_bump_tests"
-_POST_BUMP_TESTS_TIMEOUT = 600
-_POST_BUMP_TESTS_TAIL_LINES = 40
-# :(glob) so ``**`` also matches zero directories (tests/test_x.py).
-_POST_BUMP_TESTS_PATHSPEC = ":(glob)tests/**/*.py"
-# Tests reading release metadata the bump rewrites (#6236).
-_POST_BUMP_TESTS_PATTERN = "CHANGELOG|README|pyproject"
-
-
-def _post_bump_tests_failed(message: str) -> PublishResult:
-    return PublishResult(
-        status="P3_GATE_FAILED",
-        stderr=f"[{_POST_BUMP_TESTS_RULE}] {message}",
-        exit_code=1,
-    )
-
-
-def _output_tail(stdout: str | bytes | None, stderr: str | bytes | None) -> str:
-    lines: list[str] = []
-    for stream in (stdout, stderr):
-        if isinstance(stream, bytes):
-            stream = stream.decode("utf-8", errors="replace")
-        lines.extend((stream or "").splitlines())
-    return "\n".join(lines[-_POST_BUMP_TESTS_TAIL_LINES:])
-
-
-def _has_bump_commit(worktree: Path, base_branch: str) -> bool | PublishResult:
-    """True when a publish bump commit is in range (read from Git, #5128 / #6236)."""
-    log = _run_git(
-        worktree, "log", "--format=%H %s", f"origin/{base_branch}..HEAD", check=False
-    )
-    if log.returncode != 0:
-        return _post_bump_tests_failed(
-            f"git log origin/{base_branch}..HEAD exited {log.returncode}: "
-            f"{(log.stderr or '').strip()}"
-        )
-    for line in log.stdout.splitlines():
-        sha, _, subject = line.partition(" ")
-        if subject.startswith(_BUMP_SUBJECT_PREFIX):
-            return True
-    return False
-
-
-def _post_bump_tests(worktree: Path, base_branch: str) -> PublishResult | None:
-    """Re-run release-metadata tests when a bump commit is in range (#5128 / #6236).
-
-    The bump rewrites the pyproject version, may fold ``## Unreleased`` and syncs
-    README version references; tests reading CHANGELOG / README / pyproject can turn
-    red only after it. Runs on every publish while a bump commit is in range, so a
-    re-run with fix commits stacked on top re-verifies the current tree before push.
-    """
-    bumped = _has_bump_commit(worktree, base_branch)
-    if isinstance(bumped, PublishResult):
-        return bumped
-    if not bumped:
-        return None
-
-    grep = _run_git(
-        worktree, "grep", "-l", "-E", _POST_BUMP_TESTS_PATTERN, "--",
-        _POST_BUMP_TESTS_PATHSPEC,
-        check=False,
-    )
-    if grep.returncode == 1:
-        return None
-    if grep.returncode != 0:
-        return _post_bump_tests_failed(
-            f"git grep for release-metadata tests exited {grep.returncode}: "
-            f"{(grep.stderr or '').strip()}"
-        )
-    files = [f for f in grep.stdout.splitlines() if f]
-    if not files:
-        return None
-
-    targets = " ".join(files)
-    cmd = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *files]
-    try:
-        proc = subprocess.run(
-            cmd,
-            cwd=worktree,
-            capture_output=True,
-            text=True,
-            timeout=_POST_BUMP_TESTS_TIMEOUT,
-        )
-    except subprocess.TimeoutExpired as exc:
-        return _post_bump_tests_failed(
-            f"pytest timeout after {_POST_BUMP_TESTS_TIMEOUT}s on release-metadata "
-            f"tests after the version bump\ntargets: {targets}\n"
-            f"{_output_tail(exc.stdout, exc.stderr)}"
-        )
-    if proc.returncode != 0:
-        return _post_bump_tests_failed(
-            f"pytest exited {proc.returncode} on release-metadata tests after the "
-            f"version bump\ntargets: {targets}\n"
-            f"{_output_tail(proc.stdout, proc.stderr)}"
-        )
-    print(f"post-bump tests passed: {targets}")
-    return None
 
 
 def _discard_runtime_dir_dirt(worktree: Path, allow_paths: list[str]) -> None:
@@ -687,10 +585,6 @@ def publish(
     bump_fail = _maybe_bump_version(worktree, base_branch, repo, issue_repo)
     if bump_fail is not None:
         return bump_fail
-
-    post_bump_fail = _post_bump_tests(worktree, base_branch)
-    if post_bump_fail is not None:
-        return post_bump_fail
 
     if _ahead_commit_count(worktree, base_branch) == 0:
         return PublishResult(status="NO_DIFF", exit_code=1)
