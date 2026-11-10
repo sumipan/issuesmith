@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.178.0 - 2026-11-10
+
+### Changed
+
+- `issuesmith.body_editor` implements H2 section helpers locally; gate code imports `Violation` from `issuesmith.gate_registry` instead of ghdag (#6349).
+
 ## 0.176.4 - 2026-11-10
 
 ### Changed

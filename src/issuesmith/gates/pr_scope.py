@@ -5,8 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Sequence
 
-from ghdag.workflow.gates import Violation
-
+from issuesmith.gate_registry import Violation
 from issuesmith.gates import Verdict
 from issuesmith.pr_scope import check_pr_diff_scope
 

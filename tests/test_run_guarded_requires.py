@@ -402,9 +402,8 @@ def test_llm_impl_done_overridden_by_gate_fail(capsys, fresh_repo: Path):
 
 def test_scope_breadth_blocks_llm(capsys, fresh_repo: Path):
     """scope_breadth.too_large (repairable=False) → LLM not called, andon(decision)."""
-    from ghdag.workflow.gates import Violation
-
     from issuesmith.engine import run_guarded
+    from issuesmith.gate_registry import Violation
 
     variables = [
         "issue_number=42",
@@ -484,9 +483,8 @@ def test_scope_breadth_blocks_llm(capsys, fresh_repo: Path):
 
 def test_base_freshness_fixed_before_llm(capsys, fresh_repo: Path):
     """base_freshness.behind_base → auto-fixed before LLM call."""
-    from ghdag.workflow.gates import Violation
-
     from issuesmith.engine import run_guarded
+    from issuesmith.gate_registry import Violation
 
     variables = [
         "issue_number=42",
@@ -555,9 +553,8 @@ def test_base_freshness_fixed_before_llm(capsys, fresh_repo: Path):
 
 def test_run_requires_loop_max_repairs_options_widen():
     """max_repairs exceeded with pr_scope violation → options include widen:<file>."""
-    from ghdag.workflow.gates import Violation
-
     from issuesmith.config import StepConfig
+    from issuesmith.gate_registry import Violation
     from issuesmith.ops.dispatch import run_requires_loop
 
     step_cfg = StepConfig(
@@ -609,9 +606,8 @@ def test_run_requires_loop_max_repairs_options_widen():
 
 def test_run_requires_loop_max_repairs_no_pr_scope_no_widen():
     """max_repairs exceeded without pr_scope → options are split and reject only."""
-    from ghdag.workflow.gates import Violation
-
     from issuesmith.config import StepConfig
+    from issuesmith.gate_registry import Violation
     from issuesmith.ops.dispatch import run_requires_loop
 
     step_cfg = StepConfig(

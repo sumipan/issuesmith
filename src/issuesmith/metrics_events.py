@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
 
-from ghdag.workflow.gates import Violation
+from issuesmith.gate_registry import Violation
 
 
 def _utc_ts() -> str:

@@ -6,9 +6,8 @@ import sys
 from pathlib import Path
 from typing import Mapping
 
-from ghdag.workflow.gates import Violation
-
 from issuesmith.config import ReviewConfig, get_config
+from issuesmith.gate_registry import Violation
 from issuesmith.gates import GateBuildContext, GateBuildError
 
 

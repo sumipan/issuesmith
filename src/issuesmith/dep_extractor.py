@@ -9,8 +9,8 @@ from dataclasses import asdict, dataclass, field
 from functools import lru_cache
 
 from ghdag.forge import ForgePort, get_forge
-from ghdag.markdown.body_editor import count_heading, get_section
 
+from issuesmith.body_editor import count_heading, get_section
 from issuesmith.config import get_config
 
 _MERGE_DONE_LABEL = "issuesmith:merge-done"

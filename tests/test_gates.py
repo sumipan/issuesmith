@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -9,6 +12,7 @@ import pytest
 
 import issuesmith.gates as gates_mod
 from issuesmith.gates import Verdict, check_ac_complete, check_deps, check_pr_scope, check_scope
+from tests.conventions._util import REPO_ROOT
 
 # ---------------------------------------------------------------------------
 # Verdict dataclass
@@ -46,6 +50,19 @@ def test_verdict_equality() -> None:
 def test_all_gates_are_importable() -> None:
     for name in gates_mod.__all__:
         assert hasattr(gates_mod, name), f"missing: {name}"
+
+
+def test_pr_scope_importable_first() -> None:
+    """Importing pr_scope before issuesmith.gates must not hit a circular import (#6349)."""
+    env = {**os.environ, "PYTHONPATH": str(REPO_ROOT / "src")}
+    proc = subprocess.run(
+        [sys.executable, "-c", "import issuesmith.pr_scope"],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr[-1500:]
 
 
 # ---------------------------------------------------------------------------
@@ -102,7 +119,7 @@ def test_check_pr_scope_returns_verdict_passed_when_in_scope() -> None:
 
 
 def test_check_pr_scope_returns_verdict_failed_when_out_of_scope() -> None:
-    from ghdag.workflow.gates import Violation
+    from issuesmith.gate_registry import Violation
 
     violation = Violation(
         rule_id="pr_diff_scope.out_of_scope",

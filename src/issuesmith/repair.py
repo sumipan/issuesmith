@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ghdag.workflow.gates import Violation
+from issuesmith.gate_registry import Violation
 
 
 @dataclass

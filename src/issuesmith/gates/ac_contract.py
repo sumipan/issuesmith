@@ -4,13 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ghdag.workflow.gates import Violation
-
 from issuesmith.ac_contract import (
     extract_contract_from_body,
     is_invalid_contract_path,
     run_checks,
 )
+from issuesmith.gate_registry import Violation
 
 _FIX_HINT = (
     "Do not delete, rename, or merge paths covered by the acceptance contract "
