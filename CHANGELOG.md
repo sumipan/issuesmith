@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.176.0 - 2026-11-10
+
+### Fixed
+
+- `test_version_exact_assert` evaluates only added lines of `.py` files under `tests/`, and ignores `count(...) == 1` inside strings and comments, so unchanged context lines, docstrings and `.diff` fixtures no longer pair with an added git pin (#6242).
+
 ### Removed
 
 - **BREAKING:** compatibility shim modules `issuesmith.cp1_gate`, `issuesmith.m2_gate`, `issuesmith.b1_verify`, `issuesmith.gates.m2`, `issuesmith.gate_rules.cp1`, `issuesmith.gate_rules.m2`, `issuesmith.gate_rules.b1_ac_format`, `issuesmith.gate_rules.b1_migration` and `issuesmith.gate_rules.b1_milestone_subdesign`. Import `issuesmith.design_lint_entry`, `issuesmith.ac_complete_entry`, `issuesmith.step_verify`, `issuesmith.gates.ac_complete` and the `gate_rules.*_rules` modules instead (#6077).

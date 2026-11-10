@@ -88,6 +88,20 @@ def _is_tests_path(path: str) -> bool:
     return normalized.startswith("tests/") or "/tests/" in normalized
 
 
+def _code_outside_strings(content: str) -> str:
+    """Return ``content`` with string literals and comments removed (#6242).
+
+    Falls back to the raw line when it does not tokenize on its own (e.g. a line in
+    the middle of a multi-line string).
+    """
+    try:
+        tokens = list(tokenize.generate_tokens(io.StringIO(content.lstrip()).readline))
+    except (IndentationError, tokenize.TokenError):
+        return content
+    skipped = {tokenize.STRING, tokenize.COMMENT}
+    return " ".join(t.string for t in tokens if t.type not in skipped)
+
+
 def _rhs_pins_exact_version(content: str) -> bool:
     """True when ``==`` RHS is a quoted semver or a list/tuple of quoted semvers (#6203)."""
     try:
@@ -174,6 +188,9 @@ def check_test_version_exact_assert(diff: str) -> list[Violation]:
     Pattern b: ``git+https://...@vX.Y.Z`` checked with ``==`` / ``count(...) == 1``
     Pattern c: ``def test_*_v<major>_<minor>[_<patch>]`` under tests/
     Pattern d: ``==`` RHS is a semver string or list/tuple of semver strings (#6203)
+
+    Only added lines of ``.py`` files under tests/ are evaluated; unchanged context
+    lines and fixture data files (``.diff`` etc.) never contribute (#6242).
     """
     in_tests = False
     file_has_count_eq_one = False
@@ -196,12 +213,13 @@ def check_test_version_exact_assert(diff: str) -> list[Violation]:
 
     for line in diff.splitlines():
         if line.startswith("diff --git "):
-            in_tests = bool(re.search(r"[ab]/tests/", line))
+            in_tests = bool(re.search(r"[ab]/tests/\S*\.py\b", line))
             file_has_count_eq_one = False
             plus_git_pin = False
             continue
         if line.startswith("+++ b/"):
-            in_tests = _is_tests_path(line[6:])
+            new_path = line[6:].strip()
+            in_tests = _is_tests_path(new_path) and new_path.endswith(".py")
             continue
         if not in_tests:
             continue
@@ -210,14 +228,11 @@ def check_test_version_exact_assert(diff: str) -> list[Violation]:
         if not line or line[0] not in " +-":
             continue
 
-        content = line[1:]
-        if _COUNT_EQ_ONE.search(content):
-            file_has_count_eq_one = True
-
         if line[0] != "+":
-            if plus_git_pin and file_has_count_eq_one:
-                return _violation()
             continue
+        content = line[1:]
+        if _COUNT_EQ_ONE.search(_code_outside_strings(content)):
+            file_has_count_eq_one = True
 
         if _VERSIONED_TEST_DEF.match(content):
             return _violation()

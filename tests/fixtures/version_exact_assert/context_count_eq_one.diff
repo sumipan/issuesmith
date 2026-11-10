@@ -1,0 +1,8 @@
+diff --git a/tests/pkg/test_example.py b/tests/pkg/test_example.py
+index 1111111..2222222 100644
+--- a/tests/pkg/test_example.py
++++ b/tests/pkg/test_example.py
+@@ -1,2 +1,3 @@
+ assert deps.count(dependency) == 1
++fixture = "x @ git+https://h/x.git@v0.1.0"
+ done = True

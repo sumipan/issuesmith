@@ -64,13 +64,6 @@ index 1111111..2222222 100644
     assert check_test_version_exact_assert(diff) == []
 
 
-# Version literals live in constants so this file's own diff does not trip the gate.
-_PIN = '"0.116.0"'
-_TAG = '"0.107.2"'
-_GIT_PIN = "git+https://h/x.git@" + "v0.1.0"
-_VERSIONED_DEF = "def test_pyproject_ghdag_pins_" + "v0_116_0():"
-
-
 def _tests_hunk(plus_line: str) -> str:
     return f"""\
 diff --git a/tests/pkg/test_example.py b/tests/pkg/test_example.py
@@ -91,7 +84,7 @@ def _assert_violation(vs: list, *, rule_id: str = _RULE_ID) -> None:
 def test_versioned_test_name_fails():
     """Issue #6203: test function names must not embed version segments."""
     vs = check_test_version_exact_assert(
-        _tests_hunk(_VERSIONED_DEF)
+        _tests_hunk("def test_pyproject_ghdag_pins_v0_116_0():")
     )
     _assert_violation(vs)
 
@@ -99,7 +92,7 @@ def test_versioned_test_name_fails():
 def test_exact_version_list_rhs_fails():
     """Issue #6203: list RHS of == must not pin exact version strings."""
     vs = check_test_version_exact_assert(
-        _tests_hunk(f"    assert pins == [{_PIN}, {_PIN}]")
+        _tests_hunk('    assert pins == ["0.116.0", "0.116.0"]')
     )
     _assert_violation(vs)
 
@@ -107,7 +100,7 @@ def test_exact_version_list_rhs_fails():
 def test_exact_version_scalar_rhs_fails():
     """Issue #6203: scalar RHS of == must not pin exact version strings."""
     vs = check_test_version_exact_assert(
-        _tests_hunk(f"    assert tag == {_TAG}")
+        _tests_hunk('    assert tag == "0.107.2"')
     )
     _assert_violation(vs)
 
@@ -115,7 +108,7 @@ def test_exact_version_scalar_rhs_fails():
 def test_fixture_version_literal_passes():
     """Issue #6203: fixture write_text with @v pin is not an assert comparison."""
     vs = check_test_version_exact_assert(
-        _tests_hunk(f"write_text('x @ {_GIT_PIN}')")
+        _tests_hunk("write_text('x @ git+https://h/x.git@v0.1.0')")
     )
     assert vs == []
 
@@ -146,14 +139,29 @@ def test_version_literal_inside_fixture_string_passes():
 
 def test_removed_new_patterns_pass():
     """Issue #6203: deletion-only lines do not trigger new patterns."""
-    diff = f"""\
-diff --git a/tests/pkg/test_example.py b/tests/pkg/test_example.py
-index 1111111..2222222 100644
---- a/tests/pkg/test_example.py
-+++ b/tests/pkg/test_example.py
-@@ -1,3 +0,0 @@
--{_VERSIONED_DEF}
--    assert pins == [{_PIN}, {_PIN}]
--    assert tag == {_TAG}
-"""
+    diff = (_FIXTURES / "removed_patterns.diff").read_text(encoding="utf-8")
+    assert check_test_version_exact_assert(diff) == []
+
+
+def test_count_eq_one_on_context_line_does_not_pair_with_new_pin():
+    """Issue #6242: an unchanged count(...) == 1 line must not pair with an added pin."""
+    diff = (_FIXTURES / "context_count_eq_one.diff").read_text(encoding="utf-8")
+    assert check_test_version_exact_assert(diff) == []
+
+
+def test_added_pin_and_count_eq_one_still_fail():
+    """Issue #6242: both on added lines remains a violation."""
+    diff = (_FIXTURES / "added_pin_and_count.diff").read_text(encoding="utf-8")
+    _assert_violation(check_test_version_exact_assert(diff))
+
+
+def test_fixture_data_files_are_skipped():
+    """Issue #6242: non-.py files under tests/ (diff fixtures) are data, not test code."""
+    diff = (_FIXTURES / "fixture_data_file.diff").read_text(encoding="utf-8")
+    assert check_test_version_exact_assert(diff) == []
+
+
+def test_count_eq_one_inside_string_is_not_code():
+    """Issue #6242: count(...) == 1 inside a docstring or string literal is prose, not a check."""
+    diff = (_FIXTURES / "count_eq_one_in_string.diff").read_text(encoding="utf-8")
     assert check_test_version_exact_assert(diff) == []
