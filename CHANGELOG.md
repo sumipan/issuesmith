@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.174.6 - 2026-11-10
+
+### Fixed
+
+- Use text stream-json capabilities for Claude `call_managed` so review prose keeps `PIPELINE_STATUS:` markers (#6282).
+
 ## 0.174.2 - 2026-11-09
 
 ### Fixed
