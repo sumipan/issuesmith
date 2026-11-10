@@ -18,6 +18,10 @@ _IDEO_COMMA = bytes.fromhex("e38081").decode("utf-8")
 _IDEO_PERIOD = bytes.fromhex("e38082").decode("utf-8")
 _CLAUSE_DELIMS = _IDEO_COMMA + _IDEO_PERIOD + ",;|"
 _CLAUSE_SPLIT = re.compile("[" + re.escape(_CLAUSE_DELIMS) + "]")
+# A clause states a pin change only when it names the pin itself: the word
+# "pin" (pin / pins / pinned / requires_pins) or a direct reference
+# ("<pkg> @ git+...").  A dependency name next to a version number is not
+# enough: designs cite the version they port from or verified against.
 _PIN_WORD = re.compile(r"(?<![A-Za-z])pin(?:s|ned)?(?![A-Za-z])|@\s*git\+", re.IGNORECASE)
 
 _SELF_PIN_NOTE = (

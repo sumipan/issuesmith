@@ -525,3 +525,39 @@ Bump the ghdag pin from 0.120.2 to 0.121.0.
     violations = _check(body, [])
     assert len(violations) == 1
     assert violations[0].rule_id == "pin_bump.in_feature_issue"
+
+
+@pytest.mark.parametrize("delimiter", [lt._text(0x3001), lt._text(0x3002), ",", ";", "|"])
+def test_pin_bump_splits_clauses_on_a_line_with_the_pin_word(delimiter: str):
+    body = f"""\
+```yaml
+target_repo: sumipan/issuesmith
+base_branch: main
+allow_paths:
+  - pyproject.toml
+```
+
+## Design
+
+Remove the ghdag pin note from README.md{delimiter} set the pyproject.toml version to 0.177.0.
+"""
+    assert _check(body, []) == []
+
+
+@pytest.mark.parametrize("required_version", ["0.120.2", "v0.120.2"])
+def test_pin_bump_ignores_required_version_on_a_line_with_the_pin_word(required_version: str):
+    body = f"""\
+```yaml
+target_repo: sumipan/issuesmith
+base_branch: main
+allow_paths:
+  - pyproject.toml
+requires_pins:
+  ghdag: {required_version}
+```
+
+## Design
+
+Keep the ghdag pin at v0.120.2.
+"""
+    assert _check(body, []) == []
