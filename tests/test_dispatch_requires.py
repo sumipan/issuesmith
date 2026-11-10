@@ -13,10 +13,10 @@ from dataclasses import asdict, replace
 from unittest.mock import MagicMock, patch
 
 import pytest
-from ghdag.workflow.gates import Violation
 
 from issuesmith.andon import from_comment as _andon_from_comment_body
 from issuesmith.config import StepConfig, get_config, reset_config_cache
+from issuesmith.gate_registry import Violation
 from issuesmith.gates.base import ContractInput
 from issuesmith.repair import (
     RequiresResult,

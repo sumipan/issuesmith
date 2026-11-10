@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from ghdag.workflow.gates import Violation
-
 from issuesmith.config import RepairConfig, StepConfig
+from issuesmith.gate_registry import Violation
 from issuesmith.ops.dispatch import run_requires_loop
 
 

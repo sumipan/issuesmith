@@ -20,8 +20,7 @@ import time
 from pathlib import Path
 from typing import Literal, Sequence
 
-from ghdag.workflow.gates import Violation
-
+from issuesmith.gate_registry import Violation
 from issuesmith.gates.base import ContractInput
 from issuesmith.worktree import fetch_base_gate_result
 

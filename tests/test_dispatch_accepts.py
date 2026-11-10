@@ -5,10 +5,9 @@ import json
 from dataclasses import replace
 from unittest.mock import MagicMock, patch
 
-from ghdag.workflow.gates import Violation
-
 from issuesmith.config import StepConfig, get_config
 from issuesmith.contract import StepResult
+from issuesmith.gate_registry import Violation
 
 
 def _v(rule_id: str = "test.fail", auto_fixable: bool = False) -> Violation:

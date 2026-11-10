@@ -7,10 +7,10 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
-from ghdag.workflow.gates import Violation
 
 from issuesmith.andon import Andon, raise_andon
 from issuesmith.config import get_config
+from issuesmith.gate_registry import Violation
 from issuesmith.metrics_events import append_event, record_step_started, serialize_violations
 from issuesmith.repair import record_metrics
 

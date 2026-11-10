@@ -5,8 +5,8 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-from ghdag.workflow.gates import Violation
 
+from issuesmith.gate_registry import Violation
 from tests import test_dispatch_requires as _base
 from tests.test_dispatch_requires import (
     RepairStepBoundary,
@@ -221,8 +221,7 @@ class TestDispatchRepairGuards:
     def test_bash_fallback_runs_with_repair_active_env(self, monkeypatch):
         import os
 
-        from ghdag.workflow.gates import Violation
-
+        from issuesmith.gate_registry import Violation
         from issuesmith.ops.dispatch import _run_repair_step
 
         monkeypatch.delenv("ISSUESMITH_REPAIR_ACTIVE", raising=False)

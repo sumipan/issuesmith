@@ -36,7 +36,6 @@ from typing import Literal
 
 from ghdag.core.vocabulary import PIPELINE_WAIT_QUOTA
 from ghdag.forge import get_forge
-from ghdag.workflow.gates import Violation
 
 from issuesmith.andon import Andon as _FullAndon
 from issuesmith.andon import raise_andon as _raise_andon
@@ -44,6 +43,7 @@ from issuesmith.config import StepConfig, get_config
 from issuesmith.contract import Andon, LabelWriteForbidden, StepContext, StepResult, Verdict
 from issuesmith.engine import RetrySignal
 from issuesmith.forge_guard import guard_step_forge
+from issuesmith.gate_registry import Violation
 from issuesmith.ops.labels import project_issue
 from issuesmith.projection import IssueState, is_final_step, phase_for_step
 from issuesmith.template_ids import template_identifiers

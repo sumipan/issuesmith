@@ -5,8 +5,8 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-from ghdag.workflow.gates import Violation
 
+from issuesmith.gate_registry import Violation
 from tests import test_dispatch_requires as _base
 from tests.test_dispatch_requires import (
     RepairStepBoundary,

@@ -9,9 +9,9 @@ from collections import Counter
 from dataclasses import dataclass
 
 from ghdag.forge import ForgePort
-from ghdag.workflow.gates import Violation
 
 from issuesmith.config import get_config
+from issuesmith.gate_registry import Violation
 from issuesmith.gate_rules import GATE_REGISTRY
 from issuesmith.rule_ids import normalize_rule_id
 

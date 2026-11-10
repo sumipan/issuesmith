@@ -6,10 +6,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
-from ghdag.workflow.gates import Violation
 
 from issuesmith import config as config_module
 from issuesmith.config import StepConfig, reset_config_cache
+from issuesmith.gate_registry import Violation
 from issuesmith.language import EN, LanguagePack, load_language_pack
 
 

@@ -5,12 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 from ghdag.forge import ForgePort
-from ghdag.workflow.gates import Violation
 
 from issuesmith.dep_extractor import (
     check_dependencies,
     extract_dependencies,
 )
+from issuesmith.gate_registry import Violation
 from issuesmith.gate_rules.deps_format import DepsFormatRules
 from issuesmith.gate_rules.scope_coupling import (
     deletion_references_for_body,

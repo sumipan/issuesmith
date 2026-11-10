@@ -11,11 +11,11 @@ from pathlib import Path
 from typing import Sequence
 
 from ghdag.forge import ForgePort
-from ghdag.workflow.gates import Violation
 
 from issuesmith.config import _DEFAULT_FORBIDDEN_PR_PATHS, get_config
 from issuesmith.context_hook import parse_issue_metadata
 from issuesmith.forge_api import api_request
+from issuesmith.gate_registry import Violation
 
 DEFAULT_FORBIDDEN_PR_PATHS = _DEFAULT_FORBIDDEN_PR_PATHS
 

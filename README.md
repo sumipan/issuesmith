@@ -101,7 +101,7 @@ Run a command as `python3 -m issuesmith <command>` or through the `issuesmith` c
 | `context` / `context_hook` / `context-hook` | ghdag context hook: Issue YAML metadata and step context |
 | `gate <name> --body-file F` | Same as `gate-preflight --gate <name> --body-file F` |
 | `gate design_lint <issue>` / `gate ac_complete <issue>` | Run the design-lint / AC-complete gate entry points on an Issue |
-| `gate-preflight` | ghdag gate runner (`ghdag.workflow.gates`) with the issuesmith rules registered |
+| `gate-preflight` | Rule-class gate runner with the issuesmith rules registered |
 | `verify <step_id>` | Deterministic Verify for a step with `steps.<id>.verify: design_doc` (`VERIFY_RECOVERY:` markers; `--prev-report FILE` adds oscillation detection) |
 | `queue <subcommand>` | Request queue (see [`queue`](#queue-subcommands)) |
 | `deps` | Extract and check Issue dependencies |
@@ -308,7 +308,7 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/ac_contract.py` | Extract and run the acceptance-criteria YAML contract |
 | `issuesmith/ac_complete_entry.py` | `ac_complete` gate CLI and library entry (rules in `gate_rules/ac_complete_rules.py`) |
 | `issuesmith/andon.py` | Andons (typed stop-the-line signals in Issue comments) and auto-answer rules |
-| `issuesmith/body_editor.py` | Issue body editing (ghdag `body_editor` plus milestone normalizers) |
+| `issuesmith/body_editor.py` | Issue body H2 section editing and milestone normalizers |
 | `issuesmith/branch_reuse.py` | Find and record reusable branches from earlier runs |
 | `issuesmith/cli.py` | Unified CLI (`_HANDLERS`) |
 | `issuesmith/config.py` | `issuesmith.yaml` loading, validation and defaults |
