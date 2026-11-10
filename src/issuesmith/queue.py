@@ -226,6 +226,7 @@ PlanReason = Literal[
     "allow_paths_conflict",
     "pipeline_not_idle",
     "max_dispatch_reached",
+    "priority_barrier",
 ]
 
 
@@ -1855,6 +1856,17 @@ def _plan_with_window(
     strict_detail = ""
     entries: list[PlanEntry] = []
 
+    high_issues: list[int] = []
+    seen_high: set[int] = set()
+    for rid in snap.active_order:
+        hres = store.effective_request(snap, rid)
+        if hres is None or hres.priority != "high":
+            continue
+        if hres.issue in seen_high:
+            continue
+        high_issues.append(hres.issue)
+        seen_high.add(hres.issue)
+
     for rid in list(snap.active_order):
         req = store.effective_request(snap, rid)
         if req is None:
@@ -1863,6 +1875,11 @@ def _plan_with_window(
             engine = _resolve_engine(req.phase)
         except Exception:
             engine = None
+
+        if req.priority == "low" and high_issues:
+            detail = "waiting high: " + ", ".join(f"#{n}" for n in high_issues)
+            entries.append(_plan_wait_entry(req, "priority_barrier", detail, engine))
+            continue
 
         if strict_stop is not None:
             entries.append(_plan_wait_entry(req, strict_stop, strict_detail, engine))
