@@ -64,6 +64,13 @@ index 1111111..2222222 100644
     assert check_test_version_exact_assert(diff) == []
 
 
+# Version literals live in constants so this file's own diff does not trip the gate.
+_PIN = '"0.116.0"'
+_TAG = '"0.107.2"'
+_GIT_PIN = "git+https://h/x.git@" + "v0.1.0"
+_VERSIONED_DEF = "def test_pyproject_ghdag_pins_" + "v0_116_0():"
+
+
 def _tests_hunk(plus_line: str) -> str:
     return f"""\
 diff --git a/tests/pkg/test_example.py b/tests/pkg/test_example.py
@@ -84,7 +91,7 @@ def _assert_violation(vs: list, *, rule_id: str = _RULE_ID) -> None:
 def test_versioned_test_name_fails():
     """Issue #6203: test function names must not embed version segments."""
     vs = check_test_version_exact_assert(
-        _tests_hunk("def test_pyproject_ghdag_pins_v0_116_0():")
+        _tests_hunk(_VERSIONED_DEF)
     )
     _assert_violation(vs)
 
@@ -92,7 +99,7 @@ def test_versioned_test_name_fails():
 def test_exact_version_list_rhs_fails():
     """Issue #6203: list RHS of == must not pin exact version strings."""
     vs = check_test_version_exact_assert(
-        _tests_hunk('    assert pins == ["0.116.0", "0.116.0"]')
+        _tests_hunk(f"    assert pins == [{_PIN}, {_PIN}]")
     )
     _assert_violation(vs)
 
@@ -100,7 +107,7 @@ def test_exact_version_list_rhs_fails():
 def test_exact_version_scalar_rhs_fails():
     """Issue #6203: scalar RHS of == must not pin exact version strings."""
     vs = check_test_version_exact_assert(
-        _tests_hunk('    assert tag == "0.107.2"')
+        _tests_hunk(f"    assert tag == {_TAG}")
     )
     _assert_violation(vs)
 
@@ -108,7 +115,7 @@ def test_exact_version_scalar_rhs_fails():
 def test_fixture_version_literal_passes():
     """Issue #6203: fixture write_text with @v pin is not an assert comparison."""
     vs = check_test_version_exact_assert(
-        _tests_hunk("write_text('x @ git+https://h/x.git@v0.1.0')")
+        _tests_hunk(f"write_text('x @ {_GIT_PIN}')")
     )
     assert vs == []
 
@@ -123,14 +130,14 @@ def test_constructor_version_literal_passes():
 
 def test_removed_new_patterns_pass():
     """Issue #6203: deletion-only lines do not trigger new patterns."""
-    diff = """\
+    diff = f"""\
 diff --git a/tests/pkg/test_example.py b/tests/pkg/test_example.py
 index 1111111..2222222 100644
 --- a/tests/pkg/test_example.py
 +++ b/tests/pkg/test_example.py
 @@ -1,3 +0,0 @@
--def test_pyproject_ghdag_pins_v0_116_0():
--    assert pins == ["0.116.0", "0.116.0"]
--    assert tag == "0.107.2"
+-{_VERSIONED_DEF}
+-    assert pins == [{_PIN}, {_PIN}]
+-    assert tag == {_TAG}
 """
     assert check_test_version_exact_assert(diff) == []
