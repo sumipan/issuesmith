@@ -163,7 +163,7 @@ def _build_registry() -> dict[str, GateEntry]:
         build=_build_ac_contract,
     )
 
-    # Gate rules registered in ghdag's GATE_REGISTRY (via import issuesmith.gate_rules).
+    # Gate rules registered in the rule-class GATE_REGISTRY (via import issuesmith.gate_rules).
     import issuesmith.gate_rules  # noqa: F401 — triggers registration side effects
     from issuesmith.gate_registry import GATE_REGISTRY as _IMPL_REG
 
