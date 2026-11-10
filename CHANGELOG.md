@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.176.1 - 2026-11-10
+
 ### Removed
 
 - `publish.post_bump_tests` gate: publish no longer runs pytest on tests matching CHANGELOG/README/pyproject after a version bump (#6309).
