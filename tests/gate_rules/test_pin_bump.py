@@ -463,7 +463,7 @@ allow_paths:
 
 ## Design
 
-README.md から ghdag 所有の記述を除き、pyproject.toml の版を 0.177.0 に上げる。
+Remove ghdag-owned text from README.md, and bump pyproject.toml version to 0.177.0.
 """
     assert _check(body, []) == []
 
@@ -482,7 +482,7 @@ requires_pins:
 
 ## Design
 
-ghdag v0.120.2 の振る舞いを変えない。
+Do not change ghdag v0.120.2 behavior.
 """
     assert _check(body, []) == []
 
@@ -500,7 +500,7 @@ requires_pins:
 
 ## Design
 
-ghdag の pin を v0.121.0 に上げる。
+Bump the ghdag pin to v0.121.0.
 """
     violations = _check(body, [])
     assert len(violations) == 1
@@ -520,7 +520,7 @@ requires_pins:
 
 ## Design
 
-ghdag の pin を 0.120.2 から 0.121.0 に上げる。
+Bump the ghdag pin from 0.120.2 to 0.121.0.
 """
     violations = _check(body, [])
     assert len(violations) == 1
