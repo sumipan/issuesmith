@@ -214,7 +214,7 @@ _SUB_HEADER_EN_RE = re.compile(
 def get_section_by_keyword(body: str, keyword: str) -> str | None:
     """Return the body of the first H2 section whose heading **contains** ``keyword``.
 
-    ghdag's get_section matches H2 headings exactly and misses suffixed headings
+    get_section matches H2 headings exactly and misses suffixed headings
     B1 writes, such as ``## <acceptance criteria> (Phase 1)`` (the SUB1 false
     negative in #2535). Gate fallback using the same "partial H2 match" rule as
     the ac_contract extractor. ``None`` when not found.
