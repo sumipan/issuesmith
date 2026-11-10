@@ -151,7 +151,7 @@ def test_sub_block_parity_excludes_parent_section_paths():
 
 
 def _violation(rule_id: str, severity: str = "fail"):
-    from ghdag.workflow.gates import Violation
+    from issuesmith.gate_registry import Violation
 
     return Violation(
         rule_id=rule_id,

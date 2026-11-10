@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import re
 
-from ghdag.workflow.gates import GATE_REGISTRY, Violation
-
 from issuesmith.config import get_config
+from issuesmith.gate_registry import GATE_REGISTRY, Violation
 
 
 def has_acceptance_criteria_section(body: str) -> bool:

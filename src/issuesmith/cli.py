@@ -44,11 +44,42 @@ def _run_context(argv: list[str]) -> int:
 
 
 def _run_gate_preflight(argv: list[str]) -> int:
-    import issuesmith.gate_rules  # noqa: F401 — populates GATE_REGISTRY
+    import argparse
+    from pathlib import Path
 
-    sys.argv = ["ghdag.workflow.gates", *argv]
-    gates_main = importlib.import_module("ghdag.workflow.gates.__main__")
-    gates_main.main()
+    import issuesmith.gate_rules  # noqa: F401 — populates GATE_REGISTRY
+    from issuesmith.gate_registry import GATE_REGISTRY
+
+    parser = argparse.ArgumentParser(prog="issuesmith gate-preflight")
+    parser.add_argument("--gate", required=True, help="Gate name (rule-class GATE_REGISTRY)")
+    parser.add_argument("--body-file", required=True, help="Path to issue body text file")
+    parser.add_argument("--labels-file", default=None, help="Path to newline-separated labels file")
+    args = parser.parse_args(argv)
+
+    if args.gate not in GATE_REGISTRY:
+        print(f"Error: gate '{args.gate}' is not registered", file=sys.stderr)
+        return 1
+
+    body_path = Path(args.body_file)
+    if not body_path.exists():
+        print(f"Error: body file '{args.body_file}' does not exist", file=sys.stderr)
+        return 1
+
+    body = body_path.read_text(encoding="utf-8")
+
+    labels: list[str] = []
+    if args.labels_file is not None:
+        labels_path = Path(args.labels_file)
+        if labels_path.exists():
+            labels = [
+                line.strip()
+                for line in labels_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+
+    rule_cls = GATE_REGISTRY[args.gate]
+    violations = rule_cls().check(body, labels)
+    print(json.dumps([asdict(v) for v in violations]))
     return 0
 
 

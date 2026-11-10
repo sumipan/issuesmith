@@ -1,7 +1,7 @@
 """Structural completeness tests for GATE_REGISTRY (#3671).
 
 AC-2: verifies that:
-  (a) gate_rules/*.py ids registered in ghdag's GATE_REGISTRY are in issuesmith's GATE_REGISTRY
+  (a) gate_rules/*.py ids in the rule-class registry are in the unified GATE_REGISTRY
   (b) gates/worktree.py *Gate classes are all covered in GATE_REGISTRY
   (c) deps / scope / pr_scope / m2 are in GATE_REGISTRY
   (d) README.md gate table ids match GATE_REGISTRY keys exactly
@@ -12,21 +12,22 @@ import re
 from pathlib import Path
 
 import pytest
-from ghdag.workflow.gates import GATE_REGISTRY as _GHDAG_REG
 
 import issuesmith.gate_rules  # noqa: F401 — register gate_rules side effects
+from issuesmith.gate_registry import GATE_REGISTRY as _RULE_REG
 from issuesmith.gates import GATE_REGISTRY
 
 # ---------------------------------------------------------------------------
-# (a) All ghdag-registered gate_rules ids are in GATE_REGISTRY
+# (a) All rule-class gate_rules ids are in GATE_REGISTRY
 # ---------------------------------------------------------------------------
 
 
-def test_all_ghdag_gate_rule_ids_in_registry() -> None:
-    missing = [gid for gid in _GHDAG_REG if gid not in GATE_REGISTRY]
+def test_all_gate_rule_ids_in_registry() -> None:
+    missing = [gid for gid in _RULE_REG if gid not in GATE_REGISTRY]
     assert not missing, (
-        f"gate_rules ids registered in ghdag but missing from GATE_REGISTRY: {missing}"
+        f"gate_rules ids registered in rule registry but missing from GATE_REGISTRY: {missing}"
     )
+    assert GATE_REGISTRY["ac_format"].input_kind == "issue"
 
 
 # ---------------------------------------------------------------------------

@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ghdag.workflow.gates import Violation
-
 from issuesmith.config import ScopeGateConfig, get_config
+from issuesmith.gate_registry import Violation
 from issuesmith.gates import Verdict
 from issuesmith.scope_gate import evaluate, measure_scope
 

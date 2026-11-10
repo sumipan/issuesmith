@@ -4,11 +4,11 @@ from __future__ import annotations
 import re
 
 from ghdag.forge import ForgePort
-from ghdag.workflow.gates import GATE_REGISTRY, Violation
 
 from issuesmith.body_editor import normalize_sub_headers, relocate_sub_plan
 from issuesmith.config import get_config
 from issuesmith.contract import sub_header_re
+from issuesmith.gate_registry import GATE_REGISTRY, Violation
 from issuesmith.gate_rules.milestone_subdesign_rules import get_section
 
 _SUB_HEADER_EN_RE = re.compile(

@@ -13,12 +13,11 @@ import re
 import subprocess
 from pathlib import Path
 
-from ghdag.workflow.gates import GATE_REGISTRY, Violation
-
 from issuesmith.ac_contract import extract_contract_from_body
 from issuesmith.config import get_config
 from issuesmith.context_hook import parse_issue_metadata
 from issuesmith.contract import change_paths_for_repo, extract_change_table_rows
+from issuesmith.gate_registry import GATE_REGISTRY, Violation
 from issuesmith.scope_gate import parse_allow_paths_from_ctx, resolve_scope_root
 
 # Python builtins and common verbs that generate too many false-positive grep hits.
