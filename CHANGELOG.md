@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.176.3 - 2026-11-10
+
 ### Fixed
 
 - `pin_bump.in_feature_issue` matches design clauses that name a dependency and a mismatched version together; clauses that cite only the `requires_pins` version, or put the package name and version in separate clauses, no longer count as pin changes (nexus#6330).
