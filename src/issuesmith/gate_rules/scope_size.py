@@ -16,11 +16,11 @@ import re
 from dataclasses import dataclass
 
 import yaml
-from ghdag.workflow.gates import GATE_REGISTRY, Violation
 
 from issuesmith.config import ScopeSizeConfig, get_config
 from issuesmith.context_hook import parse_issue_metadata
 from issuesmith.contract import change_paths_for_repo, extract_change_table_rows
+from issuesmith.gate_registry import GATE_REGISTRY, Violation
 from issuesmith.gate_rules.milestone_subdesign_rules import (
     PLACEHOLDER_AC_TEMPLATES,
     PLACEHOLDER_CHANGE_CONTENT,

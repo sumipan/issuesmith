@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import cast
 
 import yaml
-from ghdag.workflow.gates import GATE_REGISTRY, Violation
 
 from issuesmith.config import get_config
 from issuesmith.context_hook import parse_issue_metadata, parse_issue_metadata_blocks
@@ -20,6 +19,7 @@ from issuesmith.contract import (  # noqa: F401 — re-exported for legacy impor
     parse_table_rows,
     plan_dep_refs,
 )
+from issuesmith.gate_registry import GATE_REGISTRY, Violation
 from issuesmith.targets import companion_allow_paths_raw
 
 _SCOPE_MILESTONE = "scope:" + "milestone"

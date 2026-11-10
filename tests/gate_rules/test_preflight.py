@@ -1,4 +1,3 @@
-import importlib
 import json
 import subprocess
 import sys
@@ -7,9 +6,9 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from ghdag.workflow.gates import GATE_REGISTRY, Violation
-
-import issuesmith.gate_rules  # noqa: F401 - populates ghdag.workflow.gates.GATE_REGISTRY
+import issuesmith.gate_rules  # noqa: F401 - populates issuesmith.gate_registry.GATE_REGISTRY
+from issuesmith.cli import _run_gate_preflight
+from issuesmith.gate_registry import GATE_REGISTRY, Violation
 from issuesmith.ops.preflight import check_post_merge
 
 
@@ -22,23 +21,24 @@ def run_preflight_subprocess(*args):
 
 
 def run_preflight_direct(argv):
-    gates_main = importlib.import_module("ghdag.workflow.gates.__main__")
-    with patch("sys.argv", ["ghdag.workflow.gates"] + argv):
-        with patch("sys.stdout", new_callable=StringIO) as mock_stdout:
-            gates_main.main()
-            return mock_stdout.getvalue()
+    with patch("sys.stdout", new_callable=StringIO) as mock_stdout:
+        rc = _run_gate_preflight(argv)
+        return mock_stdout.getvalue(), rc
 
 
 def test_unknown_gate_exits_1():
-    result = run_preflight_subprocess("--gate", "unknown", "--body-file", "/dev/null")
+    result = run_preflight_subprocess("--gate", "nope", "--body-file", "/dev/null")
     assert result.returncode == 1
-    assert result.stderr
+    assert "Error: gate 'nope' is not registered" in result.stderr
 
 
 def test_nonexistent_body_file_exits_1():
-    result = run_preflight_subprocess("--gate", "design_lint", "--body-file", "/nonexistent/path")
+    missing = "/nonexistent/path/to/body.md"
+    result = run_preflight_subprocess(
+        "--gate", "ac_format", "--body-file", missing,
+    )
     assert result.returncode == 1
-    assert result.stderr
+    assert f"Error: body file '{missing}' does not exist" in result.stderr
 
 
 def test_known_gate_outputs_json_array():
@@ -52,7 +52,8 @@ def test_known_gate_outputs_json_array():
             f.write("test body")
             body_path = f.name
 
-        output = run_preflight_direct(["--gate", "_test_noop", "--body-file", body_path])
+        output, rc = run_preflight_direct(["--gate", "_test_noop", "--body-file", body_path])
+        assert rc == 0
         result = json.loads(output)
         assert isinstance(result, list)
     finally:
@@ -79,11 +80,12 @@ def test_gate_with_labels_file():
             f.write("label-a\nlabel-b\n")
             labels_path = f.name
 
-        output = run_preflight_direct([
+        output, rc = run_preflight_direct([
             "--gate", "_test_capture",
             "--body-file", body_path,
             "--labels-file", labels_path,
         ])
+        assert rc == 0
         result = json.loads(output)
         assert isinstance(result, list)
         assert received["body"] == "body content"

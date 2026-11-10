@@ -319,9 +319,8 @@ class TestAC5RegistryAndGateIntegration:
     """AC-5: GATE_REGISTRY contains scope_coupling; design_lint_entry aggregates violations."""
 
     def test_gate_registry_contains_scope_coupling(self):
-        from ghdag.workflow.gates import GATE_REGISTRY
-
         import issuesmith.gate_rules  # noqa: F401 -- ensures registration
+        from issuesmith.gate_registry import GATE_REGISTRY
 
         assert "scope_coupling" in GATE_REGISTRY
         assert GATE_REGISTRY["scope_coupling"] is ScopeCouplingRules

@@ -1,4 +1,36 @@
+import dataclasses
+
+import issuesmith.gate_rules  # noqa: F401
 from issuesmith.gate_rules import GATE_REGISTRY, Violation
+
+
+def test_violation_asdict_key_order():
+    v = Violation(
+        rule_id="r",
+        severity="fail",
+        message="m",
+        location=None,
+        auto_fixable=False,
+        fix_hint=None,
+    )
+    assert list(dataclasses.asdict(v).keys()) == [
+        "rule_id",
+        "severity",
+        "message",
+        "location",
+        "auto_fixable",
+        "fix_hint",
+    ]
+
+
+def test_rule_gates_registered():
+    for gate_id in (
+        "ac_format",
+        "milestone_subdesign",
+        "milestone_consistency",
+        "design_lint",
+    ):
+        assert gate_id in GATE_REGISTRY
 
 
 def test_violation_instantiation():

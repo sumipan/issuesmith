@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 
 import yaml
-from ghdag.workflow.gates import GATE_REGISTRY, Violation
 
 from issuesmith.ac_contract import (
     KNOWN_POST_MERGE_KINDS,
@@ -12,6 +11,7 @@ from issuesmith.ac_contract import (
     manual_check_description,
 )
 from issuesmith.config import get_config
+from issuesmith.gate_registry import GATE_REGISTRY, Violation
 from issuesmith.gate_rules.ac_format_rules import extract_yaml_block, get_ac_section
 
 

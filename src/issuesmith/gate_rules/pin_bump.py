@@ -6,11 +6,10 @@ import re
 from collections.abc import Mapping
 from pathlib import Path
 
-from ghdag.workflow.gates import GATE_REGISTRY, Violation
-
 from issuesmith.config import get_config
 from issuesmith.context_hook import parse_issue_metadata
 from issuesmith.contract import extract_change_table_rows
+from issuesmith.gate_registry import GATE_REGISTRY, Violation
 from issuesmith.pr_scope import normalize_allow_path
 
 _VERSION_TOKEN = re.compile(r"v?\d+\.\d+\.\d+")

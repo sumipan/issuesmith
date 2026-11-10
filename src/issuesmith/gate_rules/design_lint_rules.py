@@ -11,13 +11,13 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from ghdag.workflow.gates import GATE_REGISTRY, Violation
-from ghdag.workflow.gates.common import strip_code_regions
 
 from issuesmith.config import get_config
 from issuesmith.context_hook import parse_issue_metadata, validate_issue_metadata
 from issuesmith.contract import extract_change_table_rows
+from issuesmith.gate_registry import GATE_REGISTRY, Violation
 from issuesmith.gate_rules.ac_format_rules import extract_yaml_block, get_ac_section
+from issuesmith.gate_rules.common import strip_code_regions
 from issuesmith.gate_rules.milestone_subdesign_rules import (
     _extract_paths_from_change_table,
     extract_sub_blocks,

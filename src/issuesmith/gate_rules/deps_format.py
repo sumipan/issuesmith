@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from ghdag.workflow.gates import GATE_REGISTRY, Violation
-
 from issuesmith.dep_extractor import UNPARSED_DEPENDENCY_SECTION, unparsed_dependency_refs
+from issuesmith.gate_registry import GATE_REGISTRY, Violation
 
 
 class DepsFormatRules:

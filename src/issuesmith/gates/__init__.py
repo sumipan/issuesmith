@@ -164,9 +164,8 @@ def _build_registry() -> dict[str, GateEntry]:
     )
 
     # Gate rules registered in ghdag's GATE_REGISTRY (via import issuesmith.gate_rules).
-    from ghdag.workflow.gates import GATE_REGISTRY as _IMPL_REG
-
     import issuesmith.gate_rules  # noqa: F401 — triggers registration side effects
+    from issuesmith.gate_registry import GATE_REGISTRY as _IMPL_REG
 
     def _make_rule_build(cls: Any) -> Callable[[GateBuildContext], RequiresGate]:
         def _build(ctx: GateBuildContext) -> RequiresGate:

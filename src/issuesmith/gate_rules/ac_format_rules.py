@@ -3,10 +3,10 @@ from __future__ import annotations
 import re
 
 import yaml
-from ghdag.workflow.gates import GATE_REGISTRY, Violation
 
 from issuesmith.ac_contract import is_invalid_contract_path, normalize_reference_entry
 from issuesmith.config import get_config
+from issuesmith.gate_registry import GATE_REGISTRY, Violation
 
 _SCOPE_MILESTONE = "scope:" + "milestone"
 _SCOPE_MIGRATION = "scope:" + "migration"

@@ -12,9 +12,9 @@ import re
 from pathlib import Path
 
 import pytest
-from ghdag.workflow.gates import GATE_REGISTRY as _GHDAG_REG
 
 import issuesmith.gate_rules  # noqa: F401 — register gate_rules side effects
+from issuesmith.gate_registry import GATE_REGISTRY as _RULE_REG
 from issuesmith.gates import GATE_REGISTRY
 
 # ---------------------------------------------------------------------------
@@ -22,10 +22,10 @@ from issuesmith.gates import GATE_REGISTRY
 # ---------------------------------------------------------------------------
 
 
-def test_all_ghdag_gate_rule_ids_in_registry() -> None:
-    missing = [gid for gid in _GHDAG_REG if gid not in GATE_REGISTRY]
+def test_all_gate_rule_ids_in_registry() -> None:
+    missing = [gid for gid in _RULE_REG if gid not in GATE_REGISTRY]
     assert not missing, (
-        f"gate_rules ids registered in ghdag but missing from GATE_REGISTRY: {missing}"
+        f"gate_rules ids registered in rule registry but missing from GATE_REGISTRY: {missing}"
     )
 
 

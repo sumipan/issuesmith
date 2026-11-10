@@ -5,10 +5,9 @@ from __future__ import annotations
 import fnmatch
 import posixpath
 
-from ghdag.workflow.gates import GATE_REGISTRY, Violation
-
 from issuesmith.config import get_config
 from issuesmith.context_hook import parse_issue_metadata
+from issuesmith.gate_registry import GATE_REGISTRY, Violation
 from issuesmith.scope_gate import parse_allow_paths_from_ctx
 
 # Match pr_scope path normalization / fixture skips (public API is normalize_allow_path only).

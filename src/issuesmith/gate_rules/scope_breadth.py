@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from ghdag.workflow.gates import GATE_REGISTRY, Violation
-
 import issuesmith.config as config_module
 from issuesmith.ac_contract import extract_contract_from_body
 from issuesmith.config import get_config
 from issuesmith.context_hook import parse_issue_metadata
 from issuesmith.contract import change_paths_for_repo
+from issuesmith.gate_registry import GATE_REGISTRY, Violation
 from issuesmith.scope_gate import (
     ScopeMeasure,
     evaluate,

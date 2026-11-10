@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import fnmatch
 
-from ghdag.workflow.gates import GATE_REGISTRY, Violation
-
 from issuesmith.config import get_config
 from issuesmith.context_hook import parse_issue_metadata
 from issuesmith.contract import extract_change_table_rows
+from issuesmith.gate_registry import GATE_REGISTRY, Violation
 from issuesmith.pr_scope import normalize_allow_path
 from issuesmith.scope_gate import parse_allow_paths_from_ctx
 

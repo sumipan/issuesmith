@@ -78,12 +78,10 @@ The end of `gate_rules/__init__.py` imports every gate module; registration in `
 
 See `cp1.py` (CP1 gate) and `m2.py` (M2 gate) for existing examples.
 
-## Utilities (ghdag.workflow.gates.common)
-
-The implementation moved to ghdag (`common.py` / `preflight.py` no longer exist in this directory).
+## Utilities (`issuesmith.gate_rules.common`)
 
 ```python
-from ghdag.workflow.gates.common import strip_code_regions
+from issuesmith.gate_rules.common import strip_code_regions
 
 stripped = strip_code_regions(body)
 ```
@@ -130,7 +128,7 @@ Runs before LLM when the host registers this gate on P0. Compares Issue YAML
 
 ## gate-preflight CLI
 
-The CLI itself moved to `ghdag.workflow.gates.__main__`. `python -m issuesmith gate-preflight` is a thin entry point that imports issuesmith.gate_rules to register the rules and then delegates to the ghdag CLI; it runs a single gate against any Issue body file.
+`python -m issuesmith gate-preflight` imports `issuesmith.gate_rules` to register rules, resolves the gate from rule-class `issuesmith.gate_registry.GATE_REGISTRY`, and prints violations as JSON on stdout.
 
 ```bash
 # Run the CP1 gate against body.md
