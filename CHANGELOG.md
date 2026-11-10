@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.175.2 - 2026-11-10
+
+### Fixed
+
+- `test_version_exact_assert` reads the `==` right-hand side with the Python tokenizer, so semver strings inside other string literals are not treated as exact version asserts (#6203).
+
 ## 0.175.1 - 2026-11-10
 
 ### Fixed

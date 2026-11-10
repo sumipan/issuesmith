@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import io
 import posixpath
 import re
 import shlex
 import subprocess
 import sys
+import tokenize
 from pathlib import Path
 from typing import Any
 
@@ -75,7 +77,6 @@ _GIT_PIN_EXACT = re.compile(r"git\+https://[^\"']*@v[0-9]+\.[0-9]")
 _COUNT_EQ_ONE = re.compile(r"count\s*\(.*\)\s*==\s*1")
 _VERSIONED_TEST_DEF = re.compile(r"^\s*def\s+test_\w+_v\d+_\d+(?:_\d+)?\s*\(")
 _SEMVER_QUOTED = re.compile(r'^["\'](\d+\.\d+(?:\.\d+)?)["\']\s*$')
-_SEMVER_IN_QUOTES = re.compile(r'["\'](\d+\.\d+(?:\.\d+)?)["\']')
 _TEST_VERSION_ASSERT_HINT = (
     "check versions / pins with a lower bound (`>=`) or do not test them;"
     " publish bumps them deterministically"
@@ -89,21 +90,41 @@ def _is_tests_path(path: str) -> bool:
 
 def _rhs_pins_exact_version(content: str) -> bool:
     """True when ``==`` RHS is a quoted semver or a list/tuple of quoted semvers (#6203)."""
-    if "==" not in content:
+    try:
+        tokens = list(tokenize.generate_tokens(io.StringIO(content.lstrip()).readline))
+    except (IndentationError, tokenize.TokenError):
         return False
-    pos = content.find("==")
-    rhs = content[pos + 2 :].strip()
-    if not rhs:
-        return False
-    if re.match(r"Version\s*\(", rhs):
-        return False
-    if _SEMVER_QUOTED.match(rhs):
-        return True
-    if rhs[0] not in "[(":
-        return False
-    if not (rhs.rstrip().endswith("]") or rhs.rstrip().endswith(")")):
-        return False
-    return bool(_SEMVER_IN_QUOTES.search(rhs))
+
+    ignored_tail = {tokenize.COMMENT, tokenize.ENDMARKER, tokenize.NEWLINE, tokenize.NL}
+    for index, token in enumerate(tokens):
+        if token.type != tokenize.OP or token.string != "==":
+            continue
+        rhs = tokens[index + 1 :]
+        if not rhs:
+            continue
+        first = rhs[0]
+        if first.type == tokenize.STRING and _SEMVER_QUOTED.fullmatch(first.string):
+            if all(t.type in ignored_tail for t in rhs[1:]):
+                return True
+            continue
+        if first.type != tokenize.OP or first.string not in "[(":
+            continue
+
+        depth = 0
+        for rhs_token in rhs:
+            if rhs_token.type == tokenize.OP and rhs_token.string in "[(":
+                depth += 1
+            elif rhs_token.type == tokenize.OP and rhs_token.string in ")]":
+                depth -= 1
+                if depth == 0:
+                    break
+            elif (
+                depth == 1
+                and rhs_token.type == tokenize.STRING
+                and _SEMVER_QUOTED.fullmatch(rhs_token.string)
+            ):
+                return True
+    return False
 
 
 def check_version_line_in_diff(diff: str) -> list[Violation]:
