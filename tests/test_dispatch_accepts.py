@@ -214,6 +214,8 @@ class TestDispatchAcceptsMetrics:
         assert line["event"] == "requires_repair"
         assert line["origin"] == "accepts"
         assert line["rule_ids"] == ["tests.pytest_failure"]
+        assert line["violations"][0]["rule_id"] == "tests.pytest_failure"
+        assert line["violations"][0]["message"] == "test violation"
 
     def test_empty_accepts_does_not_add_extra_metrics_lines(self, tmp_path, monkeypatch):
         from issuesmith.ops import dispatch as dispatch_mod

@@ -405,3 +405,49 @@ class TestCostAttribution:
         result = compute(metrics, config=get_config(), issue_filter=6001)
         assert [i["issue"] for i in result["issues"]] == [6001]
         assert result["issues"][0]["cost_usd"] == pytest.approx(3.0)
+
+
+class TestVerifyCheckNonAggregated:
+    """verify_check rows are known events but do not affect rework totals (#6207)."""
+
+    def _verify_check_rows(self) -> list[dict]:
+        return [
+            {
+                "event": "verify_check",
+                "ts": "2026-09-28T12:00:00+00:00",
+                "issue": 6001,
+                "step": "b1",
+                "rule_ids": ["ac_format.missing_yaml"],
+                "violations": [
+                    {
+                        "rule_id": "ac_format.missing_yaml",
+                        "location": None,
+                        "message": "missing",
+                    }
+                ],
+            },
+            {
+                "event": "verify_check",
+                "ts": "2026-09-29T12:00:00+00:00",
+                "issue": 6002,
+                "step": "b1",
+                "rule_ids": [],
+                "violations": [],
+            },
+        ]
+
+    def test_verify_check_does_not_change_rework_aggregation(self, tmp_path, monkeypatch):
+        _minimal_config(tmp_path, monkeypatch)
+        from issuesmith.config import get_config
+
+        base_text = METRICS_FIXTURE.read_text(encoding="utf-8")
+        metrics = tmp_path / "metrics.jsonl"
+        metrics.write_text(base_text, encoding="utf-8")
+        before = compute(metrics, audit_path=AUDIT_FIXTURE, config=get_config())
+        extra = "\n".join(json.dumps(r) for r in self._verify_check_rows()) + "\n"
+        metrics.write_text(base_text + extra, encoding="utf-8")
+        after = compute(metrics, audit_path=AUDIT_FIXTURE, config=get_config())
+
+        assert before["skipped_rows"] == after["skipped_rows"]
+        assert before["weeks"] == after["weeks"]
+        assert before["issues"] == after["issues"]
