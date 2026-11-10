@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.176.2 - 2026-11-10
+
 ### Changed
 
 - observe policy: `issue_stall` and `orphan_exec` emit `WaitAction` only (no andon); suppress `dag_terminated` observe andons when the same issue already has an open pipeline (non-`observe:`) andon (#6328).
