@@ -14,6 +14,7 @@ from issuesmith.observe.events import (
     ForgeUnavailableEvent,
     IssueStallEvent,
     LabelDriftEvent,
+    OrphanExecEvent,
     SystemicStepFailureEvent,
 )
 from issuesmith.observe.policy import (
@@ -65,13 +66,25 @@ class TestEvaluate:
         halt_actions = [a for a in actions if isinstance(a, HaltAction)]
         assert halt_actions[0].scope == "all"
 
-    def test_issue_stall_produces_andon_blocked(self):
+    def test_issue_stall_returns_wait_only(self):
+        """#6328: stall is observed via WaitAction, not an andon."""
         cfg_obs = ObserveConfig()
         event = IssueStallEvent(issue=300, phase="develop", minutes=150)
         actions = evaluate([event], cfg_obs)
-        andon_actions = [a for a in actions if isinstance(a, AndonAction)]
-        assert len(andon_actions) == 1
-        assert andon_actions[0].kind == "blocked"
+        assert len(actions) == 1
+        assert isinstance(actions[0], WaitAction)
+        assert actions[0].reason
+        assert not any(isinstance(a, AndonAction) for a in actions)
+
+    def test_orphan_exec_returns_wait_only(self):
+        """#6328: orphan exec is observed via WaitAction, not an andon."""
+        cfg_obs = ObserveConfig()
+        event = OrphanExecEvent(uuid="dead-beef", issue=301)
+        actions = evaluate([event], cfg_obs)
+        assert len(actions) == 1
+        assert isinstance(actions[0], WaitAction)
+        assert actions[0].reason
+        assert not any(isinstance(a, AndonAction) for a in actions)
 
     def test_label_drift_produces_wait(self):
         cfg_obs = ObserveConfig()
@@ -305,13 +318,3 @@ class TestObserveConfigOverrides:
         assert cfg.observe.systemic_window_minutes == 90
         assert cfg.observe.forge_max_consecutive_errors == 5
         assert cfg.observe.task_timeout_minutes == 60
-
-    def test_evaluate_uses_config_threshold_for_stall(self):
-        from issuesmith.observe.events import IssueStallEvent
-        from issuesmith.observe.policy import evaluate
-
-        cfg_obs = ObserveConfig(stall_minutes=60)
-        event = IssueStallEvent(issue=100, phase="develop", minutes=50)
-        actions = evaluate([event], cfg_obs)
-        assert len(actions) == 1
-        assert isinstance(actions[0], AndonAction)

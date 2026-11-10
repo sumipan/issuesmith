@@ -9,7 +9,7 @@ from ghdag.forge import get_forge
 
 from issuesmith.andon import answer, list_open
 from issuesmith.config import get_config, reset_config_cache
-from issuesmith.observe.events import ChainHaltedEvent, ForgeUnavailableEvent, IssueStallEvent
+from issuesmith.observe.events import ChainHaltedEvent, ForgeUnavailableEvent
 from issuesmith.observe.policy import AndonAction, evaluate, execute
 from issuesmith.queue_store import QueueStore
 
@@ -44,10 +44,11 @@ def _halted(parent: int) -> list:
 
 
 def test_andon_id_is_stable_across_changing_summary():
-    first = evaluate([IssueStallEvent(issue=7, phase="develop-running", minutes=80)], get_config().observe)[0]
-    later = evaluate([IssueStallEvent(issue=7, phase="develop-running", minutes=95)], get_config().observe)[0]
+    cfg = get_config().observe
+    first = evaluate([ForgeUnavailableEvent(consecutive=3)], cfg)[1]
+    later = evaluate([ForgeUnavailableEvent(consecutive=7)], cfg)[1]
     assert isinstance(first, AndonAction) and first.summary != later.summary
-    assert first.andon_id == later.andon_id == "observe:7:stall:develop-running:0"
+    assert first.andon_id == later.andon_id == "observe:0:forge_unavailable:0"
 
 
 def test_same_condition_three_ticks_raises_once(store, client):
