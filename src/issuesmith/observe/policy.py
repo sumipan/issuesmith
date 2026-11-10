@@ -151,22 +151,22 @@ def _evaluate_one(event: ObserveEvent, config: "ObserveConfig") -> list[Action]:
 
     if isinstance(event, IssueStallEvent):
         return [
-            AndonAction(
-                kind="blocked",
-                issue=event.issue,
-                summary=f"issue #{event.issue} stalled in {event.phase} for {event.minutes} minutes",
-                key=f"stall:{event.phase}",
+            WaitAction(
+                reason=(
+                    f"issue #{event.issue} stalled in {event.phase} "
+                    f"for {event.minutes} minutes"
+                ),
             )
         ]
 
     if isinstance(event, OrphanExecEvent):
         issue = event.issue or 0
         return [
-            AndonAction(
-                kind="blocked",
-                issue=issue,
-                summary=f"orphan exec UUID {event.uuid} has no in_flight tracking",
-                key=f"orphan:{event.uuid}",
+            WaitAction(
+                reason=(
+                    f"orphan exec UUID {event.uuid} has no in_flight tracking "
+                    f"(issue #{issue})"
+                ),
             )
         ]
 
@@ -386,6 +386,45 @@ def _resolve_phase_scope(step: str, config: "ObserveConfig") -> str:
     return "all"
 
 
+def _andon_actions_for_sync(
+    andon_actions: list[AndonAction],
+    client: Any | None,
+) -> list[AndonAction]:
+    """Drop dag_terminated andons for issues that already have a pipeline andon open."""
+    if client is None:
+        return andon_actions
+    if not any(a.key.startswith("dag_terminated:") for a in andon_actions):
+        return andon_actions
+    from issuesmith.andon import list_open
+
+    try:
+        open_andons = list_open(client)
+    except Exception:
+        logger.exception("list_open failed; not suppressing dag_terminated")
+        return andon_actions
+
+    pipeline_issues: set[int] = set()
+    for andon in open_andons:
+        if andon.id.startswith("observe:"):
+            continue
+        if andon.issue:
+            pipeline_issues.add(andon.issue)
+
+    if not pipeline_issues:
+        return andon_actions
+
+    active: list[AndonAction] = []
+    for action in andon_actions:
+        if action.key.startswith("dag_terminated:") and action.issue in pipeline_issues:
+            logger.debug(
+                "dag_terminated suppressed: issue #%s has open pipeline andon",
+                action.issue,
+            )
+            continue
+        active.append(action)
+    return active
+
+
 # ---------------------------------------------------------------------------
 # Execution
 # ---------------------------------------------------------------------------
@@ -410,7 +449,10 @@ def execute(
     from issuesmith.andon import Andon, answer_if_open, raise_andon
 
     andon_actions = [a for a in actions if isinstance(a, AndonAction)]
-    new_ids, resolved_ids = store.sync_observe_andons({a.andon_id for a in andon_actions})
+    sync_andon_actions = _andon_actions_for_sync(andon_actions, client)
+    new_ids, resolved_ids = store.sync_observe_andons(
+        {a.andon_id for a in sync_andon_actions}
+    )
 
     if resolved_ids and client is not None:
         # dag_terminated andons auto-resolve only when the event clears AND the latest DAG

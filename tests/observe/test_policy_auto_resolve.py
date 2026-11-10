@@ -14,7 +14,7 @@ from ghdag.forge import get_forge
 from issuesmith.andon import Andon, list_open, raise_andon
 from issuesmith.config import get_config, reset_config_cache
 from issuesmith.observe.dag_state import DagState
-from issuesmith.observe.events import DagTerminatedEvent, OrphanExecEvent
+from issuesmith.observe.events import DagTerminatedEvent
 from issuesmith.observe.policy import evaluate, execute
 from issuesmith.queue_store import QueueStore
 
@@ -44,13 +44,6 @@ def _dag_terminated_actions(issue: int, phase: str = "develop", step: str = "cp1
     key = f"{issue}:{phase}:{step}:{gen}"
     return evaluate(
         [DagTerminatedEvent(issue=issue, key=key, phase=phase, failed_step=step)],
-        get_config().observe,
-    )
-
-
-def _orphan_actions(uuid: str, issue: int = 0):
-    return evaluate(
-        [OrphanExecEvent(uuid=uuid, issue=issue or None)],
         get_config().observe,
     )
 
@@ -162,24 +155,6 @@ def test_dag_terminated_recurs_after_auto_resolve(store, client, monkeypatch):
     assert any(a.id == dag_id for a in list_open(client))
 
 
-# AC-2: orphan andon is auto-resolved when UUID disappears from running
-def test_orphan_auto_resolved_when_uuid_leaves_running(store, client):
-    number = client.issue_create("orphan issue", "body")
-    uuid = "dead-beef-1234"
-    execute(_orphan_actions(uuid, issue=number), store, sinks=[], client=client)
-
-    orphan_id = f"observe:{number}:orphan:{uuid}:0"
-    assert any(a.id == orphan_id for a in list_open(client)), "orphan andon should be raised"
-
-    # UUID is gone from running (empty events in next tick)
-    execute([], store, sinks=[], client=client)
-
-    open_andons = list_open(client)
-    assert not any(a.id == orphan_id for a in open_andons), (
-        "orphan andon should be auto-resolved when UUID disappears"
-    )
-
-
 # AC-4: decision andon raised outside observe policy is not auto-resolved
 def test_decision_andon_raised_outside_observe_not_auto_resolved(store, client):
     number = client.issue_create("decision issue", "body")
@@ -231,6 +206,56 @@ def test_dag_terminated_not_auto_resolved_when_still_failed(store, client, monke
     dag_id = f"observe:{number}:dag_terminated:{number}:develop:cp1:0"
     _patch_dag_state(monkeypatch, number, "failed")
     execute([], store, sinks=[], client=client)
+    assert any(a.id == dag_id for a in list_open(client))
+
+
+def test_dag_terminated_suppressed_by_pipeline_andon_strips_running_label(store, client):
+    """#6328: pipeline andon open → no dag_terminated post, running label still removed."""
+    number = client.issue_create("suppressed dag term", "body")
+    ns = get_config().label_namespace
+    client.issue_update(number, labels_add=[f"{ns}:develop-running"])
+    pipeline = Andon(
+        id=f"issuesmith:{number}:cp2:0",
+        kind="blocked",
+        issue=number,
+        step="cp2",
+        summary="cp2 failed",
+    )
+    raise_andon(client, pipeline)
+
+    execute(_dag_terminated_actions(number), store, sinks=[], client=client)
+
+    dag_id = f"observe:{number}:dag_terminated:{number}:develop:cp1:0"
+    assert not any(a.id == dag_id for a in list_open(client))
+    labels = client.issue_get(number).get("labels") or []
+    label_names = [lbl.get("name") if isinstance(lbl, dict) else lbl for lbl in labels]
+    assert f"{ns}:develop-running" not in label_names
+
+
+def test_dag_terminated_not_suppressed_by_observe_andon(store, client):
+    """#6328: only observe: open andons do not suppress dag_terminated."""
+    number = client.issue_create("observe only", "body")
+    other = Andon(
+        id=f"observe:{number}:stall:develop:0",
+        kind="blocked",
+        issue=number,
+        step="observe",
+        summary="stall wait",
+    )
+    raise_andon(client, other)
+
+    execute(_dag_terminated_actions(number), store, sinks=[], client=client)
+
+    dag_id = f"observe:{number}:dag_terminated:{number}:develop:cp1:0"
+    assert any(a.id == dag_id for a in list_open(client))
+
+
+def test_dag_terminated_raised_without_pipeline_andon(store, client):
+    """#6328: no pipeline andon → dag_terminated is posted."""
+    number = client.issue_create("no pipeline andon", "body")
+    execute(_dag_terminated_actions(number), store, sinks=[], client=client)
+
+    dag_id = f"observe:{number}:dag_terminated:{number}:develop:cp1:0"
     assert any(a.id == dag_id for a in list_open(client))
 
 
