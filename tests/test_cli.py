@@ -194,6 +194,8 @@ def test_dispatch_sets_caller_step_env_for_python_steps(monkeypatch) -> None:
         seen.append(os.environ.get(CALLER_STEP_ENV_VAR))
         return 0
 
+    # The publish step runs this suite with the caller step already exported.
+    monkeypatch.delenv(CALLER_STEP_ENV_VAR, raising=False)
     monkeypatch.setattr("issuesmith.ops.dispatch.main", fake_dispatch)
     assert _cmd_dispatch(["p0", "issue_number=1"]) == 0
     assert seen == ["p0"]
