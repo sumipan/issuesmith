@@ -583,7 +583,7 @@ def _deletion_search_key_kinds(
         add(path, "path")
         raw_parts = Path(path).with_suffix("").parts
         if raw_parts and raw_parts[0] == "src" and len(parts) > 2:
-            add(".".join(parts[:-1]), "module")
+            add(".".join(parts[:-1]), "parent_module")
 
     if Path(path).suffix == ".py" and repo_path is not None:
         stem = Path(path).stem
@@ -688,11 +688,30 @@ def _stem_match_context(
     return None
 
 
+def _parent_module_imports_stem(parent: str, line: str, deleted_path: str) -> bool:
+    """True when ``line`` imports the deleted module through its parent package (#6233).
+
+    Matches ``from <parent> import <..stem..>`` and ``import <parent>.<stem>`` only, so
+    importers of sibling modules under the same package are not treated as referrers.
+    """
+    stem = Path(deleted_path).stem
+    escaped_parent = re.escape(parent)
+    escaped_stem = re.escape(stem)
+    if re.search(
+        rf"(?<![A-Za-z0-9_.]){escaped_parent}\.{escaped_stem}(?![A-Za-z0-9_])", line
+    ):
+        return True
+    from_match = re.search(r"from\s+([A-Za-z_][A-Za-z0-9_.]*)\s+import\s+(.+)", line)
+    if from_match and from_match.group(1) == parent:
+        return _stem_import_list_pattern(stem).search(from_match.group(2)) is not None
+    return False
+
+
 def _key_matches_line(key: str, kind: str, line: str) -> bool:
     if kind == "path":
         return True
     escaped = re.escape(key)
-    if kind == "module":
+    if kind in ("module", "parent_module"):
         pattern = rf"(?<![A-Za-z0-9_]){escaped}(?![A-Za-z0-9_])"
     elif kind == "name":
         pattern = rf"(?<![A-Za-z0-9_.\-]){escaped}(?![A-Za-z0-9_])"
@@ -755,6 +774,10 @@ def _deletion_hits(
                     if not _key_matches_line(key, kind, line):
                         continue
                     effective_kind = kind
+                    if kind == "parent_module":
+                        if not _parent_module_imports_stem(key, line, path):
+                            continue
+                        effective_kind = "module"
                     if kind == "stem":
                         stem_context = _stem_match_context(key, line, path, rel_path)
                         if stem_context is None:

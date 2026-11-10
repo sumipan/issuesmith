@@ -414,3 +414,38 @@ def test_deletion_rows_use_pack_delete_words(tmp_path, monkeypatch):
     metadata = {"target_repo": "sumipan/issuesmith", "allow_paths": ["scripts/git-sync.py"]}
     required, _ = _extract_search_keys(body, metadata, tmp_path)
     assert "git-sync" in required
+
+
+def _subpackage_repo(tmp_path: Path) -> Path:
+    root = tmp_path / "subpkg"
+    files = {
+        "src/pkg/sub/__init__.py": "",
+        "src/pkg/sub/a.py": "VALUE = 1\n",
+        "src/pkg/sub/b.py": "class X:\n    pass\n",
+        "tests/test_sibling_from.py": "from pkg.sub.b import X\n",
+        "tests/test_sibling_parent.py": "from pkg.sub import Verdict\n",
+        "tests/test_from_parent.py": "from pkg.sub import a\n",
+        "tests/test_import_dotted.py": "import pkg.sub.a\n",
+    }
+    for rel, text in files.items():
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+    _git(root, "init", "-q")
+    _git(root, "add", "-A")
+    _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+    return root
+
+
+def test_parent_module_key_ignores_sibling_importers(tmp_path):
+    """#6233: deleting src/pkg/sub/a.py must not flag importers of sibling modules."""
+    root = _subpackage_repo(tmp_path)
+    row = "| sumipan/issuesmith | src/pkg/sub/a.py | delete | retire a |"
+    body = _body(["src/pkg/sub/a.py"], rows=row)
+    violations = check_deletion_references(body, ["src/pkg/sub/a.py"], root)
+    assert len(violations) == 1
+    message = violations[0].message
+    assert "tests/test_from_parent.py" in message
+    assert "tests/test_import_dotted.py" in message
+    assert "tests/test_sibling_from.py" not in message
+    assert "tests/test_sibling_parent.py" not in message
