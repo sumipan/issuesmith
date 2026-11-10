@@ -36,6 +36,7 @@ from typing import Literal
 
 from ghdag.core.vocabulary import PIPELINE_WAIT_QUOTA
 from ghdag.forge import get_forge
+from ghdag.workflow.gates import Violation
 
 from issuesmith.andon import Andon as _FullAndon
 from issuesmith.andon import raise_andon as _raise_andon
@@ -603,13 +604,20 @@ def _safe_record_metrics(
     rule_ids: list[str] | None = None,
     *,
     origin: Literal["requires", "accepts"] = "requires",
+    violations: list[Violation] | None = None,
 ) -> None:
     try:
         from issuesmith.repair import record_metrics
 
         path = get_config().paths.metrics
-        if "origin" in inspect.signature(record_metrics).parameters:
-            record_metrics(path, event, step_id, issue_num, rule_ids, origin=origin)
+        params = inspect.signature(record_metrics).parameters
+        kwargs: dict = {}
+        if "origin" in params:
+            kwargs["origin"] = origin
+        if "violations" in params and violations is not None:
+            kwargs["violations"] = violations
+        if kwargs:
+            record_metrics(path, event, step_id, issue_num, rule_ids, **kwargs)
         else:
             record_metrics(path, event, step_id, issue_num, rule_ids)
     except Exception:
@@ -975,7 +983,12 @@ def run_requires_loop(
 
     blocking_rule_ids = list(dict.fromkeys(v.rule_id for v in result.blocking))
     _safe_record_metrics(
-        "requires_repair", step_id, issue_num, rule_ids=blocking_rule_ids, origin=origin
+        "requires_repair",
+        step_id,
+        issue_num,
+        rule_ids=blocking_rule_ids,
+        origin=origin,
+        violations=result.blocking,
     )
 
     # Launch repair step — may raise RetrySignal (not counted as repair).

@@ -31,6 +31,7 @@ _EVENT_NAMES = frozenset(
         "requires_repair",
         "andon_raised",
         "andon_answered",
+        "verify_check",
     }
 )
 

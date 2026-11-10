@@ -129,6 +129,28 @@ def detect_oscillation(violations, prev_report: str) -> Violation | None:
     )
 
 
+def _record_verify_check_metrics(
+    step_id: str, issue_num: int, violations: list[Violation]
+) -> None:
+    try:
+        from issuesmith.config import get_config
+        from issuesmith.metrics_events import append_event, serialize_violations
+
+        rule_ids = list(dict.fromkeys(v.rule_id for v in violations))
+        append_event(
+            get_config().paths.metrics,
+            {
+                "event": "verify_check",
+                "step": step_id,
+                "issue": issue_num,
+                "rule_ids": rule_ids,
+                "violations": serialize_violations(violations),
+            },
+        )
+    except Exception:
+        return
+
+
 def format_report(violations) -> str:
     if not violations:
         return "VERIFY_FAILED_CHECKS: (none)\n"
@@ -318,6 +340,8 @@ def main(step_id: str, argv: list[str] | None = None) -> int:
             oscillation = detect_oscillation(violations, prev_report)
             if oscillation is not None:
                 violations.append(oscillation)
+        if not args.dry_run:
+            _record_verify_check_metrics(step_id, args.issue_number, violations)
         sys.stdout.write(format_report(violations))
         return 1 if violations else 0
     finally:
