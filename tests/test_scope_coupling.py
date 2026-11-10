@@ -316,7 +316,7 @@ class TestAC4IgnoreShortAndConfigSymbols:
 
 
 class TestAC5RegistryAndGateIntegration:
-    """AC-5: GATE_REGISTRY contains scope_coupling; cp1_gate aggregates violations."""
+    """AC-5: GATE_REGISTRY contains scope_coupling; design_lint_entry aggregates violations."""
 
     def test_gate_registry_contains_scope_coupling(self):
         from ghdag.workflow.gates import GATE_REGISTRY
@@ -326,8 +326,8 @@ class TestAC5RegistryAndGateIntegration:
         assert "scope_coupling" in GATE_REGISTRY
         assert GATE_REGISTRY["scope_coupling"] is ScopeCouplingRules
 
-    def test_cp1_gate_aggregates_coupling_violations(self):
-        from issuesmith.cp1_gate import check_gate
+    def test_design_lint_entry_aggregates_coupling_violations(self):
+        from issuesmith.design_lint_entry import check_gate
 
         with mock.patch(
             "issuesmith.gate_rules.scope_coupling.resolve_scope_root",
@@ -345,8 +345,8 @@ class TestAC5RegistryAndGateIntegration:
             for r in result["reasons"]
         )
 
-    def test_cp1_gate_sets_autofix_when_coupling_widens(self):
-        from issuesmith.cp1_gate import check_gate
+    def test_design_lint_entry_sets_autofix_when_coupling_widens(self):
+        from issuesmith.design_lint_entry import check_gate
 
         with mock.patch(
             "issuesmith.gate_rules.scope_coupling.resolve_scope_root",

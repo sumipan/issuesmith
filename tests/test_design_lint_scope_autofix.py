@@ -1,4 +1,4 @@
-"""tests/test_cp1_scope_autofix.py — CP1 deterministic allow_paths auto-narrow (#3487 AC-2/AC-3).
+"""tests/test_design_lint_scope_autofix.py — CP1 deterministic allow_paths auto-narrow (#3487 AC-2/AC-3).
 
 Mirrors the nexus #3483 failure: a cross-repo child inherited an oversized
 ``tests/**`` allow_paths (85 files alone exceeds max_files=80), CP1 passed
@@ -16,9 +16,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from issuesmith.b1_verify import collect_violations
+from issuesmith.step_verify import collect_violations
 from issuesmith.config import ScopeCouplingConfig, ScopeGateConfig
-from issuesmith.cp1_gate import check_gate
+from issuesmith.design_lint_entry import check_gate
 from tests.legacy_text import (
     ACCEPTANCE_CRITERIA,
     CHANGE_TYPE,
@@ -170,8 +170,8 @@ def test_narrow_allow_paths_already_within_threshold_is_a_plain_pass(tmp_path: P
     assert result["autofix_note"] is None
 
 
-def test_b1_verify_reaches_the_same_result(tmp_path: Path) -> None:
-    """AC-3: b1_verify shares gate_rules.scope_breadth — no separate narrowing logic."""
+def test_step_verify_reaches_the_same_result(tmp_path: Path) -> None:
+    """AC-3: step_verify shares gate_rules.scope_breadth — no separate narrowing logic."""
     _oversized_clone(tmp_path)
     body = _body_with_table_and_ac(["tests/**", *_NARROW_PATHS])
     with _patch_cfg(tmp_path):
@@ -180,10 +180,10 @@ def test_b1_verify_reaches_the_same_result(tmp_path: Path) -> None:
 
 
 def test_main_persists_the_narrowed_allow_paths_and_comments(tmp_path: Path) -> None:
-    """AC-2 end-to-end: cp1_gate.main() writes the narrowed body and posts the note."""
+    """AC-2 end-to-end: design_lint_entry.main() writes the narrowed body and posts the note."""
     import sys
 
-    from issuesmith import cp1_gate
+    from issuesmith import design_lint_entry
 
     _oversized_clone(tmp_path)
     body = _body_with_table_and_ac(["tests/**"])
@@ -191,10 +191,10 @@ def test_main_persists_the_narrowed_allow_paths_and_comments(tmp_path: Path) -> 
     forge.issue_get.return_value = {"body": body, "labels": []}
     with (
         _patch_cfg(tmp_path),
-        patch.object(cp1_gate, "get_forge", return_value=forge),
-        patch.object(sys, "argv", ["issuesmith.cp1_gate", "42"]),
+        patch.object(design_lint_entry, "get_forge", return_value=forge),
+        patch.object(sys, "argv", ["issuesmith.design_lint_entry", "42"]),
     ):
-        cp1_gate.main()
+        design_lint_entry.main()
 
     forge.issue_update.assert_called_once()
     _, kwargs = forge.issue_update.call_args
@@ -210,7 +210,7 @@ def test_main_does_not_touch_the_issue_when_no_autofix(tmp_path: Path) -> None:
     """A clean, already-narrow body triggers no forge writes at all."""
     import sys
 
-    from issuesmith import cp1_gate
+    from issuesmith import design_lint_entry
 
     _oversized_clone(tmp_path)
     body = _body_with_table_and_ac(_NARROW_PATHS)
@@ -218,10 +218,10 @@ def test_main_does_not_touch_the_issue_when_no_autofix(tmp_path: Path) -> None:
     forge.issue_get.return_value = {"body": body, "labels": []}
     with (
         _patch_cfg(tmp_path),
-        patch.object(cp1_gate, "get_forge", return_value=forge),
-        patch.object(sys, "argv", ["issuesmith.cp1_gate", "42"]),
+        patch.object(design_lint_entry, "get_forge", return_value=forge),
+        patch.object(sys, "argv", ["issuesmith.design_lint_entry", "42"]),
     ):
-        cp1_gate.main()
+        design_lint_entry.main()
 
     forge.issue_update.assert_not_called()
     forge.issue_comment.assert_not_called()

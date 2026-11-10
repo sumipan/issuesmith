@@ -6,7 +6,7 @@ import pytest
 import yaml
 
 import issuesmith.gate_rules.pin_bump  # noqa: F401 — registers on import
-from issuesmith.b1_verify import collect_violations
+from issuesmith.step_verify import collect_violations
 from issuesmith.config import reset_config_cache
 from issuesmith.gate_rules import GATE_REGISTRY
 from issuesmith.gate_rules.pin_bump import _self_package
@@ -121,7 +121,7 @@ Raise only the package version field in pyproject.toml to 0.2.0.dev1.
     assert _check(body, []) == []
 
 
-def test_pin_bump_registered_and_collected_by_b1_verify(tmp_path, monkeypatch):
+def test_pin_bump_registered_and_collected_by_step_verify(tmp_path, monkeypatch):
     cfg_path = tmp_path / "issuesmith.yaml"
     cfg_path.write_text(
         yaml.safe_dump(

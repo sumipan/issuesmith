@@ -1,4 +1,4 @@
-"""test_m2_gate_post_merge.py — unit tests for M2 post_merge runtime verification."""
+"""test_ac_complete_entry_post_merge.py — unit tests for AC-complete post_merge runtime verification."""
 from __future__ import annotations
 
 from pathlib import Path

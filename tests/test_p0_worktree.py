@@ -204,7 +204,7 @@ def test_fetch_base_retries_transient_lock_at_most_three_times(
         capture_output=True,
     )
 
-    monkeypatch.setenv("P0_FETCH_LOCK_WAIT", "0")
+    monkeypatch.setenv("ISSUESMITH_FETCH_LOCK_WAIT", "0")
     sleeps: list[float] = []
     monkeypatch.setattr(wt, "_sleep", lambda s: sleeps.append(s))
 
@@ -245,7 +245,7 @@ def test_fetch_base_or_raise_includes_remote_and_ref(
             return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="network down")
         return subprocess.run(cmd, **kwargs)
 
-    monkeypatch.setenv("P0_FETCH_LOCK_WAIT", "0")
+    monkeypatch.setenv("ISSUESMITH_FETCH_LOCK_WAIT", "0")
     monkeypatch.setattr(wt, "_sleep", lambda _s: None)
     monkeypatch.setattr(wt.subprocess, "run", always_fail)
     with pytest.raises(wt.WorktreeError, match="failed to fetch sumipan/issuesmith:main"):
@@ -308,7 +308,7 @@ def test_fetch_base_with_retry_uses_common_dir_lock_on_linked_worktree(
         check=True,
         capture_output=True,
     )
-    monkeypatch.setenv("P0_FETCH_LOCK_WAIT", "0")
+    monkeypatch.setenv("ISSUESMITH_FETCH_LOCK_WAIT", "0")
     monkeypatch.setattr(wt, "_sleep", lambda _s: None)
     real_run = subprocess.run
 
@@ -404,19 +404,20 @@ def test_prepare_cross_repo_worktree_reuses_existing_clone(tmp_path: Path) -> No
     assert _git(worktree_dir, "branch", "--show-current") == "feat/issue-cross"
 
 
-def test_lock_wait_seconds_prefers_issuesmith_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fetch_lock_wait_uses_issuesmith_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ISSUESMITH_FETCH_LOCK_WAIT", "5")
     monkeypatch.delenv("P0_FETCH_LOCK_WAIT", raising=False)
     assert wt._lock_wait_seconds() == 5
 
 
-def test_lock_wait_seconds_legacy_env_emits_deprecation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_legacy_fetch_lock_wait_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+    import warnings
+
     monkeypatch.delenv("ISSUESMITH_FETCH_LOCK_WAIT", raising=False)
     monkeypatch.setenv("P0_FETCH_LOCK_WAIT", "5")
-    with pytest.warns(DeprecationWarning, match="ISSUESMITH_FETCH_LOCK_WAIT"):
-        assert wt._lock_wait_seconds() == 5
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert wt._lock_wait_seconds() == 30
 
 
 def test_stale_base_resume_hint_uses_next_step_in_phase(

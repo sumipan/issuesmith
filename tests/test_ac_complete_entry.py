@@ -1,5 +1,5 @@
 """
-tests/tools/issuesmith/test_m2_gate.py
+tests/test_ac_complete_entry.py
 
 Unit tests for the M2 checkbox gate.
 """
@@ -289,7 +289,7 @@ class TestMainRepoRootCli:
             ["m2-gate", "2515", "--repo-root", str(external)],
         )
 
-        from issuesmith.m2_gate import main
+        from issuesmith.ac_complete_entry import main
 
         main()
         out = json.loads(capsys.readouterr().out)

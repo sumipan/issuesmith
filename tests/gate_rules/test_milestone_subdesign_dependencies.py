@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-import issuesmith.gate_rules.b1_milestone_subdesign  # noqa: F401
-from tests.gate_rules.test_b1_milestone_subdesign import (
+import issuesmith.gate_rules.milestone_subdesign_rules  # noqa: F401
+from tests.gate_rules.test_milestone_subdesign import (
     _REPO,
     MILESTONE_LABELS,
     _check,
@@ -33,7 +33,7 @@ def _dep_ids(body: str) -> list[str]:
 
 
 def test_infer_sub_dependencies_projection_fixture():
-    from issuesmith.gate_rules.b1_milestone_subdesign import (
+    from issuesmith.gate_rules.milestone_subdesign_rules import (
         extract_sub_blocks,
         infer_sub_dependencies,
     )
@@ -53,7 +53,7 @@ def test_infer_sub_dependencies_projection_fixture():
     ["policy", "content", "ac"],
 )
 def test_infer_reads_policy_content_and_ac(where):
-    from issuesmith.gate_rules.b1_milestone_subdesign import (
+    from issuesmith.gate_rules.milestone_subdesign_rules import (
         extract_sub_blocks,
         infer_sub_dependencies,
     )
@@ -70,7 +70,7 @@ def test_infer_reads_policy_content_and_ac(where):
 
 
 def test_infer_is_deterministic():
-    from issuesmith.gate_rules.b1_milestone_subdesign import (
+    from issuesmith.gate_rules.milestone_subdesign_rules import (
         extract_sub_blocks,
         infer_sub_dependencies,
     )
@@ -142,7 +142,7 @@ def test_declared_edge_closing_cycle_is_reported():
 
 
 def test_apply_inferred_dependency_fixes_replaces_none():
-    from issuesmith.gate_rules.b1_milestone_subdesign import apply_inferred_dependency_fixes
+    from issuesmith.gate_rules.milestone_subdesign_rules import apply_inferred_dependency_fixes
 
     body = _dep_body(_projection_subs(), ["none", "none"])
     fixed, applied = apply_inferred_dependency_fixes(body)
@@ -156,7 +156,7 @@ def test_apply_inferred_dependency_fixes_replaces_none():
 
 
 def test_apply_inferred_dependency_fixes_merges_existing_and_empty():
-    from issuesmith.gate_rules.b1_milestone_subdesign import apply_inferred_dependency_fixes
+    from issuesmith.gate_rules.milestone_subdesign_rules import apply_inferred_dependency_fixes
 
     blocks = [*_projection_subs(), _dep_sub(3, [("src/issuesmith/z.py", "modify", "z")])]
     fixed, _ = apply_inferred_dependency_fixes(_dep_body(blocks, ["none", "#3", "none"]))
@@ -168,7 +168,7 @@ def test_apply_inferred_dependency_fixes_merges_existing_and_empty():
 
 
 def test_apply_inferred_dependency_fixes_skips_cycle_edges():
-    from issuesmith.gate_rules.b1_milestone_subdesign import apply_inferred_dependency_fixes
+    from issuesmith.gate_rules.milestone_subdesign_rules import apply_inferred_dependency_fixes
 
     body = _dep_body(_cycle_subs(), ["none", "none"])
     assert apply_inferred_dependency_fixes(body) == (body, [])
@@ -181,7 +181,7 @@ def test_dependency_vocabulary_comes_from_language_pack(tmp_path, monkeypatch):
     import yaml
 
     from issuesmith.config import reset_config_cache
-    from issuesmith.gate_rules.b1_milestone_subdesign import (
+    from issuesmith.gate_rules.milestone_subdesign_rules import (
         apply_inferred_dependency_fixes,
         extract_sub_blocks,
         infer_sub_dependencies,
@@ -316,7 +316,7 @@ def test_sub_order_words_come_from_language_pack(tmp_path, monkeypatch):
 
 
 def test_sub_plan_dep_format_fixes_cases():
-    from issuesmith.gate_rules.b1_milestone_subdesign import (
+    from issuesmith.gate_rules.milestone_subdesign_rules import (
         _SUB_PLAN_DEP_FORMAT_ID,
         apply_sub_plan_dep_format_fixes,
     )
@@ -349,7 +349,7 @@ def test_sub_plan_dep_format_fixes_cases():
 
 
 def test_sub_plan_dep_format_violation_auto_fixable():
-    from issuesmith.gate_rules.b1_milestone_subdesign import _SUB_PLAN_DEP_FORMAT_ID
+    from issuesmith.gate_rules.milestone_subdesign_rules import _SUB_PLAN_DEP_FORMAT_ID
 
     bare = _dep_body(_projection_subs(), ["none", "2"])
     hits = [v for v in _check(bare, MILESTONE_LABELS) if v.rule_id == _SUB_PLAN_DEP_FORMAT_ID]

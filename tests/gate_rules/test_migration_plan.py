@@ -1,7 +1,7 @@
 """tests/gate_rules/test_migration_plan.py — unit tests for the b1_migration gate."""
 from __future__ import annotations
 
-import issuesmith.gate_rules.b1_migration  # noqa: F401 — registers on import
+import issuesmith.gate_rules.migration_plan_rules  # noqa: F401 — registers on import
 from issuesmith.gate_rules import GATE_REGISTRY
 
 MIGRATION_LABELS = ["scope:migration"]

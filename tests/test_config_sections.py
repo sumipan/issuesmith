@@ -14,9 +14,9 @@ from issuesmith.gate_rules.ac_complete_rules import (
     get_unchecked_count,
     has_acceptance_criteria_section,
 )
-from issuesmith.gate_rules.b1_ac_format import get_ac_section
-from issuesmith.gate_rules.b1_milestone_subdesign import B1MilestoneSubdesignRules
-from issuesmith.m2_gate import has_acceptance_criteria_section as m2_gate_has_section
+from issuesmith.gate_rules.ac_format_rules import get_ac_section
+from issuesmith.gate_rules.milestone_subdesign_rules import MilestoneSubdesignRules
+from issuesmith.ac_complete_entry import has_acceptance_criteria_section as ac_complete_has_section
 from issuesmith.step_tier import design_doc_tier as determine_b1_tier
 
 
@@ -76,7 +76,7 @@ def test_default_sections_match_legacy_when_unset(tmp_path, monkeypatch):
     assert determine_b1_tier(body) == "heavy"
     assert get_ac_section(body) is not None
     assert has_acceptance_criteria_section(body)
-    assert m2_gate_has_section(body)
+    assert ac_complete_has_section(body)
     assert get_unchecked_count(body) == 1
     assert extract_contract_from_body(body) == {"paths_must_exist": ["a.py"]}
 
@@ -111,8 +111,8 @@ def test_custom_acceptance_criteria_propagates_to_consumers(tmp_path, monkeypatc
     assert get_ac_section(body_custom) is not None
     assert not has_acceptance_criteria_section(body_legacy)
     assert has_acceptance_criteria_section(body_custom)
-    assert not m2_gate_has_section(body_legacy)
-    assert m2_gate_has_section(body_custom)
+    assert not ac_complete_has_section(body_legacy)
+    assert ac_complete_has_section(body_custom)
     assert extract_contract_from_body(body_legacy) is None
     assert extract_contract_from_body(body_custom) == {"paths_must_exist": ["a.py"]}
     assert get_unchecked_count(body_custom) == 1
@@ -211,7 +211,7 @@ def test_sub_design_subsections_default_and_custom(tmp_path, monkeypatch):
         "- [ ] one\n- [ ] two\n- [ ] three\n"
     )
     # custom subsections complete → no subsection_missing
-    v = B1MilestoneSubdesignRules().check(body, ["scope:milestone"])
+    v = MilestoneSubdesignRules().check(body, ["scope:milestone"])
     missing = [x for x in v if x.rule_id == "milestone_subdesign.subsection_missing"]
     assert missing == []
 

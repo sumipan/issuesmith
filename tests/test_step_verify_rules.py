@@ -1,7 +1,7 @@
 """test_step_verify.py — unit tests for B1 deterministic Verify (#2541)."""
 from __future__ import annotations
 
-from issuesmith.b1_verify import _GATES, collect_violations, format_report
+from issuesmith.step_verify import DESIGN_DOC_GATES, collect_violations, format_report
 
 _VALID_BODY = (
     '```yaml\n'
@@ -20,8 +20,8 @@ def test_valid_body_has_no_violations():
     assert collect_violations(_VALID_BODY, []) == []
 
 
-def test_deps_format_gate_is_in_b1_verify_gates():
-    assert "deps_format" in _GATES
+def test_deps_format_gate_is_in_step_verify_gates():
+    assert "deps_format" in DESIGN_DOC_GATES
 
 
 def test_collect_violations_reports_unparsed_dependency_section():
@@ -56,7 +56,7 @@ def test_migration_rules_are_included():
 
 def test_complete_migration_body_satisfies_ac_format_and_migration_gates():
     """One migration body must be able to satisfy every B1 gate at once (nexus #3899)."""
-    from tests.gate_rules.test_b1_migration import BODY_COMPLETE
+    from tests.gate_rules.test_migration_plan import BODY_COMPLETE
 
     rule_ids = {v.rule_id for v in collect_violations(_VALID_BODY + "\n" + BODY_COMPLETE, ["scope:migration"])}
     assert not {r for r in rule_ids if r.startswith(("ac_format.", "migration_plan."))}, rule_ids
@@ -114,21 +114,21 @@ _PROMOTED_MILESTONE_BODY = _VALID_BODY + (
 
 
 def test_milestone_subdesign_gate_is_registered():
-    from issuesmith.b1_verify import _GATES
+    from issuesmith.step_verify import DESIGN_DOC_GATES
 
-    assert "milestone_subdesign" in _GATES
+    assert "milestone_subdesign" in DESIGN_DOC_GATES
 
 
 def test_pin_bump_gate_is_registered():
-    from issuesmith.b1_verify import _GATES
+    from issuesmith.step_verify import DESIGN_DOC_GATES
 
-    assert "pin_bump" in _GATES
+    assert "pin_bump" in DESIGN_DOC_GATES
 
 
 def test_change_table_scope_gate_is_registered():
-    from issuesmith.b1_verify import _GATES
+    from issuesmith.step_verify import DESIGN_DOC_GATES
 
-    assert "change_table_scope" in _GATES
+    assert "change_table_scope" in DESIGN_DOC_GATES
 
 
 def test_change_table_scope_imported_in_gate_registry():
@@ -203,7 +203,7 @@ Bump the ghdag pin to ghdag v0.104.5 in pyproject.toml.
 
 
 def test_allow_paths_forbidden_gate_is_registered():
-    assert "allow_paths_forbidden" in _GATES
+    assert "allow_paths_forbidden" in DESIGN_DOC_GATES
 
 
 def test_allow_paths_forbidden_collected_on_overlap():
@@ -272,7 +272,7 @@ def test_no_split_plan_body_ignores_milestone_subdesign():
 
 def test_assumed_labels_adds_scope_milestone_when_plan_present():
     """assumed_labels: split-plan body with no label → returns list with scope:milestone appended."""
-    from issuesmith.b1_verify import assumed_labels
+    from issuesmith.step_verify import assumed_labels
 
     result = assumed_labels(_PROMOTED_MILESTONE_BODY, [])
     assert result == ["scope:milestone"]
@@ -280,7 +280,7 @@ def test_assumed_labels_adds_scope_milestone_when_plan_present():
 
 def test_assumed_labels_noop_when_label_already_present():
     """assumed_labels: already has scope:milestone → returns copy unchanged."""
-    from issuesmith.b1_verify import assumed_labels
+    from issuesmith.step_verify import assumed_labels
 
     result = assumed_labels(_PROMOTED_MILESTONE_BODY, ["scope:milestone"])
     assert result == ["scope:milestone"]
@@ -288,7 +288,7 @@ def test_assumed_labels_noop_when_label_already_present():
 
 def test_assumed_labels_noop_when_no_split_plan():
     """assumed_labels: no split-plan pattern → returns copy of labels unchanged."""
-    from issuesmith.b1_verify import assumed_labels
+    from issuesmith.step_verify import assumed_labels
 
     result = assumed_labels(_VALID_BODY, ["scope:feature"])
     assert result == ["scope:feature"]
@@ -296,7 +296,7 @@ def test_assumed_labels_noop_when_no_split_plan():
 
 def test_assumed_labels_does_not_mutate_input():
     """assumed_labels: never modifies the input list."""
-    from issuesmith.b1_verify import assumed_labels
+    from issuesmith.step_verify import assumed_labels
 
     original = []
     result = assumed_labels(_PROMOTED_MILESTONE_BODY, original)
@@ -311,7 +311,7 @@ def test_cp1_intentional_hold_excluded_with_assumed_labels():
 
 
 def test_complete_milestone_body_passes_milestone_subdesign():
-    from tests.gate_rules.test_b1_milestone_subdesign import _valid_body
+    from tests.gate_rules.test_milestone_subdesign import _valid_body
 
     rule_ids = {v.rule_id for v in collect_violations(_valid_body(), ["scope:milestone"])}
     assert not {r for r in rule_ids if r.startswith("milestone_subdesign.")}, rule_ids
@@ -394,7 +394,7 @@ def test_deterministic_recovery_promotes_oversized_issue_in_one_pass(tmp_path, m
     """AC (#4191): scope_size overflow → milestone contract in one recovery."""
     import yaml
 
-    from issuesmith.b1_verify import apply_deterministic_recovery
+    from issuesmith.step_verify import apply_deterministic_recovery
     from issuesmith.config import reset_config_cache
     from tests.legacy_text import SUB
 
@@ -452,9 +452,9 @@ def test_deterministic_recovery_promoted_placeholder_design_needs_llm(
     """AC (#4915): promotion leaves placeholder_design for LLM recovery."""
     import yaml
 
-    from issuesmith.b1_verify import apply_deterministic_recovery
+    from issuesmith.step_verify import apply_deterministic_recovery
     from issuesmith.config import reset_config_cache
-    from issuesmith.gate_rules.b1_milestone_subdesign import PLACEHOLDER_DESIGN_ID
+    from issuesmith.gate_rules.milestone_subdesign_rules import PLACEHOLDER_DESIGN_ID
 
     cfg_path = tmp_path / "issuesmith.yaml"
     cfg_path.write_text(
@@ -524,7 +524,7 @@ def test_deterministic_recovery_is_idempotent(tmp_path, monkeypatch):
     """AC (#4191): re-running recovery does not duplicate body/label/milestone."""
     import yaml
 
-    from issuesmith.b1_verify import apply_deterministic_recovery
+    from issuesmith.step_verify import apply_deterministic_recovery
     from issuesmith.config import reset_config_cache
 
     cfg_path = tmp_path / "issuesmith.yaml"
@@ -563,7 +563,7 @@ def test_deterministic_recovery_skips_normal_sized_issue(tmp_path, monkeypatch):
     """AC (#4191): scope_size-ineligible Issues are unchanged by promotion."""
     import yaml
 
-    from issuesmith.b1_verify import apply_deterministic_recovery
+    from issuesmith.step_verify import apply_deterministic_recovery
     from issuesmith.config import reset_config_cache
 
     cfg_path = tmp_path / "issuesmith.yaml"
@@ -591,7 +591,7 @@ def test_deterministic_recovery_skips_promotion_when_declined(tmp_path, monkeypa
     """When promotion_declined, do not promote or attach milestone label."""
     import yaml
 
-    from issuesmith.b1_verify import apply_deterministic_recovery
+    from issuesmith.step_verify import apply_deterministic_recovery
     from issuesmith.config import reset_config_cache
     from tests.gate_rules.test_scope_size import _MODIFY, _body
 
@@ -626,7 +626,7 @@ def test_deterministic_recovery_reports_unresolved_when_same_rule_remains(
     """AC (#4191): can_done is False and reason lists remaining rule_ids."""
     import yaml
 
-    from issuesmith.b1_verify import apply_deterministic_recovery
+    from issuesmith.step_verify import apply_deterministic_recovery
     from issuesmith.config import reset_config_cache
 
     cfg_path = tmp_path / "issuesmith.yaml"
@@ -808,7 +808,7 @@ def test_check_paths_must_not_exist_validity_wrapper(tmp_path, monkeypatch):
 
     import yaml
 
-    from issuesmith.b1_verify import check_paths_must_not_exist_validity
+    from issuesmith.step_verify import check_paths_must_not_exist_validity
     from issuesmith.config import reset_config_cache
 
     repo = _setup_contract_repo(tmp_path)
@@ -845,7 +845,7 @@ _DEP_CYCLE = "milestone_subdesign.dependency_cycle"
 def _recover(tmp_path, monkeypatch, body: str, runs: int = 1):
     import yaml
 
-    from issuesmith.b1_verify import apply_deterministic_recovery
+    from issuesmith.step_verify import apply_deterministic_recovery
     from issuesmith.config import reset_config_cache
 
     cfg_path = tmp_path / "issuesmith.yaml"
@@ -868,7 +868,7 @@ def _recover(tmp_path, monkeypatch, body: str, runs: int = 1):
 
 
 def test_deterministic_recovery_persists_inferred_dependency(tmp_path, monkeypatch):
-    from tests.gate_rules.test_b1_milestone_subdesign import (
+    from tests.gate_rules.test_milestone_subdesign import (
         _dep_body,
         _plan_row,
         _projection_subs,
@@ -886,7 +886,7 @@ def test_deterministic_recovery_persists_inferred_dependency(tmp_path, monkeypat
 
 
 def test_deterministic_recovery_dependency_fix_is_idempotent(tmp_path, monkeypatch):
-    from tests.gate_rules.test_b1_milestone_subdesign import _dep_body, _projection_subs
+    from tests.gate_rules.test_milestone_subdesign import _dep_body, _projection_subs
 
     body = _dep_body(_projection_subs(), ["none", "none"])
     client, (first, second) = _recover(tmp_path, monkeypatch, body, runs=2)
@@ -897,8 +897,8 @@ def test_deterministic_recovery_dependency_fix_is_idempotent(tmp_path, monkeypat
 
 
 def test_deterministic_recovery_applies_sub_plan_dep_format(tmp_path, monkeypatch):
-    from issuesmith.gate_rules.b1_milestone_subdesign import _SUB_PLAN_DEP_FORMAT_ID
-    from tests.gate_rules.test_b1_milestone_subdesign import _dep_body, _projection_subs
+    from issuesmith.gate_rules.milestone_subdesign_rules import _SUB_PLAN_DEP_FORMAT_ID
+    from tests.gate_rules.test_milestone_subdesign import _dep_body, _projection_subs
 
     body = _dep_body(_projection_subs(), ["4", "2"])
     client, (result,) = _recover(tmp_path, monkeypatch, body)
@@ -909,7 +909,7 @@ def test_deterministic_recovery_applies_sub_plan_dep_format(tmp_path, monkeypatc
 
 
 def test_deterministic_recovery_does_not_write_cycle_edges(tmp_path, monkeypatch):
-    from tests.gate_rules.test_b1_milestone_subdesign import _cycle_subs, _dep_body
+    from tests.gate_rules.test_milestone_subdesign import _cycle_subs, _dep_body
 
     body = _dep_body(_cycle_subs(), ["none", "none"])
     client, (result,) = _recover(tmp_path, monkeypatch, body)

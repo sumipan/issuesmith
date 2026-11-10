@@ -15,7 +15,7 @@ _ALLOWED_KEYS = frozenset({
     "paths_must_exist",
     "paths_must_not_exist",
     "references_must_resolve",
-    # scope:migration contract keys (required by b1_migration, read by ac_contract / m2_gate)
+    # scope:migration contract keys (required by migration_plan_rules, read by ac_contract / ac_complete_entry)
     "post_merge",
     "removed_trees",
 })
@@ -227,7 +227,5 @@ class AcFormatRules:
                         ))
         return violations
 
-
-B1AcFormatRules = AcFormatRules
 
 GATE_REGISTRY["ac_format"] = AcFormatRules

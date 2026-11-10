@@ -1,7 +1,7 @@
 """
 design_lint_entry.py — design-lint pattern check gate entry point
 
-The check logic is delegated to gate_rules.cp1.Cp1Rules.
+The check logic is delegated to gate_rules.design_lint_rules.DesignLintRules.
 """
 
 from __future__ import annotations
@@ -11,8 +11,8 @@ import sys
 
 from ghdag.forge import get_forge
 
-from issuesmith.gate_rules.b1_migration import B1MigrationRules
-from issuesmith.gate_rules.cp1 import Cp1Rules
+from issuesmith.gate_rules.design_lint_rules import DesignLintRules
+from issuesmith.gate_rules.migration_plan_rules import MigrationPlanRules
 from issuesmith.gate_rules.milestone_consistency import MilestoneConsistencyRules
 from issuesmith.gate_rules.scope_breadth import ScopeBreadthRules
 from issuesmith.gate_rules.scope_coupling import ScopeCouplingRules
@@ -46,12 +46,12 @@ def check_gate(body: str, labels: list[str] | None = None) -> dict:
     label_list = labels or []
     scope_rule = ScopeBreadthRules()
     coupling_rule = ScopeCouplingRules()
-    violations = Cp1Rules().check(body, label_list)
+    violations = DesignLintRules().check(body, label_list)
     violations = violations + MilestoneConsistencyRules().check(body, label_list)
     violations = violations + scope_rule.check(body, label_list)
     violations = violations + coupling_rule.check(body, label_list)
     if "scope:migration" in label_list:
-        violations = violations + B1MigrationRules().check(body, label_list)
+        violations = violations + MigrationPlanRules().check(body, label_list)
     reasons = [v.message for v in violations]
     intentional_hold = any(
         rule_id_matches(v.rule_id, "design_lint.intentional_hold") for v in violations

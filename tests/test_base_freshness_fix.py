@@ -10,7 +10,6 @@ import pytest
 from issuesmith import worktree as wt_mod
 from issuesmith.gates import NON_REPAIRABLE_RULE_IDS, is_non_repairable_rule_id
 from issuesmith.gates import worktree as wt
-from issuesmith.gates.m1 import VersionBehindBaseGate
 
 
 def _init_git_repo(repo: Path) -> None:
@@ -133,46 +132,6 @@ def test_check_returns_fetch_failed_for_non_transient(tmp_path: Path, monkeypatc
     assert len(violations) == 1
     assert violations[0].rule_id == "base_freshness.fetch_failed"
     assert violations[0].fix_hint == "Manually fetch origin/main"
-
-
-def test_m1_check_matches_base_freshness_fetch_outcomes(tmp_path: Path, monkeypatch):
-    repo = tmp_path / "wt"
-    _init_git_repo(repo)
-    (repo / "pyproject.toml").write_text(
-        '[project]\nname = "demo"\nversion = "1.0.0"\n', encoding="utf-8"
-    )
-    subprocess.run(
-        ["git", "-C", str(repo), "add", "pyproject.toml"],
-        check=True,
-        capture_output=True,
-    )
-    subprocess.run(
-        ["git", "-C", str(repo), "commit", "-m", "add pyproject"],
-        check=True,
-        capture_output=True,
-    )
-    gate = VersionBehindBaseGate(repo, "main")
-    monkeypatch.setenv("ISSUESMITH_FETCH_LOCK_WAIT", "0")
-    monkeypatch.setattr(wt_mod, "_sleep", lambda _s: None)
-
-    fetch_side = _worktree_subprocess_side_effect(
-        repo,
-        fetch_results=[(1, _TRANSIENT_FETCH_STDERR)] * 3,
-    )
-    with patch.object(wt_mod.subprocess, "run", side_effect=fetch_side):
-        exhausted = gate.check("", [])
-    assert exhausted[0].rule_id == "base_freshness.fetch_transient_exhausted"
-
-    with patch(
-        "issuesmith.gates.m1.fetch_base_gate_result",
-        return_value=(True, False),
-    ):
-        with patch.object(
-            gate,
-            "_version_at",
-            side_effect=lambda ref: "1.0.0" if ref == "HEAD" else "0.9.0",
-        ):
-            assert gate.check("", []) == []
 
 
 def test_fetch_transient_exhausted_is_non_repairable():

@@ -282,6 +282,4 @@ class MigrationPlanRules:
         return violations
 
 
-B1MigrationRules = MigrationPlanRules
-
 GATE_REGISTRY["migration_plan"] = MigrationPlanRules

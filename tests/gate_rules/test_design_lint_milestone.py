@@ -1,9 +1,9 @@
-"""tests/gate_rules/test_cp1_milestone.py — unit tests for CP1 milestone checks 8–11."""
+"""tests/gate_rules/test_design_lint_milestone.py — unit tests for CP1 milestone checks 8–11."""
 from __future__ import annotations
 
 import pytest
 
-from issuesmith.gate_rules.design_lint_rules import Cp1Rules, _keyword_tokens
+from issuesmith.gate_rules.design_lint_rules import DesignLintRules, _keyword_tokens
 from tests.legacy_text import (
     ADD,
     CHANGE_TYPE,
@@ -91,13 +91,13 @@ paths_must_exist:
 def test_check8_sub_block_todo():
     # ASCII fixture data.
     body = _milestone_body(sub_extra="TODO: c5F8C_c3067_c6C7A_c3081_c308B\n")
-    violations = Cp1Rules().check(body, MILESTONE_LABELS)
+    violations = DesignLintRules().check(body, MILESTONE_LABELS)
     assert any(v.rule_id == "design_lint.forbidden_word.todo.sub1" for v in violations)
 
 
 def test_check8_code_block_todo_excluded():
     body = _milestone_body(sub_extra="```python\n# TODO: ignore\n```\n")
-    violations = Cp1Rules().check(body, MILESTONE_LABELS)
+    violations = DesignLintRules().check(body, MILESTONE_LABELS)
     assert not any("forbidden_word.todo" in v.rule_id for v in violations)
 
 
@@ -108,12 +108,12 @@ def test_check9_sub_ac_yaml_missing():
         "",
         1,
     )
-    violations = Cp1Rules().check(body, MILESTONE_LABELS)
+    violations = DesignLintRules().check(body, MILESTONE_LABELS)
     assert any(v.rule_id == "design_lint.milestone.sub_ac_yaml_missing" for v in violations)
 
 
 def test_check9_sub_ac_yaml_present_passes():
-    violations = Cp1Rules().check(_milestone_body(), MILESTONE_LABELS)
+    violations = DesignLintRules().check(_milestone_body(), MILESTONE_LABELS)
     assert not any(v.rule_id == "design_lint.milestone.sub_ac_yaml_missing" for v in violations)
 
 
@@ -124,7 +124,7 @@ def test_check10_parent_ac_orphan():
         "Sub-issue_c3059_c3079_c3066_c306E_c5B9F_c88C5_c304C_c5B8C_c4E86_c3059_c308B",
         "c672C Issue c3092 close c3059_c308B",
     ])
-    violations = Cp1Rules().check(body, MILESTONE_LABELS)
+    violations = DesignLintRules().check(body, MILESTONE_LABELS)
     assert any(v.rule_id == "design_lint.milestone.parent_ac_orphan" for v in violations)
 
 
@@ -135,7 +135,7 @@ def test_check10_meta_pattern_passes():
         "PR #9998 created",
         "PR #9997 closed",
     ])
-    violations = Cp1Rules().check(body, MILESTONE_LABELS)
+    violations = DesignLintRules().check(body, MILESTONE_LABELS)
     assert not any(v.rule_id == "design_lint.milestone.parent_ac_orphan" for v in violations)
 
 
@@ -159,7 +159,7 @@ def test_check10_ascii_tokens_parent_ac_cover_passes():
         ],
         sub_extra="- [ ] report posted\n",
     )
-    violations = Cp1Rules().check(body, MILESTONE_LABELS)
+    violations = DesignLintRules().check(body, MILESTONE_LABELS)
     assert not any(v.rule_id == "design_lint.milestone.parent_ac_orphan" for v in violations)
 
 
@@ -170,7 +170,7 @@ def test_check10_keyword_cover_passes():
         "PR #9001 merged",
         "PR #9002 merged",
     ])
-    violations = Cp1Rules().check(body, MILESTONE_LABELS)
+    violations = DesignLintRules().check(body, MILESTONE_LABELS)
     assert not any(v.rule_id == "design_lint.milestone.parent_ac_orphan" for v in violations)
 
 
@@ -181,7 +181,7 @@ def test_check10_optional_prefix_passes():
         "PR #9001 merged",
         "PR #9002 merged",
     ])
-    violations = Cp1Rules().check(body, MILESTONE_LABELS)
+    violations = DesignLintRules().check(body, MILESTONE_LABELS)
     assert not any(v.rule_id == "design_lint.milestone.parent_ac_orphan" for v in violations)
 
 
@@ -192,7 +192,7 @@ def test_check10_optional_prefix_midtext_fails():
         "PR #9001 merged",
         "PR #9002 merged",
     ])
-    violations = Cp1Rules().check(body, MILESTONE_LABELS)
+    violations = DesignLintRules().check(body, MILESTONE_LABELS)
     assert any(v.rule_id == "design_lint.milestone.parent_ac_orphan" for v in violations)
 
 
@@ -204,12 +204,12 @@ def test_check11_paths_must_exist_unmapped():
         "## Acceptance Criteria\n\n```yaml\npaths_must_exist:\n  - tools/foo/a.py\n  - tools/missing/new.py\n```",
         1,
     )
-    violations = Cp1Rules().check(body, MILESTONE_LABELS)
+    violations = DesignLintRules().check(body, MILESTONE_LABELS)
     assert any(v.rule_id == "design_lint.milestone.paths_must_exist_unmapped" for v in violations)
 
 
 def test_check11_paths_must_exist_mapped_passes():
-    violations = Cp1Rules().check(_milestone_body(), MILESTONE_LABELS)
+    violations = DesignLintRules().check(_milestone_body(), MILESTONE_LABELS)
     assert not any(v.rule_id == "design_lint.milestone.paths_must_exist_unmapped" for v in violations)
 
 
@@ -275,14 +275,14 @@ paths_must_exist:
 
 
 def test_check11_paths_must_exist_modify_mapped_passes():
-    violations = Cp1Rules().check(_milestone_body_with_modify_path(), MILESTONE_LABELS)
+    violations = DesignLintRules().check(_milestone_body_with_modify_path(), MILESTONE_LABELS)
     assert not any(v.rule_id == "design_lint.milestone.paths_must_exist_unmapped" for v in violations)
 
 
 def test_milestone_checks_skipped_without_label():
     # ASCII fixture data.
     body = _milestone_body(sub_extra="TODO: c6B8B_c5B58\n")
-    violations = Cp1Rules().check(body, [])
+    violations = DesignLintRules().check(body, [])
     assert not any("milestone" in v.rule_id for v in violations)
     assert not any(".sub1" in v.rule_id for v in violations)
 
@@ -332,13 +332,13 @@ paths_must_exist:
 
 def test_check10_parent_ac_orphan_skipped_without_sub_blocks():
     body = _milestone_body_without_sub_blocks()
-    violations = Cp1Rules().check(body, MILESTONE_LABELS)
+    violations = DesignLintRules().check(body, MILESTONE_LABELS)
     assert not any(v.rule_id == "design_lint.milestone.parent_ac_orphan" for v in violations)
 
 
 def test_check11_paths_must_exist_unmapped_skipped_without_sub_blocks():
     body = _milestone_body_without_sub_blocks()
-    violations = Cp1Rules().check(body, MILESTONE_LABELS)
+    violations = DesignLintRules().check(body, MILESTONE_LABELS)
     assert not any(v.rule_id == "design_lint.milestone.paths_must_exist_unmapped" for v in violations)
 
 
@@ -403,7 +403,7 @@ def test_ascii_pack_matches_en_decision(tmp_path, monkeypatch, en_kind, ascii_ki
     _use_pack(en_dir, monkeypatch)
     en_body = _pack_body("Sub", EN.change_table_columns, en_kind, sub_extra=sub_extra)
     en = sorted(
-        (v.rule_id, v.location or "") for v in Cp1Rules().check(en_body, MILESTONE_LABELS)
+        (v.rule_id, v.location or "") for v in DesignLintRules().check(en_body, MILESTONE_LABELS)
     )
 
     ascii_dir = tmp_path / "ascii"
@@ -414,7 +414,7 @@ def test_ascii_pack_matches_en_decision(tmp_path, monkeypatch, en_kind, ascii_ki
     )
     ascii_v = sorted(
         (v.rule_id, (v.location or "").replace("Part", "Sub"))
-        for v in Cp1Rules().check(ascii_body, MILESTONE_LABELS)
+        for v in DesignLintRules().check(ascii_body, MILESTONE_LABELS)
     )
 
     assert ascii_v == en
@@ -432,6 +432,6 @@ def test_sub_location_uses_pack_prefix(tmp_path, monkeypatch):
     body = _pack_body(
         "Part", _ASCII_PACK["change_table_columns"], "Add", sub_extra="TODO: fill in\n"
     )
-    violations = Cp1Rules().check(body, MILESTONE_LABELS)
+    violations = DesignLintRules().check(body, MILESTONE_LABELS)
     todo = next(v for v in violations if v.rule_id == "design_lint.forbidden_word.todo.sub1")
     assert todo.location == "#### Part1"

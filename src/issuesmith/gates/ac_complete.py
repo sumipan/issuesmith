@@ -27,6 +27,4 @@ def check_ac_complete(
     return Verdict(passed=False, reasons=reasons)
 
 
-check_m2 = check_ac_complete
-
-__all__ = ["check_ac_complete", "check_m2", "check_gate"]
+__all__ = ["check_ac_complete", "check_gate"]

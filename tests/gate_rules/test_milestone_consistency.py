@@ -6,7 +6,7 @@ from pathlib import Path
 import issuesmith.gate_rules.milestone_consistency  # noqa: F401
 from issuesmith.body_editor import normalize_sub_headers, relocate_sub_plan
 from issuesmith.gate_rules import GATE_REGISTRY
-from issuesmith.gate_rules.b1_milestone_subdesign import B1MilestoneSubdesignRules
+from issuesmith.gate_rules.milestone_subdesign_rules import MilestoneSubdesignRules
 
 _FIXTURE = (
     Path(__file__).resolve().parents[1] / "fixtures" / "issue_3059_original.md"
@@ -100,7 +100,7 @@ allow_paths:
 def test_normalized_fixture_has_no_sub_plan_missing():
     """After normalize + relocate, no milestone_subdesign.sub_plan_missing."""
     normalized = relocate_sub_plan(normalize_sub_headers(_FIXTURE))
-    vs = B1MilestoneSubdesignRules().check(normalized, ["scope:milestone"])
+    vs = MilestoneSubdesignRules().check(normalized, ["scope:milestone"])
     assert not any(v.rule_id == "milestone_subdesign.sub_plan_missing" for v in vs)
 
 
@@ -167,7 +167,7 @@ def test_label_missing_fix_hint_requires_sub_design_blocks():
     vs = _check(_FIXTURE, [])
     label_v = next(v for v in vs if v.rule_id == "milestone_consistency.label_missing")
     assert "fix_label_missing" in (label_v.fix_hint or "")
-    assert "b1_milestone_subdesign" in (label_v.fix_hint or "")
+    assert "milestone_subdesign.sub_count_mismatch" in (label_v.fix_hint or "")
     assert f"#### {SUB}N:" in (label_v.fix_hint or "")
     assert "#### Sub N:" not in (label_v.fix_hint or "")
 

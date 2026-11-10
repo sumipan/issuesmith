@@ -21,7 +21,7 @@ from ghdag.workflow.gates import GATE_REGISTRY, Violation
 from issuesmith.config import ScopeSizeConfig, get_config
 from issuesmith.context_hook import parse_issue_metadata
 from issuesmith.contract import change_paths_for_repo, extract_change_table_rows
-from issuesmith.gate_rules.b1_milestone_subdesign import (
+from issuesmith.gate_rules.milestone_subdesign_rules import (
     PLACEHOLDER_AC_TEMPLATES,
     PLACEHOLDER_CHANGE_CONTENT,
     PLACEHOLDER_DESIGN_MARKER,
@@ -216,7 +216,7 @@ def _fix_hint(body: str, cfg: ScopeSizeConfig) -> str:
         lines.extend(_plan_rows(target_repo, concerns, deps, cfg))
         return "\n".join(lines)
     lines = [
-        "Run issuesmith.b1_verify.apply_deterministic_recovery() (or "
+        "Run issuesmith.step_verify.apply_deterministic_recovery() (or "
         "issuesmith.gate_rules.scope_size.promote_oversized_issue_body() then "
         "milestone_consistency.fix_label_missing() + body_editor.normalize_sub_headers() "
         "+ body_editor.relocate_sub_plan()). Do not hand-edit English Sub headers.",
@@ -656,7 +656,7 @@ def promote_oversized_issue_body(body: str, cfg: ScopeSizeConfig | None = None) 
     Idempotent when a SUB_HEADER_RE block already exists for every concern row.
     Does not touch labels or the GitHub milestone object — callers
     must run :func:`issuesmith.gate_rules.milestone_consistency.fix_label_missing`
-    (or use :func:`issuesmith.b1_verify.apply_deterministic_recovery`).
+    (or use :func:`issuesmith.step_verify.apply_deterministic_recovery`).
     """
     cfg = cfg or get_config().scope_size
     if is_atomic(body, cfg):

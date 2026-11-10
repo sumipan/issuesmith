@@ -6,7 +6,7 @@ import pytest
 import yaml
 
 from issuesmith.config import reset_config_cache
-from issuesmith.gate_rules.design_lint_rules import Cp1Rules
+from issuesmith.gate_rules.design_lint_rules import DesignLintRules
 
 
 def _write_config(tmp_path, monkeypatch, scope_gate: dict | None = None) -> None:
@@ -39,19 +39,19 @@ def _body(split_line: str, allow_paths_yaml: str) -> str:
 
 def test_split_key_absent_is_ok():
     body = _body("", "allow_paths:\n  - src/**\n")
-    violations = Cp1Rules().check(body, [])
+    violations = DesignLintRules().check(body, [])
     assert not any(v.rule_id.startswith("design_lint.yaml_contract.split") for v in violations)
 
 
 def test_split_atomic_within_hard_max_is_ok():
     body = _body("split: atomic\n", "allow_paths:\n  - src/**\n  - tests/**\n")
-    violations = Cp1Rules().check(body, [])
+    violations = DesignLintRules().check(body, [])
     assert not any(v.rule_id.startswith("design_lint.yaml_contract.split") for v in violations)
 
 
 def test_split_invalid_value():
     body = _body("split: foo\n", "allow_paths:\n  - src/**\n")
-    violations = Cp1Rules().check(body, [])
+    violations = DesignLintRules().check(body, [])
     v = next(v for v in violations if v.rule_id == "design_lint.yaml_contract.split_invalid")
     assert v.severity == "fail"
     assert v.location == "split"
@@ -65,7 +65,7 @@ def test_split_atomic_over_hard_max(tmp_path, monkeypatch):
         "split: atomic\n",
         "allow_paths:\n  - a\n  - b\n  - c\n",
     )
-    violations = Cp1Rules().check(body, [])
+    violations = DesignLintRules().check(body, [])
     v = next(
         v for v in violations if v.rule_id == "design_lint.yaml_contract.split_atomic_over_hard_max"
     )

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-import issuesmith.gate_rules.b1_milestone_subdesign  # noqa: F401
+import issuesmith.gate_rules.milestone_subdesign_rules  # noqa: F401
 from issuesmith.config import get_config
 from issuesmith.gate_rules import GATE_REGISTRY
 from tests.legacy_text import CHANGE_TYPE, DESCRIPTION, FILE_PATH, REPOSITORY, SUB
@@ -199,7 +199,7 @@ def test_promoted_body_plan_rows_match_sub_headers_and_file_union():
     """AC (#4191): plan rows, SUB_HEADER_RE count, and parent/sub path union agree."""
     from issuesmith.config import get_config
     from issuesmith.contract import SUB_HEADER_RE, extract_change_table_rows, get_section
-    from issuesmith.gate_rules.b1_milestone_subdesign import _count_sub_plan_rows
+    from issuesmith.gate_rules.milestone_subdesign_rules import _count_sub_plan_rows
     from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
 
     body = _oversized_non_milestone_body()
@@ -217,7 +217,7 @@ def test_promoted_body_plan_rows_match_sub_headers_and_file_union():
         )
     }
     sub_paths: set[str] = set()
-    from issuesmith.gate_rules.b1_milestone_subdesign import extract_sub_blocks
+    from issuesmith.gate_rules.milestone_subdesign_rules import extract_sub_blocks
 
     for _, block in extract_sub_blocks(promoted):
         sub_paths.update(path for _, path, _ in extract_change_table_rows(block))
@@ -377,14 +377,14 @@ paths_must_exist:
 
 
 def test_allowed_repos_unions_every_metadata_block():
-    from issuesmith.gate_rules.b1_milestone_subdesign import _allowed_repos
+    from issuesmith.gate_rules.milestone_subdesign_rules import _allowed_repos
 
     body = _two_repo_body(with_parent_changed_files=True)
     assert _allowed_repos(body) == {"sumipan/nexus", "sumipan/ghdag"}
 
 
 def test_allowed_repos_adds_host_repo_from_companion_paths():
-    from issuesmith.gate_rules.b1_milestone_subdesign import _allowed_repos
+    from issuesmith.gate_rules.milestone_subdesign_rules import _allowed_repos
 
     body = (
         "```yaml\ntarget_repo: sumipan/nexus\n```\n\n"
@@ -648,7 +648,7 @@ allow_paths:
 
 def test_parent_change_paths_use_change_paths_for_repo():
     from issuesmith.contract import change_paths_for_repo, get_section
-    from issuesmith.gate_rules.b1_milestone_subdesign import _extract_parent_change_paths
+    from issuesmith.gate_rules.milestone_subdesign_rules import _extract_parent_change_paths
 
     body = _root_file_body()
     section = get_section(body, get_config().sections["changed_files"])
@@ -657,7 +657,7 @@ def test_parent_change_paths_use_change_paths_for_repo():
 
 def test_parent_change_paths_include_repo_root_file():
     _skip_unless_root_file_paths()
-    from issuesmith.gate_rules.b1_milestone_subdesign import _extract_parent_change_paths
+    from issuesmith.gate_rules.milestone_subdesign_rules import _extract_parent_change_paths
 
     assert _extract_parent_change_paths(_root_file_body()) == {
         _ROOT_FILE,
