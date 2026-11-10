@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
+
+from ghdag.workflow.gates import Violation
 
 
 def _utc_ts() -> str:
@@ -15,6 +18,25 @@ def _utc_ts() -> str:
 
 def _parent_uuid() -> str:
     return os.environ.get("GHDAG_TASK_UUID", "").strip()
+
+
+def serialize_violations(
+    violations: Sequence[Violation],
+) -> list[dict[str, str | None]]:
+    """Map gate violations to the shared metrics JSON shape."""
+    out: list[dict[str, str | None]] = []
+    for v in violations:
+        message = v.message
+        if len(message) > 300:
+            message = message[:300]
+        out.append(
+            {
+                "rule_id": v.rule_id,
+                "location": v.location,
+                "message": message,
+            }
+        )
+    return out
 
 
 def append_event(path: Path, event: dict) -> None:
@@ -101,4 +123,4 @@ def record_step_started(paths: _PathsLike) -> None:
         return
 
 
-__all__ = ["append_event", "record_step_started"]
+__all__ = ["append_event", "record_step_started", "serialize_violations"]
