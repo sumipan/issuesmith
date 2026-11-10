@@ -7,6 +7,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.175.1 - 2026-11-10
+
+### Fixed
+
+- Queue dispatch holds `low` requests while a `high` request is still waiting (`priority_barrier`) (#6254).
+
+## 0.174.7 - 2026-11-10
+
+### Fixed
+
+- Use text stream-json capabilities for Claude `call_managed` so review prose keeps `PIPELINE_STATUS:` markers (#6282).
+
+## 0.174.6 - 2026-11-10
+
 ## 0.174.2 - 2026-11-09
 
 ### Fixed

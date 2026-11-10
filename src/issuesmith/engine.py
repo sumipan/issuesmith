@@ -134,7 +134,7 @@ BRAKE_STATE_PATH = _cfg.paths.brake_state or _cfg.paths.quota_state
 # permission_mode!=default).
 _ISSUESMITH_CAPABILITIES = LLMCapabilities(
     permission_mode="bypassPermissions",
-    output_format="json",
+    stream=True,
 )
 _DEFAULT_CAPABILITIES = LLMCapabilities()
 
