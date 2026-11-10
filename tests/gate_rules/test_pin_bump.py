@@ -6,10 +6,10 @@ import pytest
 import yaml
 
 import issuesmith.gate_rules.pin_bump  # noqa: F401 — registers on import
-from issuesmith.step_verify import collect_violations
 from issuesmith.config import reset_config_cache
 from issuesmith.gate_rules import GATE_REGISTRY
 from issuesmith.gate_rules.pin_bump import _self_package
+from issuesmith.step_verify import collect_violations
 from tests import legacy_text as lt
 
 _INSTALLS = {
@@ -450,3 +450,78 @@ def test_fix_hint_keeps_pyproject_when_change_table_edits_it():
     hint = _check(body, [])[0].fix_hint or ""
     assert "Keep pyproject.toml in allow_paths" in hint
     assert "remove pyproject.toml" not in hint
+
+
+def test_pin_bump_ignores_package_and_version_in_separate_clauses():
+    body = """\
+```yaml
+target_repo: sumipan/issuesmith
+base_branch: main
+allow_paths:
+  - pyproject.toml
+```
+
+## Design
+
+README.md から ghdag 所有の記述を除き、pyproject.toml の版を 0.177.0 に上げる。
+"""
+    assert _check(body, []) == []
+
+
+@pytest.mark.parametrize("required_version", ["0.120.2", "v0.120.2"])
+def test_pin_bump_ignores_reference_to_required_version(required_version: str):
+    body = f"""\
+```yaml
+target_repo: sumipan/issuesmith
+base_branch: main
+allow_paths:
+  - pyproject.toml
+requires_pins:
+  ghdag: {required_version}
+```
+
+## Design
+
+ghdag v0.120.2 の振る舞いを変えない。
+"""
+    assert _check(body, []) == []
+
+
+def test_pin_bump_fails_on_version_outside_requires_pins():
+    body = """\
+```yaml
+target_repo: sumipan/issuesmith
+base_branch: main
+allow_paths:
+  - pyproject.toml
+requires_pins:
+  ghdag: 0.120.2
+```
+
+## Design
+
+ghdag の pin を v0.121.0 に上げる。
+"""
+    violations = _check(body, [])
+    assert len(violations) == 1
+    assert violations[0].rule_id == "pin_bump.in_feature_issue"
+
+
+def test_pin_bump_fails_when_clause_mixes_required_and_other_version():
+    body = """\
+```yaml
+target_repo: sumipan/issuesmith
+base_branch: main
+allow_paths:
+  - pyproject.toml
+requires_pins:
+  ghdag: 0.120.2
+```
+
+## Design
+
+ghdag の pin を 0.120.2 から 0.121.0 に上げる。
+"""
+    violations = _check(body, [])
+    assert len(violations) == 1
+    assert violations[0].rule_id == "pin_bump.in_feature_issue"
