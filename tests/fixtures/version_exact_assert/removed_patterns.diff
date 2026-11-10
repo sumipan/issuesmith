@@ -1,0 +1,8 @@
+diff --git a/tests/pkg/test_example.py b/tests/pkg/test_example.py
+index 1111111..2222222 100644
+--- a/tests/pkg/test_example.py
++++ b/tests/pkg/test_example.py
+@@ -1,3 +0,0 @@
+-def test_pyproject_ghdag_pins_v0_116_0():
+-    assert pins == ["0.116.0", "0.116.0"]
+-    assert tag == "0.107.2"
