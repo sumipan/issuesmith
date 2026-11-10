@@ -1,4 +1,4 @@
-"""tests/gate_rules/test_cp1_version_assert.py — exact version-assert gate in tests (#3065)."""
+"""tests/gate_rules/test_design_lint_version_assert.py — exact version-assert gate in tests (#3065)."""
 
 from __future__ import annotations
 

@@ -392,7 +392,7 @@ def _current_sub_number(body: str) -> int | None:
 
 def _body_with_sub_blocks(body: str) -> str | None:
     """Return a body that contains milestone sub blocks (self or fetched parent)."""
-    from issuesmith.gate_rules.b1_milestone_subdesign import extract_sub_blocks
+    from issuesmith.gate_rules.milestone_subdesign_rules import extract_sub_blocks
 
     if extract_sub_blocks(body):
         return body
@@ -411,7 +411,7 @@ def _body_with_sub_blocks(body: str) -> str | None:
 
 def _sibling_change_path_owners(body: str, target_repo: str) -> dict[str, int]:
     """Map change-table paths to the sub number that owns them in a milestone design."""
-    from issuesmith.gate_rules.b1_milestone_subdesign import extract_sub_blocks
+    from issuesmith.gate_rules.milestone_subdesign_rules import extract_sub_blocks
 
     parent_like = _body_with_sub_blocks(body)
     if not parent_like:

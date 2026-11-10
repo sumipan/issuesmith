@@ -1,7 +1,7 @@
 """tests/gate_rules/test_ac_format.py — unit tests for the b1_ac_format gate."""
 from __future__ import annotations
 
-import issuesmith.gate_rules.b1_ac_format  # noqa: F401 — registers on import
+import issuesmith.gate_rules.ac_format_rules  # noqa: F401 — registers on import
 from issuesmith.gate_rules import GATE_REGISTRY
 
 

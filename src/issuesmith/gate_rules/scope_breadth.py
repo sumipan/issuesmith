@@ -72,7 +72,7 @@ def _format_autofix_note(
 class ScopeBreadthRules:
     def __init__(self) -> None:
         # Populated by check() when it auto-narrowed allow_paths instead of
-        # failing (#3487 AC-2). Callers with forge write access (cp1_gate.main)
+        # failing (#3487 AC-2). Callers with forge write access (design_lint_entry.main)
         # use this to persist the narrowed list and post the note; check()
         # itself never mutates the Issue.
         self.autofix_note: str | None = None

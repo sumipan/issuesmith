@@ -9,7 +9,7 @@ import pytest
 
 from issuesmith.config import get_config
 from issuesmith.contract import plan_dep_refs
-from issuesmith.gate_rules.b1_milestone_subdesign import _sub_plan_dependencies
+from issuesmith.gate_rules.milestone_subdesign_rules import _sub_plan_dependencies
 from issuesmith.milestone import Sub1State, resolve_dependencies
 
 
@@ -23,7 +23,7 @@ def test_plan_dep_refs_none_and_empty() -> None:
 
 
 def test_sub_plan_dependencies_bare_and_hash_equivalent() -> None:
-    from tests.gate_rules.test_b1_milestone_subdesign import _dep_body, _projection_subs
+    from tests.gate_rules.test_milestone_subdesign import _dep_body, _projection_subs
 
     bare = _dep_body(_projection_subs(), ["none", "2, 4"])
     hashed = _dep_body(_projection_subs(), ["none", "#2, #4"])

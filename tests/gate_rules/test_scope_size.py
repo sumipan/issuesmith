@@ -532,13 +532,13 @@ def test_promote_merges_unreadable_root_concern_into_first_readable():
 
 
 def test_promote_sub_blocks_pass_change_paths_readable_check():
-    from issuesmith.gate_rules.b1_milestone_subdesign import B1MilestoneSubdesignRules
+    from issuesmith.gate_rules.milestone_subdesign_rules import MilestoneSubdesignRules
     from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
 
     rows = [(f"src/{d}/x.py", _MODIFY) for d in ("a", "b", "c")]
     rows += [("Procfile", _MODIFY), ("pyproject.toml", _MODIFY)]
     promoted = promote_oversized_issue_body(_body(rows))
-    rules = B1MilestoneSubdesignRules()
+    rules = MilestoneSubdesignRules()
     for sub_num, block in _promoted_sub_blocks(promoted):
         assert rules._check_change_paths_readable(promoted, sub_num, block) == []
 
@@ -626,8 +626,8 @@ def test_promote_writes_creator_dependency_and_no_deps_word():
 
 def test_promote_merges_mutually_dependent_concerns():
     from issuesmith.contract import extract_change_table_rows
-    from issuesmith.gate_rules.b1_milestone_subdesign import (
-        B1MilestoneSubdesignRules,
+    from issuesmith.gate_rules.milestone_subdesign_rules import (
+        MilestoneSubdesignRules,
         find_dependency_cycles,
         infer_sub_dependencies,
     )
@@ -641,7 +641,7 @@ def test_promote_merges_mutually_dependent_concerns():
     assert len(owned) == len(set(owned))
     deps = infer_sub_dependencies(blocks)
     assert find_dependency_cycles(deps) == []
-    ids = {v.rule_id for v in B1MilestoneSubdesignRules().check(promoted, ["scope:milestone"])}
+    ids = {v.rule_id for v in MilestoneSubdesignRules().check(promoted, ["scope:milestone"])}
     assert "milestone_subdesign.dependency_cycle" not in ids
     assert "milestone_subdesign.sibling_new_file_unreferenced_dependency" not in ids
 

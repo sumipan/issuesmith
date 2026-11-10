@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-import issuesmith.gate_rules.b1_milestone_subdesign  # noqa: F401
+import issuesmith.gate_rules.milestone_subdesign_rules  # noqa: F401
 from issuesmith.config import get_config
-from tests.gate_rules.test_b1_milestone_subdesign import (
+from tests.gate_rules.test_milestone_subdesign import (
     _TABLE_HEADER,
     MILESTONE_LABELS,
     NON_MILESTONE_LABELS,

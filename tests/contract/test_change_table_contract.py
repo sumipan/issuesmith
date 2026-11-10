@@ -14,7 +14,7 @@ from issuesmith.contract import (
     extract_change_table_rows,
     parse_table_rows,
 )
-from issuesmith.gate_rules.b1_milestone_subdesign import B1MilestoneSubdesignRules
+from issuesmith.gate_rules.milestone_subdesign_rules import MilestoneSubdesignRules
 from issuesmith.milestone import PlanRow, allow_paths_for_row, build_child_body, parse_split_plan
 from tests.legacy_text import (
     ADD,
@@ -77,7 +77,7 @@ def _row() -> PlanRow:
 
 def test_bold_label_table_is_read_by_gate_and_sub1_alike() -> None:
     body = _parent(_table("sumipan/issuesmith", _CHILD_PATHS))
-    gate_ids = [v.rule_id for v in B1MilestoneSubdesignRules().check(body, ["scope:milestone"])]
+    gate_ids = [v.rule_id for v in MilestoneSubdesignRules().check(body, ["scope:milestone"])]
     assert "milestone_subdesign.change_paths_unreadable" not in gate_ids
     got = allow_paths_for_row(body, _row())
     assert got == _CHILD_PATHS
@@ -97,7 +97,7 @@ def test_unreadable_table_fails_gate_and_yields_no_paths() -> None:
     body = _parent(_table("sumipan/nexus", ["scripts/x.py"]))
     row = _row()
     assert allow_paths_for_row(body, row) == []
-    gate_ids = [v.rule_id for v in B1MilestoneSubdesignRules().check(body, ["scope:milestone"])]
+    gate_ids = [v.rule_id for v in MilestoneSubdesignRules().check(body, ["scope:milestone"])]
     # gate reports the repo it *could* read and SUB1's repo agree on "unreadable for issuesmith"
     assert change_paths_for_repo(body, "sumipan/issuesmith") == []
     assert "milestone_subdesign.repo_mismatch" in gate_ids or gate_ids  # repo column mismatch surfaces at B1
@@ -105,7 +105,7 @@ def test_unreadable_table_fails_gate_and_yields_no_paths() -> None:
 
 def test_missing_table_is_a_gate_violation() -> None:
     body = _parent("(no table here)\n")
-    gate_ids = [v.rule_id for v in B1MilestoneSubdesignRules().check(body, ["scope:milestone"])]
+    gate_ids = [v.rule_id for v in MilestoneSubdesignRules().check(body, ["scope:milestone"])]
     assert "milestone_subdesign.change_paths_unreadable" in gate_ids
     assert allow_paths_for_row(body, _row()) == []
 
@@ -187,6 +187,6 @@ def test_repo_root_file_is_returned_from_four_column_table() -> None:
 
 def test_root_only_sub_block_is_readable_by_gate() -> None:
     body = _parent(_table("sumipan/issuesmith", ["issuesmith.yaml", "pyproject.toml"]))
-    gate_ids = [v.rule_id for v in B1MilestoneSubdesignRules().check(body, ["scope:milestone"])]
+    gate_ids = [v.rule_id for v in MilestoneSubdesignRules().check(body, ["scope:milestone"])]
     assert "milestone_subdesign.change_paths_unreadable" not in gate_ids
     assert allow_paths_for_row(body, _row()) == ["issuesmith.yaml", "pyproject.toml"]

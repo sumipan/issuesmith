@@ -206,27 +206,23 @@ Ledger keys: `lanes` (lane name to Issue numbers), `hold`, `backlog`, `auto_lane
 
 | Module | Symbols |
 |---|---|
-| `issuesmith.gates` | `Verdict`, `GateBuildContext`, `GateBuildError`, `GateEntry`, `RequiresGate`, `GATE_REGISTRY`, `NON_REPAIRABLE_RULE_IDS`, `is_non_repairable_rule_id`, `resolve_gate`, `validate_step_requires`, `check_scope`, `check_pr_scope`, `check_m2`, `check_ac_complete`, `check_deps` |
+| `issuesmith.gates` | `Verdict`, `GateBuildContext`, `GateBuildError`, `GateEntry`, `RequiresGate`, `GATE_REGISTRY`, `NON_REPAIRABLE_RULE_IDS`, `is_non_repairable_rule_id`, `resolve_gate`, `validate_step_requires`, `check_scope`, `check_pr_scope`, `check_ac_complete`, `check_deps` |
 | `issuesmith.gates.ac_contract` | `AcContractGate` |
 | `issuesmith.gates.base` | `ContractInput`, `Gate` |
 | `issuesmith.gates.dep` | `check_deps`, `DepsGate`, `dependents_of`, `on_dep_merge_done` |
-| `issuesmith.gates.m1` | `RULE_ID`, `VersionBehindBaseGate` |
-| `issuesmith.gates.m2` | `check_m2` |
 | `issuesmith.gates.pr_scope` | `check_pr_scope`, `PrScopeGate` |
 | `issuesmith.gates.review` | `ReviewGate`, `build_review_gate` |
 | `issuesmith.gates.scope` | `check_scope`, `ScopeGate` |
-| `issuesmith.gates.ac_complete` | `check_ac_complete`, `check_m2` |
+| `issuesmith.gates.ac_complete` | `check_ac_complete` |
 | `issuesmith.gates.worktree` | `LintGate`, `TestsGate`, `ExternalLeakGate`, `BaseFreshnessGate`, `WORKTREE_GATES`, `changed_files`, `derive_static_test_allow_paths`, `derive_static_ledger_allow_paths`, `derive_test_allow_paths`, `derive_ledger_allow_paths`, `check_derived_test_guard`, `line_has_cjk`, `cjk_added_lines`, `external_target_state`, `is_external_target` |
 | `issuesmith.ac_complete_entry` | `has_acceptance_criteria_section`, `get_unchecked_count`, `check_gate`, `check_gate_multi_root`, `synthesize_contract_failures`, `main` |
-| `issuesmith.m2_gate` | Compatibility shim (same symbols as `ac_complete_entry`) |
 | `issuesmith.design_lint_entry` | `check_gate`, `main` |
-| `issuesmith.cp1_gate` | Compatibility shim (same symbols as `design_lint_entry`) |
 | `issuesmith.rule_ids` | `RULE_ID_ALIASES`, `normalize_rule_id`, `rule_id_matches` |
 | `issuesmith.repair` | `RequiresResult`, `evaluate_requires`, `apply_auto_fixes`, `record_metrics` |
 | `issuesmith.scope_gate` | `ScopeMeasure`, `ScopeVerdict`, `evaluate`, `format_comment`, `measure_scope`, `override_from_metadata`, `parse_allow_paths_from_ctx`, `record_p0_trip_metric`, `resolve_scope_root` |
 | `issuesmith.pr_scope` | `DEFAULT_FORBIDDEN_PR_PATHS`, `DIFF_LINES_FALLBACK`, `DerivedAllowPathsError`, `allow_paths_from_issue_body`, `check_pr_diff_scope`, `check_pr_scope_with_derived`, `derived_allow_paths_from_result`, `filenames_from_pr_files`, `find_pr_for_branch`, `normalize_allow_path`, `pr_diff_lines`, `unchecked_ac_count` |
 | `issuesmith.ac_contract` | `GateMaterializationError`, `materialize_gate_root`, `cleanup_gate_root`, `dual_gate_roots`, `extract_contract_from_body`, `run_checks`, `contract_failures`, `pending_manual_checks`, `is_invalid_contract_path`, `normalize_reference_entry`, `extract_key_path_values`, `manual_check_description`, `KNOWN_POST_MERGE_KINDS`, `POST_MERGE_REQUIRED_FIELDS` |
-| `issuesmith.gate_rules.milestone_subdesign_rules` | `MilestoneSubdesignRules` (legacy alias `B1MilestoneSubdesignRules`; legacy module `gate_rules.b1_milestone_subdesign`), `extract_sub_blocks`, `infer_sub_dependencies`, `find_dependency_cycles`, `apply_inferred_dependency_fixes`, `apply_sub_plan_dep_format_fixes`, `change_rows_with_content` |
+| `issuesmith.gate_rules.milestone_subdesign_rules` | `MilestoneSubdesignRules`, `extract_sub_blocks`, `infer_sub_dependencies`, `find_dependency_cycles`, `apply_inferred_dependency_fixes`, `apply_sub_plan_dep_format_fixes`, `change_rows_with_content` |
 
 Gate ids usable in `steps.*.requires`: `ac_complete`, `ac_contract`, `ac_format`, `allow_paths_forbidden`, `base_freshness`, `deps`, `deps_format`, `design_lint`, `external_leak`, `importer_import`, `lint`, `migration_plan`, `milestone_consistency`, `milestone_subdesign`, `pin_bump`, `pr_scope`, `scope`, `scope_breadth`, `scope_coupling`, `scope_size`, `tests` (`GATE_REGISTRY`), plus `review` (`STEP_BOUND_GATES`; needs `steps.<id>.review`). A `module.path:attr` reference loads an external gate.
 
@@ -297,15 +293,9 @@ issuesmith is pre-1.0 and follows `0.Y.Z`: a `Y` bump may change or remove publi
 |---|---|
 | `recover` command (**removed** in 0.173.0; was deprecated with `FutureWarning`) | `resume <issue> --from <step>` (see https://github.com/sumipan/issuesmith/pull/318) |
 | `redispatch` command (emits `FutureWarning`) | `resume <issue> --phase <phase>` |
-| Legacy `P0_`-prefixed fetch lock wait variable (emits `DeprecationWarning`) | `ISSUESMITH_FETCH_LOCK_WAIT` |
 | `paths.brake_state` for engine pause / quota dispatch | `paths.quota_state` (legacy `halt*` fields are converted on read and not written back) |
 | `apply` / `ingest-review` commands (exit 2) | The host's `tools/stash/` scripts |
 | `issuesmith.yaml` keys `sections`, `sub_design_subsections`, `scope_size.delete_words` / `new_words` / `sub_plan_header` / `no_deps_word` (emit `DeprecationWarning`) | `language_pack` |
-| `issuesmith.m2_gate` | `issuesmith.ac_complete_entry` (deprecated shim) |
-| `issuesmith.cp1_gate` | `issuesmith.design_lint_entry` (deprecated shim) |
-| `issuesmith.gate_rules.m2` | `issuesmith.gate_rules.ac_complete` (deprecated shim) |
-| `issuesmith.gate_rules.cp1` | `issuesmith.gate_rules.design_lint` (deprecated shim) |
-| `issuesmith.b1_verify` (verify recovery naming) | `issuesmith.step_verify` (deprecated shim of gate bundle) |
 
 ## Architecture
 
@@ -318,7 +308,6 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/ac_contract.py` | Extract and run the acceptance-criteria YAML contract |
 | `issuesmith/ac_complete_entry.py` | `ac_complete` gate CLI and library entry (rules in `gate_rules/ac_complete_rules.py`) |
 | `issuesmith/andon.py` | Andons (typed stop-the-line signals in Issue comments) and auto-answer rules |
-| `issuesmith/b1_verify.py` | Deterministic Verify of B1 output and deterministic recovery |
 | `issuesmith/body_editor.py` | Issue body editing (ghdag `body_editor` plus milestone normalizers) |
 | `issuesmith/branch_reuse.py` | Find and record reusable branches from earlier runs |
 | `issuesmith/cli.py` | Unified CLI (`_HANDLERS`) |
@@ -326,7 +315,6 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/context_hook.py` | ghdag context hook and Issue YAML metadata parsing |
 | `issuesmith/contract.py` | Step contract types and Issue-body section parsers |
 | `issuesmith/convert_to_milestone.py` | Move an Issue back to the milestone path |
-| `issuesmith/cp1_gate.py` | Compatibility shim re-exporting `design_lint_entry` |
 | `issuesmith/design_lint_entry.py` | `design_lint` gate CLI and library entry (rules in `gate_rules/design_lint_rules.py`) |
 | `issuesmith/dep_extractor.py` | Dependency extraction and checks |
 | `issuesmith/engine.py` | LLM role switcher, `run-guarded`, `run-verified`, rate-limit pause and engine wait |
@@ -337,14 +325,9 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/gate_rules/ac_complete_rules.py` | `ac_complete` gate rules (M2 merge readiness) |
 | `issuesmith/gate_rules/ac_format_rules.py` | `ac_format` gate rules |
 | `issuesmith/gate_rules/allow_paths_forbidden.py` | allow_paths vs forbidden_pr_paths overlap (pre-LLM) |
-| `issuesmith/gate_rules/b1_ac_format.py` | Compatibility shim for `ac_format_rules` |
-| `issuesmith/gate_rules/b1_migration.py` | Compatibility shim for `migration_plan_rules` |
-| `issuesmith/gate_rules/b1_milestone_subdesign.py` | Compatibility shim for `milestone_subdesign_rules` |
 | `issuesmith/gate_rules/change_table_scope.py` | Change-table path scope vs allow_paths / host_allow_paths |
-| `issuesmith/gate_rules/cp1.py` | Compatibility shim for `design_lint_rules` |
 | `issuesmith/gate_rules/deps_format.py` | Dependencies section format: unparsed `#N` refs without forge calls |
 | `issuesmith/gate_rules/design_lint_rules.py` | `design_lint` / CP1 design rules |
-| `issuesmith/gate_rules/m2.py` | Compatibility shim for `ac_complete_rules` |
 | `issuesmith/gate_rules/migration_plan_rules.py` | `migration_plan` gate rules |
 | `issuesmith/gate_rules/milestone_subdesign_rules.py` | `milestone_subdesign` gate rules and dependency inference |
 | `issuesmith/gate_rules/milestone_consistency.py` | Split plan without the `scope:milestone` label |
@@ -357,8 +340,6 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/gates/ac_contract.py` | Worktree gate: acceptance contract `paths_must_exist` / `paths_must_not_exist` |
 | `issuesmith/gates/base.py` | `Gate` protocol and `ContractInput` |
 | `issuesmith/gates/dep.py` | Dependency gate |
-| `issuesmith/gates/m1.py` | M1 version-behind-base gate |
-| `issuesmith/gates/m2.py` | Compatibility shim for `gates/ac_complete.py` |
 | `issuesmith/gates/pr_scope.py` | PR scope gate |
 | `issuesmith/gates/review.py` | `review` gate: runs `steps.<id>.review` through `run-guarded` and maps its problems to violations |
 | `issuesmith/gates/scope.py` | Scope gate |
@@ -367,7 +348,6 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/lanes.py` | Lane ledger planning: capacity, candidates, enqueue and patrol report |
 | `issuesmith/lang/en.yaml` | English messages for `context_hook` metadata validation |
 | `issuesmith/language.py` | Language packs |
-| `issuesmith/m2_gate.py` | Compatibility shim re-exporting `ac_complete_entry` |
 | `issuesmith/merge.py` | PR merge and verification helpers |
 | `issuesmith/metrics_events.py` | Metrics JSONL event writers |
 | `issuesmith/metrics_rework.py` | Rework metrics (`metrics rework`) |

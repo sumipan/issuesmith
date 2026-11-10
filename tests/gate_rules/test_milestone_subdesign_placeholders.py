@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import issuesmith.gate_rules.b1_milestone_subdesign  # noqa: F401
+import issuesmith.gate_rules.milestone_subdesign_rules  # noqa: F401
 from issuesmith.config import get_config
-from tests.gate_rules.test_b1_milestone_subdesign import (
+from tests.gate_rules.test_milestone_subdesign import (
     _TABLE_HEADER,
     MILESTONE_LABELS,
     NON_MILESTONE_LABELS,
@@ -126,7 +126,7 @@ def test_sub_block_returns_empty_when_no_subs():
 def test_sub_block_parity_with_extract_sub_blocks():
     """sub_block(body, N) and extract_sub_blocks(body)[N-1] return identical text."""
     from issuesmith.contract import sub_block
-    from issuesmith.gate_rules.b1_milestone_subdesign import extract_sub_blocks
+    from issuesmith.gate_rules.milestone_subdesign_rules import extract_sub_blocks
 
     body = _body_with_parent_section_after_last_sub()
     blocks = extract_sub_blocks(body)
@@ -147,7 +147,7 @@ def test_sub_block_parity_excludes_parent_section_paths():
     assert "tools/foo/b.py" in paths
 
 
-# --- b1_verify oscillation detection (nexus #4076) ---
+# --- step_verify oscillation detection (nexus #4076) ---
 
 
 def _violation(rule_id: str, severity: str = "fail"):
@@ -171,7 +171,7 @@ _PREV_REPORT = (
 
 
 def test_parse_prev_counts_reads_the_report_header():
-    from issuesmith.b1_verify import _parse_prev_counts
+    from issuesmith.step_verify import _parse_prev_counts
 
     counts = _parse_prev_counts(_PREV_REPORT)
     assert counts == {
@@ -183,7 +183,7 @@ def test_parse_prev_counts_reads_the_report_header():
 
 
 def test_oscillation_detected_when_a_rule_count_grows():
-    from issuesmith.b1_verify import detect_oscillation
+    from issuesmith.step_verify import detect_oscillation
 
     current = [_violation("milestone_subdesign.repo_mismatch")] * 3
     v = detect_oscillation(current, _PREV_REPORT)
@@ -194,7 +194,7 @@ def test_oscillation_detected_when_a_rule_count_grows():
 
 
 def test_no_oscillation_when_counts_shrink_or_stay():
-    from issuesmith.b1_verify import detect_oscillation
+    from issuesmith.step_verify import detect_oscillation
 
     current = [_violation("milestone_subdesign.repo_mismatch")] * 2
     assert detect_oscillation(current, _PREV_REPORT) is None
@@ -265,7 +265,7 @@ def test_main_without_prev_report_has_no_oscillation(tmp_path, monkeypatch, caps
 
 def test_promoted_oversized_body_reports_placeholder_design_per_sub():
     """AC (#4915): each promoted sub gets exactly one placeholder_design violation."""
-    from issuesmith.gate_rules.b1_milestone_subdesign import PLACEHOLDER_DESIGN_ID
+    from issuesmith.gate_rules.milestone_subdesign_rules import PLACEHOLDER_DESIGN_ID
     from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
 
     promoted = promote_oversized_issue_body(_oversized_non_milestone_body())
@@ -277,7 +277,7 @@ def test_promoted_oversized_body_reports_placeholder_design_per_sub():
 
 def test_placeholder_design_cleared_when_one_sub_is_filled_in():
     """AC (#4915): a sub with real design and extra AC no longer reports placeholder."""
-    from issuesmith.gate_rules.b1_milestone_subdesign import (
+    from issuesmith.gate_rules.milestone_subdesign_rules import (
         PLACEHOLDER_AC_TEMPLATES,
         PLACEHOLDER_DESIGN_ID,
     )
@@ -355,7 +355,7 @@ paths_must_exist:
 
 
 def test_placeholder_design_detects_scope_marker_only():
-    from issuesmith.gate_rules.b1_milestone_subdesign import (
+    from issuesmith.gate_rules.milestone_subdesign_rules import (
         PLACEHOLDER_DESIGN_ID,
         PLACEHOLDER_DESIGN_MARKER,
     )
@@ -386,7 +386,7 @@ def test_placeholder_design_detects_scope_marker_only():
 
 
 def test_placeholder_design_detects_change_content_only():
-    from issuesmith.gate_rules.b1_milestone_subdesign import (
+    from issuesmith.gate_rules.milestone_subdesign_rules import (
         PLACEHOLDER_CHANGE_CONTENT,
         PLACEHOLDER_DESIGN_ID,
     )
@@ -417,7 +417,7 @@ def test_placeholder_design_detects_change_content_only():
 
 
 def test_placeholder_design_detects_template_ac_only():
-    from issuesmith.gate_rules.b1_milestone_subdesign import (
+    from issuesmith.gate_rules.milestone_subdesign_rules import (
         PLACEHOLDER_AC_TEMPLATES,
         PLACEHOLDER_DESIGN_ID,
     )
@@ -450,7 +450,7 @@ def test_placeholder_design_detects_template_ac_only():
 
 
 def test_placeholder_design_no_false_positive_marker_mid_sentence():
-    from issuesmith.gate_rules.b1_milestone_subdesign import (
+    from issuesmith.gate_rules.milestone_subdesign_rules import (
         PLACEHOLDER_DESIGN_ID,
         PLACEHOLDER_DESIGN_MARKER,
     )
@@ -480,7 +480,7 @@ def test_placeholder_design_no_false_positive_marker_mid_sentence():
 
 
 def test_placeholder_design_no_false_positive_mixed_ac():
-    from issuesmith.gate_rules.b1_milestone_subdesign import (
+    from issuesmith.gate_rules.milestone_subdesign_rules import (
         PLACEHOLDER_AC_TEMPLATES,
         PLACEHOLDER_DESIGN_ID,
     )
@@ -511,7 +511,7 @@ def test_placeholder_design_no_false_positive_mixed_ac():
 
 
 def test_placeholder_design_skipped_without_milestone_label():
-    from issuesmith.gate_rules.b1_milestone_subdesign import PLACEHOLDER_DESIGN_ID
+    from issuesmith.gate_rules.milestone_subdesign_rules import PLACEHOLDER_DESIGN_ID
     from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
 
     promoted = promote_oversized_issue_body(_oversized_non_milestone_body())
@@ -524,7 +524,7 @@ def test_placeholder_design_skipped_without_milestone_label():
 
 
 def test_placeholder_design_fix_hint_allows_ac_key_moves():
-    from issuesmith.gate_rules.b1_milestone_subdesign import (
+    from issuesmith.gate_rules.milestone_subdesign_rules import (
         PLACEHOLDER_DESIGN_ID,
         PLACEHOLDER_DESIGN_MARKER,
     )

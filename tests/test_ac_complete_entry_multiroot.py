@@ -1,4 +1,4 @@
-"""tests/test_m2_gate_multiroot.py — M2 multi-root contract synthesis tests (#2866)"""
+"""tests/test_ac_complete_entry_multiroot.py — AC-complete multi-root contract synthesis tests (#2866)"""
 
 from pathlib import Path
 

@@ -42,10 +42,10 @@ _CJK_RE = re.compile(
 _MIGRATED_FILES = (
     "src/issuesmith/queue.py",
     "src/issuesmith/queue_triage.py",
-    "src/issuesmith/m2_gate.py",
+    "src/issuesmith/ac_complete_entry.py",
     "src/issuesmith/scope_gate.py",
-    "src/issuesmith/cp1_gate.py",
-    "src/issuesmith/b1_verify.py",
+    "src/issuesmith/design_lint_entry.py",
+    "src/issuesmith/step_verify.py",
     "src/issuesmith/ac_contract.py",
 )
 

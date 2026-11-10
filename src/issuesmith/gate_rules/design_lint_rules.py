@@ -825,6 +825,4 @@ class DesignLintRules:
         return violations
 
 
-Cp1Rules = DesignLintRules
-
 GATE_REGISTRY["design_lint"] = DesignLintRules

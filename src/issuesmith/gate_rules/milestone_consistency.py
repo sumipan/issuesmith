@@ -9,7 +9,7 @@ from ghdag.workflow.gates import GATE_REGISTRY, Violation
 from issuesmith.body_editor import normalize_sub_headers, relocate_sub_plan
 from issuesmith.config import get_config
 from issuesmith.contract import sub_header_re
-from issuesmith.gate_rules.b1_milestone_subdesign import get_section
+from issuesmith.gate_rules.milestone_subdesign_rules import get_section
 
 _SUB_HEADER_EN_RE = re.compile(
     r"^####\s+[Ss]ub[ \t]+(\d+)[ \t]*:?", re.MULTILINE | re.IGNORECASE
@@ -142,7 +142,7 @@ class MilestoneConsistencyRules:
                         f"a `#### {sub_prefix}N: <title>` design block under "
                         f"`## {sections['design']}` "
                         "(changed files table, acceptance criteria); otherwise verify fails "
-                        "with b1_milestone_subdesign.sub_count_mismatch. "
+                        "with milestone_subdesign.sub_count_mismatch. "
                         "Do not use the spaced `Sub N` header form "
                         "(milestone_consistency.sub_header_english rejects them)."
                     ),

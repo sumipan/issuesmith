@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Removed
+
+- **BREAKING:** compatibility shim modules `issuesmith.cp1_gate`, `issuesmith.m2_gate`, `issuesmith.b1_verify`, `issuesmith.gates.m2`, `issuesmith.gate_rules.cp1`, `issuesmith.gate_rules.m2`, `issuesmith.gate_rules.b1_ac_format`, `issuesmith.gate_rules.b1_migration` and `issuesmith.gate_rules.b1_milestone_subdesign`. Import `issuesmith.design_lint_entry`, `issuesmith.ac_complete_entry`, `issuesmith.step_verify`, `issuesmith.gates.ac_complete` and the `gate_rules.*_rules` modules instead (#6077).
+- **BREAKING:** dead module `issuesmith.gates.m1` (`VersionBehindBaseGate`, no importers) (#6077).
+- **BREAKING:** legacy class aliases `Cp1Rules`, `M2Rules`, `B1AcFormatRules`, `B1MigrationRules` and `B1MilestoneSubdesignRules`; use `DesignLintRules`, `AcCompleteRules`, `AcFormatRules`, `MigrationPlanRules` and `MilestoneSubdesignRules` (#6077).
+- **BREAKING:** `check_m2` from `issuesmith.gates` and `issuesmith.gates.ac_complete`; use `check_ac_complete` (#6077).
+- **BREAKING:** the `P0_FETCH_LOCK_WAIT` environment variable fallback and its `DeprecationWarning`; only `ISSUESMITH_FETCH_LOCK_WAIT` is read (#6077).
+
 ## 0.175.3 - 2026-11-10
 
 ### Fixed

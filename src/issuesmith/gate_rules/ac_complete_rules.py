@@ -56,6 +56,4 @@ class AcCompleteRules:
         )]
 
 
-M2Rules = AcCompleteRules
-
 GATE_REGISTRY["ac_complete"] = AcCompleteRules

@@ -23,6 +23,8 @@ _VOCAB = re.compile(
     r'|"(b1|cp1|cp2|p0|p1|p3|m1|m2|mg1|sub1)"'
     r'|\b(BRUSHUP_(DONE|FAILED)|IMPL_FAILED|CP2_(PASS|FAIL)|SUB_(CREATED|BODY_READY|BODY_FAILED)|P3_[A-Z_]+|MIGRATE_DONE|B1_RECOVERY)\b'
     r"|issuesmith:(rejected|superseded)"
+    r"|\b(cp1|m2|b1_ac_format|b1_migration|b1_milestone_subdesign)\.[a-z_]"
+    r"|\b(P0_FETCH_LOCK_WAIT|INTENTIONAL_HOLD)\b"
 )
 
 _LEDGER_PATH = REPO_ROOT / "tests/conventions/known_vocabulary_hits.txt"
@@ -66,6 +68,22 @@ def _read_ledger() -> dict[str, int]:
     ],
 )
 def test_vocab_matches_consumer_workflow_literals(sample: str):
+    assert _VOCAB.search(sample), f"_VOCAB must match {sample!r}"
+
+
+@pytest.mark.parametrize(
+    "sample",
+    [
+        '"cp1.intentional_hold"',
+        '"m2.unchecked"',
+        '"b1_ac_format.missing_section"',
+        '"b1_migration.post_merge_schema"',
+        '"b1_milestone_subdesign.sub_count_mismatch"',
+        "P0_FETCH_LOCK_WAIT",
+        "INTENTIONAL_HOLD",
+    ],
+)
+def test_vocab_matches_legacy_workflow_literals(sample: str):
     assert _VOCAB.search(sample), f"_VOCAB must match {sample!r}"
 
 
@@ -129,3 +147,35 @@ def test_diary_hits_reports_path_and_line(tmp_path: Path):
     (pkg / "mod.py").write_text("x = 1\n# legacy Diary note\n", encoding="utf-8")
     (pkg / "data.yaml").write_text("diary: true\n", encoding="utf-8")
     assert _diary_hits(pkg) == ["src/issuesmith/data.yaml:1", "src/issuesmith/mod.py:2"]
+
+
+# #6077: the compatibility shims and legacy aliases were removed; nothing may
+# reference them again.
+_LEGACY_REFERENCE = re.compile(
+    r"\bissuesmith\.(cp1_gate|m2_gate|b1_verify)\b"
+    r"|\bfrom issuesmith import (cp1_gate|m2_gate|b1_verify)\b"
+    r"|\bissuesmith\.gates\.(m1|m2)\b"
+    r"|\bissuesmith\.gate_rules\.(cp1|m2|b1_ac_format|b1_migration|b1_milestone_subdesign)\b"
+    r"|\b(Cp1Rules|M2Rules|B1AcFormatRules|B1MigrationRules|B1MilestoneSubdesignRules|check_m2)\b"
+)
+
+# Files that assert the removal itself and therefore spell the legacy names.
+_LEGACY_REFERENCE_EXEMPT = frozenset(
+    {
+        "tests/conventions/test_no_workflow_vocabulary.py",
+        "tests/test_gates.py",
+    }
+)
+
+
+def test_source_and_tests_use_canonical_module_references():
+    hits: list[str] = []
+    for root in (REPO_ROOT / "src/issuesmith", REPO_ROOT / "tests"):
+        for path in sorted(root.rglob("*.py")):
+            rel = str(path.relative_to(REPO_ROOT))
+            if rel in _LEGACY_REFERENCE_EXEMPT:
+                continue
+            for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if _LEGACY_REFERENCE.search(line):
+                    hits.append(f"{rel}:{lineno}")
+    assert not hits, "legacy shim / alias references remain:\n" + "\n".join(hits)

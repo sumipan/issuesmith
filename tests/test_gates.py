@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 
 import issuesmith.gates as gates_mod
-from issuesmith.gates import Verdict, check_deps, check_m2, check_pr_scope, check_scope
+from issuesmith.gates import Verdict, check_ac_complete, check_deps, check_pr_scope, check_scope
 
 # ---------------------------------------------------------------------------
 # Verdict dataclass
@@ -145,44 +145,44 @@ def test_pr_scope_gate_still_rejects_other_file_with_dot_slash_allow(tmp_path: P
 
 
 # ---------------------------------------------------------------------------
-# check_m2
+# check_ac_complete
 # ---------------------------------------------------------------------------
 
 
-def test_check_m2_returns_verdict_passed_on_proceed() -> None:
+def test_check_ac_complete_returns_verdict_passed_on_proceed() -> None:
     gate_result = {"action": "proceed", "unchecked_count": 0, "has_section": True,
                    "has_migration_label": False, "contract_failures": []}
-    with patch("issuesmith.gates.m2.check_gate", return_value=gate_result):
-        result = check_m2("## Acceptance Criteria\n- [x] done\n", [])
+    with patch("issuesmith.gates.ac_complete.check_gate", return_value=gate_result):
+        result = check_ac_complete("## Acceptance Criteria\n- [x] done\n", [])
     assert isinstance(result, Verdict)
     assert result.passed is True
 
 
-def test_check_m2_returns_verdict_failed_on_retry_with_unchecked() -> None:
+def test_check_ac_complete_returns_verdict_failed_on_retry_with_unchecked() -> None:
     gate_result = {"action": "retry", "unchecked_count": 2, "has_section": True,
                    "has_migration_label": False, "contract_failures": []}
-    with patch("issuesmith.gates.m2.check_gate", return_value=gate_result):
-        result = check_m2("## Acceptance Criteria\n- [ ] todo\n", [])
+    with patch("issuesmith.gates.ac_complete.check_gate", return_value=gate_result):
+        result = check_ac_complete("## Acceptance Criteria\n- [ ] todo\n", [])
     assert isinstance(result, Verdict)
     assert result.passed is False
     assert any("2" in r for r in result.reasons)
 
 
-def test_check_m2_returns_verdict_failed_on_retry_with_contract_failures() -> None:
+def test_check_ac_complete_returns_verdict_failed_on_retry_with_contract_failures() -> None:
     gate_result = {"action": "retry", "unchecked_count": 0, "has_section": True,
                    "has_migration_label": False, "contract_failures": ["path missing: src/x.py"]}
-    with patch("issuesmith.gates.m2.check_gate", return_value=gate_result):
-        result = check_m2("body text", [])
+    with patch("issuesmith.gates.ac_complete.check_gate", return_value=gate_result):
+        result = check_ac_complete("body text", [])
     assert isinstance(result, Verdict)
     assert result.passed is False
     assert "path missing: src/x.py" in result.reasons
 
 
-def test_check_m2_returns_verdict_failed_on_migrate() -> None:
+def test_check_ac_complete_returns_verdict_failed_on_migrate() -> None:
     gate_result = {"action": "migrate", "unchecked_count": 1, "has_section": True,
                    "has_migration_label": True, "contract_failures": []}
-    with patch("issuesmith.gates.m2.check_gate", return_value=gate_result):
-        result = check_m2("body text", ["scope:migration"])
+    with patch("issuesmith.gates.ac_complete.check_gate", return_value=gate_result):
+        result = check_ac_complete("body text", ["scope:migration"])
     assert isinstance(result, Verdict)
     assert result.passed is False
 
@@ -252,14 +252,14 @@ def test_all_gate_functions_return_verdict_type() -> None:
         patch("issuesmith.gates.scope.measure_scope", return_value=measure),
         patch("issuesmith.gates.scope.evaluate", return_value=scope_verdict_raw),
         patch("issuesmith.gates.pr_scope.check_pr_diff_scope", return_value=[]),
-        patch("issuesmith.gates.m2.check_gate", return_value=gate_result),
+        patch("issuesmith.gates.ac_complete.check_gate", return_value=gate_result),
     ):
         scope_v = check_scope(Path("."), ["src/**"], cfg)
         pr_v = check_pr_scope([], [])
-        m2_v = check_m2("body text", [])
+        ac_v = check_ac_complete("body text", [])
         dep_v = check_deps([])
 
-    for v in (scope_v, pr_v, m2_v, dep_v):
+    for v in (scope_v, pr_v, ac_v, dep_v):
         assert isinstance(v, Verdict), f"expected Verdict, got {type(v)}"
 
 
@@ -433,7 +433,7 @@ def test_deps_gate_merged_dep_returns_empty() -> None:
 
 
 # ---------------------------------------------------------------------------
-# m1.version_behind_base: VersionBehindBaseGate (nexus #3936)
+# git helpers
 # ---------------------------------------------------------------------------
 
 
@@ -443,173 +443,6 @@ def _git(cwd: Path, *args: str) -> str:
     return subprocess.run(
         ["git", "-C", str(cwd), *args], capture_output=True, text=True, check=True
     ).stdout
-
-
-def _write_version(repo: Path, version: str) -> None:
-    (repo / "pyproject.toml").write_text(
-        f'[project]\nname = "demo"\nversion = "{version}"\n', encoding="utf-8"
-    )
-
-
-def _version_behind_repo(
-    tmp_path: Path, *, start: str, branch: str | None, base: str | None
-) -> Path:
-    """origin (bare) + a clone on ``feat`` whose pyproject diverged from ``main``.
-
-    ``branch`` / ``base`` are the versions committed on ``feat`` / ``origin/main``
-    after the fork (None = the line is left at ``start``).
-    """
-    origin = tmp_path / "origin.git"
-    _git(tmp_path, "init", "--bare", "-b", "main", str(origin))
-    seed = tmp_path / "seed"
-    _git(tmp_path, "clone", str(origin), str(seed))
-    for repo in (seed,):
-        _git(repo, "config", "user.email", "t@t.com")
-        _git(repo, "config", "user.name", "T")
-    _write_version(seed, start)
-    (seed / "CHANGELOG.md").write_text("# Changelog\n", encoding="utf-8")
-    _git(seed, "add", ".")
-    _git(seed, "commit", "-m", "init")
-    _git(seed, "push", "origin", "HEAD:main")
-
-    wt = tmp_path / "wt"
-    _git(tmp_path, "clone", str(origin), str(wt))
-    _git(wt, "config", "user.email", "t@t.com")
-    _git(wt, "config", "user.name", "T")
-    _git(wt, "checkout", "-b", "feat")
-    (wt / "notes.txt").write_text("feature\n", encoding="utf-8")
-    _git(wt, "add", ".")
-    _git(wt, "commit", "-m", "docs: add notes")
-    if branch is not None:
-        _write_version(wt, branch)
-        _git(wt, "commit", "-am", f"chore: bump version to {branch} (Z: Z)")
-    _git(wt, "push", "-u", "origin", "feat")
-
-    if base is not None:
-        _write_version(seed, base)
-        _git(seed, "commit", "-am", f"chore: bump version to {base} (Z: Z)")
-        _git(seed, "push", "origin", "HEAD:main")
-    return wt
-
-
-def _in_process_bump(worktree: Path, base_branch: str):
-    """Stand-in for publish._run_version_bump without the nexus scripts/ shim."""
-    import contextlib
-    import io
-    import subprocess
-
-    from issuesmith.ops.version_bump import run_bump
-
-    out = io.StringIO()
-    with contextlib.redirect_stdout(out):
-        rc = run_bump(worktree, base_branch)
-    return subprocess.CompletedProcess(args=[], returncode=rc, stdout=out.getvalue(), stderr="")
-
-
-def _pyproject_version_at(repo: Path, ref: str) -> str:
-    import re
-
-    text = _git(repo, "show", f"{ref}:pyproject.toml")
-    m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
-    assert m
-    return m.group(1)
-
-
-def test_version_behind_base_passes_without_pyproject(tmp_path: Path) -> None:
-    """AC-3: a target without pyproject.toml (nexus) never violates."""
-    from issuesmith.gates.m1 import VersionBehindBaseGate
-
-    wt = tmp_path / "wt"
-    wt.mkdir()
-    _git(tmp_path, "init", "-b", "main", str(wt))
-    assert VersionBehindBaseGate(wt, "main").check("", []) == []
-
-
-def test_version_behind_base_equal_versions_violates(tmp_path: Path) -> None:
-    from issuesmith.gates.m1 import VersionBehindBaseGate
-
-    wt = _version_behind_repo(tmp_path, start="0.80.0", branch="0.81.0", base="0.81.0")
-    violations = VersionBehindBaseGate(wt, "main").check("", [])
-    assert [v.rule_id for v in violations] == ["m1.version_behind_base"]
-    assert violations[0].auto_fixable is True
-    assert "0.81.0" in violations[0].message
-
-
-def test_version_behind_base_branch_ahead_passes(tmp_path: Path) -> None:
-    """AC-2: branch version > base version → no violation, fix() adds no commit."""
-    from issuesmith.gates.base import ContractInput
-    from issuesmith.gates.m1 import VersionBehindBaseGate
-
-    wt = _version_behind_repo(tmp_path, start="0.80.0", branch="0.81.0", base=None)
-    gate = VersionBehindBaseGate(wt, "main")
-    assert gate.check("", []) == []
-    head = _git(wt, "rev-parse", "HEAD")
-    with patch("issuesmith.gates.m1.run_version_bump", side_effect=_in_process_bump) as bump:
-        gate.fix(ContractInput(body=""))
-    bump.assert_not_called()
-    assert _git(wt, "rev-parse", "HEAD") == head
-
-
-def test_version_behind_base_fix_equal_bumps_and_pushes(tmp_path: Path) -> None:
-    """AC-1 / AC-6: 0.81.0 == 0.81.0 → 0.81.1 pushed; check() is clean afterwards."""
-    from issuesmith.gates.base import ContractInput
-    from issuesmith.gates.m1 import VersionBehindBaseGate
-
-    wt = _version_behind_repo(tmp_path, start="0.80.0", branch="0.81.0", base="0.81.0")
-    gate = VersionBehindBaseGate(wt, "main")
-    with patch("issuesmith.gates.m1.run_version_bump", side_effect=_in_process_bump):
-        gate.fix(ContractInput(body=""))
-    assert _pyproject_version_at(wt, "HEAD") == "0.81.1"
-    _git(wt, "fetch", "origin")
-    assert _pyproject_version_at(wt, "origin/feat") == "0.81.1"
-    assert _git(wt, "merge-base", "--is-ancestor", "origin/main", "HEAD") == ""
-    assert gate.check("", []) == []
-
-
-def test_version_behind_base_fix_branch_older_bumps_past_base(tmp_path: Path) -> None:
-    """AC-5: branch 0.80.0 < base 0.81.0 → 0.81.1 (not 0.80.1)."""
-    from issuesmith.gates.base import ContractInput
-    from issuesmith.gates.m1 import VersionBehindBaseGate
-
-    wt = _version_behind_repo(tmp_path, start="0.80.0", branch=None, base="0.81.0")
-    gate = VersionBehindBaseGate(wt, "main")
-    assert [v.rule_id for v in gate.check("", [])] == ["m1.version_behind_base"]
-    with patch("issuesmith.gates.m1.run_version_bump", side_effect=_in_process_bump):
-        gate.fix(ContractInput(body=""))
-    assert _pyproject_version_at(wt, "HEAD") == "0.81.1"
-    assert gate.check("", []) == []
-
-
-def test_version_behind_base_fix_is_idempotent(tmp_path: Path) -> None:
-    """AC-6: a second fix() after a successful one adds no commit."""
-    from issuesmith.gates.base import ContractInput
-    from issuesmith.gates.m1 import VersionBehindBaseGate
-
-    wt = _version_behind_repo(tmp_path, start="0.80.0", branch="0.81.0", base="0.81.0")
-    gate = VersionBehindBaseGate(wt, "main")
-    with patch("issuesmith.gates.m1.run_version_bump", side_effect=_in_process_bump):
-        gate.fix(ContractInput(body=""))
-        head = _git(wt, "rev-parse", "HEAD")
-        gate.fix(ContractInput(body=""))
-    assert _git(wt, "rev-parse", "HEAD") == head
-    assert _pyproject_version_at(wt, "HEAD") == "0.81.1"
-
-
-def test_version_behind_base_fix_failure_rolls_back(tmp_path: Path) -> None:
-    """A failed bump leaves HEAD (and origin/feat) where they were and raises."""
-    import subprocess
-
-    from issuesmith.gates.base import ContractInput
-    from issuesmith.gates.m1 import VersionBehindBaseGate
-
-    wt = _version_behind_repo(tmp_path, start="0.80.0", branch="0.81.0", base="0.81.0")
-    head = _git(wt, "rev-parse", "HEAD")
-    failed = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="boom")
-    with patch("issuesmith.gates.m1.run_version_bump", return_value=failed):
-        with pytest.raises(RuntimeError, match="boom"):
-            VersionBehindBaseGate(wt, "main").fix(ContractInput(body=""))
-    assert _git(wt, "rev-parse", "HEAD") == head
-    assert _git(wt, "rev-parse", "origin/feat") == head
 
 
 def test_publish_exports_bump_helpers() -> None:
@@ -644,39 +477,20 @@ def test_non_repairable_rule_ids_and_pr_scope_repairable() -> None:
     assert is_non_repairable_rule_id("review.cp2") is False
 
 
-def test_legacy_gate_modules_are_shims() -> None:
-    import issuesmith.ac_complete_entry as ac_complete
-    import issuesmith.cp1_gate as cp1
-    import issuesmith.design_lint_entry as design_lint
+def test_gates_exports_only_canonical_ac_complete() -> None:
+    import importlib
+
     import issuesmith.gates.ac_complete as gates_ac
-    import issuesmith.gates.m2 as gates_m2
-    import issuesmith.m2_gate as m2
 
-    assert cp1 is design_lint
-    assert m2 is ac_complete
-    assert gates_m2 is gates_ac
-    assert gates_m2.check_m2 is gates_ac.check_ac_complete
-
-    from issuesmith.gates.m2 import check_m2  # noqa: F401
-    from issuesmith.m2_gate import (  # noqa: F401
-        check_gate,
-        get_unchecked_count,
-        synthesize_contract_failures,
-    )
-
-
-def test_m2_shim_check_gate_is_patchable() -> None:
-    gate_result = {
-        "action": "proceed",
-        "unchecked_count": 0,
-        "has_section": True,
-        "has_migration_label": False,
-        "contract_failures": [],
-    }
-    with patch("issuesmith.gates.m2.check_gate", return_value=gate_result):
-        result = check_m2("## Acceptance Criteria\n- [x] done\n", [])
-    assert isinstance(result, Verdict)
-    assert result.passed is True
+    assert "check_ac_complete" in gates_mod.__all__
+    assert gates_mod.check_ac_complete is gates_ac.check_ac_complete
+    assert "check_m2" not in gates_mod.__all__
+    assert not hasattr(gates_mod, "check_m2")
+    assert not hasattr(gates_ac, "check_m2")
+    with pytest.raises(ImportError):
+        exec("from issuesmith.gates import check_m2", {})
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("issuesmith.gates.m2")
 
 
 # ---------------------------------------------------------------------------

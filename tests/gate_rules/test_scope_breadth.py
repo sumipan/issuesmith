@@ -111,8 +111,8 @@ def test_missing_measurement_root_is_a_warning():
     assert violations[0].severity == "warn"
 
 
-def test_root_unavailable_is_not_a_b1_verify_failed_check():
-    from issuesmith.b1_verify import collect_violations, format_report
+def test_root_unavailable_is_not_a_step_verify_failed_check():
+    from issuesmith.step_verify import collect_violations, format_report
 
     body = (
         "```yaml\n"

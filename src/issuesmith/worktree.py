@@ -89,20 +89,7 @@ def _git_common_dir(repo_dir: Path) -> Path:
 
 
 def _lock_wait_seconds() -> int:
-    import warnings
-
-    raw = os.environ.get("ISSUESMITH_FETCH_LOCK_WAIT")
-    if raw is None:
-        legacy = os.environ.get("P0_FETCH_LOCK_WAIT")
-        if legacy is not None:
-            warnings.warn(
-                "P0_FETCH_LOCK_WAIT is deprecated; use ISSUESMITH_FETCH_LOCK_WAIT",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            raw = legacy
-        else:
-            raw = "30"
+    raw = os.environ.get("ISSUESMITH_FETCH_LOCK_WAIT", "30")
     try:
         return max(0, int(raw))
     except ValueError:

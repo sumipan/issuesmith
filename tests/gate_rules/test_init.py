@@ -75,23 +75,23 @@ def test_gate_rule_protocol_compliance():
     assert result == []
 
 
-def test_legacy_rule_classes_are_aliases_of_concept_rules():
-    from issuesmith.gate_rules.ac_complete_rules import AcCompleteRules, get_unchecked_count
-    from issuesmith.gate_rules.b1_milestone_subdesign import (
-        B1MilestoneSubdesignRules,
-        _sub_plan_dependencies,
-        parse_table_rows,
-    )
-    from issuesmith.gate_rules.cp1 import Cp1Rules
+def test_canonical_rule_classes_are_registered():
+    from issuesmith.gate_rules import GATE_REGISTRY
+    from issuesmith.gate_rules.ac_complete_rules import AcCompleteRules
+    from issuesmith.gate_rules.ac_format_rules import AcFormatRules
     from issuesmith.gate_rules.design_lint_rules import DesignLintRules
-    from issuesmith.gate_rules.m2 import M2Rules
+    from issuesmith.gate_rules.migration_plan_rules import MigrationPlanRules
+    from issuesmith.gate_rules.milestone_subdesign_rules import MilestoneSubdesignRules
 
-    assert Cp1Rules is DesignLintRules
-    assert M2Rules is AcCompleteRules
-    assert callable(get_unchecked_count)
-    assert callable(parse_table_rows)
-    assert callable(_sub_plan_dependencies)
-    assert B1MilestoneSubdesignRules is not None
+    expected = {
+        "design_lint": DesignLintRules,
+        "ac_complete": AcCompleteRules,
+        "ac_format": AcFormatRules,
+        "migration_plan": MigrationPlanRules,
+        "milestone_subdesign": MilestoneSubdesignRules,
+    }
+    for gate_id, cls in expected.items():
+        assert GATE_REGISTRY.get(gate_id) is cls, gate_id
 
 
 def test_src_gate_rules_use_concept_rule_id_prefixes():

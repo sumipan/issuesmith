@@ -1,8 +1,8 @@
 """
 ac_complete_entry.py — acceptance-criteria completion gate entry point
 
-The logic is delegated to M2Rules in gate_rules/m2.py.
-has_acceptance_criteria_section / get_unchecked_count are re-exported for backward compatibility.
+The logic is delegated to AcCompleteRules in gate_rules/ac_complete_rules.py.
+has_acceptance_criteria_section / get_unchecked_count are re-exported from gate_rules.ac_complete_rules.
 """
 
 from __future__ import annotations
@@ -14,8 +14,8 @@ from pathlib import Path
 
 from ghdag.forge import get_forge
 
-from issuesmith.gate_rules.m2 import (
-    M2Rules,
+from issuesmith.gate_rules.ac_complete_rules import (
+    AcCompleteRules,
     get_unchecked_count,
     has_acceptance_criteria_section,
 )
@@ -145,7 +145,7 @@ def check_gate_multi_root(
 ) -> dict:
     """AC-complete gate verdict combining per-target contracts across multiple roots."""
     has_migration_label = "scope:migration" in labels
-    violations = M2Rules().check(body, labels)
+    violations = AcCompleteRules().check(body, labels)
     rule_ids = {v.rule_id for v in violations}
 
     if any(rule_id_matches(rid, "ac_complete.ac_section_missing") for rid in rule_ids):
@@ -202,7 +202,7 @@ def check_gate_multi_root(
 def check_gate(body: str, labels: list[str], repo_root: Path | None = None) -> dict:
     """Return the AC-complete gate verdict."""
     has_migration_label = "scope:migration" in labels
-    violations = M2Rules().check(body, labels)
+    violations = AcCompleteRules().check(body, labels)
 
     rule_ids = {v.rule_id for v in violations}
 
