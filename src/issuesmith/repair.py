@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ghdag.workflow.gates import Violation
+
 
 @dataclass
 class RequiresResult:
@@ -116,7 +118,7 @@ def record_metrics(
     rule_ids: list[str] | None = None,
     *,
     origin: str | None = None,
-    violations: Sequence | None = None,
+    violations: Sequence[Violation] | None = None,
 ) -> None:
     """Append a requires_check or requires_repair event to the metrics file."""
     from issuesmith.metrics_events import append_event, serialize_violations

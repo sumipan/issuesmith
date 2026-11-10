@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
 
+from ghdag.workflow.gates import Violation
+
 
 def _utc_ts() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -18,7 +20,9 @@ def _parent_uuid() -> str:
     return os.environ.get("GHDAG_TASK_UUID", "").strip()
 
 
-def serialize_violations(violations: Sequence) -> list[dict[str, str | None]]:
+def serialize_violations(
+    violations: Sequence[Violation],
+) -> list[dict[str, str | None]]:
     """Map gate violations to the shared metrics JSON shape."""
     out: list[dict[str, str | None]] = []
     for v in violations:

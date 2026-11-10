@@ -36,6 +36,7 @@ from typing import Literal
 
 from ghdag.core.vocabulary import PIPELINE_WAIT_QUOTA
 from ghdag.forge import get_forge
+from ghdag.workflow.gates import Violation
 
 from issuesmith.andon import Andon as _FullAndon
 from issuesmith.andon import raise_andon as _raise_andon
@@ -603,7 +604,7 @@ def _safe_record_metrics(
     rule_ids: list[str] | None = None,
     *,
     origin: Literal["requires", "accepts"] = "requires",
-    violations: list | None = None,
+    violations: list[Violation] | None = None,
 ) -> None:
     try:
         from issuesmith.repair import record_metrics
