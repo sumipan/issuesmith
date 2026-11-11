@@ -31,7 +31,7 @@ order, source text, bytecode, or documentation wording.
 | T4 | Do not name test files or functions after issue numbers, acceptance criteria, or phases. |
 | T5 | Do not assert private-helper calls; verify boundaries and results. |
 | T6 | Do not snapshot structural counts or directory enumerations; public `__all__` is a contract and may be checked. |
-| T7 | Do not import host-only vocabulary such as nexus labels, templates, Slack, or `jobs/` paths into this repository's tests. |
+| T7 | Do not import host-only vocabulary such as host labels, templates, Slack, or `jobs/` paths into this repository's tests. |
 | T8 | Keep test files under 1,000 lines and split them by target module. |
 | T9 | Do not add characterization tests that freeze current behaviour before a change; write one test per acceptance criterion. |
 | T10 | Do not copy complete string constants from external packages; import a public constant or check only a stable distinguishing fragment. |

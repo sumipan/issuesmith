@@ -1,6 +1,6 @@
 """Canonical contract types and extractors for issuesmith (#3487, #4272).
 
-Workflow design rule (nexus docs/ISSUESMITH.md, workflow design conventions R1):
+Workflow design rule (workflow design conventions R1):
 every gate that validates a contract section and every step that consumes it
 MUST call the same function from this module. Defining a second parser for
 the same section anywhere else is a convention violation and is detected by

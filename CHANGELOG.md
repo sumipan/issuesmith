@@ -589,11 +589,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- Host companion naming: Issue YAML `host_allow_paths`, context variables `has_host_changes` / `host_worktree_path` / `host_allow_paths`, and matching `StepContext` fields. Legacy `diary_*` keys and context fields are still emitted with the same values for one release. `path_env_prefixes` in `issuesmith.yaml` replaces the hard-coded `${NIKKI_ROOT}` SUB1 path exclusion.
+- Host companion naming: Issue YAML `host_allow_paths`, context variables `has_host_changes` / `host_worktree_path` / `host_allow_paths`, and matching `StepContext` fields. Legacy `diary_*` keys and context fields are still emitted with the same values for one release. `path_env_prefixes` in `issuesmith.yaml` replaces the hard-coded host environment-variable prefix in the SUB1 path exclusion.
 
 ### Deprecated
 
-- `diary_allow_paths` (YAML), context `diary_*` / `StepContext` diary fields, `-diary` worktree path for new pipelines (existing `-diary` directories are still used when present), and diary-themed avoidance lint patterns will be removed in the next Y bump.
+- `diary_allow_paths` (YAML), context `diary_*` / `StepContext` `diary_*` fields, `-diary` worktree path for new pipelines (existing `-diary` directories are still used when present), and the host-specific avoidance lint patterns will be removed in the next Y bump.
 
 ## 0.146.1 - 2026-10-10
 
@@ -632,7 +632,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `scope_breadth.too_large` no longer fires for `scope:milestone` parent issues (nexus #4165). Milestone parents contain the union of all sub-issue paths; applying per-issue file/line limits to them always fails by design. `ScopeBreadthRules.check()` returns `[]` immediately when `scope:milestone` is present in `labels`, before any measurement.
 
-- `scope_coupling.deletion_search_keys()` now uses module-path (`tools.mltgnt_bridge.progress`) and slash-path (`tools/mltgnt_bridge/progress.py`) as primary grep keys instead of bare stems (nexus #4165). Bare stems (e.g. `progress`) and their dash→underscore variants are included only when the stem is unique across all tracked files in the target repo (`repo_path` parameter). Without `repo_path` — the call signature for all pre-existing callers — bare stems are omitted on the safe side. `uncovered_deletion_references()` now passes `repo_path` to `deletion_search_keys()`, enabling uniqueness-aware key selection in the gate. This eliminates the false-positive referrers that caused the #4163 recovery oscillation.
+- `scope_coupling.deletion_search_keys()` now uses module-path (`tools.bridge.progress`) and slash-path (`tools/bridge/progress.py`) as primary grep keys instead of bare stems (nexus #4165). Bare stems (e.g. `progress`) and their dash→underscore variants are included only when the stem is unique across all tracked files in the target repo (`repo_path` parameter). Without `repo_path` — the call signature for all pre-existing callers — bare stems are omitted on the safe side. `uncovered_deletion_references()` now passes `repo_path` to `deletion_search_keys()`, enabling uniqueness-aware key selection in the gate. This eliminates the false-positive referrers that caused the #4163 recovery oscillation.
 
 - `engine.run_guarded()` now guarantees a newline boundary after the requires loop before emitting `derived_allow_paths:` or any `PIPELINE_STATUS:` line (nexus #4159). A repair step whose stdout ended without a trailing newline caused the heading to be concatenated (`PIPELINE_STATUS: REPAIR_DONEderived_allow_paths:`), which made `CP2._derived_allow_paths_from_p1_result()` miss the block and report scope violations for test files that P1 had legitimately fixed. The fix adds a single `print()` call immediately after `run_requires_loop()` returns. `_derived_allow_paths_from_p1_result()` also switches to `line.rstrip().endswith("derived_allow_paths:")` (tolerates the concatenated form in older results) and logs `CP2: derived_allow_paths from <file>: <N>` to stderr on every read, with an additional warn line when 0 entries are parsed despite the keyword being present.
 
@@ -640,9 +640,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `DagTerminatedEvent` no longer releases `in_flight` (nexus #4137). `RemoveRunningLabelAction` replaces `ReleaseInFlightAction` in the `DagTerminatedEvent` branch of `_evaluate_one`: only the `{ns}:{phase}-running` label is removed; the `allow_paths` lock in `in_flight` is preserved until the DAG recovers (`dag recover` starts a new run), is reset, or is explicitly abandoned. Auto-resolve of the `dag_terminated` andon now fires on the first tick where the event is absent (= DAG recovered and issue still `in_flight`), removing the deferred-until-redispatch wait. `REBASE_CONFLICT` output now includes the SHA and subject of each conflicting `origin/<base>` commit (from `git log --oneline HEAD..origin/<base> -- <conflict_files>`), so the cause can be identified without a manual `git log`.
 - `ReleaseInFlightAction` skips `in_flight` release when the target Issue still has an open linked PR (nexus #3895). `execute()` calls `_issue_has_open_linked_pr()` before `remove_in_flight()`; matches use `Closes`/`Refs #N`, `issue-{N}-*` head refs, or `#{N}` in the PR title/body. Defense in depth for any caller that still emits `ReleaseInFlightAction`; `DagTerminatedEvent` itself keeps the lock via `RemoveRunningLabelAction` (#4137).
-- P0 branches from `origin/<base>` when it exists (nexus #4111). `steps.p0_worktree.resolve_base_ref()` now prefers `origin/<base>` and falls back to `refs/heads/<base>` (returned as the full ref) only when the remote-tracking ref is missing, e.g. a local-only repo. Before, it preferred local `<base>`, so unpushed auto-commits on a local `main` (daemon memory commits) ended up in the feature branch and `pr_scope` reported them as `out_of_allow`, because `changed_files()` diffs against `origin/<base>...HEAD`.
+- P0 branches from `origin/<base>` when it exists (nexus #4111). `steps.p0_worktree.resolve_base_ref()` now prefers `origin/<base>` and falls back to `refs/heads/<base>` (returned as the full ref) only when the remote-tracking ref is missing, e.g. a local-only repo. Before, it preferred local `<base>`, so unpushed auto-commits on a local `main` ended up in the feature branch and `pr_scope` reported them as `out_of_allow`, because `changed_files()` diffs against `origin/<base>...HEAD`.
 - `external_leak`: the CJK check for external targets is now fail-closed (nexus #4116). New `gates.worktree.external_target_state(body)` returns `"external"` / `"host"` / `"unknown"` (blank body, unparsable metadata, or no `target_repo`); `is_external_target` is unchanged in behavior. When the target is unknown, `ExternalLeakGate` reports `external_leak.target_unknown` instead of silently passing, and dispatch treats that rule as non-repairable (andon(decision), no LLM repair). Every evaluation logs one stderr line: `[external_leak] cjk: skipped (reason=disabled|host_target|target_unknown)` or `[external_leak] cjk: checked (target=<repo>), <H> CJK line(s) in <M> file(s)`. `run_requires_loop` logs `[requires] issue body unavailable (issue=<N>, reason=<exc>)` when the forge fetch fails with no fallback body, and `[requires] <step> pass: <gate>=<n> ...` on pass.
-- B1 Verify handles multi-repo milestone parents (one ```` ```yaml ```` metadata block per repo) (nexus #4076). New `context_hook.parse_issue_metadata_blocks(body) -> list[dict]` returns every yaml block that parses to a dict (`parse_issue_metadata` is unchanged). `b1_milestone_subdesign._allowed_repos` is the union of every block's `target_repo` (+ `sumipan/diary` when any block has `diary_allow_paths`), so a repository column mixing two repos no longer fails `repo_mismatch`; its fix_hint now asks to add a metadata block for the row's repo and keep the existing blocks, instead of rewriting `target_repo` (which made recovery oscillate between repos). `file_union` uses the union of every block's `allow_paths` as the parent path set when the parent has no changed-files section (no more `file_union_missing_in_parent` for every child path). `scope_breadth.root_unavailable` is now `warn`, and `b1_verify.collect_violations` drops violations whose severity is not `fail`. `scope_coupling` deletion search keys skip common file names (`_IGNORE_FILENAMES`: `README.md`, `SKILL.md`, `__init__.py`, …) and common or short stems (`readme`, `skill`, `setup`, …), so deleting `skills/x/SKILL.md` no longer reports dozens of unrelated referrers. `b1-verify <N> --prev-report FILE` (`-` for stdin) adds `b1_verify.oscillation_detected` when a rule_id has more violations than in the previous report.
+- B1 Verify handles multi-repo milestone parents (one ```` ```yaml ```` metadata block per repo) (nexus #4076). New `context_hook.parse_issue_metadata_blocks(body) -> list[dict]` returns every yaml block that parses to a dict (`parse_issue_metadata` is unchanged). `b1_milestone_subdesign._allowed_repos` is the union of every block's `target_repo` (+ the host companion repository when any block has `diary_allow_paths`), so a repository column mixing two repos no longer fails `repo_mismatch`; its fix_hint now asks to add a metadata block for the row's repo and keep the existing blocks, instead of rewriting `target_repo` (which made recovery oscillate between repos). `file_union` uses the union of every block's `allow_paths` as the parent path set when the parent has no changed-files section (no more `file_union_missing_in_parent` for every child path). `scope_breadth.root_unavailable` is now `warn`, and `b1_verify.collect_violations` drops violations whose severity is not `fail`. `scope_coupling` deletion search keys skip common file names (`_IGNORE_FILENAMES`: `README.md`, `SKILL.md`, `__init__.py`, …) and common or short stems (`readme`, `skill`, `setup`, …), so deleting `skills/x/SKILL.md` no longer reports dozens of unrelated referrers. `b1-verify <N> --prev-report FILE` (`-` for stdin) adds `b1_verify.oscillation_detected` when a rule_id has more violations than in the previous report.
 
 ### Changed
 
@@ -654,13 +654,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- `unparsed_dependency_refs` no longer treats a prose mention of the Issue's own milestone parent (`親イシュー: #N` + "parallel with sub 2 of #N" in the dependencies section) as an unparsed dependency. SUB1-generated children were blocked at dispatch with `deps unparsed` (nexus #4053 / #4056). 0.84.1
+- `unparsed_dependency_refs` no longer treats a prose mention of the Issue's own milestone parent (a parent-Issue line naming `#N` + "parallel with sub 2 of #N" in the dependencies section) as an unparsed dependency. SUB1-generated children were blocked at dispatch with `deps unparsed` (nexus #4053 / #4056). 0.84.1
 
 ### Fixed
 
 - B1 Verify now runs `b1_milestone_subdesign` (nexus #4002). `b1_verify._GATES` ends with `b1_milestone_subdesign`, so an Issue that the verify→recover loop promoted to `scope:milestone` (split plan added, label added) but that still has no `#### Sub N` sub design blocks fails with `b1_milestone_subdesign.sub_count_mismatch` instead of reaching `draft-done` and stopping SUB1's `_parent_design_gate`. Non-milestone Issues are unaffected (the gate returns `[]` without `scope:milestone`). The fix_hints that drive recovery now ask for the sub design blocks too: `scope_size` (design section and `sub_design_subsections` from config, mentions `b1_milestone_subdesign`), `milestone_consistency.label_missing` (label alone is not enough) and `b1_milestone_subdesign.sub_count_mismatch` (was `None`; lists the required subsections). `cp1.py` is unchanged.
 
-- allow_paths conflicts are phase-aware (nexus, 2026-09-26). `draft` (B1) and `sub` (SUB1) only edit Issue bodies / create child Issues, so a draft / sub candidate no longer waits on overlapping allow_paths, and draft / sub runs in flight no longer block a `develop` candidate. In-flight entries now record `phase` (`QueueStore.add_in_flight(phase=)`); legacy entries with `role: design` and no phase are treated as draft. Before, two brushups touching the same doc waited on each other for nothing.
+- allow_paths conflicts are phase-aware (2026-09-26). `draft` (B1) and `sub` (SUB1) only edit Issue bodies / create child Issues, so a draft / sub candidate no longer waits on overlapping allow_paths, and draft / sub runs in flight no longer block a `develop` candidate. In-flight entries now record `phase` (`QueueStore.add_in_flight(phase=)`); legacy entries with `role: design` and no phase are treated as draft. Before, two brushups touching the same doc waited on each other for nothing.
 
 ### Added
 
@@ -672,13 +672,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `b1_migration` now validates the contents of `post_merge` / `removed_trees`, not only their presence (nexus #3955). `b1_migration.post_merge_schema` (fail, not auto-fixable) reports items that are not dicts, have a `kind` outside `ac_contract.KNOWN_POST_MERGE_KINDS` (`stable_install` / `tag` / `restart`; the fix_hint lists them with a full example), or miss a field from `ac_contract.POST_MERGE_REQUIRED_FIELDS` (`stable_install`: `repo` / `path`, `tag`: `repo` / `tag`, `restart`: `processes`). `b1_migration.removed_trees_schema` reports non-string `removed_trees` items. Previously a free-text `post_merge` item passed B1 through merge and stopped M2 with a decision andon after the PR was merged (nexus #2972). M2's `ac_contract.run_checks` is unchanged.
 
-- M1 gate `m1.version_behind_base` (nexus #3936). Before merging a CLEAN PR, the M1 step compares the branch's `pyproject.toml` version with `origin/<base>`'s; when it is not ahead (two Issues on the same repo published the same next version in parallel, so the second merge reused the first one's release tag and never got a release), `VersionBehindBaseGate.fix()` merges `origin/<base>` into the branch, re-runs the deterministic version bump against it (branch 0.81.0 / base 0.81.0 → 0.81.1; branch 0.80.0 / base 0.81.0 → 0.81.1), pushes, and M1 re-reads the merge state before merging. A failed fix resets the branch and reports `MERGE_FAILED_STAGES:version_behind_base` without merging. Targets without `pyproject.toml` (nexus) always pass. `ops.publish` now declares `__all__`, exporting `_run_version_bump` and `_bump_commits_on_top`, plus the public alias `run_version_bump` that the gate imports.
+- M1 gate `m1.version_behind_base` (nexus #3936). Before merging a CLEAN PR, the M1 step compares the branch's `pyproject.toml` version with `origin/<base>`'s; when it is not ahead (two Issues on the same repo published the same next version in parallel, so the second merge reused the first one's release tag and never got a release), `VersionBehindBaseGate.fix()` merges `origin/<base>` into the branch, re-runs the deterministic version bump against it (branch 0.81.0 / base 0.81.0 → 0.81.1; branch 0.80.0 / base 0.81.0 → 0.81.1), pushes, and M1 re-reads the merge state before merging. A failed fix resets the branch and reports `MERGE_FAILED_STAGES:version_behind_base` without merging. Targets without `pyproject.toml` always pass. `ops.publish` now declares `__all__`, exporting `_run_version_bump` and `_bump_commits_on_top`, plus the public alias `run_version_bump` that the gate imports.
 
 - `external_leak` gate: CJK added-line check for external targets (nexus #3909). With `external_leak.cjk_free_external_targets: true` in `issuesmith.yaml`, a branch whose Issue `target_repo` differs from the host `repo` fails P1's requires with `external_leak.cjk_added_line` (one violation per file, listing the added line numbers) when `origin/<base>...HEAD` adds lines containing CJK characters, literal or `\uXXXX` escaped; pre-existing CJK is ignored. The repair loop then rewrites the lines inside P1 instead of a later publish-time check stopping the pipeline without repair. New helpers `line_has_cjk`, `cjk_added_lines`, `is_external_target`; `ExternalLeakConfig` on the config.
 
 ### Added
 
-- Dependency declarations as list items (nexus #3901 / #3905). `dep_extractor.extract_dependencies` now reads `- ` / `* ` / `+ ` / `1. ` / `1) ` items in the dependencies section in addition to table data rows and `依存:` lines (fenced code blocks are skipped). New `unparsed_dependency_refs(body)` returns `#N` refs that the dependencies section mentions without declaring them; `check_dependencies(..., unparsed_refs=)` / `check_issue` return `decision: BLOCK` with `reason: unparsed_dependency_section` (and `unparsed_refs`) before any forge call, `DepsGate` raises `deps.unparsed_dependency_section`, and the queue's phase preconditions refuse the issue. Previously a hand-written section such as `- #3855 (...)` extracted nothing and the dependency gate passed as "no deps" (fail-open), so P1 started on issues whose prerequisites were still open.
+- Dependency declarations as list items (nexus #3901 / #3905). `dep_extractor.extract_dependencies` now reads `- ` / `* ` / `+ ` / `1. ` / `1) ` items in the dependencies section in addition to table data rows and dependency-label lines (fenced code blocks are skipped). New `unparsed_dependency_refs(body)` returns `#N` refs that the dependencies section mentions without declaring them; `check_dependencies(..., unparsed_refs=)` / `check_issue` return `decision: BLOCK` with `reason: unparsed_dependency_section` (and `unparsed_refs`) before any forge call, `DepsGate` raises `deps.unparsed_dependency_section`, and the queue's phase preconditions refuse the issue. Previously a hand-written section such as `- #3855 (...)` extracted nothing and the dependency gate passed as "no deps" (fail-open), so P1 started on issues whose prerequisites were still open.
 
 - Issue size gate `scope_size` (nexus #3665), run by B1 Verify (`b1_verify._GATES`). It reads only the Issue's change table (no clone) and fails with `scope_size.too_many_files` (counted files > `max_files`, default 8), `scope_size.too_many_concerns` (distinct parent directories > `max_concerns`, default 2) and `scope_size.delete_with_new` (deletion and creation mixed). `tests/` `docs/` `README.md` `CHANGELOG.md` `pyproject.toml` are not counted; `scope:milestone` Issues are skipped. The fix_hint proposes a sub-issue split plan per concern. Configure with top-level `scope_size:` in `issuesmith.yaml` (`ScopeSizeConfig`); set `scope_size: {enabled: false}` to turn it off. The vocabulary of the host's Issue bodies is configurable and ASCII by default: `delete_words` (`["delete"]`) / `new_words` (`["new", "add"]`) classify the change-type cell, `sub_plan_header` / `no_deps_word` shape the split-plan example in the fix_hint.
 
@@ -979,7 +979,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   resolution is moved before `pipeline_id` determination so the search uses the correct repo dir.
 - `steps.p0_worktree._prepare_local` / `_prepare_cross_repo`: call
   `branch_reuse.record_base(repo_dir, branch, base)` after `prepare_worktree` succeeds (new
-  creation, existing branch attach, and existing worktree reuse). Idempotent; diary branches are
+  creation, existing branch attach, and existing worktree reuse). Idempotent; host companion branches are
   not recorded (they are not candidates for reuse).
 
 ## 0.55.1 - 2026-09-23
@@ -1033,7 +1033,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `tests/conventions/`: structural tests (OSS_QUALITY chapter 8, sumipan/nexus#3571). CLI table vs
   usage / docs / deprecation advice, lazily imported handler modules, `__all__` resolution with a
-  shrinking list of private cross-module imports, no nexus workflow vocabulary in verbs / gates /
+  shrinking list of private cross-module imports, no host workflow vocabulary in verbs / gates /
   observe / andon / labels / dispatch / engine, every ghdag name used exists in the pinned ghdag, and
   write / read-back round trips on `LocalForge` (andon raise / list / answer, label apply,
   `MERGE_DONE` projection vs `labels.project`, queue enqueue / in-flight / complete). Each
@@ -1150,7 +1150,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `gate_rules.PREFLIGHT_PARITY` + `tests/test_workflow_conventions.py`: deterministic detector for
   the workflow design conventions (R1 one parser per contract section, R3 every runtime stop status
   has a preflight rule or an explicit runtime-only reason) (#3487)
-- `b1_milestone_subdesign.change_paths_unreadable`: B1 fails when a `#### サブN` change table yields
+- `b1_milestone_subdesign.change_paths_unreadable`: B1 fails when a sub design's change table yields
   no path for its repo — the exact condition under which SUB1 cannot build a child (#3487)
 - `scope_breadth.root_unavailable`: CP1 fails closed when the cross-repo clone is missing (#3487)
 - `tests/contract/`: fixture parity tests feeding the same body to gate and step (#3487)
@@ -1187,94 +1187,96 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- `steps.sub1_create._run_guarded_body`: `resolve("implementation", "default")` が TIERS（light / heavy）外で
-  ValueError になり、子 Issue の LLM 本文生成が常にスキップされて雛形（設計空・AC「(from parent)」）のまま
-  起票されていた。tier を渡さない（state のモデルをそのまま使う）ように修正（nexus #3379 / #3322）
-- `steps.sub1_create._resolve_dependencies`: 依存の連番参照を substring 置換していたため `#2, #3` が
-  `#3382` 置換後に `#3` が `#3382` 内へマッチして `#3383382` になり、子 Issue 検証（V4）で chain が
-  halted になっていた。トークン単位の正規表現置換に変更し、milestone 参照の除外も同じ経路に統合（nexus #3379 / #3301）
+- `steps.sub1_create._run_guarded_body`: `resolve("implementation", "default")` raised ValueError
+  because the tier is outside TIERS (light / heavy), so the LLM body generation for child Issues was always
+  skipped and children were created as bare templates (empty design, AC "(from parent)"). No tier is passed
+  now (the model in the state is used as is) (nexus #3379 / #3322)
+- `steps.sub1_create._resolve_dependencies`: sequential dependency references were replaced by substring,
+  so for `#2, #3`, after the `#3382` replacement `#3` matched inside `#3382` and became `#3383382`, and child
+  Issue validation (V4) halted the chain. Replacement is now a token-level regex, and the exclusion of
+  milestone references goes through the same path (nexus #3379 / #3301)
 
 ### Fixed
 
-- `ac_contract.run_checks`: `references_must_resolve` の plain string 形式（`- docs/FOO.md`）を
-  「ファイルが存在すること」の検査として受理し、`key_path` 省略の dict も同様に扱う。
-  従来は `TypeError: string indices must be integers` で M2 が落ちていた（nexus #3290）
-- `steps.m2_finalize._evaluate_dual_root`: 契約実行中の例外を fail-open（stderr ログ + 基本判定を返す）にし、
-  契約フォーマット変異で impl ステップ全体がクラッシュしないようにする（nexus #3290）
+- `ac_contract.run_checks`: accept the plain string form of `references_must_resolve` (`- docs/FOO.md`)
+  as a "file exists" check, and treat a dict without `key_path` the same way.
+  Previously M2 failed with `TypeError: string indices must be integers` (nexus #3290)
+- `steps.m2_finalize._evaluate_dual_root`: exceptions during contract execution are fail-open (stderr log +
+  return the basic verdict), so a contract format variation no longer crashes the whole impl step (nexus #3290)
 
 ### Added
 
-- P0 **scope_gate** (`steps.scope_gate` / `config.ScopeGateConfig`): worktree 作成後に
-  `allow_paths` 一致の追跡ファイル数・行数を計測し、既定閾値（80 files / 20000 lines）超過時は
-  Issue コメント + `issuesmith:scope-too-large` + `SCOPE_TOO_LARGE` で P1 を止める。
-  Issue YAML の `scope_gate.max_files` で個別上書き可（`hard_max_files` は CP1 が検証）（#3349）
-- `paths.brake_state`: issuesmith budget gate（既定フォールバックは `quota_state`）を追加し、
-  queue / engine の pause 判定を global quota gate と budget gate の和集合にする。
-  `call_managed` と `rate_limit_detected` の書き込み先は `quota_state` に固定する（#3263）
-- `pr_diff_scope` gate (`issuesmith.pr_scope.check_pr_diff_scope`): CP2 冒頭で
-  PR 変更ファイルを `allow_paths` / `forbidden_pr_paths`（`jobs/**`・`*.jsonl` 等）と照合し、
-  違反時はコメント + `CP2_FAILED` で M1/M2 を止める。P0 は worktree 作成後に `jobs/` dirty
-  を検査する（#3178）
-- `gate_rules.milestone_consistency`: 本文の分割計画パターン（`### サブイシュー分割計画` /
-  `#### サブN:` / `#### Sub N:`）と `scope:milestone` ラベルの矛盾を検知する。
-  CP1 `check_gate()` と B1 Verify に組み込み、誤って develop 高速経路へ進むのを防ぐ（#3077）
-- `body_editor.normalize_sub_headers` / `relocate_sub_plan`: 英語サブ見出しの正規化と、
-  `## 設計` 配下の分割計画を `## マイルストーン` へ移す決定論正規化（#3077）
-- `issuesmith convert-to-milestone <N>`: develop 誤投入 Issue を milestone 経路へ
-  1 コマンドで復旧（DAG cancel・ラベル・milestone オブジェクト・in_flight 除去・
-  draft redispatch）。`--dry-run` 対応（#3077）
-- `redispatch --phase sub`: milestone 経路の sub フェーズ再投入。`cmd_redispatch` は
-  冒頭で stale `in_flight` を除去する（#3077）
-- `gate_rules.cp1.check_test_version_exact_assert`: tests/ の `version == "X.Y"` /
-  `git+https://…@vX.Y` 完全一致 assert を unified diff から検出する（#3065）
+- P0 **scope_gate** (`steps.scope_gate` / `config.ScopeGateConfig`): after the worktree is created,
+  count the tracked files and lines matching `allow_paths`; above the default thresholds (80 files / 20000 lines),
+  stop P1 with an Issue comment + `issuesmith:scope-too-large` + `SCOPE_TOO_LARGE`.
+  Issue YAML `scope_gate.max_files` overrides the limit per Issue (`hard_max_files` is validated by CP1) (#3349)
+- `paths.brake_state`: add the issuesmith budget gate (falls back to `quota_state` by default);
+  the queue / engine pause decision is the union of the global quota gate and the budget gate.
+  `call_managed` and `rate_limit_detected` always write to `quota_state` (#3263)
+- `pr_diff_scope` gate (`issuesmith.pr_scope.check_pr_diff_scope`): at the start of CP2,
+  check the PR's changed files against `allow_paths` / `forbidden_pr_paths` (`jobs/**`, `*.jsonl`, etc.);
+  on a violation, comment and stop M1/M2 with `CP2_FAILED`. P0 checks for a dirty `jobs/`
+  after the worktree is created (#3178)
+- `gate_rules.milestone_consistency`: detect a mismatch between a split-plan pattern in the body (the
+  split-plan heading, a localized sub heading, or `#### Sub N:`) and the `scope:milestone` label.
+  Wired into CP1 `check_gate()` and B1 Verify so such an Issue does not take the develop fast path by mistake (#3077)
+- `body_editor.normalize_sub_headers` / `relocate_sub_plan`: deterministic normalization of English sub
+  headings, and of a split plan under the design section, which is moved to the milestone section (#3077)
+- `issuesmith convert-to-milestone <N>`: recover an Issue wrongly sent to develop onto the milestone path
+  with one command (DAG cancel, labels, milestone object, in_flight removal,
+  draft redispatch). Supports `--dry-run` (#3077)
+- `redispatch --phase sub`: re-run the sub phase of the milestone path. `cmd_redispatch`
+  removes a stale `in_flight` entry first (#3077)
+- `gate_rules.cp1.check_test_version_exact_assert`: detect exact-match asserts in tests/ on `version == "X.Y"` /
+  `git+https://…@vX.Y` from the unified diff (#3065)
 - Milestone chain multi-repo validation: V1 expects child `target_repo` from the parent
-  split-plan `対象リポジトリ` column (falls back to parent `target_repo` when the column
+  split-plan target-repository column (falls back to parent `target_repo` when the column
   is absent); unsupported repos fail V1; V2 `allow_paths` checks only change-table rows
   for the child's `target_repo` (#2961)
 - `issuesmith milestone status` shows each child's `target_repo`
 
 ### Fixed
 
-- engine: 全エンジン pause 時に `resume_at=None`（budget-brake 等）でも最大 30〜60 分
-  一括 sleep せず、`ISSUESMITH_ENGINE_WAIT_POLL_SEC`（既定 60 秒）ごとに
-  `QuotaGate.snapshot()` を再取得する。待機と LLM 実行の合計は `ISSUESMITH_TIMEOUT_SEC`
-  に収め、待機予測分を `call_managed` timeout に加算しない。2026-09-13 の nexus #3252
-  CP2 で codex pause 解除後も長時間再確認されず `DAG_TASK_TIMEOUT` と二重実行した事象の修正（#3256）
-- publish: rebase 後の再 push で non-fast-forward にならないよう、リモート tip が
-  `HEAD` の祖先でないときは `git push --force-with-lease=<branch>:<remote_sha>` で
-  更新する。lease 失敗（他者の未知コミット等）は `PUBLISH_STATUS: PUSH_DIVERGED`
-  を返す。push 前に `fetch` し `rev-list` の ahead/behind を stdout に残す（#3237）
-- publish: `_ensure_rebased` が rebase 前に `RUNTIME_DIR_EXCLUDES`（`jobs/**`・
-  `chat/**`・`sessions/**`・`logs/**`）配下の未コミット変更を破棄する。allow_paths
-  内に汚れが残る場合は `PUBLISH_STATUS: DIRTY_WORKTREE`、本物の競合は
-  `REBASE_CONFLICT`（競合ファイル一覧付き・`--abort`）を返す。nexus worktree で
-  実行時ファイル汚れにより P3 が全件 `REBASE_CONFLICT` になる障害を防ぐ（#3227）
-- publish: `_check_commit_diff_gates` の差分を二点ドット（`origin/<base>..HEAD`）から
-  三点ドット（`origin/<base>...HEAD`、merge-base 起点）に変更。base が進んだだけで
-  逆方向の `version =` 差分が写り `P3_GATE_FAILED` になる偽陽性を防ぐ。publish 前に
-  `git fetch` + 必要時 `rebase` し、競合時は `PUBLISH_STATUS: REBASE_CONFLICT` を返す（#3221）
-- M1: PR マージ成功後に `post_merge_test` だけ失敗したとき `issuesmith:merge-running` を付与し、
-  M1r → M2 のラベル遷移欠落を防ぐ（#3221）
-- M2 finalizer: `develop-done` / `merge-ready` / `merge-running` から `merge-done` へ到達可能にし、
-  `transition()` がフェーズラベル欠落で失敗したときは `issue_update` で直付替する fallback を追加（#3221）
-- queue: design engine（claude）が paused でも implementation ロールの
-  `develop` / `merge` / `sub` は投入できるよう、paused 判定をフェーズ別ロールに変更。
-  CP2（design）は `resume_at=null` でも固定インターバルで sleep & retry し、
-  既定最大 6h まで REJECT を遅らせる。`call_managed` の timeout にも待機分を加算（#3091）
-- queue: `draft-done` 直後の design スロット解放がラベルのみに依存していたため、
-  brushup/impl の未完了 exec がある Issue が `in_flight` から消え、watcher が
-  起動した impl DAG が追跡外になり `_dispatch_pipeline_ready` が queue 全体を
-  止めていた。未完了 exec がある間は解放せず、`develop-running` なのに
-  `in_flight` 不在の Issue は tick 時に再登録する。`queue status` /
-  `queue doctor` で追跡外実行中 Issue を表示する（#3092）
-- publish が commit 後・version bump 前に `check_version_line_in_diff` と
-  `check_test_version_exact_assert` を実行し、LLM による `pyproject.toml` の
-  `version =` 変更および tests/ の版・pin 完全一致 assert を `P3_GATE_FAILED` で止める（#3065）
-- `pyproject.toml` の ghdag 依存バージョンを v0.35.0 から v0.44.0 に更新（`[ghdag]` / `[dev]` extras）
-- `README.md` のバージョン表記・インストール手順を v0.1.0 → v0.10.0 に更新、冒頭に参照版と確認日を追加
-- `src/issuesmith/github_api.py` のエラー文を旧ドット形式（`issuesmith.queue enqueue`）から統一 CLI 形式（`issuesmith queue enqueue`）に修正
-- `engine check` が `DEFAULT_LIGHT_MODELS`（`issuesmith.yaml` の `engines.<role>.light_model.<engine>`）全項目を許可リストと突合し、外れていれば修正キーを案内する。`engine resolve --tier light` に `allowlist_valid` / `reason` を追加。`--engine` 上書き経路でも allowlist 外 light は heavy にフォールバックする（nexus #2981）
-- `_iter_issuesmith_exec_records` が世代付き冪等キー（`issuesmith:impl:2959:1`、redispatch 時に ghdag が付与）の末尾要素を issue 番号と誤解釈し、再投入中の DAG を in_flight 外の「孤児」とみなして `pipeline not idle` で全 dispatch を止めていた。`issuesmith:<handler>:<issue>[:<generation>]` を正しく解釈する（2026-09-09、nexus #2959 の再投入で実測）
+- engine: when every engine is paused with `resume_at=None` (budget brake, etc.), no longer sleep for
+  30 to 60 minutes in one go; re-read `QuotaGate.snapshot()` every `ISSUESMITH_ENGINE_WAIT_POLL_SEC`
+  (default 60 s). Waiting plus LLM execution stays within `ISSUESMITH_TIMEOUT_SEC`,
+  and the expected wait is not added to the `call_managed` timeout. Fixes the 2026-09-13 nexus #3252
+  CP2 case, where the pause was not rechecked long after codex resumed, ending in `DAG_TASK_TIMEOUT` and a double run (#3256)
+- publish: so that the re-push after a rebase is not rejected as non-fast-forward, when the remote tip is
+  not an ancestor of `HEAD` the branch is updated with `git push --force-with-lease=<branch>:<remote_sha>`.
+  A lease failure (e.g. unknown commits by someone else) returns `PUBLISH_STATUS: PUSH_DIVERGED`.
+  Before pushing it runs `fetch` and prints the `rev-list` ahead/behind counts to stdout (#3237)
+- publish: before rebasing, `_ensure_rebased` discards uncommitted changes under `RUNTIME_DIR_EXCLUDES`
+  (`jobs/**`, `chat/**`, `sessions/**`, `logs/**`). If dirt remains inside allow_paths
+  it returns `PUBLISH_STATUS: DIRTY_WORKTREE`; a real conflict returns
+  `REBASE_CONFLICT` (with the list of conflicting files, after `--abort`). Prevents every P3 from ending in
+  `REBASE_CONFLICT` because of dirty runtime files in host worktrees (#3227)
+- publish: the diff in `_check_commit_diff_gates` changes from two-dot (`origin/<base>..HEAD`) to
+  three-dot (`origin/<base>...HEAD`, from the merge base). Prevents the false positive where a base that
+  merely advanced showed a reversed `version =` diff and failed with `P3_GATE_FAILED`. Before publishing it runs
+  `git fetch` and, when needed, `rebase`; a conflict returns `PUBLISH_STATUS: REBASE_CONFLICT` (#3221)
+- M1: when the PR merge succeeds and only `post_merge_test` fails, apply `issuesmith:merge-running`
+  so the M1r → M2 label transition is not lost (#3221)
+- M2 finalizer: `merge-done` is reachable from `develop-done` / `merge-ready` / `merge-running`, and
+  when `transition()` fails because the phase label is missing, a fallback replaces the label directly with `issue_update` (#3221)
+- queue: the paused check uses the role of each phase, so `develop` / `merge` / `sub` of the
+  implementation role can be dispatched while the design engine (claude) is paused.
+  CP2 (design) sleeps and retries at a fixed interval even with `resume_at=null`,
+  delaying REJECT up to 6h by default. The wait is also added to the `call_managed` timeout (#3091)
+- queue: the design slot release right after `draft-done` relied on labels alone, so an
+  Issue with unfinished brushup/impl exec rows dropped out of `in_flight`, the impl DAG
+  started by the watcher became untracked, and `_dispatch_pipeline_ready` stopped the
+  whole queue. The slot is not released while unfinished exec rows exist, and an Issue that is
+  `develop-running` but missing from `in_flight` is re-registered on tick. `queue status` /
+  `queue doctor` show Issues running untracked (#3092)
+- publish runs `check_version_line_in_diff` and `check_test_version_exact_assert` after the commit and
+  before the version bump, and stops with `P3_GATE_FAILED` on an LLM change to the `pyproject.toml`
+  `version =` line or on exact-match version / pin asserts in tests/ (#3065)
+- Update the ghdag dependency version in `pyproject.toml` from v0.35.0 to v0.44.0 (`[ghdag]` / `[dev]` extras)
+- Update the version shown in `README.md` and its install steps from v0.1.0 → v0.10.0, and add the reference version and check date at the top
+- Fix the error text in `src/issuesmith/github_api.py` from the old dotted form (`issuesmith.queue enqueue`) to the unified CLI form (`issuesmith queue enqueue`)
+- `engine check` checks every entry of `DEFAULT_LIGHT_MODELS` (`engines.<role>.light_model.<engine>` in `issuesmith.yaml`) against the allowlist and, on a miss, names the key to fix. `engine resolve --tier light` adds `allowlist_valid` / `reason`. On the `--engine` override path, a light model outside the allowlist also falls back to heavy (nexus #2981)
+- `_iter_issuesmith_exec_records` misread the last element of a generation-suffixed idempotency key (`issuesmith:impl:2959:1`, added by ghdag on redispatch) as the issue number, treated the DAG being redispatched as an "orphan" outside in_flight, and stopped every dispatch with `pipeline not idle`. `issuesmith:<handler>:<issue>[:<generation>]` is now parsed correctly (2026-09-09, observed on the redispatch of nexus #2959)
 
 ### Changed
 
@@ -1284,18 +1286,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- queue が `*-ready` を付けるとき、ハンドラーの冪等キーが消費済みなら `ghdag trigger --redispatch` で世代を上げて起動する
-  （従来は `redispatch` / `enqueue --force` 後に watcher が「already dispatched」で skip し続けた）
-- `PIPELINE_STATUS` の独立行判定がバッククォート / 太字の装飾を許容する（codex が装飾付きで出力し CP2 PASS が FAIL 扱いになった）
+- When the queue applies `*-ready` and the handler's idempotency key is already consumed, it starts the run with `ghdag trigger --redispatch`, raising the generation
+  (previously the watcher kept skipping with "already dispatched" after `redispatch` / `enqueue --force`)
+- The standalone-line check for `PIPELINE_STATUS` tolerates backtick / bold decoration (codex printed it decorated and a CP2 PASS was treated as FAIL)
 
 ## 0.8.1 - 2026-09-09
 
 ### Fixed
 
-- `engine resolve --tier light` は light モデルが `configs/llm-models.yml` の allowlist に無い場合、
-  `EngineModelError` でパイプラインを止めず heavy モデルへフォールバックする（#2968 / #2986 の再発防止）
-- `engine check` が state 未設定時の config 既定 light モデルも allowlist と照合する
-- codex の light 既定モデルを `gpt-5.4-mini` → `gpt-5.5`（ChatGPT アカウント認証で 400 になる）
+- `engine resolve --tier light` falls back to the heavy model instead of stopping the pipeline with
+  `EngineModelError` when the light model is not in the `configs/llm-models.yml` allowlist (prevents a recurrence of #2968 / #2986)
+- `engine check` also checks the config default light model against the allowlist when the state is unset
+- codex default light model: `gpt-5.4-mini` → `gpt-5.5` (the former returns 400 under ChatGPT account auth)
 
 ### Added
 
@@ -1308,7 +1310,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- Initial release of `issuesmith` as a standalone package extracted from nexus (`tools/issuesmith`)
+- Initial release of `issuesmith` as a standalone package extracted from a host repository
 - Unified CLI: `python3 -m issuesmith <command>` / `issuesmith` console script
 - Core modules: context hook, gates (cp1/m2/b1), queue/triage, engine, ops (dispatch/publish/doctor/smoke/version-bump)
 - Configuration via `issuesmith.yaml` (env `ISSUESMITH_CONFIG`, cwd walk-up, package-root fallback, builtin defaults)

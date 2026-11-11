@@ -1,6 +1,6 @@
 """Workflow design conventions — deterministic detector (#3487).
 
-Rules (nexus docs/ISSUESMITH.md, section "Workflow design conventions"):
+Rules (workflow design conventions):
 
 R2 (contract fixtures) lives in tests/contract/: the same fixture goes through
     the gate rule and the consuming step, and both must agree.

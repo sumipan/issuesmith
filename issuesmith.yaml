@@ -1,7 +1,7 @@
 repo: sumipan/issuesmith
 label_namespace: issuesmith
 timezone: Asia/Tokyo
-# 旧パッケージ既定だった一覧。config 既定は空になったため明示する (#3081)。
+# The config default for supported_repos is empty, so the list is explicit (#3081).
 supported_repos:
   - sumipan/nexus
   - sumipan/mltgnt
