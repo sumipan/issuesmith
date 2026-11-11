@@ -1,8 +1,8 @@
 import re
 import sys
 
+from ghdag.forge import DEFAULT_REPO
 from ghdag.github_cli import cli_main
-from ghdag.github_client import DEFAULT_REPO
 
 _READY_LABEL_RE = re.compile(r"issuesmith:(?:draft|develop|merge)-ready")
 

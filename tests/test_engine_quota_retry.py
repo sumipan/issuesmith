@@ -414,7 +414,7 @@ def test_brake_paused_engine_excluded_from_managed_fallbacks(
 
 
 def test_quota_exhausted_raises_retry_signal(execute_mocks, monkeypatch):
-    from ghdag.metrics.models import FailureClass
+    from ghdag.metrics import FailureClass
 
     from issuesmith.engine import RetryReason, RetrySignal
 
@@ -458,7 +458,7 @@ def test_quota_exhausted_raises_retry_signal(execute_mocks, monkeypatch):
 
 
 def test_quota_exhausted_records_metrics_before_retry(execute_mocks, monkeypatch):
-    from ghdag.metrics.models import FailureClass
+    from ghdag.metrics import FailureClass
 
     from issuesmith.engine import RetrySignal
 
@@ -501,7 +501,7 @@ def test_quota_exhausted_records_metrics_before_retry(execute_mocks, monkeypatch
 def test_quota_exhausted_after_none_raises_retry_with_none_after(
     execute_mocks, monkeypatch
 ):
-    from ghdag.metrics.models import FailureClass
+    from ghdag.metrics import FailureClass
 
     from issuesmith.engine import RetrySignal
 
@@ -531,7 +531,7 @@ def test_quota_exhausted_after_none_raises_retry_with_none_after(
 
 
 def test_run_verified_emit_propagates_quota_retry(execute_mocks, monkeypatch, tmp_path):
-    from ghdag.metrics.models import FailureClass
+    from ghdag.metrics import FailureClass
 
     from issuesmith.engine import RetrySignal, run_verified
 

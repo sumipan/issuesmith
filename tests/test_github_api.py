@@ -2,7 +2,7 @@ import sys
 from unittest.mock import patch
 
 import pytest
-from ghdag.github_client import DEFAULT_REPO
+from ghdag.forge import DEFAULT_REPO
 
 import issuesmith.github_api as github_api_module
 

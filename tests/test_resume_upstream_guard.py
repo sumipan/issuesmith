@@ -243,7 +243,7 @@ class TestMarkDone:
     def test_mark_done_then_real_recover_resets_downstream(self, pipeline_fs, capsys):
         """After --mark-done p1 and an in-process recover, p1 is success and p2 pending."""
         from ghdag import status as ghdag_status
-        from ghdag.dag.recover import execute_recover, plan_recover
+        from ghdag.dag import execute_recover, plan_recover
 
         from issuesmith.resume import resume
 

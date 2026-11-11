@@ -7,10 +7,9 @@ from contextlib import contextmanager
 from unittest.mock import MagicMock
 
 import pytest
-from ghdag.core.models.metrics import FailureClass
-from ghdag.llm import LLMParseError, call_managed
+from ghdag.llm import LLMParseError, LLMResult, call_managed
 from ghdag.llm import managed as llm_managed
-from ghdag.llm.engines import LLMResult
+from ghdag.metrics import FailureClass
 from ghdag.quota import QuotaSnapshot
 
 from issuesmith.engine import (

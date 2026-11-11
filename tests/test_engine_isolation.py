@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from ghdag.llm import ManagedResult
-from ghdag.metrics.models import FailureClass
+from ghdag.metrics import FailureClass
 from ghdag.quota import EngineQuotaState, QuotaSnapshot
 
 from issuesmith.engine import (

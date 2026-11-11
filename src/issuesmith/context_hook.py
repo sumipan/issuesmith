@@ -228,7 +228,7 @@ def validate_context_hook_security(
 
     allow_paths_raw = _allow_paths_list(metadata)
     target_repo = metadata.get("target_repo")
-    from ghdag.github_client import DEFAULT_REPO
+    from ghdag.forge import DEFAULT_REPO
 
     issue_repo = str(metadata.get("issue_repo", DEFAULT_REPO))
     cross_repo_target = bool(
@@ -559,7 +559,7 @@ def build_context(
             logging.warning("Issue #%s: YAML metadata parse failed: %s", issue_number, exc)
             metadata = {}
 
-    from ghdag.github_client import DEFAULT_REPO
+    from ghdag.forge import DEFAULT_REPO
 
     if metadata_parsed:
         raise_metadata_violations(

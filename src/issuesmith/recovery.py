@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
+import importlib
 import json
 import re
 import subprocess
@@ -59,7 +59,11 @@ def _done_dir() -> Path:
 
 
 def _generation_keys_available() -> bool:
-    if importlib.util.find_spec("ghdag.dag.recover") is not None:
+    try:
+        dag_mod = importlib.import_module("ghdag.dag")
+    except ImportError:
+        dag_mod = None
+    if dag_mod is not None and hasattr(dag_mod, "plan_recover"):
         return True
     try:
         proc = subprocess.run(

@@ -30,12 +30,10 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from ghdag.forge import get_forge
-from ghdag.llm import call_managed
+from ghdag.llm import LLMCapabilities, call_managed
+from ghdag.llm import call as _ghdag_call
 from ghdag.llm import managed as _llm_managed
-from ghdag.llm.capabilities import LLMCapabilities
-from ghdag.llm.engines import call as _ghdag_call
-from ghdag.metrics import MetricsRecorder, TaskMetrics
-from ghdag.metrics.models import FailureClass
+from ghdag.metrics import FailureClass, MetricsRecorder, TaskMetrics
 from ghdag.quota import QuotaGate
 from ruamel.yaml import YAML
 
@@ -673,7 +671,7 @@ def _issue_number_from_variables(variables: list[str]) -> int | None:
 
 
 def _render_template(template_path: str, variables: list[str]) -> str:
-    from ghdag.pipeline.order import TemplateVariableError
+    from ghdag.pipeline import TemplateVariableError
 
     path = Path(template_path)
     template = string.Template(path.read_text(encoding="utf-8"))

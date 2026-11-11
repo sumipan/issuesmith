@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from ghdag.dag._util import WaitQuotaSignal, parse_wait_quota_signal
+from ghdag.dag import WaitQuotaSignal, parse_wait_quota_signal
 from ghdag.llm import list_engines
 
 from issuesmith.engine import ROLE_ENGINES, RetryReason, RetrySignal

@@ -67,7 +67,7 @@ def _m1_failed(jobs: Path) -> None:
 
 
 def _run(cfg, jobs: Path, recover_calls: list, *, table: str = "merge", **kwargs) -> int:
-    from ghdag.dag.recover import execute_recover, plan_recover
+    from ghdag.dag import execute_recover, plan_recover
 
     from issuesmith.resume import resume
 

@@ -110,8 +110,11 @@ def _compute_dag_state(
     done_dir: Path,
     running_dir: Path,
 ) -> DagState:
-    from ghdag.core.vocabulary import LEGACY_DONE_DEFERRED
-    from ghdag.io.done import interpret_done, read_done_content
+    from ghdag.dag import LEGACY_DONE_DEFERRED
+    from ghdag.io import done
+
+    interpret_done = done.interpret_done
+    read_done_content = done.read_done_content
 
     if not rows:
         return DagState(issue=issue, key=key, status="pending")

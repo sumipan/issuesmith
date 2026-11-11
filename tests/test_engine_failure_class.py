@@ -6,8 +6,8 @@ import subprocess
 from unittest.mock import MagicMock
 
 import pytest
-from ghdag.llm.engines import LLMResult
-from ghdag.metrics.models import FailureClass
+from ghdag.llm import LLMResult
+from ghdag.metrics import FailureClass
 from ghdag.quota import EngineQuotaState, QuotaSnapshot
 
 from issuesmith.engine import (
@@ -156,7 +156,7 @@ def test_execute_timeout_expired_records_metrics_and_returns_124(execute_mocks, 
 
 
 def test_execute_llm_result_timeout_records_metrics(execute_mocks, monkeypatch):
-    from ghdag.llm.managed import ManagedResult
+    from ghdag.llm import ManagedResult
 
     monkeypatch.setattr(
         "issuesmith.engine.call_managed",

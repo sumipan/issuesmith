@@ -23,7 +23,7 @@ class _Client:
         self.calls: list[str] = []
 
     def issue_get(self, number, fields=None):
-        from ghdag.core.exceptions import GitHubApiError
+        from ghdag.forge import GitHubApiError
 
         self.calls.append("issue_get")
         raise GitHubApiError(f"issue #{number} not found", status_code=404)

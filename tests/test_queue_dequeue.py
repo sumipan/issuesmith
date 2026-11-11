@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from ghdag.core.exceptions import GitHubApiError
+from ghdag.forge import GitHubApiError
 
 from issuesmith.queue_store import QueueStore
 

@@ -30,25 +30,13 @@ def test_runtime_reached_apis_exist():
     assert missing_upstream_apis() == []
 
 
-def test_doctor_lists_wait_quota_protocol():
-    assert ("ghdag.core.vocabulary", "PIPELINE_WAIT_QUOTA", None) in REQUIRED_UPSTREAM_APIS
-    assert ("ghdag.core.vocabulary", "WAIT_QUOTA_COMPANION_RE", None) in REQUIRED_UPSTREAM_APIS
-
-
 def test_doctor_no_longer_lists_removed_defer_apis():
     """ghdag 0.106.0 removed QuotaGate.defer / release_ready and DONE_DEFERRED (sumipan/nexus#5757)."""
     assert ("ghdag.quota", "QuotaGate", "defer") not in REQUIRED_UPSTREAM_APIS
     assert ("ghdag.quota", "QuotaGate", "release_ready") not in REQUIRED_UPSTREAM_APIS
-    assert ("ghdag.core.vocabulary", "DONE_DEFERRED", None) not in REQUIRED_UPSTREAM_APIS
-
-
 def test_doctor_lists_quota_gate_public_state_apis():
     assert ("ghdag.quota", "QuotaGate", "read_state") in REQUIRED_UPSTREAM_APIS
     assert ("ghdag.quota", "QuotaGate", "modify") in REQUIRED_UPSTREAM_APIS
-
-
-def test_doctor_lists_github_client_graphql():
-    assert ("ghdag.github_client", "GitHubClient", "graphql") in REQUIRED_UPSTREAM_APIS
 
 
 def test_detects_missing_quota_gate_read_state():

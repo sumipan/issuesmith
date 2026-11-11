@@ -273,7 +273,7 @@ def main() -> None:
     labels = [label["name"] for label in data["labels"]]
 
     if args.repo_roots:
-        from ghdag.github_client import DEFAULT_REPO
+        from ghdag.forge import DEFAULT_REPO
 
         from issuesmith.context_hook import parse_issue_metadata
 
