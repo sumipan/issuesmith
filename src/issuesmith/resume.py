@@ -80,7 +80,7 @@ def _load_step_statuses(
 ) -> list[StepStatus] | None:
     """Return steps for the current DAG run, or None on I/O error (fail closed)."""
     from ghdag import status as ghdag_status
-    from ghdag.dag.recover import running_uuids_from_queue_dir
+    from ghdag.dag import running_uuids_from_queue_dir
 
     try:
         cfg = get_config()
@@ -223,8 +223,10 @@ def _format_blockers_message(
 
 
 def _write_step_mark_done(step: StepStatus) -> None:
-    from ghdag.core.vocabulary import DONE_SUCCESS
-    from ghdag.io.done import mark_done as _mark_done_file
+    from ghdag.dag import DONE_SUCCESS
+    from ghdag.io import done
+
+    _mark_done_file = done.mark_done
 
     cfg = get_config()
     _mark_done_file(cfg.paths.done_dir, step.uuid, DONE_SUCCESS)

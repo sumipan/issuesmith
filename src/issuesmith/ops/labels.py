@@ -264,7 +264,7 @@ def run_hygiene(
     client: Any = None,
 ) -> tuple[int, dict]:
     """Remove stale phase labels from an issue (replaces ops/label_hygiene.py)."""
-    from ghdag.exceptions import GitHubApiError
+    from ghdag.forge import GitHubApiError
     from ghdag.forge import get_forge as _get_forge
 
     if client is None:

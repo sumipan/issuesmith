@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
-from ghdag.metrics.models import FailureClass
+from ghdag.metrics import FailureClass
 
 from issuesmith.config import ConfigError, IssuesmithConfig
 from issuesmith.rule_ids import normalize_rule_id

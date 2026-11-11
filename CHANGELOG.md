@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Changed
+
+- ghdag imports use one-level public paths (`ghdag` / `ghdag.<package>` only); deep paths and shim modules are forbidden via conventions test (#6321).
+
 ## 0.178.0 - 2026-11-10
 
 ### Changed

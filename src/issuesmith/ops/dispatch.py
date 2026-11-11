@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
-from ghdag.core.vocabulary import PIPELINE_WAIT_QUOTA
+from ghdag.dag import PIPELINE_WAIT_QUOTA
 from ghdag.forge import get_forge
 
 from issuesmith.andon import Andon as _FullAndon
