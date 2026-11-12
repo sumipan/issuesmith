@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.178.20 - 2026-11-12
+
+### Fixed
+
+- `issuesmith.engine` imports again with ghdag v0.130.x: it now uses `Permission` and the `permission=` keyword instead of the removed `LLMCapabilities` / `capabilities=`.
+
 ## 0.178.2 - 2026-11-11
 
 ### Changed
