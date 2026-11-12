@@ -2,6 +2,14 @@
 
 from __future__ import annotations
 
+from issuesmith.engine import (
+    ROLE_ENGINES,
+    exec_file,
+    resolve,
+    run_guarded,
+    run_verified,
+)
+from issuesmith.ops.dispatch import map_step_result
 from issuesmith.verbs.finalize import cleanup_branches, cleanup_worktrees, close_issue
 from issuesmith.verbs.merge import find_pr, merge_pr, merge_state
 from issuesmith.verbs.publish import publish_branch
@@ -16,4 +24,10 @@ __all__ = [
     "cleanup_worktrees",
     "cleanup_branches",
     "close_issue",
+    "run_guarded",
+    "run_verified",
+    "exec_file",
+    "resolve",
+    "ROLE_ENGINES",
+    "map_step_result",
 ]

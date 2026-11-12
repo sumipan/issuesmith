@@ -200,81 +200,20 @@ Ledger keys: `lanes` (lane name to Issue numbers), `hold`, `backlog`, `auto_lane
 
 ## Public API
 
-`issuesmith.__all__` is empty; import the submodules. Modules with `__all__` are listed by that list; other modules list their public definitions. Names that start with `_` are internal.
-
-### Gates
+Supported Python imports are limited to six modules (`issuesmith.__all__` is empty). The CLI (`python3 -m issuesmith` / `issuesmith`) and `module.path:attr` hooks in `issuesmith.yaml` are separate extension surfaces. Each module below lists its `__all__` names; names starting with `_` are internal.
 
 | Module | Symbols |
 |---|---|
-| `issuesmith.gates` | `Verdict`, `GateBuildContext`, `GateBuildError`, `GateEntry`, `RequiresGate`, `GATE_REGISTRY`, `NON_REPAIRABLE_RULE_IDS`, `is_non_repairable_rule_id`, `resolve_gate`, `validate_step_requires`, `check_scope`, `check_pr_scope`, `check_ac_complete`, `check_deps` |
-| `issuesmith.gates.ac_contract` | `AcContractGate` |
-| `issuesmith.gates.base` | `ContractInput`, `Gate` |
-| `issuesmith.gates.dep` | `check_deps`, `DepsGate`, `dependents_of`, `on_dep_merge_done` |
-| `issuesmith.gates.pr_scope` | `check_pr_scope`, `PrScopeGate` |
-| `issuesmith.gates.review` | `ReviewGate`, `build_review_gate` |
-| `issuesmith.gates.scope` | `check_scope`, `ScopeGate` |
-| `issuesmith.gates.ac_complete` | `check_ac_complete` |
-| `issuesmith.gates.worktree` | `LintGate`, `TestsGate`, `ExternalLeakGate`, `BaseFreshnessGate`, `WORKTREE_GATES`, `changed_files`, `derive_static_test_allow_paths`, `derive_static_ledger_allow_paths`, `derive_test_allow_paths`, `derive_ledger_allow_paths`, `check_derived_test_guard`, `line_has_cjk`, `cjk_added_lines`, `external_target_state`, `is_external_target` |
-| `issuesmith.ac_complete_entry` | `has_acceptance_criteria_section`, `get_unchecked_count`, `check_gate`, `check_gate_multi_root`, `synthesize_contract_failures`, `main` |
-| `issuesmith.design_lint_entry` | `check_gate`, `main` |
-| `issuesmith.rule_ids` | `RULE_ID_ALIASES`, `normalize_rule_id`, `rule_id_matches` |
-| `issuesmith.repair` | `RequiresResult`, `evaluate_requires`, `apply_auto_fixes`, `record_metrics` |
-| `issuesmith.scope_gate` | `ScopeMeasure`, `ScopeVerdict`, `evaluate`, `format_comment`, `measure_scope`, `override_from_metadata`, `parse_allow_paths_from_ctx`, `record_p0_trip_metric`, `resolve_scope_root` |
-| `issuesmith.pr_scope` | `DEFAULT_FORBIDDEN_PR_PATHS`, `DIFF_LINES_FALLBACK`, `DerivedAllowPathsError`, `allow_paths_from_issue_body`, `check_pr_diff_scope`, `check_pr_scope_with_derived`, `derived_allow_paths_from_result`, `filenames_from_pr_files`, `find_pr_for_branch`, `normalize_allow_path`, `pr_diff_lines`, `unchecked_ac_count` |
-| `issuesmith.ac_contract` | `GateMaterializationError`, `materialize_gate_root`, `cleanup_gate_root`, `dual_gate_roots`, `extract_contract_from_body`, `run_checks`, `contract_failures`, `pending_manual_checks`, `is_invalid_contract_path`, `normalize_reference_entry`, `extract_key_path_values`, `manual_check_description`, `KNOWN_POST_MERGE_KINDS`, `POST_MERGE_REQUIRED_FIELDS` |
-| `issuesmith.gate_rules.milestone_subdesign_rules` | `MilestoneSubdesignRules`, `extract_sub_blocks`, `infer_sub_dependencies`, `find_dependency_cycles`, `apply_inferred_dependency_fixes`, `apply_sub_plan_dep_format_fixes`, `change_rows_with_content` |
+| `issuesmith.contract` | `StepContext`, `StepResult`, `StepConfig`, `Andon`, `RetrySignal`, `RetryReason`, `parse_issue_metadata`, `validate_issue_metadata`, `MetadataViolation` |
+| `issuesmith.verbs` | `prepare_worktree`, `publish_branch`, `find_pr`, `merge_state`, `merge_pr`, `cleanup_worktrees`, `cleanup_branches`, `close_issue`, `run_guarded`, `run_verified`, `exec_file`, `resolve`, `ROLE_ENGINES`, `map_step_result` |
+| `issuesmith.gates` | `Verdict`, `GateBuildContext`, `GateBuildError`, `GateEntry`, `RequiresGate`, `GATE_REGISTRY`, `NON_REPAIRABLE_RULE_IDS`, `is_non_repairable_rule_id`, `resolve_gate`, `validate_step_requires`, `check_scope`, `check_pr_scope`, `check_ac_complete`, `check_deps`, `Violation`, `Gate`, `PreconditionContext`, `normalize_allow_path`, `external_target_state` |
+| `issuesmith.config` | `get_config`, `load_config`, `IssuesmithConfig`, `LanguagePack` |
+| `issuesmith.andon` | `Andon`, `AndonSink`, `AutoAnswerPlan`, `raise_andon`, `list_open`, `list_open_records`, `answer`, `from_comment`, `to_comment`, `plan_auto_answers`, `apply_auto_answers` |
+| `issuesmith.queue` | `QueueStore`, `DispatchResult`, `dispatch_one` |
+
+Deeper import paths (for example `issuesmith.engine`, `issuesmith.merge`, or other subpackages) may still resolve while the interface shrinks, but they are not part of the supported public API and may change or be removed in any release.
 
 Gate ids usable in `steps.*.requires`: `ac_complete`, `ac_contract`, `ac_format`, `allow_paths_forbidden`, `base_freshness`, `deps`, `deps_format`, `design_lint`, `external_leak`, `importer_import`, `lint`, `migration_plan`, `milestone_consistency`, `milestone_subdesign`, `pin_bump`, `pr_scope`, `scope`, `scope_breadth`, `scope_coupling`, `scope_size`, `tests` (`GATE_REGISTRY`), plus `review` (`STEP_BOUND_GATES`; needs `steps.<id>.review`). A `module.path:attr` reference loads an external gate.
-
-### Contract, projection and labels
-
-| Module | Symbols |
-|---|---|
-| `issuesmith.contract` | `StepContext`, `StepResult`, `Verdict`, `Andon`, `LabelWriteForbidden`, `CONTRACT_EXTRACTORS`, `get_section`, `parse_table_rows`, `extract_change_table_rows`, `change_paths_for_repo`, `sub_header_re`, `SUB_HEADER_RE` (lazy, delegates to `sub_header_re()`), `iter_sub_blocks`, `sub_block`, `plan_dep_refs`, `PLAN_DEP_REF_RE`, `parse_frontmatter_fields`, `validate_frontmatter` |
-| `issuesmith.projection` | `IssueState`, `project`, `diff`, `state_from_labels`, `phase_for_step`, `phase_steps`, `is_final_step`, `is_managed` |
-| `issuesmith.ops.labels` | `project_issue` (the only writer that applies label projection to an Issue), `reconcile`, `run_hygiene`, `ExecRecord` |
-| `issuesmith.forge_guard` | `ReadOnlyLabelForge`, `guard_step_forge` |
-| `issuesmith.preconditions` | `PRECONDITION_REGISTRY`, `register`, `resolve_predicate`, `external_reference_valid`, `PreconditionContext`, `evaluate` |
-| `issuesmith.pins` | `requires_pins`, `pin_version`, `installed_version`, `unlanded_pins`, `develop_pins_landed` |
-| `issuesmith.body_editor` | `count_heading`, `filter_section_by_paths`, `get_section`, `get_section_by_keyword`, `get_subsections`, `split_h2_sections`, `upsert_section`, `replace_allow_paths`, `normalize_sub_headers`, `relocate_sub_plan`, `apply_milestone_normalizers` |
-| `issuesmith.language` | `LanguagePack`, `EN`, `FIELD_NAMES`, `load_language_pack`, `language_pack_from_mapping` |
-
-Built-in phase predicates: `deps_terminal`, `closing_pr_exists` (`issuesmith.preconditions`) and `pins_landed` (registered by `issuesmith.pins`, which the config loader imports).
-
-### Context hook (ghdag)
-
-| Module | Symbols |
-|---|---|
-| `issuesmith.context_hook` | `ContextHookError`, `MetadataViolation`, `validate_context_hook_security`, `validate_issue_metadata`, `raise_metadata_violations`, `parse_issue_metadata`, `parse_issue_metadata_blocks`, `build_context`, `main` |
-
-`ContextHookError` is raised (via `raise_metadata_violations`) when Issue YAML metadata fails security validation before template expansion in `build_context`.
-
-### Operations
-
-| Module | Symbols |
-|---|---|
-| `issuesmith.andon` | `Andon`, `AndonSink`, `AutoAnswerPlan`, `to_comment`, `from_comment`, `raise_andon`, `list_open`, `list_open_records`, `answer`, `answer_if_open`, `note`, `plan_auto_answers`, `apply_auto_answers`, `project_issue` |
-| `issuesmith.lanes` | `Ledger`, `LanePlan`, `IssueView`, `load_ledger`, `classify`, `plan`, `apply`, `report`, `resolve_report_since`, `count_merge_done_since`, `ledger_state_path`, `load_report_state`, `save_report_state` |
-| `issuesmith.merge` | `CompanionReadyResult`, `LocalMergeVerifyResult`, `MergeStateInfo`, `PostMergeTestResult`, `PrSearchResult`, `MergeStateTimeoutError`, `find_pr`, `find_companion_pr`, `list_pulls`, `get_merge_state`, `graphql_merge_state`, `wait_merge_state`, `is_already_merged`, `check_companion_ready`, `verify_local_merge`, `run_post_merge_pytest` |
-| `issuesmith.worktree` | `WorktreeError`, `assert_jobs_clean`, `clone_if_missing`, `ensure_base_included`, `fetch_base_or_raise`, `fetch_base_with_retry`, `github_client`, `handle_milestone`, `prepare_cross_repo_worktree`, `prepare_local_worktree`, `prepare_worktree`, `require_yaml_metadata`, `resolve_base_ref`, `validate_branch` |
-| `issuesmith.milestone` | `milestone_status`, `milestone_resume`, `milestone_prune`, `milestone_consolidate`, `advance_milestone_chains`, `parse_split_plan`, `plan_section`, `build_child_body`, `prevalidate_child_body`, `validate_children`, `check_v6_dependency_refs`, `run_sub1_create`, `main` and further SUB1 helpers |
-| `issuesmith.ops.publish` | `PublishResult`, `publish`, `run_version_bump`, `main` |
-| `issuesmith.ops.version_bump` | `BumpDecision`, `decide_bump`, `apply_bump`, `fold_unreleased`, `run_bump`, `main` |
-| `issuesmith.metrics_events` | `append_event`, `record_step_started`, `serialize_violations` |
-| `issuesmith.metrics_rework` | `compute`, `format_text`, `load_jsonl`, `parse_since`, `resolve_cause_target`, `main` |
-| `issuesmith.quota_gate` | `GitHubApiState`, `read_github_api_state`, `is_github_api_low`, `read_github_api_notified`, `write_github_api_notified` |
-| `issuesmith.observe` | `observe`, `ObserveSnapshot`, `github_api_status` |
-
-### Verbs
-
-`issuesmith.verbs` re-exports the step verbs.
-
-| Symbol | Module | Notes |
-|---|---|---|
-| `prepare_worktree` | `issuesmith.verbs.worktree` | Create or verify a worktree branched from a base |
-| `publish_branch` | `issuesmith.verbs.publish` | Push a branch (force-with-lease when already published) |
-| `find_pr` / `merge_state` / `merge_pr` | `issuesmith.verbs.merge` | Find, inspect and merge a PR |
-| `cleanup_worktrees` / `cleanup_branches` / `close_issue` | `issuesmith.verbs.finalize` | Remove worktrees and branches, close the Issue |
 
 ### Protocols and extension points
 
@@ -285,7 +224,7 @@ Built-in phase predicates: `deps_terminal`, `closing_pr_exists` (`issuesmith.pre
 
 ### Public API Stability
 
-issuesmith is pre-1.0 and follows `0.Y.Z`: a `Y` bump may change or remove public API, a `Z` bump does not. The modules and symbols above are the supported surface; anything else may change in any release.
+issuesmith is pre-1.0 and follows `0.Y.Z`: a `Y` bump may change or remove public API, a `Z` bump does not. The six modules in the [Public API](#public-api) table are the supported surface; anything else may change in any release.
 
 ### Deprecated API
 
