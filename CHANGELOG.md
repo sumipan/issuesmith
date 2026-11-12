@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - `issuesmith.engine` imports again with ghdag v0.130.x: it now uses `Permission` and the `permission=` keyword instead of the removed `LLMCapabilities` / `capabilities=`.
+- Queue redispatch passes `--exec-jsonl` to `ghdag trigger` (the old `--exec-md` flag was removed in ghdag v0.129.0).
 
 ## 0.178.2 - 2026-11-11
 
