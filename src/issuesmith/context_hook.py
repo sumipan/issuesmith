@@ -35,7 +35,7 @@ import yaml
 from issuesmith.branch_reuse import find_reusable_branch
 from issuesmith.branch_reuse import is_base_recorded as _is_base_recorded
 from issuesmith.branch_reuse import previous_commits as _prev_commits
-from issuesmith.config import get_config
+from issuesmith.config import ConfigError, get_config
 
 _PIPELINE_BRANCH_RE = re.compile(
     r"<!--\s*pipeline-branch:\s*feat/issue-(\d+)-([a-f0-9]+)\s*-->",
@@ -85,8 +85,18 @@ _REPO_ROOT: str = ""
 _WORKTREES_REL: str = ""
 _EXTERNAL_REL: str = ""
 
+# Frozen on first successful config load in this interpreter (see SUPPORTED_REPOS).
+# Import must stay light when ISSUESMITH_CONFIG is incomplete: ConfigError → leave None.
+_SUPPORTED_REPOS: set[str] | None = None
+try:
+    _SUPPORTED_REPOS = set(get_config().supported_repos)
+except ConfigError:
+    pass
+
 
 def _supported_repos() -> set[str]:
+    if _SUPPORTED_REPOS is not None:
+        return _SUPPORTED_REPOS
     return set(get_config().supported_repos)
 
 
