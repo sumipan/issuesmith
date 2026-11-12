@@ -200,7 +200,7 @@ Ledger keys: `lanes` (lane name to Issue numbers), `hold`, `backlog`, `auto_lane
 
 ## Public API
 
-Supported Python imports are limited to six modules (`issuesmith.__all__` is empty). The CLI (`python3 -m issuesmith` / `issuesmith`) and `module.path:attr` hooks in `issuesmith.yaml` are separate extension surfaces. Each module below lists its `__all__` names; names starting with `_` are internal.
+Supported Python imports are limited to seven modules (`issuesmith.__all__` is empty). The CLI (`python3 -m issuesmith` / `issuesmith`) and `module.path:attr` hooks in `issuesmith.yaml` are separate extension surfaces. Each module below lists its `__all__` names; names starting with `_` are internal.
 
 | Module | Symbols |
 |---|---|
@@ -210,6 +210,7 @@ Supported Python imports are limited to six modules (`issuesmith.__all__` is emp
 | `issuesmith.config` | `get_config`, `load_config`, `IssuesmithConfig`, `LanguagePack` |
 | `issuesmith.andon` | `Andon`, `AndonSink`, `AutoAnswerPlan`, `raise_andon`, `list_open`, `list_open_records`, `answer`, `from_comment`, `to_comment`, `plan_auto_answers`, `apply_auto_answers` |
 | `issuesmith.queue` | `QueueStore`, `DispatchResult`, `dispatch_one` |
+| `issuesmith.forge` | `ForgePort`, `GitHubApiError`, `GitHubClient`, `LocalForge`, `get_forge` |
 
 Deeper import paths (for example `issuesmith.engine`, `issuesmith.merge`, or other subpackages) may still resolve while the interface shrinks, but they are not part of the supported public API and may change or be removed in any release.
 
@@ -224,7 +225,7 @@ Gate ids usable in `steps.*.requires`: `ac_complete`, `ac_contract`, `ac_format`
 
 ### Public API Stability
 
-issuesmith is pre-1.0 and follows `0.Y.Z`: a `Y` bump may change or remove public API, a `Z` bump does not. The six modules in the [Public API](#public-api) table are the supported surface; anything else may change in any release.
+issuesmith is pre-1.0 and follows `0.Y.Z`: a `Y` bump may change or remove public API, a `Z` bump does not. The seven modules in the [Public API](#public-api) table are the supported surface; anything else may change in any release.
 
 ### Deprecated API
 
