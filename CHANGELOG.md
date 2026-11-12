@@ -7,6 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Changed
+
+- Document the six-module public import surface in README (`issuesmith.contract`, `issuesmith.verbs`, `issuesmith.gates`, `issuesmith.config`, `issuesmith.andon`, `issuesmith.queue`).
+- Re-export step-runner symbols on `issuesmith.verbs`: `run_guarded`, `run_verified`, `exec_file`, `resolve`, `ROLE_ENGINES`, and `map_step_result` (same objects as in `issuesmith.engine` / `issuesmith.ops.dispatch`).
+
 ## 0.178.23 - 2026-11-12
 
 ### Fixed
