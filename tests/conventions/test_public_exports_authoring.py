@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import issuesmith.config as config_mod
 import issuesmith.contract as contract_mod
@@ -117,3 +118,29 @@ def test_contract_import_has_no_cycle():
     )
     assert proc.returncode == 0, proc.stderr
     assert "ImportError" not in proc.stderr
+
+
+def test_contract_metadata_reexports_match_context_hook_with_incomplete_config(tmp_path: Path):
+    """Metadata re-exports stay identical to context_hook even when ISSUESMITH_CONFIG omits phases."""
+    incomplete = tmp_path / "incomplete.yaml"
+    incomplete.write_text("repo: example/repo\n", encoding="utf-8")
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(REPO_ROOT / "src"),
+        "ISSUESMITH_CONFIG": str(incomplete),
+    }
+    code = (
+        "import issuesmith.contract as c\n"
+        "import issuesmith.context_hook as h\n"
+        "assert c.parse_issue_metadata is h.parse_issue_metadata\n"
+        "assert c.validate_issue_metadata is h.validate_issue_metadata\n"
+        "assert c.MetadataViolation is h.MetadataViolation\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr

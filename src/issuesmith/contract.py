@@ -465,19 +465,12 @@ class LabelWriteForbidden(RuntimeError):
         )
 
 
-from issuesmith.config import ConfigError, StepConfig  # noqa: E402
-
-try:
-    from issuesmith.context_hook import (  # noqa: E402
-        MetadataViolation,
-        parse_issue_metadata,
-        validate_issue_metadata,
-    )
-except (ImportError, ConfigError):
-    # Incomplete ISSUESMITH_CONFIG must not break import-light ``import issuesmith.contract``.
-    MetadataViolation = None  # type: ignore[misc, assignment]
-    parse_issue_metadata = None  # type: ignore[assignment]
-    validate_issue_metadata = None  # type: ignore[assignment]
+from issuesmith.config import StepConfig  # noqa: E402
+from issuesmith.context_hook import (  # noqa: E402
+    MetadataViolation,
+    parse_issue_metadata,
+    validate_issue_metadata,
+)
 
 __all__ = [
     "StepContext",
