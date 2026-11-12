@@ -14,7 +14,6 @@ tracked workflow definition.
 from __future__ import annotations
 
 import argparse
-import enum
 import os
 import re
 import shutil
@@ -38,6 +37,7 @@ from ruamel.yaml import YAML
 from issuesmith.andon import Andon as _AndonModel
 from issuesmith.andon import raise_andon as _raise_andon
 from issuesmith.config import get_config
+from issuesmith.contract import RetryReason, RetrySignal
 from issuesmith.template_ids import template_identifiers
 
 
@@ -74,43 +74,6 @@ def _configured_engine_roles() -> frozenset[str] | None:
     return frozenset(
         str(role) for role, value in engines.items() if isinstance(value, dict)
     )
-
-
-class RetryReason(str, enum.Enum):
-    """Reason carried by RetrySignal to classify the deferred retry cause."""
-    QUOTA_PAUSED = "QUOTA_PAUSED"
-    BRAKE_PAUSED = "BRAKE_PAUSED"
-    ENGINE_ENVIRONMENT_ERROR = "ENGINE_ENVIRONMENT_ERROR"
-    RATE_LIMITED = "RATE_LIMITED"
-
-
-class RetrySignal(RuntimeError):
-    """Raised by _execute() when the step must be deferred for retry.
-
-    Replaces the old 6h wait loop: engine detects a paused / rate-limited state
-    and immediately signals dispatch.py to hand the task back to ghdag as a quota wait
-    (``PIPELINE_STATUS: WAIT_QUOTA``) and apply the <ns>:waiting label (exit 0, no DEP_FAILED).
-
-    The ``engine`` CLI converts ``RetrySignal`` to the WAIT_QUOTA companion lines and exit
-    code 0. Direct Python API callers of ``_execute()`` still receive ``RetrySignal`` as
-    raised. Other runtime errors remain ``REJECTED:`` on stderr with exit code 1.
-    """
-
-    def __init__(
-        self,
-        *,
-        reason: RetryReason,
-        after: datetime | None = None,
-        role: str = "",
-    ) -> None:
-        self.reason = reason
-        self.after = after
-        self.role = role
-        if reason == RetryReason.QUOTA_PAUSED and role:
-            msg = f"All engines paused for role {role}"
-        else:
-            msg = f"retry deferred: {reason.value}"
-        super().__init__(msg)
 
 
 _cfg = get_config()
