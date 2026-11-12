@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
-from ghdag.llm import ManagedResult
+from ghdag.llm import LLMResult
 from ghdag.quota import AdmissionDecision, EngineQuotaState, QuotaSnapshot
 
 from issuesmith.engine import (
@@ -46,8 +46,8 @@ def _snapshot(engines: dict[str, EngineQuotaState]) -> QuotaSnapshot:
     )
 
 
-def _success_result(engine: str = "claude") -> ManagedResult:
-    return ManagedResult(
+def _success_result(engine: str = "claude") -> LLMResult:
+    return LLMResult(stdout="", stderr="",
         body="ok",
         usage=None,
         returncode=0,
@@ -127,9 +127,9 @@ def execute_mocks(monkeypatch):
     monkeypatch.setattr("issuesmith.engine._record_task_metrics", lambda **kwargs: None)
     monkeypatch.setattr("issuesmith.engine._resolve_timeout_sec", lambda role: 600.0)
 
-    call_managed = RecordingCallManaged()
-    call_managed.return_value = _success_result()
-    monkeypatch.setattr("issuesmith.engine.call_managed", call_managed)
+    call = RecordingCallManaged()
+    call.return_value = _success_result()
+    monkeypatch.setattr("issuesmith.engine.call", call)
     sleep = MagicMock()
     monkeypatch.setattr("issuesmith.engine.time.sleep", sleep)
 
@@ -140,7 +140,7 @@ def execute_mocks(monkeypatch):
     )
 
     return {
-        "call_managed": call_managed,
+        "call": call,
         "sleep": sleep,
         "quota_gate": quota_gate,
     }
@@ -209,12 +209,12 @@ def test_timeout_le_300_fails_without_sleep(execute_mocks, monkeypatch):
         _execute("design", "prompt")
 
     execute_mocks["sleep"].assert_not_called()
-    assert execute_mocks["call_managed"].calls == []
+    assert execute_mocks["call"].calls == []
 
 
 
 def test_primary_paused_uses_fallback_without_sleep(execute_mocks):
-    """AC-8: primary paused, fallback available → no sleep, one call_managed."""
+    """AC-8: primary paused, fallback available → no sleep, one call."""
     snap = _snapshot(
         {
             "claude": _paused(datetime.now(timezone.utc) + timedelta(seconds=30)),
@@ -222,15 +222,15 @@ def test_primary_paused_uses_fallback_without_sleep(execute_mocks):
         }
     )
     execute_mocks["quota_gate"].snapshot_result = snap
-    execute_mocks["call_managed"].return_value = _success_result(engine="codex")
+    execute_mocks["call"].return_value = _success_result(engine="codex")
 
     result = _execute("design", "prompt")
 
     assert result.returncode == 0
     execute_mocks["sleep"].assert_not_called()
     assert execute_mocks["quota_gate"].snapshot_calls == 1
-    assert len(execute_mocks["call_managed"].calls) == 1
-    assert execute_mocks["call_managed"].calls[0]["engine"] == "codex"
+    assert len(execute_mocks["call"].calls) == 1
+    assert execute_mocks["call"].calls[0]["engine"] == "codex"
 
 
 
@@ -255,17 +255,17 @@ def test_brake_only_paused_uses_fallback(execute_mocks, monkeypatch, tmp_path):
     brake_gate.snapshot_result = _snapshot(
         {"claude": _paused(None), "codex": _available()}
     )
-    execute_mocks["call_managed"].return_value = _success_result(engine="codex")
+    execute_mocks["call"].return_value = _success_result(engine="codex")
     monkeypatch.setattr(
-        "issuesmith.engine.call_managed", execute_mocks["call_managed"]
+        "issuesmith.engine.call", execute_mocks["call"]
     )
 
     result = _execute("design", "prompt")
 
     assert result.returncode == 0
     execute_mocks["sleep"].assert_not_called()
-    assert execute_mocks["call_managed"].calls[-1]["engine"] == "codex"
-    assert execute_mocks["call_managed"].calls[-1]["quota_gate"] is quota_gate
+    assert execute_mocks["call"].calls[-1]["engine"] == "codex"
+    assert execute_mocks["call"].calls[-1]["quota_gate"] is quota_gate
     assert brake_gate.reports == []
 
 
@@ -298,7 +298,7 @@ def test_all_paused_across_gates_raises(execute_mocks, monkeypatch, tmp_path):
     with pytest.raises(RuntimeError, match="All engines paused for role design"):
         _execute("design", "prompt")
 
-    assert execute_mocks["call_managed"].calls == []
+    assert execute_mocks["call"].calls == []
 
 
 def test_rate_limit_report_writes_quota_gate_only(
@@ -322,7 +322,7 @@ def test_rate_limit_report_writes_quota_gate_only(
     quota_gate.snapshot_result = available
     brake_gate.snapshot_result = available
 
-    rate_limited = ManagedResult(
+    rate_limited = LLMResult(stdout="", stderr="",
         body="rate limit exceeded, please try again later",
         usage=None,
         returncode=1,
@@ -333,12 +333,12 @@ def test_rate_limit_report_writes_quota_gate_only(
         quota_reported=False,
         additional_tags={},
     )
-    execute_mocks["call_managed"].side_effect = [
+    execute_mocks["call"].side_effect = [
         rate_limited,
         _success_result(engine="codex"),
     ]
     monkeypatch.setattr(
-        "issuesmith.engine.call_managed", execute_mocks["call_managed"]
+        "issuesmith.engine.call", execute_mocks["call"]
     )
     monkeypatch.setattr("issuesmith.engine._is_rate_limited", lambda body: True)
 
@@ -348,14 +348,14 @@ def test_rate_limit_report_writes_quota_gate_only(
     assert len(quota_gate.reports) == 1
     assert quota_gate.reports[0]["reason"] == "rate_limit_detected"
     assert brake_gate.reports == []
-    assert execute_mocks["call_managed"].calls[0]["quota_gate"] is quota_gate
-    assert execute_mocks["call_managed"].calls[1]["quota_gate"] is quota_gate
+    assert execute_mocks["call"].calls[0]["quota_gate"] is quota_gate
+    assert execute_mocks["call"].calls[1]["quota_gate"] is quota_gate
 
 
 def test_call_managed_receives_quota_gate_not_brake(
     execute_mocks, monkeypatch, tmp_path
 ):
-    """AC-7: call_managed always receives the global quota_gate."""
+    """AC-7: call always receives the global quota_gate."""
     quota_path = tmp_path / "quota.json"
     brake_path = tmp_path / "brake.json"
     monkeypatch.setattr("issuesmith.engine.QUOTA_STATE_PATH", quota_path)
@@ -372,19 +372,19 @@ def test_call_managed_receives_quota_gate_not_brake(
     quota_gate.snapshot_result = available
     brake_gate.snapshot_result = available
     monkeypatch.setattr(
-        "issuesmith.engine.call_managed", execute_mocks["call_managed"]
+        "issuesmith.engine.call", execute_mocks["call"]
     )
 
     _execute("design", "prompt")
 
-    assert execute_mocks["call_managed"].calls[-1]["quota_gate"] is quota_gate
-    assert execute_mocks["call_managed"].calls[-1]["quota_gate"] is not brake_gate
+    assert execute_mocks["call"].calls[-1]["quota_gate"] is quota_gate
+    assert execute_mocks["call"].calls[-1]["quota_gate"] is not brake_gate
 
 
 def test_brake_paused_engine_excluded_from_managed_fallbacks(
     execute_mocks, monkeypatch, tmp_path
 ):
-    """Engines paused on the budget gate are not passed as call_managed fallbacks."""
+    """Engines paused on the budget gate are not passed as call fallbacks."""
     quota_path = tmp_path / "quota.json"
     brake_path = tmp_path / "brake.json"
     monkeypatch.setattr("issuesmith.engine.QUOTA_STATE_PATH", quota_path)
@@ -404,13 +404,13 @@ def test_brake_paused_engine_excluded_from_managed_fallbacks(
         {"claude": _available(), "codex": _paused(None)}
     )
     monkeypatch.setattr(
-        "issuesmith.engine.call_managed", execute_mocks["call_managed"]
+        "issuesmith.engine.call", execute_mocks["call"]
     )
 
     _execute("design", "prompt")
 
-    assert execute_mocks["call_managed"].calls[-1]["engine"] == "claude"
-    assert execute_mocks["call_managed"].calls[-1]["fallback_candidates"] == []
+    assert execute_mocks["call"].calls[-1]["engine"] == "claude"
+    assert execute_mocks["call"].calls[-1]["fallback_candidates"] == []
 
 
 def test_quota_exhausted_raises_retry_signal(execute_mocks, monkeypatch):
@@ -418,18 +418,18 @@ def test_quota_exhausted_raises_retry_signal(execute_mocks, monkeypatch):
 
     from issuesmith.engine import RetryReason, RetrySignal
 
-    exhausted = ManagedResult(
+    exhausted = LLMResult(stdout="", stderr="",
         body='{"type":"thread.started"}',
         usage=None,
         returncode=1,
-        failure_class=FailureClass.QUOTA_EXHAUSTED.value,
+        failure_class=FailureClass.QUOTA_EXHAUSTED,
         engine_used="codex",
         model_used="m",
         attempts=2,
         quota_reported=True,
         additional_tags={},
     )
-    execute_mocks["call_managed"].return_value = exhausted
+    execute_mocks["call"].return_value = exhausted
 
     available = _snapshot({"claude": _available(), "codex": _available()})
     resume_early = datetime.now(timezone.utc) + timedelta(minutes=30)
@@ -475,11 +475,11 @@ def test_quota_exhausted_records_metrics_before_retry(execute_mocks, monkeypatch
 
     monkeypatch.setattr("issuesmith.engine._declare_finish", track_finish)
 
-    execute_mocks["call_managed"].return_value = ManagedResult(
+    execute_mocks["call"].return_value = LLMResult(stdout="", stderr="",
         body="",
         usage=None,
         returncode=1,
-        failure_class=FailureClass.QUOTA_EXHAUSTED.value,
+        failure_class=FailureClass.QUOTA_EXHAUSTED,
         engine_used="codex",
         model_used="m",
         attempts=1,
@@ -505,11 +505,11 @@ def test_quota_exhausted_after_none_raises_retry_with_none_after(
 
     from issuesmith.engine import RetrySignal
 
-    execute_mocks["call_managed"].return_value = ManagedResult(
+    execute_mocks["call"].return_value = LLMResult(stdout="", stderr="",
         body="",
         usage=None,
         returncode=1,
-        failure_class=FailureClass.QUOTA_EXHAUSTED.value,
+        failure_class=FailureClass.QUOTA_EXHAUSTED,
         engine_used="claude",
         model_used="m",
         attempts=1,
@@ -535,11 +535,11 @@ def test_run_verified_emit_propagates_quota_retry(execute_mocks, monkeypatch, tm
 
     from issuesmith.engine import RetrySignal, run_verified
 
-    execute_mocks["call_managed"].return_value = ManagedResult(
+    execute_mocks["call"].return_value = LLMResult(stdout="", stderr="",
         body="",
         usage=None,
         returncode=1,
-        failure_class=FailureClass.QUOTA_EXHAUSTED.value,
+        failure_class=FailureClass.QUOTA_EXHAUSTED,
         engine_used="codex",
         model_used="m",
         attempts=1,

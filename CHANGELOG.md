@@ -7,6 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.178.23 - 2026-11-12
+
+### Fixed
+
+- `issuesmith.engine` and `issuesmith.queue_triage` use the single `ghdag.llm.call` (ghdag v0.132.0 removed `call_managed` / `call_text` / `ManagedResult`). Per-engine permissions are passed with `permission_overrides` instead of patching ghdag at run time.
+- `issuesmith preflight` resolves the shell adapter through `ghdag.pipeline.get_command_adapter` (the old `ghdag.workflow.engine` module no longer exists).
+
 ## 0.178.20 - 2026-11-12
 
 ### Fixed

@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
-from ghdag.llm import ManagedResult
+from ghdag.llm import LLMResult
+from ghdag.metrics import FailureClass
 from ghdag.quota import EngineQuotaState, QuotaSnapshot
 
 from issuesmith.config import _build_engines
 from issuesmith.engine import (
-    _LAST_LLM_STDERR,
     RetryReason,
     RetrySignal,
     RoleSelection,
@@ -120,7 +121,7 @@ def _snap(engines):
 
 
 def _result(engine="claude", *, rc=0, body="ok"):
-    return ManagedResult(
+    return LLMResult(stdout="", stderr="",
         body=body,
         usage=None,
         returncode=rc,
@@ -142,16 +143,15 @@ def exe_mocks(monkeypatch):
     monkeypatch.setattr("issuesmith.engine._record_task_metrics", lambda **kwargs: None)
     monkeypatch.setattr("issuesmith.engine._resolve_timeout_sec", lambda role: 600.0)
     cm = MagicMock(return_value=_result())
-    monkeypatch.setattr("issuesmith.engine.call_managed", cm)
+    monkeypatch.setattr("issuesmith.engine.call", cm)
     qg = MagicMock()
     monkeypatch.setattr("issuesmith.engine.QuotaGate", lambda state_path: qg)
-    return {"call_managed": cm, "quota_gate": qg}
+    return {"call": cm, "quota_gate": qg}
 
 
-def _call_managed_with_stderr(stderr: str, result: ManagedResult):
+def _call_with_stderr(stderr: str, result: LLMResult):
     def _inner(*_args, **_kwargs):
-        _LAST_LLM_STDERR[0] = stderr
-        return result
+        return dataclasses.replace(result, stderr=stderr)
 
     return _inner
 
@@ -160,7 +160,7 @@ def _no_fallback(exe_mocks, *, stderr: str = "Error: 429 Too Many Requests"):
     available = _snap({"claude": _state("available"), "codex": _state("available")})
     paused = _snap({"claude": _state("paused"), "codex": _state("paused")})
     exe_mocks["quota_gate"].snapshot.side_effect = [available, paused]
-    exe_mocks["call_managed"].side_effect = _call_managed_with_stderr(
+    exe_mocks["call"].side_effect = _call_with_stderr(
         stderr,
         _result("claude", rc=1, body="issue #5429 only in body"),
     )
@@ -211,14 +211,13 @@ def test_fallback_still_used_and_resume_at_reported(exe_mocks):
     def _side_effect(*_args, **_kwargs):
         if calls["n"] == 0:
             calls["n"] += 1
-            _LAST_LLM_STDERR[0] = stderr
-            return _result("claude", rc=1, body="rate limit in body only")
+            return dataclasses.replace(_result("claude", rc=1, body="rate limit in body only"), stderr=stderr)
         return _result("codex")
 
-    exe_mocks["call_managed"].side_effect = _side_effect
+    exe_mocks["call"].side_effect = _side_effect
     result = _execute("design", "prompt")
     assert result.returncode == 0
-    assert exe_mocks["call_managed"].call_args.kwargs["engine"] == "codex"
+    assert exe_mocks["call"].call_args.kwargs["engine"] == "codex"
     kwargs = _report_kwargs(exe_mocks)
     assert kwargs["engine"] == "claude"
     assert kwargs["reason"].startswith("rate_limit_detected: ")
@@ -229,7 +228,7 @@ def test_fallback_still_used_and_resume_at_reported(exe_mocks):
 def test_body_only_rate_limit_does_not_pause(exe_mocks):
     available = _snap({"claude": _state("available"), "codex": _state("available")})
     exe_mocks["quota_gate"].snapshot.return_value = available
-    exe_mocks["call_managed"].side_effect = _call_managed_with_stderr(
+    exe_mocks["call"].side_effect = _call_with_stderr(
         "",
         _result("claude", rc=1, body="rate limit and 429 in body only"),
     )
@@ -240,7 +239,7 @@ def test_body_only_rate_limit_does_not_pause(exe_mocks):
 def test_false_positive_stderr_does_not_pause(exe_mocks):
     available = _snap({"claude": _state("available"), "codex": _state("available")})
     exe_mocks["quota_gate"].snapshot.return_value = available
-    exe_mocks["call_managed"].side_effect = _call_managed_with_stderr(
+    exe_mocks["call"].side_effect = _call_with_stderr(
         "issue #5429",
         _result("claude", rc=1, body="failed"),
     )
@@ -252,11 +251,11 @@ def test_false_positive_stderr_does_not_pause(exe_mocks):
     "result",
     [
         _result("claude", rc=0),
-        ManagedResult(
+        LLMResult(stdout="", stderr="",
             body="failed",
             usage=None,
             returncode=1,
-            failure_class="other",
+            failure_class=FailureClass.UNKNOWN_FAILURE,
             engine_used="claude",
             model_used="m",
             attempts=1,
@@ -270,7 +269,7 @@ def test_rate_limit_evidence_only_checked_for_unclassified_failure(
 ):
     available = _snap({"claude": _state("available"), "codex": _state("available")})
     exe_mocks["quota_gate"].snapshot.return_value = available
-    exe_mocks["call_managed"].return_value = result
+    exe_mocks["call"].return_value = result
     evidence = MagicMock(return_value="rate limit exceeded")
     monkeypatch.setattr("issuesmith.engine._rate_limit_evidence", evidence)
 
@@ -284,7 +283,7 @@ def test_rate_limit_evidence_checked_once_for_unclassified_failure(
 ):
     available = _snap({"claude": _state("available"), "codex": _state("available")})
     exe_mocks["quota_gate"].snapshot.return_value = available
-    exe_mocks["call_managed"].return_value = _result("claude", rc=1)
+    exe_mocks["call"].return_value = _result("claude", rc=1)
     evidence = MagicMock(return_value=None)
     monkeypatch.setattr("issuesmith.engine._rate_limit_evidence", evidence)
     monkeypatch.setattr("issuesmith.engine._is_rate_limited", lambda _text: False)
