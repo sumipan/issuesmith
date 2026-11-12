@@ -2981,3 +2981,5 @@ def resolve_engine(phase: str) -> str:
 
 
 import issuesmith.pins  # noqa: E402,F401  (registers the pins_landed predicate)
+
+__all__ = ["QueueStore", "DispatchResult", "dispatch_one"]

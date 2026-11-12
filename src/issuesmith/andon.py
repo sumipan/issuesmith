@@ -633,3 +633,18 @@ def apply_auto_answers(client: Any, plan: AutoAnswerPlan) -> AutoAnswerPlan:
         client.issue_comment(issue, _note_comment(andon_id, "auto_answer", rule_name))
         answer(client, andon_id, action)
     return plan
+
+
+__all__ = [
+    "Andon",
+    "AndonSink",
+    "AutoAnswerPlan",
+    "raise_andon",
+    "list_open",
+    "list_open_records",
+    "answer",
+    "from_comment",
+    "to_comment",
+    "plan_auto_answers",
+    "apply_auto_answers",
+]
