@@ -6,7 +6,7 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from ghdag.llm import ManagedResult
+from ghdag.llm import LLMResult
 from ghdag.quota import AdmissionDecision, EngineQuotaState, QuotaSnapshot
 
 from issuesmith.engine import (
@@ -41,8 +41,8 @@ def _snapshot() -> QuotaSnapshot:
 
 def _result(
     engine: str = "claude", *, returncode: int = 0, body: str = "ok"
-) -> ManagedResult:
-    return ManagedResult(
+) -> LLMResult:
+    return LLMResult(stdout="", stderr="",
         body=body,
         usage=None,
         returncode=returncode,
@@ -105,7 +105,7 @@ class RecordingCallManaged:
 
     def __call__(self, *args, **kwargs):
         if self.events is not None:
-            self.events.append("call_managed")
+            self.events.append("call")
         record = dict(kwargs)
         if args:
             record["content"] = args[0]
@@ -132,12 +132,12 @@ def mocks(monkeypatch, tmp_path):
 
     events: list[str] = []
     gate = RecordingQuotaGate(events=events)
-    call_managed = RecordingCallManaged(events=events)
+    call = RecordingCallManaged(events=events)
     monkeypatch.setattr("issuesmith.engine.QuotaGate", lambda state_path: gate)
-    monkeypatch.setattr("issuesmith.engine.call_managed", call_managed)
+    monkeypatch.setattr("issuesmith.engine.call", call)
 
     monkeypatch.setenv("GHDAG_TASK_UUID", TASK_UUID)
-    return {"gate": gate, "call_managed": call_managed, "events": events}
+    return {"gate": gate, "call": call, "events": events}
 
 
 def _use_engine(monkeypatch, engine: str) -> None:
@@ -152,7 +152,7 @@ def test_begin_run_declares_selected_engine_before_call_managed(
     mocks, monkeypatch, engine
 ):
     _use_engine(monkeypatch, engine)
-    mocks["call_managed"].return_value = _result(engine)
+    mocks["call"].return_value = _result(engine)
 
     result = _execute(ROLE, "prompt")
 
@@ -163,9 +163,9 @@ def test_begin_run_declares_selected_engine_before_call_managed(
     assert "role" not in gate.begin_runs[0]
     assert "role_engines" not in gate.begin_runs[0]
     assert gate.begin_runs[0]["engine"] != "shell"
-    assert len(mocks["call_managed"].calls) == 1
-    assert gate.begin_runs[0]["engine"] == mocks["call_managed"].calls[0].get("engine", engine)
-    assert mocks["events"].index("begin_run") < mocks["events"].index("call_managed")
+    assert len(mocks["call"].calls) == 1
+    assert gate.begin_runs[0]["engine"] == mocks["call"].calls[0].get("engine", engine)
+    assert mocks["events"].index("begin_run") < mocks["events"].index("call")
 
 
 @pytest.mark.parametrize("engine", ENGINES)
@@ -182,7 +182,7 @@ def test_begin_run_denied_raises_quota_paused(mocks, monkeypatch, engine):
     assert exc_info.value.reason == RetryReason.QUOTA_PAUSED
     assert exc_info.value.after == resume_at
     assert exc_info.value.role == ROLE
-    assert mocks["call_managed"].calls == []
+    assert mocks["call"].calls == []
     assert mocks["gate"].finish_runs == []
 
 
@@ -193,16 +193,16 @@ def test_call_order_begin_call_finish(mocks, monkeypatch):
 
     gate = mocks["gate"]
     assert len(gate.begin_runs) == 1
-    assert len(mocks["call_managed"].calls) == 1
+    assert len(mocks["call"].calls) == 1
     assert len(gate.finish_runs) == 1
-    assert mocks["events"] == ["begin_run", "call_managed", "finish_run"]
+    assert mocks["events"] == ["begin_run", "call", "finish_run"]
     assert gate.begin_runs[0] == {"task_uuid": TASK_UUID, "engine": "claude"}
     assert gate.finish_runs[0] == {"task_uuid": TASK_UUID}
 
 
 def test_finish_run_called_when_call_managed_raises(mocks, monkeypatch):
     _use_engine(monkeypatch, "claude")
-    mocks["call_managed"].side_effect = RuntimeError("boom")
+    mocks["call"].side_effect = RuntimeError("boom")
 
     with pytest.raises(RuntimeError, match="boom"):
         _execute(ROLE, "prompt")
@@ -212,7 +212,7 @@ def test_finish_run_called_when_call_managed_raises(mocks, monkeypatch):
 
 def test_finish_run_called_on_timeout(mocks, monkeypatch):
     _use_engine(monkeypatch, "claude")
-    mocks["call_managed"].side_effect = subprocess.TimeoutExpired(cmd="llm", timeout=600)
+    mocks["call"].side_effect = subprocess.TimeoutExpired(cmd="llm", timeout=600)
 
     result = _execute(ROLE, "prompt")
 
@@ -223,7 +223,7 @@ def test_finish_run_called_on_timeout(mocks, monkeypatch):
 def test_rate_limit_retry_redeclares_alt_engine(mocks, monkeypatch):
     _use_engine(monkeypatch, "claude")
     monkeypatch.setattr("issuesmith.engine._is_rate_limited", lambda text: True)
-    mocks["call_managed"].side_effect = [
+    mocks["call"].side_effect = [
         _result("claude", returncode=1, body="rate limit exceeded"),
         _result("codex"),
     ]
@@ -231,7 +231,7 @@ def test_rate_limit_retry_redeclares_alt_engine(mocks, monkeypatch):
     result = _execute(ROLE, "prompt")
 
     assert result.returncode == 0
-    calls = mocks["call_managed"].calls
+    calls = mocks["call"].calls
     assert len(calls) == 2
     retry_engine = calls[1]["engine"]
     assert retry_engine != "claude"
@@ -241,7 +241,7 @@ def test_rate_limit_retry_redeclares_alt_engine(mocks, monkeypatch):
     ]
     events = mocks["events"]
     begin_idx = [i for i, n in enumerate(events) if n == "begin_run"]
-    call_idx = [i for i, n in enumerate(events) if n == "call_managed"]
+    call_idx = [i for i, n in enumerate(events) if n == "call"]
     assert begin_idx[1] < call_idx[1]
     assert len(mocks["gate"].finish_runs) == 1
 
@@ -249,7 +249,7 @@ def test_rate_limit_retry_redeclares_alt_engine(mocks, monkeypatch):
 def test_rate_limit_retry_denied_raises_quota_paused(mocks, monkeypatch):
     _use_engine(monkeypatch, "claude")
     monkeypatch.setattr("issuesmith.engine._is_rate_limited", lambda text: True)
-    mocks["call_managed"].side_effect = [
+    mocks["call"].side_effect = [
         _result("claude", returncode=1, body="rate limit exceeded"),
         _result("codex"),
     ]
@@ -266,7 +266,7 @@ def test_rate_limit_retry_denied_raises_quota_paused(mocks, monkeypatch):
 
     assert exc_info.value.reason == RetryReason.QUOTA_PAUSED
     assert exc_info.value.after == resume_at
-    assert len(mocks["call_managed"].calls) == 1
+    assert len(mocks["call"].calls) == 1
     assert len(mocks["gate"].finish_runs) == 1
 
 
@@ -282,7 +282,7 @@ def test_no_task_uuid_skips_declaration(mocks, monkeypatch, value):
 
     assert result.returncode == 0
     assert result.stdout == "ok"
-    assert len(mocks["call_managed"].calls) == 1
+    assert len(mocks["call"].calls) == 1
     assert mocks["gate"].begin_runs == []
     assert mocks["gate"].finish_runs == []
 
@@ -294,7 +294,7 @@ def test_begin_run_oserror_is_logged_and_ignored(mocks, monkeypatch, capsys):
     result = _execute(ROLE, "prompt")
 
     assert result.returncode == 0
-    assert len(mocks["call_managed"].calls) == 1
+    assert len(mocks["call"].calls) == 1
     assert "quota declare failed" in capsys.readouterr().err
 
 

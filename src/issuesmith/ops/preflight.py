@@ -9,7 +9,7 @@ ghdag_runner) is not broken.
 Checks:
 
   1. pyproject.toml has no direct ghdag dependency (confirms it is transitive)
-  2. `import ghdag` succeeds and `get_adapter('shell')` resolves correctly
+  2. `import ghdag` succeeds and `get_command_adapter("shell")` resolves correctly
 
 ghdag is obtained as a transitive dependency via mltgnt (#1148). A direct
 dependency would mean double bookkeeping, with the host and mltgnt pinning
@@ -115,25 +115,17 @@ def _check_installed_ghdag() -> tuple[bool, str]:
 
 def _check_shell_adapter() -> tuple[bool, str]:
     try:
-        from ghdag.workflow import engine as workflow_engine
+        from ghdag import GhdagError
+        from ghdag.pipeline import get_command_adapter
     except ImportError as e:
-        return False, f"failed to import ghdag.workflow.engine: {e}"
-
-    get_adapter = getattr(workflow_engine, "get_adapter", None)
-    if get_adapter is None:
-        return False, "ghdag.workflow.engine.get_adapter not found"
-    adapter_not_found_error = getattr(
-        workflow_engine,
-        "AdapterNotFoundError",
-        ValueError,
-    )
+        return False, f"failed to import ghdag.pipeline.get_command_adapter: {e}"
 
     try:
-        adapter = get_adapter("shell")
-    except (adapter_not_found_error, ValueError) as e:
+        adapter = get_command_adapter("shell")
+    except (GhdagError, ValueError) as e:
         return False, (
-            f"get_adapter('shell') failed: {e}\n"
-            "  Fix: reinstall ghdag v0.34.0 or later"
+            f"get_command_adapter('shell') failed: {e}\n"
+            "  Fix: reinstall the pinned ghdag version"
         )
     return True, f"shell adapter OK: {type(adapter).__name__}"
 

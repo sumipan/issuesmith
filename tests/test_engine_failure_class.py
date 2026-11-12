@@ -83,11 +83,14 @@ def execute_mocks(monkeypatch):
 
 def test_execute_failure_includes_truncated_stderr(execute_mocks, monkeypatch):
     monkeypatch.setattr(
-        "issuesmith.engine._ghdag_call",
+        "issuesmith.engine.call",
         lambda prompt, **kwargs: LLMResult(
+            body="",
             stdout="",
             stderr="API error: stream disconnected",
             returncode=1,
+            engine_used="claude",
+            model_used="m",
         ),
     )
 
@@ -99,17 +102,21 @@ def test_execute_failure_includes_truncated_stderr(execute_mocks, monkeypatch):
     assert execute_mocks["recorded"][-1]["failure_detail"] == "API error: stream disconnected"
 
 
-def test_execute_failure_classifies_from_stderr_when_stdout_empty(execute_mocks, monkeypatch):
+def test_execute_failure_records_the_failure_class_of_the_result(execute_mocks, monkeypatch):
     monkeypatch.setattr(
         "issuesmith.engine.ROLE_ENGINES",
         {"implementation": frozenset({"claude"})},
     )
     monkeypatch.setattr(
-        "issuesmith.engine._ghdag_call",
+        "issuesmith.engine.call",
         lambda prompt, **kwargs: LLMResult(
+            body="",
             stdout="",
             stderr="Error: authentication_error: invalid api key",
             returncode=1,
+            failure_class=FailureClass.AUTH,
+            engine_used="claude",
+            model_used="m",
         ),
     )
 
@@ -122,11 +129,14 @@ def test_execute_failure_classifies_from_stderr_when_stdout_empty(execute_mocks,
 
 def test_execute_success_does_not_persist_stderr(execute_mocks, monkeypatch):
     monkeypatch.setattr(
-        "issuesmith.engine._ghdag_call",
+        "issuesmith.engine.call",
         lambda prompt, **kwargs: LLMResult(
+            body="done",
             stdout="done",
             stderr="debug noise",
             returncode=0,
+            engine_used="claude",
+            model_used="m",
         ),
     )
 
@@ -142,7 +152,7 @@ def test_execute_timeout_expired_records_metrics_and_returns_124(execute_mocks, 
     def raise_timeout(*_args, **_kwargs):
         raise subprocess.TimeoutExpired(cmd=["agent"], timeout=3599)
 
-    monkeypatch.setattr("issuesmith.engine.call_managed", raise_timeout)
+    monkeypatch.setattr("issuesmith.engine.call", raise_timeout)
 
     proc = _execute("implementation", "prompt")
 
@@ -156,15 +166,15 @@ def test_execute_timeout_expired_records_metrics_and_returns_124(execute_mocks, 
 
 
 def test_execute_llm_result_timeout_records_metrics(execute_mocks, monkeypatch):
-    from ghdag.llm import ManagedResult
+    from ghdag.llm import LLMResult
 
     monkeypatch.setattr(
-        "issuesmith.engine.call_managed",
-        lambda *args, **kwargs: ManagedResult(
+        "issuesmith.engine.call",
+        lambda *args, **kwargs: LLMResult(stdout="", stderr="",
             body="",
             usage=None,
             returncode=124,
-            failure_class=FailureClass.TIMEOUT.value,
+            failure_class=FailureClass.TIMEOUT,
             engine_used="claude",
             model_used="claude-sonnet-4-6",
             attempts=1,

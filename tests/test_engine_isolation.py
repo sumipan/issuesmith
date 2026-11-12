@@ -1,17 +1,17 @@
-"""Tests for exec_file / _execute isolation passthrough to call_managed (#5542)."""
+"""Tests for exec_file / _execute isolation passthrough to call (#5542)."""
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 import pytest
-from ghdag.llm import ManagedResult
+from ghdag.llm import LLMResult
 from ghdag.metrics import FailureClass
 from ghdag.quota import EngineQuotaState, QuotaSnapshot
 
 from issuesmith.engine import (
-    _LAST_LLM_STDERR,
     RoleSelection,
     _execute,
     exec_file,
@@ -37,7 +37,7 @@ def _snap(engines):
 
 
 def _result(engine="claude", *, rc=0, body="ok", failure_class=None):
-    return ManagedResult(
+    return LLMResult(stdout="", stderr="",
         body=body,
         usage=None,
         returncode=rc,
@@ -59,12 +59,12 @@ def exe_mocks(monkeypatch):
     monkeypatch.setattr("issuesmith.engine._record_task_metrics", lambda **kwargs: None)
     monkeypatch.setattr("issuesmith.engine._resolve_timeout_sec", lambda role: 600.0)
     cm = MagicMock(return_value=_result())
-    monkeypatch.setattr("issuesmith.engine.call_managed", cm)
+    monkeypatch.setattr("issuesmith.engine.call", cm)
     qg = MagicMock()
     monkeypatch.setattr("issuesmith.engine.QuotaGate", lambda state_path: qg)
     snap = _snap({"claude": _available(), "codex": _available()})
     qg.snapshot.return_value = snap
-    return {"call_managed": cm, "quota_gate": qg}
+    return {"call": cm, "quota_gate": qg}
 
 
 def test_exec_file_forwards_isolation_to_execute(monkeypatch, tmp_path):
@@ -83,17 +83,17 @@ def test_exec_file_forwards_isolation_to_execute(monkeypatch, tmp_path):
 
 def test_call_managed_receives_isolation_true_on_success(exe_mocks):
     _execute("design", "prompt", isolation=True)
-    assert exe_mocks["call_managed"].call_args.kwargs["isolation"] is True
+    assert exe_mocks["call"].call_args.kwargs["isolation"] is True
 
 
 def test_call_managed_receives_isolation_none_when_omitted(exe_mocks):
     _execute("design", "prompt")
-    assert exe_mocks["call_managed"].call_args.kwargs["isolation"] is None
+    assert exe_mocks["call"].call_args.kwargs["isolation"] is None
 
 
 def test_rate_limit_fallback_preserves_isolation_true(exe_mocks, monkeypatch):
     rate_limited = _result("claude", rc=1, body="fail")
-    exe_mocks["call_managed"].side_effect = [rate_limited, _result("codex")]
+    exe_mocks["call"].side_effect = [rate_limited, _result("codex")]
     monkeypatch.setattr("issuesmith.engine._is_rate_limited", lambda _text: True)
     monkeypatch.setattr(
         "issuesmith.engine._rate_limit_evidence", lambda _text: "rate limit"
@@ -101,7 +101,7 @@ def test_rate_limit_fallback_preserves_isolation_true(exe_mocks, monkeypatch):
 
     _execute("design", "prompt", isolation=True)
 
-    calls = exe_mocks["call_managed"].call_args_list
+    calls = exe_mocks["call"].call_args_list
     assert len(calls) == 2
     assert calls[0].kwargs["isolation"] is True
     assert calls[1].kwargs["isolation"] is True
@@ -109,13 +109,13 @@ def test_rate_limit_fallback_preserves_isolation_true(exe_mocks, monkeypatch):
 
 def test_env_error_fallback_preserves_isolation_false(exe_mocks):
     env_error = _result(
-        "claude", rc=1, failure_class=FailureClass.ENGINE_ENVIRONMENT_ERROR.value
+        "claude", rc=1, failure_class=FailureClass.ENGINE_ENVIRONMENT_ERROR
     )
-    exe_mocks["call_managed"].side_effect = [env_error, _result("codex")]
+    exe_mocks["call"].side_effect = [env_error, _result("codex")]
 
     _execute("design", "prompt", isolation=False)
 
-    calls = exe_mocks["call_managed"].call_args_list
+    calls = exe_mocks["call"].call_args_list
     assert len(calls) == 2
     assert calls[0].kwargs["isolation"] is False
     assert calls[1].kwargs["isolation"] is False
@@ -125,7 +125,7 @@ def test_existing_call_managed_kwargs_unchanged_with_isolation(exe_mocks, tmp_pa
     cwd = tmp_path / "wt"
     cwd.mkdir()
     _execute("design", "prompt", cwd=str(cwd), isolation=True)
-    kwargs = exe_mocks["call_managed"].call_args.kwargs
+    kwargs = exe_mocks["call"].call_args.kwargs
     assert kwargs["engine"] == "claude"
     assert kwargs["model"] == "m"
     assert kwargs["permission"] is not None
@@ -143,11 +143,10 @@ def test_rate_limit_fallback_uses_stderr_for_detection(exe_mocks):
     def _side_effect(*_args, **_kwargs):
         if calls["n"] == 0:
             calls["n"] += 1
-            _LAST_LLM_STDERR[0] = stderr
-            return _result("claude", rc=1, body="")
+            return dataclasses.replace(_result("claude", rc=1, body=""), stderr=stderr)
         return _result("codex")
 
-    exe_mocks["call_managed"].side_effect = _side_effect
+    exe_mocks["call"].side_effect = _side_effect
     result = _execute("design", "prompt", isolation=True)
     assert result.returncode == 0
-    assert exe_mocks["call_managed"].call_count == 2
+    assert exe_mocks["call"].call_count == 2

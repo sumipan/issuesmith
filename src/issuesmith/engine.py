@@ -30,9 +30,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from ghdag.forge import get_forge
-from ghdag.llm import Permission, call_managed
-from ghdag.llm import call as _ghdag_call
-from ghdag.llm import managed as _llm_managed
+from ghdag.llm import DANGEROUS_FULL_ACCESS, Permission, call
 from ghdag.metrics import FailureClass, MetricsRecorder, TaskMetrics
 from ghdag.quota import QuotaGate
 from ruamel.yaml import YAML
@@ -127,15 +125,17 @@ METRICS_ENV_VAR = "METRICS_JSONL_PATH"
 QUOTA_STATE_PATH = _cfg.paths.quota_state
 BRAKE_STATE_PATH = _cfg.paths.brake_state or _cfg.paths.quota_state
 
-# Permission passed to call_managed as designed. `_issuesmith_call` overrides the
-# effective value per attempt and engine (codex/cursor reject
-# permission_mode!=default).
+# Permission for the claude attempt. codex / cursor do not take stream output, so
+# each attempt on those engines uses the plain full-access preset instead.
 _ISSUESMITH_PERMISSION = Permission(
     permission_mode="bypassPermissions",
     output_format="text",
     stream=True,
 )
-_DEFAULT_PERMISSION = Permission()
+_PERMISSION_OVERRIDES: dict[str, Permission] = {
+    "codex": DANGEROUS_FULL_ACCESS,
+    "cursor": DANGEROUS_FULL_ACCESS,
+}
 
 ROLE_ENGINES: dict[str, frozenset[str]] = {
     role: frozenset(role_cfg.allowed) for role, role_cfg in _cfg.engines.items()
@@ -200,8 +200,6 @@ _RATE_LIMIT_429_CONTEXT = re.compile(
 # Failure stderr diagnostic limits (#4239); tail-truncate by line count and bytes.
 _FAILURE_STDERR_MAX_LINES = 40
 _FAILURE_STDERR_MAX_BYTES = 4096
-# _issuesmith_call stashes the latest LLM child stderr (overwritten on call_managed retry).
-_LAST_LLM_STDERR: list[str] = [""]
 
 _RETRY_WAIT_MAX_SECONDS: int = 1800
 _WAIT_MAX_SEC_DEFAULT: int = 21600  # 6h — default cap to wait past the budget brake 5h window (#3091)
@@ -719,25 +717,6 @@ def _resolve_timeout_sec(role: str) -> float:
     return DEFAULT_TIMEOUTS[role]
 
 
-def _issuesmith_call(prompt: str, **kwargs):
-    """Adapt call() inside call_managed for issuesmith.
-
-    call_managed does not accept dangerously_skip_permissions. The design fallback
-    also shares permission across every attempt, but codex/cursor reject
-    permission_mode!=default / output_format!=text. Swap permission per attempt
-    to match its engine and always bypass.
-    """
-    engine = kwargs.get("engine", "claude")
-    kwargs["dangerously_skip_permissions"] = True
-    if engine == "claude":
-        kwargs["permission"] = _ISSUESMITH_PERMISSION
-    else:
-        kwargs["permission"] = _DEFAULT_PERMISSION
-    result = _ghdag_call(prompt, **kwargs)
-    _LAST_LLM_STDERR[0] = result.stderr or ""
-    return result
-
-
 def _failure_class_from_value(value: str) -> FailureClass | None:
     """Return the FailureClass member whose value is ``value``, or None if unknown."""
     return next((m for m in FailureClass if m.value == value), None)
@@ -903,7 +882,7 @@ def _execute(
         for alt in sorted(ROLE_ENGINES[role] - {selection.engine})
     ]
 
-    # global quota: read + write (call_managed / rate_limit_detected)
+    # global quota: read + write (call / rate_limit_detected)
     # budget brake: read-only pause check
     quota_gate = QuotaGate(state_path=QUOTA_STATE_PATH)
     if BRAKE_STATE_PATH == QUOTA_STATE_PATH:
@@ -930,7 +909,7 @@ def _execute(
             after = _earliest_paused_resume_at(all_engines, quota_snap, brake_snap)
             raise RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=after, role=role)
 
-    # call_managed only looks at the global quota gate, so narrow the candidates up
+    # call only looks at the global quota gate, so narrow the candidates up
     # front to keep its internal fallback from starting an engine the budget gate paused.
     fallback_candidates = [
         (alt_engine, alt_model)
@@ -953,7 +932,6 @@ def _execute(
         file=sys.stderr,
     )
 
-    _LAST_LLM_STDERR[0] = ""
 
     additional_tags = {
         "role": role,
@@ -962,17 +940,16 @@ def _execute(
     }
 
     started_at = time.time()
-    original_call = _llm_managed.call
-    _llm_managed.call = _issuesmith_call
     try:
         try:
-            result = call_managed(
+            result = call(
                 content,
                 engine=selection.engine,
                 model=selection.model,
                 timeout=int(timeout_sec),
                 cwd=working_directory,
                 permission=_ISSUESMITH_PERMISSION,
+                permission_overrides=_PERMISSION_OVERRIDES,
                 fallback_candidates=fallback_candidates,
                 additional_tags=additional_tags,
                 quota_gate=quota_gate,
@@ -1004,7 +981,7 @@ def _execute(
         rate_evidence = None
         stderr_text = ""
         if result.returncode != 0 and result.failure_class is None:
-            stderr_text = _LAST_LLM_STDERR[0]
+            stderr_text = result.stderr or ""
             rate_evidence = _rate_limit_evidence(stderr_text)
             if rate_evidence is None and _is_rate_limited(stderr_text):
                 normalized = _normalize_rate_limit_evidence(stderr_text)
@@ -1042,13 +1019,14 @@ def _execute(
                     file=sys.stderr,
                 )
                 _declare_begin(quota_gate, task_uuid, alt_engine, role)
-                result = call_managed(
+                result = call(
                     content,
                     engine=alt_engine,
                     model=alt_model,
                     timeout=int(timeout_sec),
                     cwd=working_directory,
                     permission=_ISSUESMITH_PERMISSION,
+                    permission_overrides=_PERMISSION_OVERRIDES,
                     fallback_candidates=[],
                     additional_tags=additional_tags,
                     quota_gate=quota_gate,
@@ -1057,7 +1035,7 @@ def _execute(
             else:
                 raise RetrySignal(reason=RetryReason.RATE_LIMITED, after=resume_at)
 
-        if result.failure_class == FailureClass.ENGINE_ENVIRONMENT_ERROR.value:
+        if result.failure_class is FailureClass.ENGINE_ENVIRONMENT_ERROR:
             if fallback_candidates:
                 alt_engine, alt_model = fallback_candidates[0]
                 print(
@@ -1065,13 +1043,14 @@ def _execute(
                     file=sys.stderr,
                 )
                 _declare_begin(quota_gate, task_uuid, alt_engine, role)
-                result = call_managed(
+                result = call(
                     content,
                     engine=alt_engine,
                     model=alt_model,
                     timeout=int(timeout_sec),
                     cwd=working_directory,
                     permission=_ISSUESMITH_PERMISSION,
+                    permission_overrides=_PERMISSION_OVERRIDES,
                     fallback_candidates=[],
                     additional_tags=additional_tags,
                     quota_gate=quota_gate,
@@ -1082,11 +1061,10 @@ def _execute(
                     reason=RetryReason.ENGINE_ENVIRONMENT_ERROR, after=None
                 )
     finally:
-        _llm_managed.call = original_call
         _declare_finish(quota_gate, task_uuid)
 
     finished_at = time.time()
-    if result.failure_class == FailureClass.TIMEOUT.value:
+    if result.failure_class is FailureClass.TIMEOUT:
         status = "timeout"
     elif result.returncode == 0:
         status = "success"
@@ -1095,7 +1073,7 @@ def _execute(
 
     diagnostic_stderr = ""
     if result.returncode != 0:
-        diagnostic_stderr = _truncate_failure_stderr(_LAST_LLM_STDERR[0])
+        diagnostic_stderr = _truncate_failure_stderr(result.stderr or "")
 
     _record_task_metrics(
         role=role,
@@ -1106,12 +1084,12 @@ def _execute(
         started_at=started_at,
         finished_at=finished_at,
         usage=result.usage,
-        failure_class=result.failure_class,
+        failure_class=result.failure_class.value if result.failure_class else None,
         failure_detail=diagnostic_stderr or None,
     )
     if (
         result.returncode != 0
-        and result.failure_class == FailureClass.QUOTA_EXHAUSTED.value
+        and result.failure_class is FailureClass.QUOTA_EXHAUSTED
     ):
         post_quota_snap, post_brake_snap = _dual_gate_snapshots(quota_gate, brake_gate)
         role_engines = sorted(ROLE_ENGINES[role])

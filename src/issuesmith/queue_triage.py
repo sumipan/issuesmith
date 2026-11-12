@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Literal
 
 import yaml
-from ghdag.llm import call_text
+from ghdag.llm import call
 from packaging.version import InvalidVersion, Version
 
 # parse_frontmatter_fields moved to contract.py (#4238). Re-export for existing callers.
@@ -685,7 +685,7 @@ def triage(
 
     llm = call_llm
     if llm is None:
-        llm = call_text
+        llm = call
 
     if llm is not None:
         try:

@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
-from ghdag.llm import ManagedResult
+from ghdag.llm import LLMResult
 from ghdag.metrics import FailureClass
 from ghdag.quota import EngineQuotaState, QuotaSnapshot
 
@@ -50,7 +50,7 @@ def _snap(engines):
 
 
 def _result(engine="claude", *, rc=0, body="ok", failure_class=None):
-    return ManagedResult(
+    return LLMResult(stdout="", stderr="",
         body=body,
         usage=None,
         returncode=rc,
@@ -72,11 +72,11 @@ def exe_mocks(monkeypatch):
     monkeypatch.setattr("issuesmith.engine._record_task_metrics", lambda **kwargs: None)
     monkeypatch.setattr("issuesmith.engine._resolve_timeout_sec", lambda role: 600.0)
     cm = MagicMock(return_value=_result())
-    monkeypatch.setattr("issuesmith.engine.call_managed", cm)
+    monkeypatch.setattr("issuesmith.engine.call", cm)
     monkeypatch.setattr("issuesmith.engine.time.sleep", MagicMock())
     qg = MagicMock()
     monkeypatch.setattr("issuesmith.engine.QuotaGate", lambda state_path: qg)
-    return {"call_managed": cm, "quota_gate": qg}
+    return {"call": cm, "quota_gate": qg}
 
 
 # ==================== RetrySignal class ====================
@@ -122,7 +122,7 @@ class TestExecuteAllEnginesPaused:
             _execute("design", "prompt")
 
         assert exc_info.value.reason == RetryReason.QUOTA_PAUSED
-        exe_mocks["call_managed"].assert_not_called()
+        exe_mocks["call"].assert_not_called()
 
     def test_after_is_earliest_resume_at(self, exe_mocks):
         now = datetime.now(timezone.utc)
@@ -149,11 +149,11 @@ class TestExecuteAllEnginesPaused:
         """Primary paused + fallback available → use fallback, no RetrySignal."""
         snap = _snap({"claude": _paused(None), "codex": _available()})
         exe_mocks["quota_gate"].snapshot.return_value = snap
-        exe_mocks["call_managed"].return_value = _result("codex")
+        exe_mocks["call"].return_value = _result("codex")
 
         result = _execute("design", "prompt")
         assert result.returncode == 0
-        assert exe_mocks["call_managed"].call_args.kwargs["engine"] == "codex"
+        assert exe_mocks["call"].call_args.kwargs["engine"] == "codex"
 
 
 # ==================== 3 adapter × RetrySignal (parent AC-7) ====================
@@ -210,7 +210,7 @@ class TestRateLimitedRetrySignal:
         # After quota.report(), codex also paused → no alt available
         all_paused = _snap({"claude": _paused(None), "codex": _paused(None)})
         exe_mocks["quota_gate"].snapshot.side_effect = [all_available, all_paused]
-        exe_mocks["call_managed"].return_value = _result(
+        exe_mocks["call"].return_value = _result(
             "claude", rc=1, body="rate limit exceeded"
         )
         monkeypatch.setattr("issuesmith.engine._is_rate_limited", lambda body: True)
@@ -226,7 +226,7 @@ class TestRateLimitedRetrySignal:
         all_available = _snap({"claude": _available(), "codex": _available()})
         exe_mocks["quota_gate"].snapshot.return_value = all_available
         rate_limited = _result("claude", rc=1, body="rate limit")
-        exe_mocks["call_managed"].side_effect = [rate_limited, _result("codex")]
+        exe_mocks["call"].side_effect = [rate_limited, _result("codex")]
         monkeypatch.setattr("issuesmith.engine._is_rate_limited", lambda body: True)
 
         result = _execute("design", "prompt")
@@ -241,8 +241,8 @@ class TestEngineEnvironmentError:
         """ENGINE_ENVIRONMENT_ERROR with no fallback → RetrySignal."""
         snap = _snap({"claude": _available(), "codex": _available()})
         exe_mocks["quota_gate"].snapshot.return_value = snap
-        exe_mocks["call_managed"].return_value = _result(
-            "claude", rc=1, failure_class=FailureClass.ENGINE_ENVIRONMENT_ERROR.value
+        exe_mocks["call"].return_value = _result(
+            "claude", rc=1, failure_class=FailureClass.ENGINE_ENVIRONMENT_ERROR
         )
         monkeypatch.setattr(
             "issuesmith.engine.ROLE_ENGINES",
@@ -259,9 +259,9 @@ class TestEngineEnvironmentError:
         snap = _snap({"claude": _available(), "codex": _available()})
         exe_mocks["quota_gate"].snapshot.return_value = snap
         env_error = _result(
-            "claude", rc=1, failure_class=FailureClass.ENGINE_ENVIRONMENT_ERROR.value
+            "claude", rc=1, failure_class=FailureClass.ENGINE_ENVIRONMENT_ERROR
         )
-        exe_mocks["call_managed"].side_effect = [env_error, _result("codex")]
+        exe_mocks["call"].side_effect = [env_error, _result("codex")]
 
         result = _execute("design", "prompt")
         assert result.returncode == 0
