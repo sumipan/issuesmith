@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "issuesmith"
-version = "0.178.17"
+version = "0.178.18"
 description = "GitHub Issue label-driven workflow framework on ghdag"
 readme = "README.md"
 license = "MIT"
