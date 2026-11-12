@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from ghdag.forge import get_forge
-from ghdag.llm import LLMCapabilities, call_managed
+from ghdag.llm import Permission, call_managed
 from ghdag.llm import call as _ghdag_call
 from ghdag.llm import managed as _llm_managed
 from ghdag.metrics import FailureClass, MetricsRecorder, TaskMetrics
@@ -127,14 +127,15 @@ METRICS_ENV_VAR = "METRICS_JSONL_PATH"
 QUOTA_STATE_PATH = _cfg.paths.quota_state
 BRAKE_STATE_PATH = _cfg.paths.brake_state or _cfg.paths.quota_state
 
-# Capabilities passed to call_managed as designed. `_issuesmith_call` overrides the
+# Permission passed to call_managed as designed. `_issuesmith_call` overrides the
 # effective value per attempt and engine (codex/cursor reject
 # permission_mode!=default).
-_ISSUESMITH_CAPABILITIES = LLMCapabilities(
+_ISSUESMITH_PERMISSION = Permission(
     permission_mode="bypassPermissions",
+    output_format="text",
     stream=True,
 )
-_DEFAULT_CAPABILITIES = LLMCapabilities()
+_DEFAULT_PERMISSION = Permission()
 
 ROLE_ENGINES: dict[str, frozenset[str]] = {
     role: frozenset(role_cfg.allowed) for role, role_cfg in _cfg.engines.items()
@@ -722,16 +723,16 @@ def _issuesmith_call(prompt: str, **kwargs):
     """Adapt call() inside call_managed for issuesmith.
 
     call_managed does not accept dangerously_skip_permissions. The design fallback
-    also shares capabilities across every attempt, but codex/cursor reject
-    permission_mode!=default / output_format!=text. Swap capabilities per attempt
+    also shares permission across every attempt, but codex/cursor reject
+    permission_mode!=default / output_format!=text. Swap permission per attempt
     to match its engine and always bypass.
     """
     engine = kwargs.get("engine", "claude")
     kwargs["dangerously_skip_permissions"] = True
     if engine == "claude":
-        kwargs["capabilities"] = _ISSUESMITH_CAPABILITIES
+        kwargs["permission"] = _ISSUESMITH_PERMISSION
     else:
-        kwargs["capabilities"] = _DEFAULT_CAPABILITIES
+        kwargs["permission"] = _DEFAULT_PERMISSION
     result = _ghdag_call(prompt, **kwargs)
     _LAST_LLM_STDERR[0] = result.stderr or ""
     return result
@@ -971,7 +972,7 @@ def _execute(
                 model=selection.model,
                 timeout=int(timeout_sec),
                 cwd=working_directory,
-                capabilities=_ISSUESMITH_CAPABILITIES,
+                permission=_ISSUESMITH_PERMISSION,
                 fallback_candidates=fallback_candidates,
                 additional_tags=additional_tags,
                 quota_gate=quota_gate,
@@ -1047,7 +1048,7 @@ def _execute(
                     model=alt_model,
                     timeout=int(timeout_sec),
                     cwd=working_directory,
-                    capabilities=_ISSUESMITH_CAPABILITIES,
+                    permission=_ISSUESMITH_PERMISSION,
                     fallback_candidates=[],
                     additional_tags=additional_tags,
                     quota_gate=quota_gate,
@@ -1070,7 +1071,7 @@ def _execute(
                     model=alt_model,
                     timeout=int(timeout_sec),
                     cwd=working_directory,
-                    capabilities=_ISSUESMITH_CAPABILITIES,
+                    permission=_ISSUESMITH_PERMISSION,
                     fallback_candidates=[],
                     additional_tags=additional_tags,
                     quota_gate=quota_gate,

@@ -128,7 +128,7 @@ def test_existing_call_managed_kwargs_unchanged_with_isolation(exe_mocks, tmp_pa
     kwargs = exe_mocks["call_managed"].call_args.kwargs
     assert kwargs["engine"] == "claude"
     assert kwargs["model"] == "m"
-    assert kwargs["capabilities"] is not None
+    assert kwargs["permission"] is not None
     assert kwargs["quota_gate"] is exe_mocks["quota_gate"]
     assert kwargs["cwd"] == cwd.resolve()
     assert isinstance(kwargs["fallback_candidates"], list)
