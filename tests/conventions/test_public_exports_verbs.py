@@ -51,6 +51,7 @@ PUBLIC_MODULES = (
     "issuesmith.config",
     "issuesmith.andon",
     "issuesmith.queue",
+    "issuesmith.forge",
 )
 
 _MODULE_ROW_RE = re.compile(r"^\| `(issuesmith\.[^`]+)` \| (.+) \|$")
@@ -95,7 +96,7 @@ def test_verbs_public_exports():
 
 
 def test_readme_public_modules_match_all():
-    """README Public API table lists six modules and each row matches that module __all__."""
+    """README Public API table lists seven modules and each row matches that module __all__."""
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
     table = _parse_readme_public_api_table(readme)
     assert frozenset(table) == frozenset(PUBLIC_MODULES)
