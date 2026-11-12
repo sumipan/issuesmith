@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Changed
+
+- `issuesmith gh` delegates to `python -m ghdag.github_cli` via a child process instead of importing the non-public `ghdag.github_cli.cli_main` Python entry point.
+
 ## 0.180.2 - 2026-11-12
 
 ### Added
