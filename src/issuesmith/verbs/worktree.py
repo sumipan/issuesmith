@@ -77,15 +77,14 @@ def prepare_worktree(
     """Create or verify a git worktree at *path* branched from *base*.
 
     When *external_dir* and *target_repo* are both set, clone-if-missing runs on
-    *external_dir*. When only *external_dir* is set, it is the git repository root
-    without cloning. Otherwise *repo* is the repository root.
+    *external_dir*. Otherwise *repo* is the repository root.
     """
     validate_branch(branch)
     validate_branch(base)
 
     has_external = external_dir is not None
     has_target = target_repo is not None
-    if has_target and not has_external:
+    if has_external != has_target:
         raise _cross_repo_pair_error()
 
     if clean_path is not None and Path(clean_path).is_absolute():
@@ -103,12 +102,6 @@ def prepare_worktree(
         fetch_base_or_raise(repo_dir, base, remote=target_repo)
         _assert_remote_base(repo_dir, base)
         base_ref = f"origin/{base}"
-    elif external_dir is not None:
-        repo_dir = Path(external_dir)
-        if repo_dir.exists():
-            _assert_git_repository(repo_dir)
-            fetch_base_or_raise(repo_dir, base)
-        base_ref = resolve_base_ref(repo_dir, base)
     else:
         repo_dir = Path(repo)
         _assert_git_repository(repo_dir)

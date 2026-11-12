@@ -145,9 +145,8 @@ def test_prepare_worktree_rejects_partial_cross_repo_arguments(tmp_path: Path) -
         vwt.prepare_worktree(
             repo, "main", "feat/y", wt_path, target_repo="sumipan/issuesmith"
         )
-    ext_only = tmp_path / "ext-only"
-    ext_only.mkdir()
-    with pytest.raises(vwt.WorktreeError, match="target clone is not a git repository"):
+    ext_only = _init_repo(tmp_path / "ext-only")
+    with pytest.raises(vwt.WorktreeError, match="external_dir and target_repo"):
         vwt.prepare_worktree(
             repo,
             "main",
