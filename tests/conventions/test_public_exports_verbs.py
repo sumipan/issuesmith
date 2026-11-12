@@ -53,9 +53,7 @@ PUBLIC_MODULES = (
     "issuesmith.queue",
 )
 
-_MODULE_ROW_RE = re.compile(
-    r"^\| `(issuesmith\.(?:contract|verbs|gates|config|andon|queue))` \| (.+) \|$"
-)
+_MODULE_ROW_RE = re.compile(r"^\| `(issuesmith\.[^`]+)` \| (.+) \|$")
 _SYMBOL_RE = re.compile(r"`([^`]+)`")
 
 
@@ -77,6 +75,7 @@ def _parse_readme_public_api_table(readme_text: str) -> dict[str, frozenset[str]
         if not match:
             continue
         modpath = match.group(1)
+        assert modpath not in table, f"duplicate README Public API row: {modpath}"
         symbols = frozenset(_SYMBOL_RE.findall(match.group(2)))
         table[modpath] = symbols
     return table
