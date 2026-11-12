@@ -1,8 +1,8 @@
 import re
+import subprocess
 import sys
 
 from ghdag.forge import DEFAULT_REPO
-from ghdag.github_cli import cli_main
 
 _READY_LABEL_RE = re.compile(r"issuesmith:(?:draft|develop|merge)-ready")
 
@@ -53,7 +53,11 @@ def main() -> None:
             file=sys.stderr,
         )
         sys.exit(2)
-    sys.exit(cli_main(argv))
+    completed = subprocess.run(
+        [sys.executable, "-m", "ghdag.github_cli", *argv],
+        check=False,
+    )
+    sys.exit(completed.returncode)
 
 
 if __name__ == "__main__":
