@@ -78,6 +78,11 @@ def prepare_worktree(
 
     When *external_dir* and *target_repo* are both set, clone-if-missing runs on
     *external_dir*. Otherwise *repo* is the repository root.
+
+    Migration (#6581): older ``issuesmith.verbs`` shims accepted ``external_dir`` alone
+    and passed it to ``resolve_base_ref`` / ``_prepare_worktree``. Callers must now pass
+    ``target_repo`` as well; cross-repo fetch uses *target_repo* as the git remote name
+    and ``base_ref`` is ``origin/{base}`` (``resolve_base_ref`` is not used on that path).
     """
     validate_branch(branch)
     validate_branch(base)
