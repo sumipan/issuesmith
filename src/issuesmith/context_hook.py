@@ -35,8 +35,7 @@ import yaml
 from issuesmith.branch_reuse import find_reusable_branch
 from issuesmith.branch_reuse import is_base_recorded as _is_base_recorded
 from issuesmith.branch_reuse import previous_commits as _prev_commits
-from issuesmith.config import get_config
-from issuesmith.targets import companion_allow_paths_raw, targets_from_issue
+from issuesmith.config import ConfigError, get_config
 
 _PIPELINE_BRANCH_RE = re.compile(
     r"<!--\s*pipeline-branch:\s*feat/issue-(\d+)-([a-f0-9]+)\s*-->",
@@ -81,17 +80,50 @@ def _hook_message(key: str, /, **kwargs: object) -> str:
     template = _context_hook_messages()[key]
     return template.format(**kwargs)
 
-_cfg = get_config()
-SUPPORTED_REPOS: set[str] = set(_cfg.supported_repos)
-_REPO_ROOT = str(_cfg.root)
+# Test overrides (empty / unset → resolve via get_config() at call time).
+_REPO_ROOT: str = ""
+_WORKTREES_REL: str = ""
+_EXTERNAL_REL: str = ""
+
+# Frozen on first successful config load in this interpreter (see SUPPORTED_REPOS).
+# Import must stay light when ISSUESMITH_CONFIG is incomplete: ConfigError → leave None.
+_SUPPORTED_REPOS: set[str] | None = None
 try:
-    _WORKTREES_REL = str(_cfg.paths.worktrees_dir.relative_to(_cfg.root))
-except ValueError:
-    _WORKTREES_REL = str(_cfg.paths.worktrees_dir)
-try:
-    _EXTERNAL_REL = str(_cfg.paths.external_dir.relative_to(_cfg.root))
-except ValueError:
-    _EXTERNAL_REL = str(_cfg.paths.external_dir)
+    _SUPPORTED_REPOS = set(get_config().supported_repos)
+except ConfigError:
+    pass
+
+
+def _supported_repos() -> set[str]:
+    if _SUPPORTED_REPOS is not None:
+        return _SUPPORTED_REPOS
+    return set(get_config().supported_repos)
+
+
+def _repo_root() -> str:
+    if _REPO_ROOT:
+        return _REPO_ROOT
+    return str(get_config().root)
+
+
+def _worktrees_rel() -> str:
+    if _WORKTREES_REL:
+        return _WORKTREES_REL
+    cfg = get_config()
+    try:
+        return str(cfg.paths.worktrees_dir.relative_to(cfg.root))
+    except ValueError:
+        return str(cfg.paths.worktrees_dir)
+
+
+def _external_rel() -> str:
+    if _EXTERNAL_REL:
+        return _EXTERNAL_REL
+    cfg = get_config()
+    try:
+        return str(cfg.paths.external_dir.relative_to(cfg.root))
+    except ValueError:
+        return str(cfg.paths.external_dir)
 
 
 # Phrases in the out-of-scope section that mean host-side change (matched lowercased).
@@ -105,7 +137,7 @@ _HOST_AVOIDANCE_PATTERNS: tuple[str, ...] = (
 
 def _companion_worktree_path(pipeline_id: str) -> str:
     """Absolute path for the host companion worktree."""
-    return str(Path(_REPO_ROOT) / _WORKTREES_REL / f"{pipeline_id}-host")
+    return str(Path(_repo_root()) / _worktrees_rel() / f"{pipeline_id}-host")
 
 
 @dataclass
@@ -233,7 +265,7 @@ def validate_context_hook_security(
     issue_repo = str(metadata.get("issue_repo", DEFAULT_REPO))
     cross_repo_target = bool(
         target_repo
-        and target_repo in SUPPORTED_REPOS
+        and target_repo in _supported_repos()
         and target_repo != issue_repo
     )
     if (
@@ -278,13 +310,13 @@ def validate_issue_metadata(
             code="missing_required",
             message="target_repo is required for every issue (single-repo issues included)",
         ))
-    elif target_repo not in SUPPORTED_REPOS:
+    elif target_repo not in _supported_repos():
         violations.append(MetadataViolation(
             field="target_repo",
             code="unsupported_repo",
             message=(
                 f"target_repo '{target_repo}' is not supported."
-                f" Supported repositories: {sorted(SUPPORTED_REPOS)}"
+                f" Supported repositories: {sorted(_supported_repos())}"
             ),
         ))
 
@@ -580,23 +612,24 @@ def build_context(
         # against a feature worktree that disappears after merge and yields false negatives
         # (#2567). Normalize to the native path.
         target_repo = ""
-    if target_repo and target_repo not in SUPPORTED_REPOS:
+    if target_repo and target_repo not in _supported_repos():
         raise ValueError(
             f"target_repo '{target_repo}' is not supported."
-            f" Supported repositories: {sorted(SUPPORTED_REPOS)}"
+            f" Supported repositories: {sorted(_supported_repos())}"
         )
+    external_rel = _external_rel()
     if target_repo:
         repo_name = target_repo.split("/")[-1]
-        target_clone_path = f"{_EXTERNAL_REL}/{repo_name}"
-        target_worktree_path_rel = f"{_EXTERNAL_REL}/{repo_name}/worktrees"
+        target_clone_path = f"{external_rel}/{repo_name}"
+        target_worktree_path_rel = f"{external_rel}/{repo_name}/worktrees"
         is_cross_repo = "true"
-        _search_repo_dir = Path(_REPO_ROOT) / target_clone_path
+        _search_repo_dir = Path(_repo_root()) / target_clone_path
     else:
         repo_name = ""
         target_clone_path = ""
         target_worktree_path_rel = ""
         is_cross_repo = "false"
-        _search_repo_dir = Path(_REPO_ROOT)
+        _search_repo_dir = Path(_repo_root())
 
     # pipeline_id: 1) restore from pipeline-branch comment 2) reuse a branch 3) new uuid
     comments = _fetch_issue_comments_from_api(issue_number, issue_repo)
@@ -628,7 +661,7 @@ def build_context(
             previous_commits_str = ""
             reuse_source = "none"
 
-    worktree_path = f"{_REPO_ROOT}/{_WORKTREES_REL}/{pipeline_id}"
+    worktree_path = f"{_repo_root()}/{_worktrees_rel()}/{pipeline_id}"
     branch = f"feat/{pipeline_id}"
 
     if target_repo:
@@ -651,6 +684,8 @@ def build_context(
         allow_paths = _publish._UNRESTRICTED_ALLOW_PATHS
 
     source = str(metadata.get("source", ""))
+
+    from issuesmith.targets import companion_allow_paths_raw, targets_from_issue
 
     companion_allow_raw = companion_allow_paths_raw(metadata)
 

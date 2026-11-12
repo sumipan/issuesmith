@@ -36,6 +36,11 @@ __all__ = [
     "check_pr_scope",
     "check_ac_complete",
     "check_deps",
+    "Violation",
+    "Gate",
+    "PreconditionContext",
+    "normalize_allow_path",
+    "external_target_state",
 ]
 
 InputKind = Literal["issue", "worktree", "artifact"]
@@ -261,10 +266,15 @@ def resolve_gate(gate_id: str) -> GateEntry:
 
 
 # Import after registry is built to avoid circular-import issues.
+from issuesmith.gate_registry import Violation  # noqa: E402
 from issuesmith.gates.ac_complete import check_ac_complete  # noqa: E402
+from issuesmith.gates.base import Gate  # noqa: E402
 from issuesmith.gates.dep import check_deps  # noqa: E402
 from issuesmith.gates.pr_scope import check_pr_scope  # noqa: E402
 from issuesmith.gates.scope import check_scope  # noqa: E402
+from issuesmith.gates.worktree import external_target_state  # noqa: E402
+from issuesmith.pr_scope import normalize_allow_path  # noqa: E402
+from issuesmith.preconditions import PreconditionContext  # noqa: E402
 
 
 def validate_step_requires(steps: "Mapping[str, Any]") -> None:
