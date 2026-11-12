@@ -13,21 +13,10 @@ from issuesmith.verbs import (
     find_pr,
     merge_pr,
     merge_state,
-    prepare_worktree,
     publish_branch,
 )
 
-
-def test_prepare_worktree_uses_external_dir_when_provided(tmp_path: Path) -> None:
-    external = tmp_path / "external"
-    with (
-        patch("issuesmith.verbs.worktree.resolve_base_ref") as mock_resolve,
-        patch("issuesmith.verbs.worktree._prepare_worktree") as mock_prepare,
-    ):
-        mock_resolve.return_value = "main"
-        prepare_worktree(tmp_path, "main", "feat/x", tmp_path / "wt", external_dir=external)
-        mock_resolve.assert_called_once_with(external, "main")
-        mock_prepare.assert_called_once_with(external, tmp_path / "wt", "feat/x", "main")
+# prepare_worktree contract tests live in tests/test_verbs_worktree.py (#6581).
 
 
 # ---------------------------------------------------------------------------
