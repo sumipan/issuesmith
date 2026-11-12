@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.180.1 - 2026-11-12
+
 ### Changed
 
 - Document the six-module public import surface in README (`issuesmith.contract`, `issuesmith.verbs`, `issuesmith.gates`, `issuesmith.config`, `issuesmith.andon`, `issuesmith.queue`).
