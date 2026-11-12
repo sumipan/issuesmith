@@ -18,4 +18,5 @@ src/issuesmith/recovery.py 3
 src/issuesmith/rule_ids.py 2
 src/issuesmith/scope_gate.py 1
 src/issuesmith/verbs/merge.py 1
+src/issuesmith/verbs/worktree.py 1
 src/issuesmith/worktree.py 1

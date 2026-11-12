@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
@@ -30,15 +31,31 @@ __all__ = [
 
 
 def _assert_git_repository(repo_dir: Path) -> None:
-    from issuesmith.worktree import _assert_git_repository as _internal
-
-    _internal(repo_dir)
+    git_dir = subprocess.run(
+        ["git", "-C", str(repo_dir), "rev-parse", "--git-dir"],
+        capture_output=True,
+        check=False,
+    )
+    if git_dir.returncode != 0:
+        raise WorktreeError(f"target clone is not a git repository: {repo_dir}")
 
 
 def _assert_remote_base(repo_dir: Path, base: str) -> None:
-    from issuesmith.worktree import _assert_remote_base as _internal
-
-    _internal(repo_dir, base)
+    remote_ok = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo_dir),
+            "show-ref",
+            "--verify",
+            "--quiet",
+            f"refs/remotes/origin/{base}",
+        ],
+        capture_output=True,
+        check=False,
+    )
+    if remote_ok.returncode != 0:
+        raise WorktreeError(f"fetched base ref not found: origin/{base}")
 
 
 def _cross_repo_pair_error() -> WorktreeError:
