@@ -1,4 +1,4 @@
-"""Regression tests for issuesmith LLM capabilities passed to call_managed (#6282)."""
+"""Regression tests for issuesmith LLM permission passed to call_managed (#6282)."""
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ from ghdag.metrics import FailureClass
 from ghdag.quota import QuotaSnapshot
 
 from issuesmith.engine import (
-    _DEFAULT_CAPABILITIES,
-    _ISSUESMITH_CAPABILITIES,
+    _DEFAULT_PERMISSION,
+    _ISSUESMITH_PERMISSION,
     RoleSelection,
     _execute,
     _issuesmith_call,
@@ -50,9 +50,9 @@ def _codex_agent_jsonl(message: str) -> str:
 
 def _validated_call(raw_stdout: str, **kwargs) -> LLMResult:
     engine = kwargs.get("engine", "claude")
-    caps = kwargs["capabilities"]
+    perm = kwargs["permission"]
     llm = LLMResult(stdout=raw_stdout, stderr="", returncode=0)
-    return llm.validate(caps, engine=engine)
+    return llm.validate(perm, engine=engine)
 
 
 @pytest.fixture
@@ -72,11 +72,11 @@ def wired_call_managed(monkeypatch):
     return _wire
 
 
-def test_issuesmith_capabilities_use_text_stream():
-    """Issue #6282: Claude outer capabilities are text + stream-json."""
-    assert _ISSUESMITH_CAPABILITIES.output_format == "text"
-    assert _ISSUESMITH_CAPABILITIES.permission_mode == "bypassPermissions"
-    assert _ISSUESMITH_CAPABILITIES.stream is True
+def test_issuesmith_permission_uses_text_stream():
+    """Issue #6282 / #6503: Claude outer permission is text + stream-json."""
+    assert _ISSUESMITH_PERMISSION.output_format == "text"
+    assert _ISSUESMITH_PERMISSION.permission_mode == "bypassPermissions"
+    assert _ISSUESMITH_PERMISSION.stream is True
 
 
 def test_claude_stream_json_prose_preserves_status_marker(wired_call_managed):
@@ -84,7 +84,7 @@ def test_claude_stream_json_prose_preserves_status_marker(wired_call_managed):
     jsonl = _claude_stream_jsonl(prose)
 
     def fake_call(_prompt, **kwargs):
-        assert kwargs["capabilities"] is _ISSUESMITH_CAPABILITIES
+        assert kwargs["permission"] is _ISSUESMITH_PERMISSION
         return _validated_call(jsonl, **kwargs)
 
     with wired_call_managed(fake_call):
@@ -92,7 +92,7 @@ def test_claude_stream_json_prose_preserves_status_marker(wired_call_managed):
             "review",
             engine="claude",
             model="claude-sonnet-4-6",
-            capabilities=_ISSUESMITH_CAPABILITIES,
+            permission=_ISSUESMITH_PERMISSION,
         )
 
     assert managed.returncode == 0
@@ -116,7 +116,7 @@ def test_codex_fallback_jsonl_preserves_status_marker(
                 returncode=1,
                 failure_class=FailureClass.QUOTA_EXHAUSTED,
             )
-        assert kwargs["capabilities"] is _DEFAULT_CAPABILITIES
+        assert kwargs["permission"] is _DEFAULT_PERMISSION
         return _validated_call(codex_jsonl, **kwargs)
 
     with wired_call_managed(fake_call):
@@ -124,7 +124,7 @@ def test_codex_fallback_jsonl_preserves_status_marker(
             "review",
             engine="claude",
             model="claude-sonnet-4-6",
-            capabilities=_ISSUESMITH_CAPABILITIES,
+            permission=_ISSUESMITH_PERMISSION,
             fallback_candidates=[("codex", "gpt-5.5")],
         )
 
@@ -186,7 +186,7 @@ def test_claude_stream_json_without_result_returns_failed_attempt(
                 "review",
                 engine="claude",
                 model="claude-sonnet-4-6",
-                capabilities=_ISSUESMITH_CAPABILITIES,
+                permission=_ISSUESMITH_PERMISSION,
             )
         except LLMParseError:
             pytest.fail("call_managed must not propagate LLMParseError")

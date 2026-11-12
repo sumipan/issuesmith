@@ -1518,7 +1518,7 @@ def _trigger_ghdag_redispatch(issue: int, handler: str, reason: str) -> int:
         handler,
         "--workflow",
         WORKFLOW_NAME,
-        "--exec-md",
+        "--exec-jsonl",
         str(EXEC_PATH),
         "--redispatch",
         "--reason",

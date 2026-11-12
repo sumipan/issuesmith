@@ -49,7 +49,7 @@ def test_trigger_ghdag_redispatch_builds_generation_bump_command(tmp_path, monke
     assert "2980" in cmd and "--handler" in cmd and cmd[cmd.index("--handler") + 1] == "impl"
     assert "--redispatch" in cmd
     assert cmd[cmd.index("--workflow") + 1] == "issuesmith"
-    assert cmd[cmd.index("--exec-md") + 1] == str(tmp_path / "exec.jsonl")
+    assert cmd[cmd.index("--exec-jsonl") + 1] == str(tmp_path / "exec.jsonl")
 
 
 def test_phase_handler_map_matches_config_declaration():
