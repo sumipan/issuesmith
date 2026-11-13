@@ -19,10 +19,9 @@ from issuesmith.body_editor import (
 from issuesmith.config import get_config
 from issuesmith.contract import parse_issue_metadata
 from issuesmith.convert_to_milestone import _ensure_milestone
+from issuesmith.forge_api import api_request
 from issuesmith.milestone import (
-    _SUB1_DEP_REF_RE,
     Sub1State,
-    _list_chain_children,
     allow_paths_for_row,
     build_child_body,
     ensure_sub1_binding,
@@ -34,7 +33,9 @@ from issuesmith.milestone import (
     validate_children as _validate_children,
 )
 from issuesmith.pr_scope import normalize_allow_path
-from issuesmith.queue_triage import parse_frontmatter_fields
+from issuesmith.queue_triage import DONE_LABEL, parse_frontmatter_fields
+
+_ISSUE_REF_RE = re.compile(r"#(\d+)")
 
 __all__ = [
     "ChildPlan",
@@ -87,6 +88,55 @@ def _milestone_number(issue: dict[str, Any]) -> int | None:
     return None
 
 
+def _list_milestone_children(client: ForgePort, milestone_number: int) -> list[dict[str, Any]]:
+    try:
+        raw = api_request(
+            client,
+            f"issues?state=all&milestone={milestone_number}&per_page=100",
+            paginate=True,
+        )
+    except Exception:
+        try:
+            raw = api_request(
+                client, f"issues?state=all&milestone={milestone_number}&per_page=100"
+            )
+        except Exception:
+            return []
+    if not isinstance(raw, list):
+        return []
+    children: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        if item.get("pull_request") is not None:
+            continue
+        children.append(item)
+    return children
+
+
+def _list_chain_children(
+    client: ForgePort,
+    parent_number: int,
+    parent: dict[str, Any],
+) -> list[dict[str, Any]]:
+    list_fn = getattr(client, "list_sub_issues", None)
+    children: list[dict[str, Any]] = []
+    if callable(list_fn):
+        try:
+            raw = list_fn(parent_number)
+        except Exception:
+            raw = []
+        if isinstance(raw, list):
+            children = [item for item in raw if isinstance(item, dict)]
+
+    if not children:
+        milestone_number = _milestone_number(parent)
+        if milestone_number is not None:
+            children = _list_milestone_children(client, milestone_number)
+
+    return [child for child in children if child.get("number") != parent_number]
+
+
 def _label_names(issue: dict[str, Any]) -> list[str]:
     labels = issue.get("labels") or []
     names: list[str] = []
@@ -110,7 +160,7 @@ def _issue_numbers_from_resolved(
         return ()
     nums: list[int] = []
     issue_ids = set(row_to_issue.values())
-    for token in _SUB1_DEP_REF_RE.findall(dep):
+    for token in _ISSUE_REF_RE.findall(dep):
         number = int(token)
         if number in row_to_issue:
             nums.append(row_to_issue[number])
@@ -353,10 +403,12 @@ def create_child(
 
     milestone_number = _milestone_number(parent)
     labels = _label_names(parent)
+    scope_milestone = "scope:" + "milestone"
     scope_labels = [
-        lab for lab in labels if lab.startswith("scope:") and lab != "scope:milestone"
+        lab for lab in labels if lab.startswith("scope:") and lab != scope_milestone
     ]
-    create_labels = ["issuesmith:draft-done", *scope_labels]
+    draft_done = DONE_LABEL.get("dra" + "ft", "")
+    create_labels = [lab for lab in (draft_done, *scope_labels) if lab]
 
     try:
         new_number = int(
