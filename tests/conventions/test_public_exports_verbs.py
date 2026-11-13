@@ -23,24 +23,46 @@ from issuesmith.engine import (
 )
 from issuesmith.gates.worktree import line_has_cjk
 from issuesmith.ops.dispatch import map_step_result as dispatch_map_step_result
+from issuesmith.verbs import acceptance as acceptance_mod
+from issuesmith.verbs import children as children_mod
+from issuesmith.verbs import worktree as worktree_mod
 from tests.conventions._util import REPO_ROOT
 
 VERBS_PUBLIC_NAMES = frozenset(
     {
+        "AcceptanceError",
+        "AcceptanceVerdict",
+        "ReviewFacts",
+        "ChildPlan",
+        "ChildPlanEntry",
+        "ChildPlanError",
+        "WorktreeError",
+        "ROLE_ENGINES",
+        "block_design_only_issue",
+        "check_acceptance",
+        "check_contract",
+        "cleanup_branches",
+        "cleanup_worktrees",
+        "close_issue",
+        "create_child",
+        "ensure_base_included",
+        "exec_file",
+        "extract_contract",
+        "find_pr",
+        "map_step_result",
+        "merge_pr",
+        "merge_state",
+        "plan_children",
         "prepare_worktree",
         "publish_branch",
-        "find_pr",
-        "merge_state",
-        "merge_pr",
-        "cleanup_worktrees",
-        "cleanup_branches",
-        "close_issue",
+        "resolve",
+        "resolve_base_ref",
+        "review_tier",
         "run_guarded",
         "run_verified",
-        "exec_file",
-        "resolve",
-        "ROLE_ENGINES",
-        "map_step_result",
+        "unchecked_acceptance_count",
+        "validate_children",
+        "widen_allow_paths",
     }
 )
 
@@ -83,7 +105,7 @@ def _parse_readme_public_api_table(readme_text: str) -> dict[str, frozenset[str]
 
 
 def test_verbs_public_exports():
-    """issuesmith.verbs __all__ matches the contract; six engine/dispatch names re-export."""
+    """issuesmith.verbs __all__ matches the contract; re-exports share definition objects."""
     assert frozenset(verbs_mod.__all__) == VERBS_PUBLIC_NAMES
     for name in VERBS_PUBLIC_NAMES:
         assert hasattr(issuesmith_verbs, name), f"verbs missing attribute {name}"
@@ -93,6 +115,15 @@ def test_verbs_public_exports():
     assert issuesmith_verbs.resolve is engine_resolve
     assert issuesmith_verbs.ROLE_ENGINES is engine_role_engines
     assert issuesmith_verbs.map_step_result is dispatch_map_step_result
+    assert issuesmith_verbs.WorktreeError is worktree_mod.WorktreeError
+    assert issuesmith_verbs.prepare_worktree is worktree_mod.prepare_worktree
+    assert issuesmith_verbs.ensure_base_included is worktree_mod.ensure_base_included
+    assert issuesmith_verbs.block_design_only_issue is worktree_mod.block_design_only_issue
+    assert issuesmith_verbs.resolve_base_ref is worktree_mod.resolve_base_ref
+    assert issuesmith_verbs.check_acceptance is acceptance_mod.check_acceptance
+    assert issuesmith_verbs.AcceptanceError is acceptance_mod.AcceptanceError
+    assert issuesmith_verbs.plan_children is children_mod.plan_children
+    assert issuesmith_verbs.ChildPlanError is children_mod.ChildPlanError
 
 
 def test_readme_public_modules_match_all():

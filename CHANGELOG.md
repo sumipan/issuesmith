@@ -7,6 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.183.0 - 2026-11-13
+
+### Added
+
+- `issuesmith.verbs.children`: `plan_children`, `create_child`, `validate_children`, and `widen_allow_paths` with `ChildPlan` / `ChildPlanEntry` / `ChildPlanError` for milestone split-plan orchestration.
+- Re-export worktree helpers (`WorktreeError`, `ensure_base_included`, `block_design_only_issue`, `resolve_base_ref`) and acceptance verbs on `issuesmith.verbs`.
+
 ## 0.180.3 - 2026-11-13
 
 ### Changed

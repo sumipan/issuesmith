@@ -205,7 +205,7 @@ Supported Python imports are limited to seven modules (`issuesmith.__all__` is e
 | Module | Symbols |
 |---|---|
 | `issuesmith.contract` | `StepContext`, `StepResult`, `StepConfig`, `Andon`, `RetrySignal`, `RetryReason`, `parse_issue_metadata`, `validate_issue_metadata`, `MetadataViolation` |
-| `issuesmith.verbs` | `prepare_worktree`, `publish_branch`, `find_pr`, `merge_state`, `merge_pr`, `cleanup_worktrees`, `cleanup_branches`, `close_issue`, `run_guarded`, `run_verified`, `exec_file`, `resolve`, `ROLE_ENGINES`, `map_step_result` |
+| `issuesmith.verbs` | `AcceptanceError`, `AcceptanceVerdict`, `ReviewFacts`, `ChildPlan`, `ChildPlanEntry`, `ChildPlanError`, `WorktreeError`, `ROLE_ENGINES`, `block_design_only_issue`, `check_acceptance`, `check_contract`, `cleanup_branches`, `cleanup_worktrees`, `close_issue`, `create_child`, `ensure_base_included`, `exec_file`, `extract_contract`, `find_pr`, `map_step_result`, `merge_pr`, `merge_state`, `plan_children`, `prepare_worktree`, `publish_branch`, `resolve`, `resolve_base_ref`, `review_tier`, `run_guarded`, `run_verified`, `unchecked_acceptance_count`, `validate_children`, `widen_allow_paths` |
 | `issuesmith.gates` | `Verdict`, `GateBuildContext`, `GateBuildError`, `GateEntry`, `RequiresGate`, `GATE_REGISTRY`, `NON_REPAIRABLE_RULE_IDS`, `is_non_repairable_rule_id`, `resolve_gate`, `validate_step_requires`, `check_scope`, `check_pr_scope`, `check_ac_complete`, `check_deps`, `Violation`, `Gate`, `PreconditionContext`, `normalize_allow_path`, `external_target_state` |
 | `issuesmith.config` | `get_config`, `load_config`, `IssuesmithConfig`, `LanguagePack` |
 | `issuesmith.andon` | `Andon`, `AndonSink`, `AutoAnswerPlan`, `raise_andon`, `list_open`, `list_open_records`, `answer`, `from_comment`, `to_comment`, `plan_auto_answers`, `apply_auto_answers` |
@@ -329,7 +329,9 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/verbs/finalize.py` | `cleanup_worktrees`, `cleanup_branches`, `close_issue` |
 | `issuesmith/verbs/merge.py` | `find_pr`, `merge_state`, `merge_pr` |
 | `issuesmith/verbs/publish.py` | `publish_branch` |
-| `issuesmith/verbs/worktree.py` | `prepare_worktree` |
+| `issuesmith/verbs/acceptance.py` | `check_acceptance`, `unchecked_acceptance_count`, `extract_contract`, `check_contract`, `review_tier` |
+| `issuesmith/verbs/children.py` | `plan_children`, `create_child`, `validate_children`, `widen_allow_paths` |
+| `issuesmith/verbs/worktree.py` | `prepare_worktree`, `ensure_base_included`, `block_design_only_issue` |
 | `issuesmith/worktree.py` | Worktree creation and base-branch fetch |
 
 ## Gates
