@@ -124,6 +124,42 @@ def test_create_child_restores_yaml_and_dependencies(local_client) -> None:
     assert stored.count(f"## {dep_heading}") == entry.draft_body.count(f"## {dep_heading}")
 
 
+def test_create_children_sequential_from_single_plan(local_client) -> None:
+    """Refs sumipan/nexus#6583 — same ChildPlan after record_created_child resolves row deps."""
+    # V6 treats only #NNN with 3+ digits as resolved; pad LocalForge numbering.
+    for _ in range(998):
+        local_client.issue_create("pad", "x")
+    parent = _create_parent(local_client, _parent_body_two_rows())
+    plan = vchildren.plan_children(local_client, parent, repo=_REPO)
+    assert plan.entries[0].existing is None
+    assert plan.entries[1].dependencies == ()
+
+    first = vchildren.create_child(local_client, parent, plan.entries[0])
+    plan = vchildren.record_created_child(
+        local_client, parent, plan, row_number=1, child_number=first
+    )
+    second_entry = plan.entries[1]
+    assert second_entry.dependencies == (first,)
+    assert f"#{first}" in second_entry.draft_body
+
+    second = vchildren.create_child(local_client, parent, second_entry)
+    assert second != first
+    assert len(local_client.list_sub_issues(parent)) == 2
+
+
+def test_create_child_raises_when_link_missing_despite_milestone(local_client) -> None:
+    """Refs sumipan/nexus#6583 — milestone alone does not satisfy sub-issue link."""
+    parent = _create_parent(local_client, _parent_body_two_rows())
+    plan = vchildren.plan_children(local_client, parent, repo=_REPO)
+    entry = plan.entries[0]
+
+    with patch.object(local_client, "add_sub_issue", return_value=None):
+        with patch.object(local_client, "list_sub_issues", return_value=[]):
+            with pytest.raises(vchildren.ChildPlanError) as exc:
+                vchildren.create_child(local_client, parent, entry)
+    assert any("sub-issue link failed" in v for v in exc.value.violations)
+
+
 def test_create_child_reuses_existing_child(local_client) -> None:
     """Refs sumipan/nexus#6583 — second create returns the same child number."""
     parent = _create_parent(local_client, _parent_body_two_rows())
@@ -184,3 +220,20 @@ def test_widen_allow_paths_returns_false_without_yaml(local_client) -> None:
     number = int(local_client.issue_create("plain", "## Design\n\nno yaml\n"))
     assert vchildren.widen_allow_paths(local_client, number, ["src/x.py"]) is False
     assert local_client.issue_get(number, fields=["body"])["body"] == "## Design\n\nno yaml\n"
+
+
+def test_widen_allow_paths_returns_false_for_empty_or_invalid_files(local_client) -> None:
+    """Refs sumipan/nexus#6583 — empty or all-invalid files never succeed."""
+    body = (
+        "```yaml\n"
+        "target_repo: sumipan/issuesmith\n"
+        "allow_paths:\n"
+        '  - "src/a.py"\n'
+        "```\n\n"
+        "## Design\n\nnotes\n"
+    )
+    number = int(local_client.issue_create("widen-empty", body))
+    assert vchildren.widen_allow_paths(local_client, number, []) is False
+    assert vchildren.widen_allow_paths(local_client, number, ["", "..", "/abs"]) is False
+    stored = str(local_client.issue_get(number, fields=["body"])["body"])
+    assert stored == body
