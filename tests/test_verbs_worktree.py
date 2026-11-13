@@ -140,10 +140,10 @@ def test_prepare_worktree_rejects_dirty_clean_path(tmp_path: Path) -> None:
 def test_prepare_worktree_migration_rejects_external_dir_without_target_repo(
     tmp_path: Path,
 ) -> None:
-    """Replaces ``tests/test_verbs.py::test_prepare_worktree_uses_external_dir_when_provided``.
+    """``external_dir`` without ``target_repo`` is rejected before any clone or fetch.
 
-    In-tree migration (#6581): the only caller passing ``external_dir`` without
-    ``target_repo`` was that legacy verbs API test. Set both for cross-repo clone roots.
+    Callers that passed only ``external_dir`` (the old cross-repo form) must now pass
+    ``target_repo`` as well.
     """
     external = tmp_path / "external"
     external.mkdir()
