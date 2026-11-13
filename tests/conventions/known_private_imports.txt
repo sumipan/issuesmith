@@ -4,6 +4,8 @@ issuesmith.config _DEFAULT_FORBIDDEN_PR_PATHS
 issuesmith.contract _normalize_path
 issuesmith.convert_to_milestone _ensure_milestone
 issuesmith.gate_rules.milestone_subdesign_rules _extract_paths_from_change_table
+issuesmith.milestone _list_chain_children
+issuesmith.milestone _SUB1_DEP_REF_RE
 issuesmith.ops.labels _exec_records_from_labels
 issuesmith.ops.labels _is_managed_label
 issuesmith.ops.labels _ns
