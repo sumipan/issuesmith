@@ -234,101 +234,6 @@ def _require_child_linked(
         raise ChildPlanError((f"sub-issue link failed for #{child_number}",))
 
 
-def record_created_child(
-    client: ForgePort,
-    parent_number: int,
-    plan: ChildPlan,
-    *,
-    row_number: int,
-    child_number: int,
-) -> ChildPlan:
-    """Refresh plan entries so later rows pick up issue numbers from prior creates."""
-    parent = client.issue_get(
-        parent_number,
-        fields=["number", "body", "labels", "milestone", "title"],
-    )
-    parent_body = str(parent.get("body") or "")
-    parent_meta = _safe_metadata(parent_body)
-    parent_target_repo = str(parent_meta.get("target_repo") or "").strip()
-    plan_rows, has_repo_col = parse_split_plan(
-        parent_body, parent_target_repo=parent_target_repo
-    )
-    rows_by_num = {row.row_num: row for row in plan_rows}
-    if row_number not in rows_by_num:
-        raise ChildPlanError((f"plan row {row_number} not found",))
-
-    row_to_issue: dict[int, int] = {}
-    for entry in plan.entries:
-        if entry.existing is not None:
-            row_to_issue[entry.row_number] = entry.existing
-    row_to_issue[row_number] = child_number
-
-    labels = _label_names(parent)
-    state = Sub1State()
-    table_row_count = len(plan_rows)
-    new_entries: list[ChildPlanEntry] = []
-
-    for entry in plan.entries:
-        if entry.row_number == row_number:
-            new_entries.append(
-                ChildPlanEntry(
-                    row_number=entry.row_number,
-                    title=entry.title,
-                    repo=entry.repo,
-                    existing=child_number,
-                    dependencies=entry.dependencies,
-                    allow_paths=entry.allow_paths,
-                    draft_body=entry.draft_body,
-                )
-            )
-            continue
-        if entry.existing is not None:
-            new_entries.append(entry)
-            continue
-        row = rows_by_num.get(entry.row_number)
-        if row is None:
-            new_entries.append(entry)
-            continue
-
-        resolved_dep = resolve_dependencies(
-            row.dep_raw,
-            table_row_count=table_row_count,
-            row_to_issue=row_to_issue,
-            client=client,
-            state=state,
-        )
-        paths = allow_paths_for_row(parent_body, row)
-        if not paths:
-            new_entries.append(entry)
-            continue
-        draft = build_child_body(
-            parent_body=parent_body,
-            parent_number=parent_number,
-            row=row,
-            resolved_dep=resolved_dep,
-            client=client,
-            parent_labels=labels,
-            allow_paths=paths,
-        )
-        new_entries.append(
-            ChildPlanEntry(
-                row_number=entry.row_number,
-                title=entry.title,
-                repo=entry.repo,
-                existing=entry.existing,
-                dependencies=_issue_numbers_from_resolved(
-                    resolved_dep,
-                    row_to_issue=row_to_issue,
-                    table_row_count=table_row_count,
-                ),
-                allow_paths=tuple(paths),
-                draft_body=draft,
-            )
-        )
-
-    return ChildPlan(entries=tuple(new_entries), milestone_number=plan.milestone_number)
-
-
 def _dependency_section(body: str, dep_heading: str) -> str | None:
     target = f"## {dep_heading}"
     for heading, section in split_h2_sections(body):
@@ -484,6 +389,22 @@ def plan_children(client: ForgePort, parent_number: int, *, repo: str) -> ChildP
     return ChildPlan(entries=tuple(entries), milestone_number=milestone_number)
 
 
+def _refresh_entry(
+    client: ForgePort,
+    parent_number: int,
+    entry: ChildPlanEntry,
+) -> ChildPlanEntry:
+    """Resolve dependencies created by earlier rows without expanding the public API."""
+    plan = plan_children(client, parent_number, repo=entry.repo)
+    for candidate in plan.entries:
+        if candidate.row_number != entry.row_number or candidate.title != entry.title:
+            continue
+        if candidate.repo != entry.repo or candidate.allow_paths != entry.allow_paths:
+            return entry
+        return candidate
+    return entry
+
+
 def create_child(
     client: ForgePort,
     parent_number: int,
@@ -492,6 +413,7 @@ def create_child(
     body: str | None = None,
 ) -> int:
     """Create or reuse a child Issue for *entry*; restore deterministic YAML/deps when *body* is set."""
+    entry = _refresh_entry(client, parent_number, entry)
     if entry.existing is not None:
         _require_child_linked(client, parent_number, entry.existing)
         return entry.existing

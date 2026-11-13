@@ -125,7 +125,7 @@ def test_create_child_restores_yaml_and_dependencies(local_client) -> None:
 
 
 def test_create_children_sequential_from_single_plan(local_client) -> None:
-    """Refs sumipan/nexus#6583 — same ChildPlan after record_created_child resolves row deps."""
+    """Refs sumipan/nexus#6583 — one ChildPlan can create ordered rows sequentially."""
     # V6 treats only #NNN with 3+ digits as resolved; pad LocalForge numbering.
     for _ in range(998):
         local_client.issue_create("pad", "x")
@@ -135,16 +135,11 @@ def test_create_children_sequential_from_single_plan(local_client) -> None:
     assert plan.entries[1].dependencies == ()
 
     first = vchildren.create_child(local_client, parent, plan.entries[0])
-    plan = vchildren.record_created_child(
-        local_client, parent, plan, row_number=1, child_number=first
-    )
-    second_entry = plan.entries[1]
-    assert second_entry.dependencies == (first,)
-    assert f"#{first}" in second_entry.draft_body
-
-    second = vchildren.create_child(local_client, parent, second_entry)
+    second = vchildren.create_child(local_client, parent, plan.entries[1])
     assert second != first
     assert len(local_client.list_sub_issues(parent)) == 2
+    second_body = str(local_client.issue_get(second, fields=["body"])["body"])
+    assert f"#{first}" in second_body
 
 
 def test_create_child_raises_when_link_missing_despite_milestone(local_client) -> None:
@@ -166,11 +161,8 @@ def test_create_child_reuses_existing_child(local_client) -> None:
     plan = vchildren.plan_children(local_client, parent, repo=_REPO)
     entry = plan.entries[0]
     first = vchildren.create_child(local_client, parent, entry)
-    replan = vchildren.plan_children(local_client, parent, repo=_REPO)
-    existing_entry = next(e for e in replan.entries if e.row_number == entry.row_number)
-    assert existing_entry.existing == first
     with patch.object(local_client, "issue_create") as mocked:
-        second = vchildren.create_child(local_client, parent, existing_entry)
+        second = vchildren.create_child(local_client, parent, entry)
         mocked.assert_not_called()
     assert first == second
 
