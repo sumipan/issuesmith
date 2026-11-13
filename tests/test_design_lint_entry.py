@@ -9,6 +9,7 @@ import pytest
 
 from issuesmith.design_lint_entry import check_gate
 from issuesmith.gate_rules.design_lint_rules import DesignLintRules
+from tests.legacy_text import ADD, CHANGE_TYPE, DESCRIPTION, FILE_PATH, REPOSITORY, SUB
 
 
 def _violation(rule_id: str) -> SimpleNamespace:
@@ -81,8 +82,6 @@ def test_check_gate_uses_canonical_rule_classes(
     assert "migration missing" in " ".join(result["reasons"])
     assert result["intentional_hold"] is False
 
-
-from tests.legacy_text import ADD, CHANGE_TYPE, DESCRIPTION, FILE_PATH, REPOSITORY, SUB
 
 _TABLE_HEADER = f"{REPOSITORY} | {FILE_PATH} | {CHANGE_TYPE} | {DESCRIPTION}"
 
