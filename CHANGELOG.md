@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.183.0 - 2026-11-13
+
 ### Added
 
 - `issuesmith.verbs.children`: `plan_children`, `create_child`, `validate_children`, and `widen_allow_paths` with `ChildPlan` / `ChildPlanEntry` / `ChildPlanError` for milestone split-plan orchestration.
