@@ -150,10 +150,17 @@ def block_design_only_issue(
     stderr_error: str | None = None,
 ) -> StepResult:
     """Block milestone-scoped issues from entering implementation."""
-    kwargs: dict[str, object] = {
-        "comment": comment,
-        "on_transition": on_transition,
-    }
-    if stderr_error is not None:
-        kwargs["stderr_error"] = stderr_error
-    return handle_milestone(client, issue_number, **kwargs)
+    if stderr_error is None:
+        return handle_milestone(
+            client,
+            issue_number,
+            comment=comment,
+            on_transition=on_transition,
+        )
+    return handle_milestone(
+        client,
+        issue_number,
+        comment=comment,
+        on_transition=on_transition,
+        stderr_error=stderr_error,
+    )
