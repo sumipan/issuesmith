@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 from ghdag.forge import ForgePort
 
@@ -110,11 +110,14 @@ def review_tier(
     )
     diff_lines = _diff_lines_from_detail(detail)
     unchecked = unchecked_acceptance_count(issue_body)
-    tier = pr_diff_tier(
-        diff_lines,
-        unchecked,
-        gates_pass,
-        light_max_diff_lines=light_max_diff_lines,
+    tier = cast(
+        Tier,
+        pr_diff_tier(
+            diff_lines,
+            unchecked,
+            gates_pass,
+            light_max_diff_lines=light_max_diff_lines,
+        ),
     )
     head_sha = _head_sha_from_detail(detail) if pr_number is not None else None
     return ReviewFacts(
