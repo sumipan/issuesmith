@@ -124,7 +124,13 @@ def test_build_context_reuses_pipeline_id_from_branch(
     _add_branch_with_commit(repo, "feat/issue-7-aaaa1111", "add feature X")
     br_mod.record_base(repo, "feat/issue-7-aaaa1111", "main")
 
-    body = "```yaml\ntarget_repo: sumipan/issuesmith\nbase_branch: main\n```\n\n## Purpose\ntest"
+    body = (
+        "```yaml\n"
+        "target_repo: sumipan/issuesmith\n"
+        "issue_repo: sumipan/nexus\n"
+        "base_branch: main\n"
+        "```\n\n## Purpose\ntest"
+    )
     ctx = build_context(7, body=body)
     assert ctx["pipeline_id"] == "issue-7-aaaa1111"
     assert ctx["branch"] == "feat/issue-7-aaaa1111"
@@ -140,7 +146,13 @@ def test_build_context_new_uuid_when_no_reusable_branch(
     _add_branch_with_commit(repo, "feat/issue-7-aaaa1111", "some work")
     br_mod.record_base(repo, "feat/issue-7-aaaa1111", "develop")
 
-    body = "```yaml\ntarget_repo: sumipan/issuesmith\nbase_branch: main\n```\n\n## Purpose\ntest"
+    body = (
+        "```yaml\n"
+        "target_repo: sumipan/issuesmith\n"
+        "issue_repo: sumipan/nexus\n"
+        "base_branch: main\n"
+        "```\n\n## Purpose\ntest"
+    )
     ctx = build_context(7, body=body)
     assert ctx["pipeline_id"] != "issue-7-aaaa1111"
     assert ctx["pipeline_id"].startswith("issue-7-")
@@ -156,7 +168,13 @@ def test_build_context_previous_commits_populated_on_reuse(
     _add_branch_with_commit(repo, "feat/issue-7-aaaa1111", "add feature X")
     br_mod.record_base(repo, "feat/issue-7-aaaa1111", "main")
 
-    body = "```yaml\ntarget_repo: sumipan/issuesmith\nbase_branch: main\n```\n\n## Purpose\ntest"
+    body = (
+        "```yaml\n"
+        "target_repo: sumipan/issuesmith\n"
+        "issue_repo: sumipan/nexus\n"
+        "base_branch: main\n"
+        "```\n\n## Purpose\ntest"
+    )
     ctx = build_context(7, body=body)
     assert ctx["previous_commits"] != ""
     assert "add feature X" in ctx["previous_commits"]
@@ -310,7 +328,13 @@ def test_reuse_source_recorded(
     _add_branch_with_commit(repo, "feat/issue-7-aaaa1111", "add feature X")
     br_mod.record_base(repo, "feat/issue-7-aaaa1111", "main")
 
-    body = "```yaml\ntarget_repo: sumipan/issuesmith\nbase_branch: main\n```\n\n## Purpose\ntest"
+    body = (
+        "```yaml\n"
+        "target_repo: sumipan/issuesmith\n"
+        "issue_repo: sumipan/nexus\n"
+        "base_branch: main\n"
+        "```\n\n## Purpose\ntest"
+    )
     ctx = build_context(7, body=body)
     assert ctx["reuse_source"] == "recorded"
 
@@ -323,7 +347,13 @@ def test_reuse_source_unrecorded(
     _add_branch_with_commit(repo, "feat/issue-7-bbbb2222", "add feature Y")
     # No record_base call → unrecorded
 
-    body = "```yaml\ntarget_repo: sumipan/issuesmith\nbase_branch: main\n```\n\n## Purpose\ntest"
+    body = (
+        "```yaml\n"
+        "target_repo: sumipan/issuesmith\n"
+        "issue_repo: sumipan/nexus\n"
+        "base_branch: main\n"
+        "```\n\n## Purpose\ntest"
+    )
     ctx = build_context(7, body=body)
     assert ctx["reuse_source"] == "unrecorded"
     assert ctx["pipeline_id"] == "issue-7-bbbb2222"

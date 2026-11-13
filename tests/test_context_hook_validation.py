@@ -104,11 +104,22 @@ def test_allow_paths_command_substitution_rejected():
 
 def test_empty_allow_paths_rejected_without_scope_gate():
     violations = validate_context_hook_security(
-        {"target_repo": "sumipan/issuesmith", "base_branch": "main", "allow_paths": []}
+        {
+            "target_repo": "sumipan/issuesmith",
+            "issue_repo": "sumipan/nexus",
+            "base_branch": "main",
+            "allow_paths": [],
+        }
     )
     assert any(v.code == "empty_allow_paths" for v in violations)
 
-    body = "```yaml\nbase_branch: main\ntarget_repo: sumipan/issuesmith\n```\n"
+    body = (
+        "```yaml\n"
+        "base_branch: main\n"
+        "target_repo: sumipan/issuesmith\n"
+        "issue_repo: sumipan/nexus\n"
+        "```\n"
+    )
     with patch("issuesmith.context_hook._fetch_issue_body_from_gh", return_value=body), patch(
         "issuesmith.context_hook._fetch_issue_comments_from_api", return_value=[]
     ):

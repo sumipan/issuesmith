@@ -260,9 +260,9 @@ def validate_context_hook_security(
 
     allow_paths_raw = _allow_paths_list(metadata)
     target_repo = metadata.get("target_repo")
-    from ghdag.forge import DEFAULT_REPO
+    configured_repo = get_config().repo
 
-    issue_repo = str(metadata.get("issue_repo", DEFAULT_REPO))
+    issue_repo = str(metadata.get("issue_repo", configured_repo))
     cross_repo_target = bool(
         target_repo
         and target_repo in _supported_repos()
@@ -349,7 +349,7 @@ def _raise_metadata_andon(
 
         from issuesmith.andon import Andon, list_open, raise_andon
 
-        client = get_forge()
+        client = get_forge(repo=get_config().repo)
         andon_id = _metadata_andon_id(issue_number, violations)
         if any(a.id == andon_id for a in list_open(client)):
             return
@@ -442,7 +442,7 @@ def _fetch_issue_body_from_api(issue_number: int) -> str | None:
     try:
         from ghdag.forge import get_forge
 
-        data = get_forge().issue_get(issue_number, fields=["body"])
+        data = get_forge(repo=get_config().repo).issue_get(issue_number, fields=["body"])
         body = data.get("body")
         return body.strip() if isinstance(body, str) and body.strip() else None
     except Exception:
@@ -591,7 +591,7 @@ def build_context(
             logging.warning("Issue #%s: YAML metadata parse failed: %s", issue_number, exc)
             metadata = {}
 
-    from ghdag.forge import DEFAULT_REPO
+    configured_repo = get_config().repo
 
     if metadata_parsed:
         raise_metadata_violations(
@@ -601,7 +601,7 @@ def build_context(
             )
         )
 
-    issue_repo = str(metadata.get("issue_repo", DEFAULT_REPO))
+    issue_repo = str(metadata.get("issue_repo", configured_repo))
     base_branch = str(metadata.get("base_branch", "main"))
 
     # Resolve target_repo / cross-repo before pipeline_id (branch_reuse searches there)

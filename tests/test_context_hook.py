@@ -110,8 +110,21 @@ def test_okr_core_supported():
 
 def test_issuesmith_cross_repo_supported():
     """sumipan/issuesmith is in SUPPORTED_REPOS and is derived as cross-repo."""
-    body = _body(target_repo="sumipan/issuesmith", allow_paths="src/**")
-    violations = validate_issue_metadata({"target_repo": "sumipan/issuesmith", "allow_paths": ["src/**"]})
+    body = textwrap.dedent("""\
+        ```yaml
+        target_repo: sumipan/issuesmith
+        issue_repo: sumipan/nexus
+        allow_paths:
+          - src/**
+        ```
+    """)
+    violations = validate_issue_metadata(
+        {
+            "target_repo": "sumipan/issuesmith",
+            "issue_repo": "sumipan/nexus",
+            "allow_paths": ["src/**"],
+        }
+    )
     assert violations == []
     ctx = build_context(7, body=body)
     assert ctx["is_cross_repo"] == "true"
@@ -136,13 +149,12 @@ def test_nexus_target_repo_is_normalized_to_native():
     As of 250868cee44 (#2567), when target_repo == issue_repo we stop treating it as
     cross-repo. Putting it on the external clone/worktree path would make M2's
     acceptance-criteria gate inspect a feature worktree that disappears after merge,
-    causing false negatives. issue_repo defaults to
-    ghdag.github_client.DEFAULT_REPO = "sumipan/nexus".
+    causing false negatives. issue_repo defaults to issuesmith.yaml ``repo``.
 
-    sumipan/nexus is in SUPPORTED_REPOS so the value itself is accepted
+    sumipan/issuesmith is in SUPPORTED_REPOS so the value itself is accepted
     (validate_issue_metadata does not reject it), but it is not cross-repo.
     """
-    body = _body(target_repo="sumipan/nexus")
+    body = _body(target_repo="sumipan/issuesmith")
     ctx = build_context(5, body=body)
     assert ctx["is_cross_repo"] == "false"
     assert ctx["repo_name"] == ""
@@ -154,7 +166,7 @@ def test_nexus_target_repo_passes_metadata_validation():
     """Even after normalization, SUPPORTED_REPOS validation passes (target_repo required on all)."""
     from issuesmith.context_hook import parse_issue_metadata, validate_issue_metadata
 
-    body = _body(target_repo="sumipan/nexus")
+    body = _body(target_repo="sumipan/issuesmith")
     violations = validate_issue_metadata(parse_issue_metadata(body))
     assert violations == []
 
@@ -470,7 +482,7 @@ def test_targets_json_cross_repo_with_host():
     assert targets[0]["primary"] is True
     assert targets[0]["repo"] == "sumipan/ghdag"
     assert targets[1]["primary"] is False
-    assert targets[1]["repo"] == "sumipan/nexus"
+    assert targets[1]["repo"] == "sumipan/issuesmith"
 
 
 def test_targets_json_backward_compat_flat_keys():
@@ -482,10 +494,10 @@ def test_targets_json_backward_compat_flat_keys():
     assert ctx["host_allow_paths"] == "- workflows/issuesmith/**"
 
 
-def test_issue_repo_defaults_to_nexus():
+def test_issue_repo_defaults_to_configured_repo():
     with patch("issuesmith.context_hook._fetch_issue_comments_from_api", return_value=[]):
         ctx = build_context(42, body="# Title")
-    assert ctx["issue_repo"] == "sumipan/nexus"
+    assert ctx["issue_repo"] == "sumipan/issuesmith"
 
 
 def test_issue_repo_from_yaml():
@@ -502,7 +514,7 @@ def test_issue_repo_from_yaml():
 def test_self_target_repo_is_not_cross_repo():
     """If target_repo is the issue_repo itself, do not use the external path (#2567)"""
     body = """```yaml
-target_repo: sumipan/nexus
+target_repo: sumipan/issuesmith
 base_branch: main
 ```
 
@@ -597,3 +609,56 @@ def test_unrestricted_allow_paths_round_trips_through_publish_and_scope_gate():
     assert ctx["allow_paths"]
     assert _parse_allow_paths(ctx["allow_paths"]) is None
     assert parse_allow_paths_from_ctx(ctx["allow_paths"]) == []
+
+
+def test_issue_repo_explicit_overrides_configured_default():
+    """Refs: nexus#6608."""
+    body = textwrap.dedent("""\
+        ```yaml
+        target_repo: sumipan/ghdag
+        issue_repo: owner-b/repo-b
+        allow_paths:
+          - src/**
+        ```
+    """)
+    with patch(
+        "issuesmith.context_hook._fetch_issue_comments_from_api",
+        return_value=[],
+    ):
+        ctx = build_context(6608, body=body)
+    assert ctx["issue_repo"] == "owner-b/repo-b"
+
+
+def test_fetch_issue_body_from_api_uses_configured_forge_repo():
+    """Refs: nexus#6608."""
+    from unittest.mock import MagicMock
+
+    from issuesmith.context_hook import _fetch_issue_body_from_api
+
+    mock_cfg = MagicMock()
+    mock_cfg.repo = "owner-a/repo-a"
+    mock_forge = MagicMock()
+    mock_forge.issue_get.return_value = {"body": "hello"}
+    with patch("issuesmith.context_hook.get_config", return_value=mock_cfg):
+        with patch("ghdag.forge.get_forge", return_value=mock_forge) as mock_get:
+            assert _fetch_issue_body_from_api(1) == "hello"
+    mock_get.assert_called_once_with(repo="owner-a/repo-a")
+
+
+def test_raise_metadata_andon_uses_configured_forge_repo():
+    """Refs: nexus#6608."""
+    from unittest.mock import MagicMock
+
+    from issuesmith.context_hook import MetadataViolation, _raise_metadata_andon
+
+    mock_cfg = MagicMock()
+    mock_cfg.repo = "owner-a/repo-a"
+    violations = (
+        MetadataViolation(field="allow_paths", code="empty_allow_paths", message="x"),
+    )
+    with patch("issuesmith.context_hook.get_config", return_value=mock_cfg):
+        with patch("ghdag.forge.get_forge") as mock_get:
+            with patch("issuesmith.andon.list_open", return_value=[]):
+                with patch("issuesmith.andon.raise_andon"):
+                    _raise_metadata_andon(1, violations)
+    mock_get.assert_called_once_with(repo="owner-a/repo-a")

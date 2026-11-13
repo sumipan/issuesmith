@@ -2,7 +2,7 @@ import re
 import subprocess
 import sys
 
-from ghdag.forge import DEFAULT_REPO
+from issuesmith.config import get_config
 
 _READY_LABEL_RE = re.compile(r"issuesmith:(?:draft|develop|merge)-ready")
 
@@ -18,25 +18,37 @@ def _has_ready_label_in_argv(argv: list[str]) -> bool:
     return False
 
 
-def _issue_create_target(argv: list[str]) -> str | None:
-    """Return non-nexus --repo value for `issue create`, else None.
-
-    Issue creation is allowed only on sumipan/nexus (CLAUDE.md §6).
-    Without ``--repo`` DEFAULT_REPO is used, so the call is let through as safe.
-    """
+def _explicit_issue_create_repo(argv: list[str]) -> str | None:
+    """Return the --repo value on `issue create`, or None when omitted."""
     if len(argv) < 2 or argv[0] != "issue" or argv[1] != "create":
         return None
     for i, arg in enumerate(argv):
         if arg == "--repo" and i + 1 < len(argv):
-            repo = argv[i + 1]
-            return None if repo == DEFAULT_REPO else repo
+            return argv[i + 1]
         if arg.startswith("--repo="):
-            repo = arg[len("--repo=") :]
-            return None if repo == DEFAULT_REPO else repo
+            return arg[len("--repo=") :]
     return None
 
 
+def _issue_create_target(argv: list[str], configured_repo: str) -> str | None:
+    """Return a disallowed --repo value for `issue create`, else None."""
+    explicit = _explicit_issue_create_repo(argv)
+    if explicit is None:
+        return None
+    return None if explicit == configured_repo else explicit
+
+
+def _inject_issue_create_repo(argv: list[str], configured_repo: str) -> list[str]:
+    """Ensure `issue create` passes --repo configured_repo when --repo is omitted."""
+    if len(argv) < 2 or argv[0] != "issue" or argv[1] != "create":
+        return argv
+    if _explicit_issue_create_repo(argv) is not None:
+        return argv
+    return [*argv, "--repo", configured_repo]
+
+
 def main() -> None:
+    configured_repo = get_config().repo
     argv = sys.argv[1:]
     if _has_ready_label_in_argv(argv):
         print(
@@ -45,14 +57,15 @@ def main() -> None:
             file=sys.stderr,
         )
         sys.exit(2)
-    target = _issue_create_target(argv)
+    target = _issue_create_target(argv, configured_repo)
     if target is not None:
         print(
-            f"Error: Issue creation is allowed only in {DEFAULT_REPO} "
+            f"Error: Issue creation is allowed only in {configured_repo} "
             f"(CLAUDE.md §6). Got --repo {target}",
             file=sys.stderr,
         )
         sys.exit(2)
+    argv = _inject_issue_create_repo(argv, configured_repo)
     completed = subprocess.run(
         [sys.executable, "-m", "ghdag.github_cli", *argv],
         check=False,

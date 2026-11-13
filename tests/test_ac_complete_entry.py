@@ -280,9 +280,14 @@ class TestMainRepoRootCli:
             "body": BODY_CROSS_REPO_CONTRACT,
             "labels": [],
         }
+
+        def _get_forge(*, repo=None):
+            assert repo == "sumipan/issuesmith"
+            return mock_client
+
         monkeypatch.setattr(
             "issuesmith.ac_complete_entry.get_forge",
-            lambda: mock_client,
+            _get_forge,
         )
         monkeypatch.setattr(
             "sys.argv",
@@ -302,3 +307,72 @@ class TestMainRepoRootCli:
         }
         assert out["action"] == "proceed"
         assert out["contract_failures"] == []
+
+
+class TestMainConfiguredRepo:
+    def test_main_issue_fetch_uses_configured_repo(self, monkeypatch, capsys):
+        """Refs: nexus#6608."""
+        captured: dict[str, str] = {}
+
+        mock_client = MagicMock()
+        mock_client.issue_get.return_value = {
+            "body": BODY_ALL_CHECKED,
+            "labels": [],
+        }
+
+        def _get_forge(*, repo=None):
+            captured["repo"] = repo
+            return mock_client
+
+        monkeypatch.setattr("issuesmith.ac_complete_entry.get_forge", _get_forge)
+        monkeypatch.setattr("sys.argv", ["m2-gate", "42"])
+
+        from issuesmith.ac_complete_entry import main
+
+        main()
+        assert captured["repo"] == "sumipan/issuesmith"
+        capsys.readouterr()
+
+    def test_main_repo_roots_passes_configured_issue_repo(self, monkeypatch, capsys, tmp_path):
+        """Refs: nexus#6608."""
+        from unittest.mock import MagicMock as MM
+
+        body = """```yaml
+base_branch: main
+target_repo: owner-a/repo-a
+allow_paths:
+  - src/**
+```"""
+        mock_client = MagicMock()
+        mock_client.issue_get.return_value = {"body": body, "labels": []}
+
+        mock_cfg = MM()
+        mock_cfg.repo = "owner-a/repo-a"
+
+        passed: dict[str, str] = {}
+
+        def _targets(metadata, *, issue_repo, body):
+            passed["issue_repo"] = issue_repo
+            return []
+
+        monkeypatch.setattr("issuesmith.ac_complete_entry.get_config", lambda: mock_cfg)
+        monkeypatch.setattr(
+            "issuesmith.ac_complete_entry.get_forge",
+            lambda *, repo=None: mock_client,
+        )
+        monkeypatch.setattr(
+            "issuesmith.ac_complete_entry.targets_from_issue",
+            _targets,
+        )
+        root = tmp_path / "ext"
+        root.mkdir()
+        monkeypatch.setattr(
+            "sys.argv",
+            ["m2-gate", "99", "--repo-roots", f"owner-a/repo-a={root}"],
+        )
+
+        from issuesmith.ac_complete_entry import main
+
+        main()
+        assert passed["issue_repo"] == "owner-a/repo-a"
+        capsys.readouterr()
