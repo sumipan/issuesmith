@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Changed
+
+- Issue host resolution in `issuesmith gh` issue creation, `context_hook`, and `ac_complete_entry` uses `issuesmith.yaml` `repo` instead of ghdag's fixed default repository.
+
 ## 0.183.0 - 2026-11-13
 
 ### Added

@@ -1,13 +1,20 @@
 import sys
 from subprocess import CompletedProcess
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-from ghdag.forge import DEFAULT_REPO
 
 import issuesmith.github_api as github_api_module
+from issuesmith.config import get_config
 
 _CLI = [sys.executable, "-m", "ghdag.github_cli"]
+_CONFIGURED_REPO = get_config().repo
+
+
+def _mock_config_repo(repo: str):
+    mock_cfg = MagicMock()
+    mock_cfg.repo = repo
+    return patch("issuesmith.github_api.get_config", return_value=mock_cfg)
 
 
 def test_main_invokes_ghdag_cli_subprocess():
@@ -97,105 +104,116 @@ def test_main_blocks_foreign_issue_create_before_subprocess(capsys):
 
 
 def test_issue_create_target_returns_none_for_non_create():
-    assert github_api_module._issue_create_target(["pr", "list"]) is None
-    assert github_api_module._issue_create_target(["issue", "view", "1"]) is None
+    assert github_api_module._issue_create_target(["pr", "list"], _CONFIGURED_REPO) is None
+    assert github_api_module._issue_create_target(["issue", "view", "1"], _CONFIGURED_REPO) is None
     assert github_api_module._issue_create_target(
-        ["issue", "view", "--repo", "sumipan/issuesmith", "1"]
+        ["issue", "view", "--repo", "sumipan/issuesmith", "1"],
+        _CONFIGURED_REPO,
     ) is None
     assert github_api_module._issue_create_target(
-        ["pr", "list", "--repo", "sumipan/issuesmith"]
+        ["pr", "list", "--repo", "sumipan/issuesmith"],
+        _CONFIGURED_REPO,
     ) is None
 
 
 def test_issue_create_target_returns_none_when_repo_omitted():
     assert github_api_module._issue_create_target(
-        ["issue", "create", "--title", "t"]
+        ["issue", "create", "--title", "t"],
+        _CONFIGURED_REPO,
     ) is None
 
 
-def test_issue_create_target_returns_none_for_default_repo():
+def test_issue_create_target_returns_none_for_configured_repo():
     assert github_api_module._issue_create_target(
-        ["issue", "create", "--title", "t", "--repo", DEFAULT_REPO]
+        ["issue", "create", "--title", "t", "--repo", _CONFIGURED_REPO],
+        _CONFIGURED_REPO,
     ) is None
     assert github_api_module._issue_create_target(
-        ["issue", "create", "--title", "t", f"--repo={DEFAULT_REPO}"]
+        ["issue", "create", "--title", "t", f"--repo={_CONFIGURED_REPO}"],
+        _CONFIGURED_REPO,
     ) is None
 
 
-def test_issue_create_target_returns_non_nexus_repo():
+def test_issue_create_target_returns_foreign_repo():
     assert (
         github_api_module._issue_create_target(
-            ["issue", "create", "--title", "t", "--repo", "sumipan/issuesmith"]
+            ["issue", "create", "--title", "t", "--repo", "owner-b/repo-b"],
+            "owner-a/repo-a",
         )
-        == "sumipan/issuesmith"
+        == "owner-b/repo-b"
     )
     assert (
         github_api_module._issue_create_target(
-            ["issue", "create", "--title", "t", "--repo=sumipan/ghdag"]
+            ["issue", "create", "--title", "t", "--repo=owner-b/repo-b"],
+            "owner-a/repo-a",
         )
-        == "sumipan/ghdag"
+        == "owner-b/repo-b"
     )
 
 
-def test_main_blocks_issue_create_to_non_nexus(capsys):
-    with patch("issuesmith.github_api.subprocess.run") as mock_run:
-        with patch.object(
-            sys,
-            "argv",
-            [
-                "github_api",
-                "issue",
-                "create",
-                "--title",
-                "t",
-                "--repo",
-                "sumipan/issuesmith",
-            ],
-        ):
-            with pytest.raises(SystemExit) as exc_info:
-                github_api_module.main()
+def test_main_blocks_issue_create_to_foreign_repo(capsys):
+    with _mock_config_repo("owner-a/repo-a"):
+        with patch("issuesmith.github_api.subprocess.run") as mock_run:
+            with patch.object(
+                sys,
+                "argv",
+                [
+                    "github_api",
+                    "issue",
+                    "create",
+                    "--title",
+                    "t",
+                    "--repo",
+                    "owner-b/repo-b",
+                ],
+            ):
+                with pytest.raises(SystemExit) as exc_info:
+                    github_api_module.main()
     assert exc_info.value.code == 2
     mock_run.assert_not_called()
     captured = capsys.readouterr()
     assert "Issue creation is allowed only in" in captured.err
-    assert "sumipan/issuesmith" in captured.err
+    assert "owner-a/repo-a" in captured.err
+    assert "owner-b/repo-b" in captured.err
 
 
-def test_main_allows_issue_create_without_repo():
-    with patch("issuesmith.github_api.subprocess.run") as mock_run:
-        mock_run.return_value = CompletedProcess(args=[], returncode=0)
-        with patch.object(
-            sys, "argv", ["github_api", "issue", "create", "--title", "t"]
-        ):
-            with pytest.raises(SystemExit) as exc_info:
-                github_api_module.main()
+def test_main_allows_issue_create_without_repo_injects_configured():
+    with _mock_config_repo("owner-a/repo-a"):
+        with patch("issuesmith.github_api.subprocess.run") as mock_run:
+            mock_run.return_value = CompletedProcess(args=[], returncode=0)
+            with patch.object(
+                sys, "argv", ["github_api", "issue", "create", "--title", "t"]
+            ):
+                with pytest.raises(SystemExit) as exc_info:
+                    github_api_module.main()
     mock_run.assert_called_once_with(
-        [*_CLI, "issue", "create", "--title", "t"],
+        [*_CLI, "issue", "create", "--title", "t", "--repo", "owner-a/repo-a"],
         check=False,
     )
     assert exc_info.value.code == 0
 
 
-def test_main_allows_issue_create_to_nexus():
-    with patch("issuesmith.github_api.subprocess.run") as mock_run:
-        mock_run.return_value = CompletedProcess(args=[], returncode=0)
-        with patch.object(
-            sys,
-            "argv",
-            [
-                "github_api",
-                "issue",
-                "create",
-                "--title",
-                "t",
-                "--repo",
-                DEFAULT_REPO,
-            ],
-        ):
-            with pytest.raises(SystemExit) as exc_info:
-                github_api_module.main()
+def test_main_allows_issue_create_to_configured_repo():
+    with _mock_config_repo("owner-a/repo-a"):
+        with patch("issuesmith.github_api.subprocess.run") as mock_run:
+            mock_run.return_value = CompletedProcess(args=[], returncode=0)
+            with patch.object(
+                sys,
+                "argv",
+                [
+                    "github_api",
+                    "issue",
+                    "create",
+                    "--title",
+                    "t",
+                    "--repo",
+                    "owner-a/repo-a",
+                ],
+            ):
+                with pytest.raises(SystemExit) as exc_info:
+                    github_api_module.main()
     mock_run.assert_called_once_with(
-        [*_CLI, "issue", "create", "--title", "t", "--repo", DEFAULT_REPO],
+        [*_CLI, "issue", "create", "--title", "t", "--repo", "owner-a/repo-a"],
         check=False,
     )
     assert exc_info.value.code == 0

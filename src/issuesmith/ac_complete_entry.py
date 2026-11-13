@@ -14,6 +14,7 @@ from pathlib import Path
 
 from ghdag.forge import get_forge
 
+from issuesmith.config import get_config
 from issuesmith.gate_rules.ac_complete_rules import (
     AcCompleteRules,
     get_unchecked_count,
@@ -268,13 +269,14 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    data = get_forge().issue_get(args.issue_number, fields=["body", "labels"])
+    configured_repo = get_config().repo
+    data = get_forge(repo=configured_repo).issue_get(
+        args.issue_number, fields=["body", "labels"],
+    )
     body = data["body"]
     labels = [label["name"] for label in data["labels"]]
 
     if args.repo_roots:
-        from ghdag.forge import DEFAULT_REPO
-
         from issuesmith.context_hook import parse_issue_metadata
 
         repo_roots = _parse_repo_roots(args.repo_roots)
@@ -282,7 +284,7 @@ def main() -> None:
             metadata = parse_issue_metadata(body)
         except Exception:
             metadata = {}
-        issue_repo = str(metadata.get("issue_repo", DEFAULT_REPO))
+        issue_repo = str(metadata.get("issue_repo", configured_repo))
         target_list = targets_from_issue(metadata, issue_repo=issue_repo, body=body)
         contracts = {t.repo: t.contract for t in target_list}
         gate_result = check_gate_multi_root(

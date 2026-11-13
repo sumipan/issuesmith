@@ -190,7 +190,13 @@ def test_case_a_in_body_passes():
 
 def test_cp1_must_fail_false_passes():
     """cp1_must_fail: false passes the gate (still true after target_repo became required)"""
-    body = "```yaml\ncp1_must_fail: false\ntarget_repo: sumipan/nexus\n```\n\n## Overview\ncontent\n"
+    body = (
+        "```yaml\n"
+        "cp1_must_fail: false\n"
+        "target_repo: sumipan/nexus\n"
+        "issue_repo: sumipan/nexus\n"
+        "```\n\n## Overview\ncontent\n"
+    )
     result = check_gate(body)
     assert result["status"] == "PASS"
 
