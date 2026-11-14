@@ -153,7 +153,7 @@ class TestExecuteAllEnginesPaused:
 
         result = _execute("design", "prompt")
         assert result.returncode == 0
-        assert exe_mocks["call"].call_args.kwargs["engine"] == "codex"
+        assert exe_mocks["call"].call_args.kwargs["route"][0][0] == "codex"
 
 
 # ==================== 3 adapter × RetrySignal (parent AC-7) ====================

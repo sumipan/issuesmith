@@ -701,7 +701,7 @@ def triage(
 
     if llm is not None:
         try:
-            llm_result = llm(prompt, engine=engine, model=model, timeout=timeout)
+            llm_result = llm(prompt, route=[(engine, model)], timeout=timeout)
             raw_output = (
                 getattr(llm_result, "text", None)
                 or getattr(llm_result, "body", None)

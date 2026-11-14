@@ -907,13 +907,11 @@ def _execute(
         try:
             result = call(
                 content,
-                engine=selection.engine,
-                model=selection.model,
+                route=[(selection.engine, selection.model), *fallback_candidates],
                 timeout=int(timeout_sec),
                 cwd=working_directory,
                 permission=_ISSUESMITH_PERMISSION,
                 permission_overrides=_PERMISSION_OVERRIDES,
-                fallback_candidates=fallback_candidates,
                 additional_tags=additional_tags,
                 quota_gate=quota_gate,
                 isolation=isolation,
@@ -984,13 +982,11 @@ def _execute(
                 _declare_begin(quota_gate, task_uuid, alt_engine, role)
                 result = call(
                     content,
-                    engine=alt_engine,
-                    model=alt_model,
+                    route=[(alt_engine, alt_model)],
                     timeout=int(timeout_sec),
                     cwd=working_directory,
                     permission=_ISSUESMITH_PERMISSION,
                     permission_overrides=_PERMISSION_OVERRIDES,
-                    fallback_candidates=[],
                     additional_tags=additional_tags,
                     quota_gate=quota_gate,
                     isolation=isolation,
@@ -1008,13 +1004,11 @@ def _execute(
                 _declare_begin(quota_gate, task_uuid, alt_engine, role)
                 result = call(
                     content,
-                    engine=alt_engine,
-                    model=alt_model,
+                    route=[(alt_engine, alt_model)],
                     timeout=int(timeout_sec),
                     cwd=working_directory,
                     permission=_ISSUESMITH_PERMISSION,
                     permission_overrides=_PERMISSION_OVERRIDES,
-                    fallback_candidates=[],
                     additional_tags=additional_tags,
                     quota_gate=quota_gate,
                     isolation=isolation,

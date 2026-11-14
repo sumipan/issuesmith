@@ -164,7 +164,7 @@ def test_begin_run_declares_selected_engine_before_call_managed(
     assert "role_engines" not in gate.begin_runs[0]
     assert gate.begin_runs[0]["engine"] != "shell"
     assert len(mocks["call"].calls) == 1
-    assert gate.begin_runs[0]["engine"] == mocks["call"].calls[0].get("engine", engine)
+    assert gate.begin_runs[0]["engine"] == mocks["call"].calls[0].get("route", [(engine, None)])[0][0]
     assert mocks["events"].index("begin_run") < mocks["events"].index("call")
 
 
@@ -233,7 +233,7 @@ def test_rate_limit_retry_redeclares_alt_engine(mocks, monkeypatch):
     assert result.returncode == 0
     calls = mocks["call"].calls
     assert len(calls) == 2
-    retry_engine = calls[1]["engine"]
+    retry_engine = calls[1]["route"][0][0]
     assert retry_engine != "claude"
     assert mocks["gate"].begin_runs == [
         {"task_uuid": TASK_UUID, "engine": "claude"},
