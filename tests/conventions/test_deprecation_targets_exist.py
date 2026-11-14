@@ -23,14 +23,13 @@ def missing_deprecation_targets(found: list[tuple[str, str]], registered: set[st
 
 def test_deprecation_messages_point_at_registered_commands():
     found = _deprecation_targets()
-    assert found, "expected at least the recover/redispatch deprecations"
     missing = missing_deprecation_targets(found, set(cli._HANDLERS))
     assert not missing, f"deprecation advice names unregistered commands: {missing}"
 
 
 def test_detects_advice_pointing_at_dropped_command():
-    """Reproduction of sumipan/nexus#3566: recover says 'use resume' while resume is unregistered."""
-    missing = missing_deprecation_targets(_deprecation_targets(), set(cli._HANDLERS) - {"resume"})
+    """Reproduction of sumipan/nexus#3566: advice names resume while resume is unregistered."""
+    missing = missing_deprecation_targets([("cli.py", "resume")], set(cli._HANDLERS) - {"resume"})
     assert ("cli.py", "resume") in missing
 
 

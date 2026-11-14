@@ -100,8 +100,7 @@ def test_plan_returns_redispatch_when_worktree_missing(repo_layout: Path, monkey
     assert plan.action == "redispatch"
     assert plan.blocked_by is None
     assert plan.required_labels == frozenset({"issuesmith:draft-done"})
-    assert "redispatch" in plan.command
-    assert "--phase develop" in plan.command
+    assert plan.command == "python3 -m issuesmith resume 42 --phase develop"
 
 
 def test_plan_blocked_when_idempotency_consumed_and_no_generation(
@@ -238,24 +237,20 @@ _RECOVER_REMOVAL_COMMIT = "7f79f2dbb5219c67f65110888d1aac892d9821ec"
 
 def test_recover_cli_removal_regression_checklist() -> None:
     """Breaking removal (#6127): recover CLI gone; resume --from is the only recovery path."""
-    from argparse import ArgumentError
-
-    from issuesmith import cli, recovery
+    from issuesmith import cli
 
     assert "recover" not in cli._HANDLERS
-    with pytest.raises((ArgumentError, SystemExit)):
-        recovery.build_parser().parse_args(["recover", "1"])
     assert _RECOVER_REMOVAL_PR.startswith("https://github.com/sumipan/issuesmith/pull/")
     assert len(_RECOVER_REMOVAL_COMMIT) == 40
 
 
 def test_redispatch_blocked_exits_without_label_changes(monkeypatch) -> None:
-    from issuesmith.recovery import cmd_redispatch
+    from issuesmith.recovery import requeue_phase
 
     blocked = recovery.Plan(
         action="redispatch",
         reason="blocked",
-        command="issuesmith redispatch 1 --phase merge",
+        command="python3 -m issuesmith resume 1 --phase merge",
         required_labels=frozenset(),
         blocked_by="no open PR",
     )
@@ -263,11 +258,10 @@ def test_redispatch_blocked_exits_without_label_changes(monkeypatch) -> None:
     client = MagicMock()
     monkeypatch.setattr(recovery, "_github_client", lambda: client)
 
-    rc = cmd_redispatch(
+    rc = requeue_phase(
         issue=1,
         phase="merge",
         reason="test",
-        dry_run=False,
     )
     assert rc == 1
     client.issue_update.assert_not_called()

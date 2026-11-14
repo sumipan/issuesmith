@@ -119,16 +119,12 @@ def test_default_phases_match_nexus_fixture_when_declared(tmp_path, monkeypatch)
 
     import issuesmith.queue as queue
     import issuesmith.queue_store as queue_store
-    import issuesmith.recovery as recovery
 
     assert queue_store.PHASES == _DEFAULT_PHASE_NAMES
     assert queue.PHASE_ROLE == _DEFAULT_PHASE_ROLE
     assert _subparser_option_choices(queue.build_parser(), "enqueue", "--phase") == list(
         _DEFAULT_PHASE_NAMES
     )
-    assert _subparser_option_choices(
-        recovery.build_parser(), "redispatch", "--phase"
-    ) == list(_DEFAULT_PHASE_NAMES)
     assert {
         p.name: p.entry_step for p in get_config().phases
     } == _DEFAULT_ENTRY_STEPS
@@ -162,7 +158,6 @@ def test_custom_three_phases_propagate_to_consumers(tmp_path, monkeypatch):
 
     import issuesmith.queue as queue
     import issuesmith.queue_store as queue_store
-    import issuesmith.recovery as recovery
 
     cfg = get_config()
     assert tuple(p.name for p in cfg.phases) == ("draft", "develop", "merge")
@@ -177,9 +172,6 @@ def test_custom_three_phases_propagate_to_consumers(tmp_path, monkeypatch):
         "develop",
         "merge",
     ]
-    assert _subparser_option_choices(
-        recovery.build_parser(), "redispatch", "--phase"
-    ) == ["draft", "develop", "merge"]
     assert {
         p.name: p.entry_step for p in get_config().phases if p.name != "sub"
     } == {"draft": "b1", "develop": "cp2", "merge": "m2"}

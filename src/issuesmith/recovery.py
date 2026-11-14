@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import importlib
 import json
 import re
@@ -223,11 +222,8 @@ def _recover_command(issue: int, failed_step: str) -> str:
     return f"python3 -m issuesmith resume {issue} --from {failed_step}"
 
 
-def _redispatch_command(issue: int, phase: str, reason: str | None = None) -> str:
-    cmd = f"python3 -m issuesmith redispatch {issue} --phase {phase}"
-    if reason:
-        cmd += f' --reason "{reason}"'
-    return cmd
+def _resume_phase_command(issue: int, phase: str) -> str:
+    return f"python3 -m issuesmith resume {issue} --phase {phase}"
 
 
 def _merge_redispatch_blocked(issue: int, client: ForgePort) -> str | None:
@@ -268,7 +264,7 @@ def plan(
                 blocked_by=None,
             )
         blocked = _merge_blocked()
-        command = _redispatch_command(issue, phase)
+        command = _resume_phase_command(issue, phase)
         return Plan(
             action="redispatch",
             reason=f"prerequisites broken: {intact_reason}",
@@ -279,7 +275,7 @@ def plan(
 
     if _generation_keys_available():
         blocked = _merge_blocked()
-        command = _redispatch_command(issue, phase)
+        command = _resume_phase_command(issue, phase)
         return Plan(
             action="redispatch",
             reason="idempotency key consumed; queue will bump ghdag generation at dispatch",
@@ -291,7 +287,7 @@ def plan(
     return Plan(
         action="redispatch",
         reason="idempotency key consumed",
-        command=_redispatch_command(issue, phase),
+        command=_resume_phase_command(issue, phase),
         required_labels=required,
         blocked_by="idempotency key consumed; needs a ghdag generation-bumped key (#2876)",
     )
@@ -359,22 +355,14 @@ def _run_ghdag_recover(
     return int(proc.returncode)
 
 
-def cmd_redispatch(
+def requeue_phase(
     issue: int,
     *,
     phase: str,
     reason: str = "",
-    dry_run: bool = False,
 ) -> int:
-    import warnings
-    warnings.warn(
-        "issuesmith redispatch is deprecated; use 'issuesmith resume --phase <phase>' instead",
-        FutureWarning,
-        stacklevel=2,
-    )
     # Drop stale in_flight first: with it in place a re-enqueue is never dispatched.
-    if not dry_run:
-        QueueStore().remove_in_flight(issue)
+    QueueStore().remove_in_flight(issue)
 
     labels_data = _github_client().issue_get(issue, fields=["labels"])
     label_names = {
@@ -389,17 +377,12 @@ def cmd_redispatch(
         print(plan_obj.blocked_by, file=sys.stderr)
         return 1
 
-    if plan_obj.action == "recover" and not dry_run:
+    if plan_obj.action == "recover":
         print(
-            f"redispatch not needed: {plan_obj.reason}. try: {plan_obj.command}",
+            f"requeue not needed: {plan_obj.reason}. try: {plan_obj.command}",
             file=sys.stderr,
         )
         return 1
-
-    required, to_remove = redispatch_label_plan(phase)
-    if dry_run:
-        print(json.dumps({"required": sorted(required), "remove": sorted(to_remove)}, ensure_ascii=False))
-        return 0
 
     client = _github_client()
     changed = apply_redispatch_labels(client, issue, phase, label_names)
@@ -417,37 +400,3 @@ def cmd_redispatch(
     )
     print(json.dumps({"request_id": result.request_id, "created": result.created}, ensure_ascii=False))
     return 0
-
-
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="issuesmith.recovery")
-    sub = parser.add_subparsers(dest="command", required=True)
-
-    p_redispatch = sub.add_parser("redispatch")
-    p_redispatch.add_argument("issue", type=int)
-    p_redispatch.add_argument(
-        "--phase",
-        required=True,
-        choices=[p.name for p in get_config().phases],
-    )
-    p_redispatch.add_argument("--reason", default="")
-    p_redispatch.add_argument("--dry-run", action="store_true")
-
-    return parser
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    if args.command == "redispatch":
-        return cmd_redispatch(
-            args.issue,
-            phase=args.phase,
-            reason=args.reason,
-            dry_run=args.dry_run,
-        )
-    return 2
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

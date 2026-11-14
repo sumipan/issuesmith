@@ -7,6 +7,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.185.0 - 2026-11-15
+
+### Removed
+
+- **BREAKING:** CLI aliases `context_hook` and `context-hook` (use `context`).
+- **BREAKING:** CLI commands `redispatch`, `apply`, and `ingest-review` (use `resume <issue> --phase <phase>` for phase re-enqueue; stash scripts live in the host tree).
+- **BREAKING:** `python3 -m issuesmith.recovery` entry point. Use `requeue_phase` from library code or `resume --phase` from the shell.
+
+### Changed
+
+- `andon` is registered in `cli._HANDLERS`, so the `issuesmith` console script runs `andon` the same way as `python3 -m issuesmith`.
+- `recovery.plan` advice commands point at `python3 -m issuesmith resume <issue> --phase <phase>` instead of `redispatch`.
+
 ## 0.184.0 - 2026-11-14
 
 ### Added
@@ -89,7 +102,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - `issuesmith.engine` and `issuesmith.queue_triage` use the single `ghdag.llm.call` (ghdag v0.132.0 removed `call_managed` / `call_text` / `ManagedResult`). Per-engine permissions are passed with `permission_overrides` instead of patching ghdag at run time.
-- `issuesmith preflight` resolves the shell adapter through `ghdag.pipeline.get_command_adapter` (the old `ghdag.workflow.engine` module no longer exists).
+- `issuesmith doctor` resolves the shell adapter through `ghdag.pipeline.get_command_adapter` (the old `ghdag.workflow.engine` module no longer exists).
 
 ## 0.178.20 - 2026-11-12
 

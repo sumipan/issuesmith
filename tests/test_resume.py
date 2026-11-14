@@ -166,41 +166,6 @@ def test_resume_phase_prints_request_id(capsys):
     assert "req-123" in captured.out
 
 
-# ---------------------------------------------------------------------------
-# recovery.cmd_redispatch emits FutureWarning and delegates to resume
-# ---------------------------------------------------------------------------
-
-def _mock_unblocked_plan():
-    from issuesmith import recovery as rec
-    return rec.Plan(
-        action="redispatch",
-        reason="test",
-        command="issuesmith redispatch 123 --phase develop",
-        required_labels=frozenset(),
-        blocked_by=None,
-    )
-
-
-def test_cmd_redispatch_emits_future_warning():
-    import warnings
-
-    from issuesmith.recovery import cmd_redispatch
-    store = _make_store_mock()
-    client = MagicMock()
-    client.issue_get.return_value = {"labels": []}
-    with (
-        patch("issuesmith.recovery._github_client", return_value=client),
-        patch("issuesmith.recovery.plan", return_value=_mock_unblocked_plan()),
-        patch("issuesmith.recovery.apply_redispatch_labels", return_value=False),
-        patch("issuesmith.recovery.QueueStore", return_value=store),
-    ):
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            cmd_redispatch(123, phase="develop")
-    categories = [str(x.category.__name__) for x in w]
-    assert "FutureWarning" in categories
-
-
 def test_cmd_resume_both_flags_exits_2():
     """AC-3: --from and --phase together is argparse error, exits 2."""
     from issuesmith.cli import _cmd_resume

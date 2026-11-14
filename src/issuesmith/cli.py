@@ -9,29 +9,35 @@ import sys
 from dataclasses import asdict
 from typing import Any, Sequence
 
-_STASH_MOVED_MSG = (
-    "apply / ingest-review moved to tools/stash/. "
-    "Example: python3 tools/stash/apply.py <path>"
-)
+_ANDON_USAGE = """\
+usage: issuesmith andon <subcommand> ...
+
+subcommands:
+  list [--all] [--json]    list open (unanswered) andons (--json: records with raised_at / notes)
+  show <andon-id>          show a specific andon by id
+  answer <andon-id> <action> [--by human|agent]  post answer, remove label, call resume hook
+  note <andon-id> --key <key> --value <value>  record a note on an open andon (no label change)
+  auto-answer [--apply] [--json]  plan (or apply) configured auto-answer rules
+"""
 
 _USAGE = """\
 usage: issuesmith <command> ...
 
 commands:
-  context|context_hook|context-hook
+  context
   gate|gate-preflight
   verify
   queue  deps  tier  comments  gh
   engine  dispatch  publish  labels  doctor  smoke  gen-live  version-bump
   resume --from <step> | --phase <phase>
-  redispatch  convert-to-milestone
+  convert-to-milestone
   milestone  status / resume / prune / consolidate <child> --into <sibling>
   config show
   observe [--apply] [--json]
   lanes check [--apply] [--json]  report [--json]
   metrics rework [--since YYYY-MM-DD] [--issue N] [--audit PATH] [--json]
   main-health  (run observe.main_health.command on the base branch, write state)
-  apply  ingest-review  (moved to tools/stash/; exit 2)
+  andon list | show | answer | note | auto-answer
 """
 
 
@@ -220,6 +226,163 @@ _LABELS_USAGE = (
 )
 
 
+def _cmd_andon(argv: list[str]) -> int:
+    from issuesmith.andon import (
+        answer,
+        apply_auto_answers,
+        list_open,
+        list_open_records,
+        note,
+        plan_auto_answers,
+        to_comment,
+    )
+
+    if not argv:
+        print(_ANDON_USAGE, end="", file=sys.stderr)
+        return 1
+    if argv[0] in {"-h", "--help"}:
+        print(_ANDON_USAGE, end="")
+        return 0
+
+    sub, *rest = argv
+
+    if sub == "list":
+        show_all = "--all" in rest
+        as_json = "--json" in rest
+        from ghdag.forge import get_forge
+        client = get_forge()
+
+        def _sort_key(kind: str, step: str) -> int:
+            if kind == "decision":
+                return 0
+            if kind == "broken":
+                return 1
+            if kind == "blocked" and step != "observe":
+                return 2
+            return 3
+
+        if as_json:
+            records = list_open_records(client)
+            if not show_all:
+                records = sorted(records, key=lambda r: _sort_key(r["kind"], r["step"]))
+            print(json.dumps(records, ensure_ascii=False))
+            return 0
+        andons = list_open(client)
+        if not show_all:
+            andons = sorted(andons, key=lambda a: _sort_key(a.kind, a.step))
+        if not andons:
+            print("no open andons")
+        for a in andons:
+            print(f"{a.id}\t{a.kind}\tissue #{a.issue}\t{a.summary}")
+        return 0
+
+    if sub == "show":
+        if not rest:
+            print("andon show: <andon-id> required", file=sys.stderr)
+            return 2
+        andon_id = rest[0]
+        from ghdag.forge import get_forge
+        client = get_forge()
+        andons = list_open(client)
+        matched = [a for a in andons if a.id == andon_id]
+        if not matched:
+            print(f"andon not found: {andon_id}", file=sys.stderr)
+            return 1
+        a = matched[0]
+        print(to_comment(a))
+        return 0
+
+    if sub == "auto-answer":
+        apply = "--apply" in rest
+        as_json = "--json" in rest
+        from ghdag.forge import get_forge
+
+        from issuesmith.config import get_config
+
+        client = get_forge()
+        rules = get_config().andon.auto_answer
+        answer_plan = plan_auto_answers(client, rules)
+        if apply:
+            apply_auto_answers(client, answer_plan)
+        if as_json:
+            print(json.dumps(answer_plan.__dict__, ensure_ascii=False))
+            return 0
+        for entry in answer_plan.answers:
+            print(
+                f"answer {entry['andon_id']} issue #{entry['issue']} "
+                f"rule={entry['rule']} action={entry['action']}"
+            )
+        for entry in answer_plan.escalations:
+            print(f"escalation {entry.get('kind')} issue #{entry.get('issue', '-')}")
+        return 0
+
+    if sub == "answer":
+        args = list(rest)
+        answered_by = "human"
+        i = 0
+        while i < len(args):
+            if args[i] == "--by":
+                if i + 1 >= len(args):
+                    print("andon answer: --by requires a value", file=sys.stderr)
+                    print(_ANDON_USAGE, end="", file=sys.stderr)
+                    return 2
+                answered_by = args[i + 1]
+                del args[i : i + 2]
+                continue
+            i += 1
+        if len(args) < 2:
+            print("andon answer: <andon-id> <action> required", file=sys.stderr)
+            return 2
+        andon_id, action = args[0], args[1]
+        from ghdag.forge import get_forge
+        client = get_forge()
+        try:
+            answer(client, andon_id, action, answered_by=answered_by)
+        except ValueError as exc:
+            print(f"andon answer: {exc}", file=sys.stderr)
+            return 2
+        print(f"answered {andon_id} with: {action}")
+        return 0
+
+    if sub == "note":
+        note_id: str | None = None
+        opts: dict[str, str] = {}
+        i = 0
+        while i < len(rest):
+            arg = rest[i]
+            if arg in {"--key", "--value"}:
+                if i + 1 >= len(rest):
+                    note_id = None
+                    opts.clear()
+                    break
+                opts[arg[2:]] = rest[i + 1]
+                i += 2
+                continue
+            if note_id is None:
+                note_id = arg
+            i += 1
+        if note_id is None or "key" not in opts or "value" not in opts:
+            print("andon note: <andon-id> --key <key> --value <value> required", file=sys.stderr)
+            print(_ANDON_USAGE, end="", file=sys.stderr)
+            return 2
+        from ghdag.forge import get_forge
+        client = get_forge()
+        try:
+            note(client, note_id, opts["key"], opts["value"])
+        except KeyError:
+            print(f"andon not found: {note_id}", file=sys.stderr)
+            return 1
+        except ValueError as exc:
+            print(f"andon note: {exc}", file=sys.stderr)
+            return 2
+        print(f"noted {note_id}: {opts['key']}={opts['value']}")
+        return 0
+
+    print(f"andon: unknown subcommand: {sub}", file=sys.stderr)
+    print(_ANDON_USAGE, end="", file=sys.stderr)
+    return 2
+
+
 def _cmd_labels(argv: list[str]) -> int:
     if not argv:
         print(_LABELS_USAGE, end="", file=sys.stderr)
@@ -315,18 +478,6 @@ def _cmd_resume(argv: list[str]) -> int:
             return 2
         kwargs["force"] = True
     return _cmd_resume_fn(args.issue, **kwargs)
-
-
-def _cmd_redispatch(argv: list[str]) -> int:
-    import warnings
-    warnings.warn(
-        "issuesmith redispatch is deprecated; use 'issuesmith resume --phase <phase>' instead",
-        FutureWarning,
-        stacklevel=2,
-    )
-    from issuesmith.recovery import main as recovery_main
-
-    return int(recovery_main(["redispatch", *argv]))
 
 
 def _cmd_convert_to_milestone(argv: list[str]) -> int:
@@ -450,11 +601,6 @@ def _cmd_main_health(_argv: list[str]) -> int:
         for line in tail_lines:
             print(f"  | {line}")
     return 0
-
-
-def _cmd_stash_moved(_argv: list[str]) -> int:
-    print(_STASH_MOVED_MSG, file=sys.stderr)
-    return 2
 
 
 def _lanes_role_engine_map(cfg: Any) -> dict[str, str]:
@@ -618,8 +764,6 @@ def _cmd_lanes(argv: list[str]) -> int:
 
 _HANDLERS = {
     "context": _run_context,
-    "context_hook": _run_context,
-    "context-hook": _run_context,
     "gate": _cmd_gate,
     "gate-preflight": _run_gate_preflight,
     "verify": _cmd_verify,
@@ -637,15 +781,13 @@ _HANDLERS = {
     "gen-live": _cmd_gen_live,
     "version-bump": _cmd_version_bump,
     "resume": _cmd_resume,
-    "redispatch": _cmd_redispatch,
     "convert-to-milestone": _cmd_convert_to_milestone,
+    "andon": _cmd_andon,
     "milestone": _cmd_milestone,
     "config": _cmd_config,
     "observe": _cmd_observe,
     "metrics": _cmd_metrics,
     "main-health": _cmd_main_health,
-    "apply": _cmd_stash_moved,
-    "ingest-review": _cmd_stash_moved,
     "lanes": _cmd_lanes,
 }
 

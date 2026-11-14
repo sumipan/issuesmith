@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -166,10 +168,6 @@ def test_dispatch_event_not_called_on_answer():
     client.dispatch_event.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
-# FutureWarning on recover / redispatch CLI
-# ---------------------------------------------------------------------------
-
 def test_cli_resume_help_documents_from_flag():
     import os
     import sys
@@ -188,26 +186,6 @@ def test_cli_resume_help_documents_from_flag():
     combined = result.stdout + result.stderr
     assert result.returncode == 0
     assert "--from" in combined
-
-
-def test_cli_redispatch_emits_future_warning():
-    import os
-    import subprocess
-    import sys
-    from pathlib import Path
-    repo_root = Path(__file__).resolve().parents[1]
-    src_path = str(repo_root / "src")
-    env = {**os.environ, "PYTHONPATH": src_path}
-    result = subprocess.run(
-        [sys.executable, "-W", "all", "-m", "issuesmith", "redispatch", "--help"],
-        cwd=str(repo_root),
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
-    )
-    combined = result.stdout + result.stderr
-    assert "DeprecationWarning" in combined or "FutureWarning" in combined or result.returncode in (0, 1, 2)
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +210,7 @@ def test_andon_list_default_sort_order():
     from unittest.mock import MagicMock
     from unittest.mock import patch as mpatch
 
-    from issuesmith.__main__ import _cmd_andon
+    from issuesmith.cli import _cmd_andon
 
     andons = _make_andons_mixed()
     fake_client = MagicMock()
@@ -273,7 +251,7 @@ def test_andon_list_all_flag_shows_unsorted():
     from unittest.mock import MagicMock
     from unittest.mock import patch as mpatch
 
-    from issuesmith.__main__ import _cmd_andon
+    from issuesmith.cli import _cmd_andon
 
     andons = _make_andons_mixed()
     fake_client = MagicMock()
@@ -301,7 +279,7 @@ def _record(andon, *, raised_at: str = "2026-09-26T00:00:00Z", notes: dict | Non
 
 
 def test_andon_list_json_empty_prints_brackets(capsys):
-    from issuesmith.__main__ import _cmd_andon
+    from issuesmith.cli import _cmd_andon
 
     with patch("issuesmith.andon.list_open_records", return_value=[]), \
          patch("ghdag.forge.get_forge", return_value=MagicMock()):
@@ -316,7 +294,7 @@ def test_andon_list_json_empty_prints_brackets(capsys):
 def test_andon_list_json_outputs_records_sorted(capsys):
     import json
 
-    from issuesmith.__main__ import _cmd_andon
+    from issuesmith.cli import _cmd_andon
 
     records = [_record(a) for a in _make_andons_mixed()]
     records[3]["notes"] = {"asked": "2026-09-26T00:00:00Z"}
@@ -339,7 +317,7 @@ def test_andon_list_json_outputs_records_sorted(capsys):
 def test_andon_list_json_all_keeps_order(capsys):
     import json
 
-    from issuesmith.__main__ import _cmd_andon
+    from issuesmith.cli import _cmd_andon
 
     records = [_record(a) for a in _make_andons_mixed()]
     with patch("issuesmith.andon.list_open_records", return_value=records), \
@@ -351,7 +329,7 @@ def test_andon_list_json_all_keeps_order(capsys):
 
 
 def test_andon_note_success(capsys):
-    from issuesmith.__main__ import _cmd_andon
+    from issuesmith.cli import _cmd_andon
 
     client = MagicMock()
     with patch("issuesmith.andon.note") as mock_note, \
@@ -364,7 +342,7 @@ def test_andon_note_success(capsys):
 
 
 def test_andon_note_missing_args_exit_2(capsys):
-    from issuesmith.__main__ import _cmd_andon
+    from issuesmith.cli import _cmd_andon
 
     for argv in (
         ["note", "wf:1:cp2:0", "--value", "v"],
@@ -381,7 +359,7 @@ def test_andon_note_missing_args_exit_2(capsys):
 
 
 def test_andon_note_not_found_exit_1(capsys):
-    from issuesmith.__main__ import _cmd_andon
+    from issuesmith.cli import _cmd_andon
 
     with patch("issuesmith.andon.note", side_effect=KeyError("Andon not found: wf:1:cp2:0")), \
          patch("ghdag.forge.get_forge", return_value=MagicMock()):
@@ -392,7 +370,7 @@ def test_andon_note_not_found_exit_1(capsys):
 
 
 def test_andon_usage_mentions_json_and_note():
-    from issuesmith.__main__ import _ANDON_USAGE
+    from issuesmith.cli import _ANDON_USAGE
 
     assert "--json" in _ANDON_USAGE
     assert "note <andon-id>" in _ANDON_USAGE
@@ -403,8 +381,8 @@ def test_andon_list_json_and_note_with_local_forge(tmp_path, monkeypatch, capsys
 
     import yaml
 
-    from issuesmith.__main__ import _cmd_andon
     from issuesmith.andon import Andon, raise_andon
+    from issuesmith.cli import _cmd_andon
     from issuesmith.config import reset_config_cache
 
     cfg_path = tmp_path / "issuesmith.yaml"
@@ -438,7 +416,7 @@ def test_andon_list_json_and_note_with_local_forge(tmp_path, monkeypatch, capsys
 
 def test_cli_answer_by_agent_records_agent(tmp_path_factory):
     """Refs sumipan/nexus#6611."""
-    from issuesmith.__main__ import _cmd_andon
+    from issuesmith.cli import _cmd_andon
 
     andon = _make_andon(andon_id="wf:42:cp2:0", issue=42)
     client = _fake_client_with_andon(andon)
@@ -459,7 +437,7 @@ def test_cli_answer_by_unknown_exits_2(tmp_path, monkeypatch, capsys):
     import dataclasses
 
     import issuesmith.config as config_module
-    from issuesmith.__main__ import _cmd_andon
+    from issuesmith.cli import _cmd_andon
 
     andon = _make_andon(andon_id="wf:42:cp2:0", issue=42)
     client = _fake_client_with_andon(andon)
@@ -479,7 +457,7 @@ def test_cli_answer_by_unknown_exits_2(tmp_path, monkeypatch, capsys):
 def test_andon_auto_answer_json_empty_rules(tmp_path, monkeypatch, capsys):
     import yaml
 
-    from issuesmith.__main__ import _cmd_andon
+    from issuesmith.cli import _cmd_andon
     from issuesmith.config import reset_config_cache
 
     cfg_path = tmp_path / "issuesmith.yaml"
@@ -493,3 +471,46 @@ def test_andon_auto_answer_json_empty_rules(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "answers" in out
     reset_config_cache()
+
+
+def test_console_entry_runs_andon_list_json(monkeypatch, capsys):
+    """AC-1 (#6697): cli.main runs andon list --json through the console entry table."""
+    from issuesmith import cli
+
+    records = [{"id": "a1", "kind": "decision", "issue": 1, "step": "cp2", "summary": "s"}]
+    with patch("ghdag.forge.get_forge", return_value=MagicMock()), \
+         patch("issuesmith.andon.list_open_records", return_value=records):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["andon", "list", "--json"])
+        assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert json.loads(out) == records
+
+
+@pytest.mark.parametrize("cmd", ["andon", "labels"])
+def test_module_and_console_entry_agree(cmd, capsys):
+    """AC-2 (#6697): -m issuesmith and cli.main share usage for andon and labels."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[1]
+    src_path = str(repo_root / "src")
+    env = {**os.environ, "PYTHONPATH": src_path}
+    mod = subprocess.run(
+        [sys.executable, "-m", "issuesmith", cmd],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    from issuesmith import cli
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main([cmd])
+    console_err = capsys.readouterr().err
+    assert mod.returncode == 1
+    assert exc.value.code == 1
+    assert mod.stderr.strip() == console_err.strip()
