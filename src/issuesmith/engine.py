@@ -377,37 +377,15 @@ def resolve(role: str, tier: str | None = None) -> RoleSelection:
 
 
 def route(role: str, tier: str | None = None) -> tuple[RoleSelection, ...]:
-    """Return the ordered (engine, model) route for a role (excludes paused engines)."""
+    """Return the ordered (engine, model) route for a role.
+
+    Pause state is not consulted (``paused=()``); ``route(role, tier)[0]``
+    equals ``resolve(role, tier)``.
+    """
     if tier is not None and tier not in TIERS:
         raise ValueError(f"tier must be one of: {', '.join(sorted(TIERS))}")
     selection = resolve(role, tier)
-    allowed = ROLE_ENGINES[role]
-    heavy = {
-        engine: DEFAULT_MODELS[(role, engine)]
-        for engine in allowed
-        if (role, engine) in DEFAULT_MODELS
-    }
-    light: dict[str, str] = {
-        engine: DEFAULT_LIGHT_MODELS[(role, engine)]
-        for engine in allowed
-        if (role, engine) in DEFAULT_LIGHT_MODELS
-    }
-    if tier == "light":
-        state = load_state()
-        selected = state[role]
-        from_state = selected.get("light_model")
-        if from_state:
-            light[str(selected["engine"])] = str(from_state)
-    pairs = build_route(
-        allowed=allowed,
-        heavy_model=heavy,
-        light_model=light,
-        selected_engine=selection.engine,
-        selected_model=selection.model,
-        tier=tier,
-        paused=(),
-        model_allowed=_light_model_allowed if tier == "light" else lambda _e, _m: True,
-    )
+    pairs = _build_role_route(role, selection, tier, ())
     return tuple(RoleSelection(engine=eng, model=mod) for eng, mod in pairs)
 
 
