@@ -7,31 +7,31 @@ issuesmith is a toolkit for GitHub Issue workflows driven by labels, built on [g
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.172.0-blue)
+![version](https://img.shields.io/badge/version-v0.183.7-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.172.0** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.183.7** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.172.0"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.183.7"
 ```
 
 The gates, forge access, `observe`, `andon`, `lanes` and `metrics` import ghdag, so install the `ghdag` extra unless another package already provides ghdag. The base package alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.172.0"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.183.7"
 ```
 
 | Item | Value |
 |---|---|
 | Python | `>=3.10` (tested on 3.10, 3.11, 3.12) |
 | Runtime dependencies | `pyyaml`, `ruamel.yaml`, `packaging`, `python-dotenv` |
-| `[ghdag]` extra | `ghdag @ git+https://github.com/sumipan/ghdag.git@v0.112.0` |
-| `[dev]` extra | `pytest`, `pytest-cov`, `mypy`, `ruff`, ghdag `v0.112.0` |
+| `[ghdag]` extra | `ghdag @ git+https://github.com/sumipan/ghdag.git@v0.134.1` |
+| `[dev]` extra | `pytest`, `pytest-cov`, `mypy`, `ruff`, ghdag `v0.134.1` |
 | Console script | `issuesmith` (`issuesmith.cli:main`) |
 
 See [TESTING.md](./TESTING.md) for what tests should and should not pin.
@@ -240,37 +240,39 @@ issuesmith is pre-1.0 and follows `0.Y.Z`: a `Y` bump may change or remove publi
 ## Architecture
 
 ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, label transitions and idempotency. issuesmith provides the gates, steps and tools that the workflow templates call. A phase may advance when its `preconditions` labels are present, its `excludes` labels are absent and every `advance_when` predicate passes. After a step finishes, its `requires` gates run; auto-fixable violations are fixed in place, other blocking violations start a repair run (`steps.*.repair`) or raise an andon (`steps.*.andon_when`). Label writes from steps go through `forge_guard`; managed labels are derived by `projection` and written only by `ops/labels.project_issue`.
-
 | Module | Role |
 |---|---|
 | `issuesmith/__init__.py` | Package marker; empty `__all__` |
 | `issuesmith/__main__.py` | `python3 -m issuesmith`: handles `andon` and `labels`, then calls `cli.main` |
-| `issuesmith/ac_contract.py` | Extract and run the acceptance-criteria YAML contract |
 | `issuesmith/ac_complete_entry.py` | `ac_complete` gate CLI and library entry (rules in `gate_rules/ac_complete_rules.py`) |
+| `issuesmith/ac_contract.py` | Extract and run the acceptance-criteria YAML contract |
 | `issuesmith/andon.py` | Andons (typed stop-the-line signals in Issue comments) and auto-answer rules |
 | `issuesmith/body_editor.py` | Issue body H2 section editing and milestone normalizers |
 | `issuesmith/branch_reuse.py` | Find and record reusable branches from earlier runs |
+| `issuesmith/bump_commits.py` | Publish version-bump commit detection and rewrite helpers |
 | `issuesmith/cli.py` | Unified CLI (`_HANDLERS`) |
 | `issuesmith/config.py` | `issuesmith.yaml` loading, validation and defaults |
 | `issuesmith/context_hook.py` | ghdag context hook and Issue YAML metadata parsing |
 | `issuesmith/contract.py` | Step contract types and Issue-body section parsers |
 | `issuesmith/convert_to_milestone.py` | Move an Issue back to the milestone path |
-| `issuesmith/design_lint_entry.py` | `design_lint` gate CLI and library entry (rules in `gate_rules/design_lint_rules.py`) |
 | `issuesmith/dep_extractor.py` | Dependency extraction and checks |
+| `issuesmith/design_lint_entry.py` | `design_lint` gate CLI and library entry (rules in `gate_rules/design_lint_rules.py`) |
 | `issuesmith/engine.py` | LLM role switcher, `run-guarded`, `run-verified`, rate-limit pause and engine wait |
+| `issuesmith/forge.py` | Public re-exports of `ghdag.forge` for host consumers |
 | `issuesmith/forge_api.py` | Typed raw REST calls on forge clients |
 | `issuesmith/forge_guard.py` | Label-write guard for step dispatch |
+| `issuesmith/gate_registry.py` | Rule-class gate registry types (`Violation`, `GateRule`, `GATE_REGISTRY`) |
 | `issuesmith/gate_rules/__init__.py` | Imports every rule module to fill ghdag's gate registry |
-| `issuesmith/gate_rules/README.md` | GateRule protocol, Violation shape and host extension guide |
 | `issuesmith/gate_rules/ac_complete_rules.py` | `ac_complete` gate rules (M2 merge readiness) |
 | `issuesmith/gate_rules/ac_format_rules.py` | `ac_format` gate rules |
 | `issuesmith/gate_rules/allow_paths_forbidden.py` | allow_paths vs forbidden_pr_paths overlap (pre-LLM) |
 | `issuesmith/gate_rules/change_table_scope.py` | Change-table path scope vs allow_paths / host_allow_paths |
+| `issuesmith/gate_rules/common.py` | Shared helpers for gate rule modules (strip fenced code from Issue bodies) |
 | `issuesmith/gate_rules/deps_format.py` | Dependencies section format: unparsed `#N` refs without forge calls |
 | `issuesmith/gate_rules/design_lint_rules.py` | `design_lint` / CP1 design rules |
 | `issuesmith/gate_rules/migration_plan_rules.py` | `migration_plan` gate rules |
-| `issuesmith/gate_rules/milestone_subdesign_rules.py` | `milestone_subdesign` gate rules and dependency inference |
 | `issuesmith/gate_rules/milestone_consistency.py` | Split plan without the `scope:milestone` label |
+| `issuesmith/gate_rules/milestone_subdesign_rules.py` | `milestone_subdesign` gate rules and dependency inference |
 | `issuesmith/gate_rules/pin_bump.py` | Reject dependency pin changes in feature Issues |
 | `issuesmith/gate_rules/scope_breadth.py` | allow_paths breadth rules |
 | `issuesmith/gate_rules/scope_coupling.py` | Caller / test coupling and deletion reference rules |
@@ -286,7 +288,6 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/gates/worktree.py` | `lint`, `tests`, `external_leak`, `base_freshness` and `importer_import` gates |
 | `issuesmith/github_api.py` | `gh` command: Issue / PR helpers with label and target guards |
 | `issuesmith/lanes.py` | Lane ledger planning: capacity, candidates, enqueue and patrol report |
-| `issuesmith/lang/en.yaml` | English messages for `context_hook` metadata validation |
 | `issuesmith/language.py` | Language packs |
 | `issuesmith/merge.py` | PR merge and verification helpers |
 | `issuesmith/metrics_events.py` | Metrics JSONL event writers |
@@ -307,8 +308,8 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/ops/repair_step.py` | Repair step for `requires` violations |
 | `issuesmith/ops/smoke.py` | `smoke`: pipeline smoke test on real Issues |
 | `issuesmith/ops/version_bump.py` | `version-bump`: `pyproject.toml` bump and CHANGELOG Unreleased fold |
-| `issuesmith/pipeline_comments.py` | Pipeline comment filter |
 | `issuesmith/pins.py` | `requires_pins` parsing and the `pins_landed` predicate |
+| `issuesmith/pipeline_comments.py` | Pipeline comment filter |
 | `issuesmith/pr_scope.py` | PR diff scope: allow_paths, `forbidden_pr_paths` and `forbidden_pr_paths_except` |
 | `issuesmith/preconditions.py` | Phase advance predicates (`PRECONDITION_REGISTRY`, `evaluate`) |
 | `issuesmith/projection.py` | Pure label projection: Issue state to managed labels |
@@ -326,13 +327,14 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/targets.py` | Multi-target Issue model |
 | `issuesmith/template_ids.py` | `string.Template` identifier extraction (Python 3.10 compatible) |
 | `issuesmith/verbs/__init__.py` | Public verb API |
+| `issuesmith/verbs/acceptance.py` | `check_acceptance`, `unchecked_acceptance_count`, `extract_contract`, `check_contract`, `review_tier` |
+| `issuesmith/verbs/children.py` | `plan_children`, `create_child`, `validate_children`, `widen_allow_paths` |
 | `issuesmith/verbs/finalize.py` | `cleanup_worktrees`, `cleanup_branches`, `close_issue` |
 | `issuesmith/verbs/merge.py` | `find_pr`, `merge_state`, `merge_pr` |
 | `issuesmith/verbs/publish.py` | `publish_branch` |
-| `issuesmith/verbs/acceptance.py` | `check_acceptance`, `unchecked_acceptance_count`, `extract_contract`, `check_contract`, `review_tier` |
-| `issuesmith/verbs/children.py` | `plan_children`, `create_child`, `validate_children`, `widen_allow_paths` |
 | `issuesmith/verbs/worktree.py` | `prepare_worktree`, `ensure_base_included`, `block_design_only_issue` |
 | `issuesmith/worktree.py` | Worktree creation and base-branch fetch |
+
 
 ## Gates
 
@@ -515,17 +517,20 @@ Logs, exception messages, CLI help and violation text stay English and are not p
 
 | Type | Module | Base | Raised when |
 |---|---|---|---|
+| `AcceptanceError` | `issuesmith.verbs.acceptance` | `RuntimeError` | Acceptance gate checks could not materialize the temporary `origin/<base>` worktree |
+| `BumpCommitsError` | `issuesmith.bump_commits` | `RuntimeError` | Git could not list or rewrite publish version-bump commits |
+| `ChildPlanError` | `issuesmith.verbs.children` | `RuntimeError` | Child-plan validation or creation failed with structured violations |
 | `ConfigError` | `issuesmith.config` | `ValueError` | Invalid `issuesmith.yaml` section, language pack, gate or predicate reference; missing `phases:` or `phases[].handler`; a step in two phases; `review` gate without `steps.<id>.review` |
 | `ContextHookError` | `issuesmith.context_hook` | `ValueError` | Issue YAML metadata failed security validation before ghdag context-hook template expansion |
-| `QueueValidationError` | `issuesmith.queue_store` | `ValueError` | Invalid queue request input (CLI exits 2) |
-| `GateBuildError` | `issuesmith.gates` | `ValueError` | A gate cannot be built from its `GateBuildContext` |
 | `DerivedAllowPathsError` | `issuesmith.pr_scope` | `ValueError` | `derived_allow_paths_from_result` finds malformed entries |
-| `MainHealthError` | `issuesmith.observe.main_health` | `RuntimeError` | The base-branch health check could not run (git, worktree, timeout); state is not updated |
+| `GateBuildError` | `issuesmith.gates` | `ValueError` | A gate cannot be built from its `GateBuildContext` |
 | `GateMaterializationError` | `issuesmith.ac_contract` | `RuntimeError` | The temporary `origin/<base>` worktree for gate checks could not be created |
-| `RetrySignal` | `issuesmith.engine` | `RuntimeError` | Rate limit or quota pause: dispatch prints `PIPELINE_STATUS: WAIT_QUOTA` and ghdag keeps the task pending (requires ghdag >= 0.106.0); not a step failure |
 | `LabelWriteForbidden` | `issuesmith.contract` | `RuntimeError` | A step wrote labels while `label_write_guard` is `enforce` |
-| `WorktreeError` | `issuesmith.worktree` | `Exception` | Worktree preparation failed |
+| `MainHealthError` | `issuesmith.observe.main_health` | `RuntimeError` | The base-branch health check could not run (git, worktree, timeout); state is not updated |
 | `MergeStateTimeoutError` | `issuesmith.merge` | `Exception` | The PR merge state did not settle before the timeout |
+| `QueueValidationError` | `issuesmith.queue_store` | `ValueError` | Invalid queue request input (CLI exits 2) |
+| `RetrySignal` | `issuesmith.contract` | `RuntimeError` | Rate limit or quota pause: dispatch prints `PIPELINE_STATUS: WAIT_QUOTA` and ghdag keeps the task pending; not a step failure |
+| `WorktreeError` | `issuesmith.worktree` | `Exception` | Worktree preparation failed |
 
 Some shape errors raise plain `ValueError` instead of `ConfigError`: a missing `repo`, a non-mapping config file, an empty or malformed `phases` list, a non-positive or non-integer `engines.<role>.pause_ttl_sec`, a non-list `forbidden_pr_paths`, `forbidden_pr_paths_except`, `terminal_labels` or `terminal_without_merge`, and an incomplete `observe.main_health`. `TemplateVariableError` (`ghdag.pipeline.order`) can propagate from `issuesmith.engine` when a template variable is missing.
 
