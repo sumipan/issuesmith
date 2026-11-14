@@ -240,6 +240,7 @@ issuesmith is pre-1.0 and follows `0.Y.Z`: a `Y` bump may change or remove publi
 ## Architecture
 
 ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, label transitions and idempotency. issuesmith provides the gates, steps and tools that the workflow templates call. A phase may advance when its `preconditions` labels are present, its `excludes` labels are absent and every `advance_when` predicate passes. After a step finishes, its `requires` gates run; auto-fixable violations are fixed in place, other blocking violations start a repair run (`steps.*.repair`) or raise an andon (`steps.*.andon_when`). Label writes from steps go through `forge_guard`; managed labels are derived by `projection` and written only by `ops/labels.project_issue`.
+
 | Module | Role |
 |---|---|
 | `issuesmith/__init__.py` | Package marker; empty `__all__` |
@@ -334,7 +335,6 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/verbs/publish.py` | `publish_branch` |
 | `issuesmith/verbs/worktree.py` | `prepare_worktree`, `ensure_base_included`, `block_design_only_issue` |
 | `issuesmith/worktree.py` | Worktree creation and base-branch fetch |
-
 
 ## Gates
 
