@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "issuesmith"
-version = "0.183.15"
+version = "0.184.0"
 description = "Suite for agent-first software factories: Issue-to-merge production lines on ghdag"
 readme = "README.md"
 license = "MIT"

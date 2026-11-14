@@ -202,27 +202,22 @@ def test_retry_signal_after_equals_resume_at(exe_mocks):
     assert exc_info.value.after == _report_kwargs(exe_mocks)["resume_at"]
 
 
-def test_fallback_still_used_and_resume_at_reported(exe_mocks):
+def test_rate_limit_with_empty_rebuilt_route_raises(exe_mocks, monkeypatch):
+    """Refs sumipan/nexus#6681 — rate limit with no remaining route raises RATE_LIMITED."""
     available = _snap({"claude": _state("available"), "codex": _state("available")})
-    exe_mocks["quota_gate"].snapshot.return_value = available
-    stderr = "rate limit exceeded on stderr"
-    calls = {"n": 0}
+    paused = _snap({"claude": _state("paused"), "codex": _state("paused")})
+    exe_mocks["quota_gate"].snapshot.side_effect = [available, paused]
+    exe_mocks["call"].return_value = dataclasses.replace(
+        _result("claude", rc=1),
+        stderr="rate limit exceeded",
+    )
+    monkeypatch.setattr("issuesmith.engine._is_rate_limited", lambda _text: True)
 
-    def _side_effect(*_args, **_kwargs):
-        if calls["n"] == 0:
-            calls["n"] += 1
-            return dataclasses.replace(_result("claude", rc=1, body="rate limit in body only"), stderr=stderr)
-        return _result("codex")
+    with pytest.raises(RetrySignal) as exc_info:
+        _execute("design", "prompt")
 
-    exe_mocks["call"].side_effect = _side_effect
-    result = _execute("design", "prompt")
-    assert result.returncode == 0
-    assert exe_mocks["call"].call_args.kwargs["route"][0][0] == "codex"
-    kwargs = _report_kwargs(exe_mocks)
-    assert kwargs["engine"] == "claude"
-    assert kwargs["reason"].startswith("rate_limit_detected: ")
-    assert "rate limit exceeded on stderr" in kwargs["reason"]
-    assert kwargs["resume_at"] - kwargs["observed_at"] == timedelta(seconds=3600)
+    assert exc_info.value.reason == RetryReason.RATE_LIMITED
+    assert exe_mocks["call"].call_count == 1
 
 
 def test_body_only_rate_limit_does_not_pause(exe_mocks):

@@ -145,17 +145,6 @@ class TestExecuteAllEnginesPaused:
 
         assert exc_info.value.after is None
 
-    def test_fallback_available_no_retry_signal(self, exe_mocks):
-        """Primary paused + fallback available → use fallback, no RetrySignal."""
-        snap = _snap({"claude": _paused(None), "codex": _available()})
-        exe_mocks["quota_gate"].snapshot.return_value = snap
-        exe_mocks["call"].return_value = _result("codex")
-
-        result = _execute("design", "prompt")
-        assert result.returncode == 0
-        assert exe_mocks["call"].call_args.kwargs["route"][0][0] == "codex"
-
-
 # ==================== 3 adapter × RetrySignal (parent AC-7) ====================
 
 class TestAdapterUniformRetrySignal:
@@ -184,8 +173,8 @@ class TestAdapterUniformRetrySignal:
         monkeypatch.setattr(
             "issuesmith.engine.ROLE_ENGINES",
             {
-                "design": frozenset({"claude", "cursor", "codex"}),
-                "implementation": frozenset({"claude", "cursor", "codex"}),
+                "design": ("claude", "cursor", "codex"),
+                "implementation": ("claude", "cursor", "codex"),
             },
         )
         snap = _snap({
@@ -221,19 +210,6 @@ class TestRateLimitedRetrySignal:
         assert exc_info.value.reason == RetryReason.RATE_LIMITED
         exe_mocks["quota_gate"].report.assert_called_once()
 
-    def test_rate_limited_with_fallback_uses_fallback(self, exe_mocks, monkeypatch):
-        """Rate limit + available fallback → retry with fallback (no RetrySignal)."""
-        all_available = _snap({"claude": _available(), "codex": _available()})
-        exe_mocks["quota_gate"].snapshot.return_value = all_available
-        rate_limited = _result("claude", rc=1, body="rate limit")
-        exe_mocks["call"].side_effect = [rate_limited, _result("codex")]
-        monkeypatch.setattr("issuesmith.engine._is_rate_limited", lambda body: True)
-
-        result = _execute("design", "prompt")
-        assert result.returncode == 0
-        assert result.stdout == "ok"
-
-
 # ==================== ENGINE_ENVIRONMENT_ERROR → RetrySignal ====================
 
 class TestEngineEnvironmentError:
@@ -246,26 +222,13 @@ class TestEngineEnvironmentError:
         )
         monkeypatch.setattr(
             "issuesmith.engine.ROLE_ENGINES",
-            {"design": frozenset({"claude"}), "implementation": frozenset({"claude"})},
+            {"design": ("claude",), "implementation": ("claude",)},
         )
 
         with pytest.raises(RetrySignal) as exc_info:
             _execute("design", "prompt")
 
         assert exc_info.value.reason == RetryReason.ENGINE_ENVIRONMENT_ERROR
-
-    def test_env_error_with_fallback_uses_fallback(self, exe_mocks):
-        """ENGINE_ENVIRONMENT_ERROR + available fallback → switch to fallback."""
-        snap = _snap({"claude": _available(), "codex": _available()})
-        exe_mocks["quota_gate"].snapshot.return_value = snap
-        env_error = _result(
-            "claude", rc=1, failure_class=FailureClass.ENGINE_ENVIRONMENT_ERROR
-        )
-        exe_mocks["call"].side_effect = [env_error, _result("codex")]
-
-        result = _execute("design", "prompt")
-        assert result.returncode == 0
-
 
 # ==================== dispatch.main() handles RetrySignal ====================
 

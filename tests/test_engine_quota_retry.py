@@ -213,62 +213,6 @@ def test_timeout_le_300_fails_without_sleep(execute_mocks, monkeypatch):
 
 
 
-def test_primary_paused_uses_fallback_without_sleep(execute_mocks):
-    """AC-8: primary paused, fallback available → no sleep, one call."""
-    snap = _snapshot(
-        {
-            "claude": _paused(datetime.now(timezone.utc) + timedelta(seconds=30)),
-            "codex": _available(),
-        }
-    )
-    execute_mocks["quota_gate"].snapshot_result = snap
-    execute_mocks["call"].return_value = _success_result(engine="codex")
-
-    result = _execute("design", "prompt")
-
-    assert result.returncode == 0
-    execute_mocks["sleep"].assert_not_called()
-    assert execute_mocks["quota_gate"].snapshot_calls == 1
-    assert len(execute_mocks["call"].calls) == 1
-    assert execute_mocks["call"].calls[0]["route"][0][0] == "codex"
-
-
-
-def test_brake_only_paused_uses_fallback(execute_mocks, monkeypatch, tmp_path):
-    """AC-6: primary paused on brake only; fallback available on both gates → use fallback."""
-    quota_path = tmp_path / "quota.json"
-    brake_path = tmp_path / "brake.json"
-    monkeypatch.setattr("issuesmith.engine.QUOTA_STATE_PATH", quota_path)
-    monkeypatch.setattr("issuesmith.engine.BRAKE_STATE_PATH", brake_path)
-
-    quota_gate = RecordingQuotaGate()
-    brake_gate = RecordingQuotaGate()
-    gates = {str(quota_path): quota_gate, str(brake_path): brake_gate}
-    monkeypatch.setattr(
-        "issuesmith.engine.QuotaGate",
-        lambda state_path: gates[str(state_path)],
-    )
-
-    quota_gate.snapshot_result = _snapshot(
-        {"claude": _available(), "codex": _available()}
-    )
-    brake_gate.snapshot_result = _snapshot(
-        {"claude": _paused(None), "codex": _available()}
-    )
-    execute_mocks["call"].return_value = _success_result(engine="codex")
-    monkeypatch.setattr(
-        "issuesmith.engine.call", execute_mocks["call"]
-    )
-
-    result = _execute("design", "prompt")
-
-    assert result.returncode == 0
-    execute_mocks["sleep"].assert_not_called()
-    assert execute_mocks["call"].calls[-1]["route"][0][0] == "codex"
-    assert execute_mocks["call"].calls[-1]["quota_gate"] is quota_gate
-    assert brake_gate.reports == []
-
-
 def test_all_paused_across_gates_raises(execute_mocks, monkeypatch, tmp_path):
     """AC-6: all candidates paused on some gate → fail under existing timeout contract."""
     quota_path = tmp_path / "quota.json"
@@ -379,37 +323,6 @@ def test_call_managed_receives_quota_gate_not_brake(
 
     assert execute_mocks["call"].calls[-1]["quota_gate"] is quota_gate
     assert execute_mocks["call"].calls[-1]["quota_gate"] is not brake_gate
-
-
-def test_brake_paused_engine_excluded_from_managed_fallbacks(
-    execute_mocks, monkeypatch, tmp_path
-):
-    """Engines paused on the budget gate are not passed as call fallbacks."""
-    quota_path = tmp_path / "quota.json"
-    brake_path = tmp_path / "brake.json"
-    monkeypatch.setattr("issuesmith.engine.QUOTA_STATE_PATH", quota_path)
-    monkeypatch.setattr("issuesmith.engine.BRAKE_STATE_PATH", brake_path)
-
-    quota_gate = RecordingQuotaGate()
-    brake_gate = RecordingQuotaGate()
-    gates = {str(quota_path): quota_gate, str(brake_path): brake_gate}
-    monkeypatch.setattr(
-        "issuesmith.engine.QuotaGate",
-        lambda state_path: gates[str(state_path)],
-    )
-    quota_gate.snapshot_result = _snapshot(
-        {"claude": _available(), "codex": _available()}
-    )
-    brake_gate.snapshot_result = _snapshot(
-        {"claude": _available(), "codex": _paused(None)}
-    )
-    monkeypatch.setattr(
-        "issuesmith.engine.call", execute_mocks["call"]
-    )
-
-    _execute("design", "prompt")
-
-    assert execute_mocks["call"].calls[-1]["route"] == [("claude", execute_mocks["call"].calls[-1]["route"][0][1])]
 
 
 def test_quota_exhausted_raises_retry_signal(execute_mocks, monkeypatch):

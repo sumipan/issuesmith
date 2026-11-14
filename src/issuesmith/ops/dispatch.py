@@ -29,6 +29,7 @@ import string
 import subprocess
 import sys
 import tempfile
+from collections.abc import Collection, Mapping
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1058,7 +1059,9 @@ def _handle_retry_signal(
     print(f"WAIT_QUOTA: after={after} engines={','.join(engines)}")
 
 
-def _wait_quota_engines(role: str, role_engines: dict[str, frozenset[str]]) -> list[str]:
+def _wait_quota_engines(
+    role: str, role_engines: Mapping[str, Collection[str]]
+) -> list[str]:
     """Engines to pause: the role's engines, or every configured engine when the role is unknown.
 
     ghdag rejects an empty engine list as ``WAIT_QUOTA_INVALID``.

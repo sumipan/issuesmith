@@ -7,13 +7,13 @@ import re
 import issuesmith.verbs as verbs_mod
 from issuesmith import verbs as issuesmith_verbs
 from issuesmith.engine import (
-    ROLE_ENGINES as engine_role_engines,
-)
-from issuesmith.engine import (
     exec_file as engine_exec_file,
 )
 from issuesmith.engine import (
     resolve as engine_resolve,
+)
+from issuesmith.engine import (
+    route as engine_route,
 )
 from issuesmith.engine import (
     run_guarded as engine_run_guarded,
@@ -37,7 +37,6 @@ VERBS_PUBLIC_NAMES = frozenset(
         "ChildPlanEntry",
         "ChildPlanError",
         "WorktreeError",
-        "ROLE_ENGINES",
         "block_design_only_issue",
         "check_acceptance",
         "check_contract",
@@ -57,6 +56,7 @@ VERBS_PUBLIC_NAMES = frozenset(
         "publish_branch",
         "resolve",
         "resolve_base_ref",
+        "route",
         "review_tier",
         "run_guarded",
         "run_verified",
@@ -113,7 +113,7 @@ def test_verbs_public_exports():
     assert issuesmith_verbs.run_verified is engine_run_verified
     assert issuesmith_verbs.exec_file is engine_exec_file
     assert issuesmith_verbs.resolve is engine_resolve
-    assert issuesmith_verbs.ROLE_ENGINES is engine_role_engines
+    assert issuesmith_verbs.route is engine_route
     assert issuesmith_verbs.map_step_result is dispatch_map_step_result
     assert issuesmith_verbs.WorktreeError is worktree_mod.WorktreeError
     assert issuesmith_verbs.prepare_worktree is worktree_mod.prepare_worktree

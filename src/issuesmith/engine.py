@@ -23,6 +23,7 @@ import sys
 import tempfile
 import time
 import uuid
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -38,6 +39,7 @@ from issuesmith.andon import Andon as _AndonModel
 from issuesmith.andon import raise_andon as _raise_andon
 from issuesmith.config import get_config
 from issuesmith.contract import RetryReason, RetrySignal
+from issuesmith.engine_route import build_route
 from issuesmith.template_ids import template_identifiers
 
 
@@ -100,8 +102,9 @@ _PERMISSION_OVERRIDES: dict[str, Permission] = {
     "cursor": DANGEROUS_FULL_ACCESS,
 }
 
-ROLE_ENGINES: dict[str, frozenset[str]] = {
-    role: frozenset(role_cfg.allowed) for role, role_cfg in _cfg.engines.items()
+ROLE_ENGINES: dict[str, tuple[str, ...]] = {
+    role: role_cfg.allowed
+    for role, role_cfg in _cfg.engines.items()
     if _configured_roles is None or role in _configured_roles
 }
 
@@ -371,6 +374,90 @@ def resolve(role: str, tier: str | None = None) -> RoleSelection:
             source=source,
         )
     return RoleSelection(engine=engine, model=model)
+
+
+def route(role: str, tier: str | None = None) -> tuple[RoleSelection, ...]:
+    """Return the ordered (engine, model) route for a role (excludes paused engines)."""
+    if tier is not None and tier not in TIERS:
+        raise ValueError(f"tier must be one of: {', '.join(sorted(TIERS))}")
+    selection = resolve(role, tier)
+    allowed = ROLE_ENGINES[role]
+    heavy = {
+        engine: DEFAULT_MODELS[(role, engine)]
+        for engine in allowed
+        if (role, engine) in DEFAULT_MODELS
+    }
+    light: dict[str, str] = {
+        engine: DEFAULT_LIGHT_MODELS[(role, engine)]
+        for engine in allowed
+        if (role, engine) in DEFAULT_LIGHT_MODELS
+    }
+    if tier == "light":
+        state = load_state()
+        selected = state[role]
+        from_state = selected.get("light_model")
+        if from_state:
+            light[str(selected["engine"])] = str(from_state)
+    pairs = build_route(
+        allowed=allowed,
+        heavy_model=heavy,
+        light_model=light,
+        selected_engine=selection.engine,
+        selected_model=selection.model,
+        tier=tier,
+        paused=(),
+        model_allowed=_light_model_allowed if tier == "light" else lambda _e, _m: True,
+    )
+    return tuple(RoleSelection(engine=eng, model=mod) for eng, mod in pairs)
+
+
+def _route_model_maps(
+    role: str, tier: str | None, selection_engine: str
+) -> tuple[dict[str, str], dict[str, str]]:
+    allowed = ROLE_ENGINES[role]
+    heavy = {
+        engine: DEFAULT_MODELS[(role, engine)]
+        for engine in allowed
+        if (role, engine) in DEFAULT_MODELS
+    }
+    light = {
+        engine: DEFAULT_LIGHT_MODELS[(role, engine)]
+        for engine in allowed
+        if (role, engine) in DEFAULT_LIGHT_MODELS
+    }
+    if tier == "light":
+        state = load_state()
+        from_state = state[role].get("light_model")
+        if from_state:
+            light[selection_engine] = str(from_state)
+    return heavy, light
+
+
+def _build_role_route(
+    role: str,
+    selection: RoleSelection,
+    tier: str | None,
+    paused: Collection[str],
+) -> list[tuple[str, str]]:
+    heavy, light = _route_model_maps(role, tier, selection.engine)
+    return build_route(
+        allowed=ROLE_ENGINES[role],
+        heavy_model=heavy,
+        light_model=light,
+        selected_engine=selection.engine,
+        selected_model=selection.model,
+        tier=tier,
+        paused=paused,
+        model_allowed=_light_model_allowed if tier == "light" else lambda _e, _m: True,
+    )
+
+
+def _paused_engines(role: str, *snapshots: Any) -> frozenset[str]:
+    return frozenset(
+        engine
+        for engine in ROLE_ENGINES[role]
+        if _engine_paused(engine, *snapshots)
+    )
 
 
 def _effective_light_model(
@@ -840,10 +927,6 @@ def _execute(
     timeout_sec = _resolve_timeout_sec(role)
     started_mono = time.monotonic()
     total_deadline = started_mono + float(timeout_sec)
-    fallback_candidates = [
-        (alt, DEFAULT_MODELS[(role, alt)])
-        for alt in sorted(ROLE_ENGINES[role] - {selection.engine})
-    ]
 
     # global quota: read + write (call / rate_limit_detected)
     # budget brake: read-only pause check
@@ -854,31 +937,11 @@ def _execute(
         brake_gate = QuotaGate(state_path=BRAKE_STATE_PATH)
 
     quota_snap, brake_snap = _dual_gate_snapshots(quota_gate, brake_gate)
-    if _engine_paused(selection.engine, quota_snap, brake_snap):
-        switched = False
-        for alt_engine, alt_model in fallback_candidates:
-            if not _engine_paused(alt_engine, quota_snap, brake_snap):
-                print(
-                    f"[issuesmith-engine] {selection.engine} is paused, "
-                    f"switching to {alt_engine}",
-                    file=sys.stderr,
-                )
-                selection = RoleSelection(engine=alt_engine, model=alt_model)
-                fallback_candidates = []
-                switched = True
-                break
-        if not switched:
-            all_engines = [selection.engine] + [e for e, _ in fallback_candidates]
-            after = _earliest_paused_resume_at(all_engines, quota_snap, brake_snap)
-            raise RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=after, role=role)
-
-    # call only looks at the global quota gate, so narrow the candidates up
-    # front to keep its internal fallback from starting an engine the budget gate paused.
-    fallback_candidates = [
-        (alt_engine, alt_model)
-        for alt_engine, alt_model in fallback_candidates
-        if not _engine_paused(alt_engine, quota_snap, brake_snap)
-    ]
+    paused = _paused_engines(role, quota_snap, brake_snap)
+    llm_route = _build_role_route(role, selection, tier, paused)
+    if not llm_route:
+        after = _earliest_paused_resume_at(list(ROLE_ENGINES[role]), quota_snap, brake_snap)
+        raise RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=after, role=role)
 
     remaining_timeout = total_deadline - time.monotonic()
     if remaining_timeout < 1.0:
@@ -886,11 +949,12 @@ def _execute(
     timeout_sec = remaining_timeout
 
     task_uuid = os.environ.get("GHDAG_TASK_UUID", "").strip()
-    _declare_begin(quota_gate, task_uuid, selection.engine, role)
+    _declare_begin(quota_gate, task_uuid, llm_route[0][0], role)
 
+    route_engine, route_model = llm_route[0]
     print(
-        f"[issuesmith-engine] start role={role} engine={selection.engine} "
-        f"model={selection.model} tier={tier or 'heavy'} "
+        f"[issuesmith-engine] start role={role} engine={route_engine} "
+        f"model={route_model} tier={tier or 'heavy'} "
         f"cwd={working_directory or Path.cwd()}",
         file=sys.stderr,
     )
@@ -907,7 +971,7 @@ def _execute(
         try:
             result = call(
                 content,
-                route=[(selection.engine, selection.model), *fallback_candidates],
+                route=llm_route,
                 timeout=int(timeout_sec),
                 cwd=working_directory,
                 permission=_ISSUESMITH_PERMISSION,
@@ -964,25 +1028,21 @@ def _execute(
                 resume_at=resume_at,
                 reason=report_reason,
             )
-            alt = None
-            if fallback_candidates:
-                rate_quota_snap, rate_brake_snap = _dual_gate_snapshots(
-                    quota_gate, brake_gate
-                )
-                for alt_engine, alt_model in fallback_candidates:
-                    if not _engine_paused(alt_engine, rate_quota_snap, rate_brake_snap):
-                        alt = (alt_engine, alt_model)
-                        break
-            if alt is not None:
-                alt_engine, alt_model = alt
-                print(
-                    f"[issuesmith-engine] rate limit detected, retried with {alt_engine}",
-                    file=sys.stderr,
-                )
-                _declare_begin(quota_gate, task_uuid, alt_engine, role)
+            rate_quota_snap, rate_brake_snap = _dual_gate_snapshots(
+                quota_gate, brake_gate
+            )
+            paused_after = set(paused)
+            paused_after.add(result.engine_used)
+            paused_after.update(
+                _paused_engines(role, rate_quota_snap, rate_brake_snap)
+            )
+            retry_route = _build_role_route(
+                role, selection, tier, frozenset(paused_after)
+            )
+            if retry_route:
                 result = call(
                     content,
-                    route=[(alt_engine, alt_model)],
+                    route=retry_route,
                     timeout=int(timeout_sec),
                     cwd=working_directory,
                     permission=_ISSUESMITH_PERMISSION,
@@ -995,28 +1055,9 @@ def _execute(
                 raise RetrySignal(reason=RetryReason.RATE_LIMITED, after=resume_at)
 
         if result.failure_class is FailureClass.ENGINE_ENVIRONMENT_ERROR:
-            if fallback_candidates:
-                alt_engine, alt_model = fallback_candidates[0]
-                print(
-                    f"[issuesmith-engine] environment error, retrying with {alt_engine}",
-                    file=sys.stderr,
-                )
-                _declare_begin(quota_gate, task_uuid, alt_engine, role)
-                result = call(
-                    content,
-                    route=[(alt_engine, alt_model)],
-                    timeout=int(timeout_sec),
-                    cwd=working_directory,
-                    permission=_ISSUESMITH_PERMISSION,
-                    permission_overrides=_PERMISSION_OVERRIDES,
-                    additional_tags=additional_tags,
-                    quota_gate=quota_gate,
-                    isolation=isolation,
-                )
-            else:
-                raise RetrySignal(
-                    reason=RetryReason.ENGINE_ENVIRONMENT_ERROR, after=None
-                )
+            raise RetrySignal(
+                reason=RetryReason.ENGINE_ENVIRONMENT_ERROR, after=None
+            )
     finally:
         _declare_finish(quota_gate, task_uuid)
 
@@ -1049,9 +1090,8 @@ def _execute(
         and result.failure_class is FailureClass.QUOTA_EXHAUSTED
     ):
         post_quota_snap, post_brake_snap = _dual_gate_snapshots(quota_gate, brake_gate)
-        role_engines = sorted(ROLE_ENGINES[role])
         after = _earliest_paused_resume_at(
-            role_engines, post_quota_snap, post_brake_snap
+            list(ROLE_ENGINES[role]), post_quota_snap, post_brake_snap
         )
         raise RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=after, role=role)
     return subprocess.CompletedProcess(

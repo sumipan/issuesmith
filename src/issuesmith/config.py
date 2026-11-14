@@ -138,7 +138,7 @@ class AndonConfig:
 
 @dataclass(frozen=True)
 class RoleConfig:
-    allowed: frozenset[str]
+    allowed: tuple[str, ...]
     default_model: Mapping[str, str]
     timeout_sec: float
     light_model: Mapping[str, str] = field(default_factory=dict)
@@ -559,7 +559,15 @@ def _build_pause_ttl_sec(raw: Any, role: str) -> int:
 
 
 def _build_role(raw: Mapping[str, Any], role: str) -> RoleConfig:
-    allowed = frozenset(str(x) for x in (raw.get("allowed") or ()))
+    allowed_raw = [str(x) for x in (raw.get("allowed") or ())]
+    seen: set[str] = set()
+    for engine in allowed_raw:
+        if engine in seen:
+            raise ConfigError(
+                f"engines.{role}.allowed contains duplicate engine: {engine!r}"
+            )
+        seen.add(engine)
+    allowed = tuple(allowed_raw)
     default_model = {
         str(k): str(v) for k, v in dict(raw.get("default_model") or {}).items()
     }

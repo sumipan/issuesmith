@@ -10,6 +10,7 @@ from ghdag.llm import LLMResult
 from ghdag.metrics import FailureClass
 from ghdag.quota import EngineQuotaState, QuotaSnapshot
 
+from issuesmith.contract import RetryReason, RetrySignal
 from issuesmith.engine import (
     RoleSelection,
     _execute,
@@ -105,7 +106,7 @@ def test_execute_failure_includes_truncated_stderr(execute_mocks, monkeypatch):
 def test_execute_failure_records_the_failure_class_of_the_result(execute_mocks, monkeypatch):
     monkeypatch.setattr(
         "issuesmith.engine.ROLE_ENGINES",
-        {"implementation": frozenset({"claude"})},
+        {"implementation": ("claude",)},
     )
     monkeypatch.setattr(
         "issuesmith.engine.call",
@@ -189,3 +190,30 @@ def test_execute_llm_result_timeout_records_metrics(execute_mocks, monkeypatch):
     recorded = execute_mocks["recorded"][-1]
     assert recorded["status"] == "timeout"
     assert recorded["failure_class"] == FailureClass.TIMEOUT.value
+
+
+def test_env_error_from_call_raises_without_retry(execute_mocks, monkeypatch):
+    """Refs sumipan/nexus#6681 — ENGINE_ENVIRONMENT_ERROR does not issue a second call."""
+    from ghdag.llm import LLMResult
+
+    monkeypatch.setattr(
+        "issuesmith.engine.call",
+        lambda prompt, **kwargs: LLMResult(
+            body="",
+            stdout="",
+            stderr="",
+            usage=None,
+            returncode=1,
+            failure_class=FailureClass.ENGINE_ENVIRONMENT_ERROR,
+            engine_used="claude",
+            model_used="m",
+            attempts=1,
+            quota_reported=False,
+            additional_tags={},
+        ),
+    )
+
+    with pytest.raises(RetrySignal) as exc_info:
+        _execute("implementation", "prompt")
+
+    assert exc_info.value.reason == RetryReason.ENGINE_ENVIRONMENT_ERROR
