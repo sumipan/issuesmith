@@ -7,6 +7,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.183.15 - 2026-11-14
+
+### Changed
+
+- `queue release` accepts in-flight entries of any role, not only design-slot entries (still refuses when the issue DAG is running).
+
+### Added
+
+- `queue release --json` prints a single JSON line with the released issue number, role, and `dispatched_at` on success.
+
 ## 0.183.14 - 2026-11-14
 
 ### Fixed

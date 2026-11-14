@@ -186,7 +186,7 @@ Global options: `--queue-path`, `--state-path`, `--lock-path`.
 | `queue audit` | Check queue store integrity |
 | `queue triage-log [--last N] [--path P]` | Show recent triage log entries (default 20) |
 | `queue migrate [--from-night-queue-state P] [--seed P] [--dry-run]` | Migrate from the legacy night-queue state |
-| `queue release --issue N` | Release a design-slot in-flight entry (recovery only) |
+| `queue release --issue N [--json]` | Remove an in-flight entry of any role when its DAG is not running (recovery only). Running labels may remain; the next tick will not re-register the issue until its DAG is running again. |
 
 During `queue tick`, dispatch respects configured `concurrency`, lane `in_flight` caps, and `pipeline_not_idle`; it does not block the next dispatch until a prior Issue reaches a terminal label.
 
