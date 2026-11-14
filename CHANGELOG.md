@@ -7,6 +7,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.184.0 - 2026-11-14
+
+### Added
+
+- `issuesmith.engine.route(role, tier=None)` and `issuesmith.verbs.route`: return the ordered (engine, model) candidate route for a role.
+- Internal `issuesmith.engine_route.build_route` to assemble `ghdag.llm.call(route=...)` from config order, tier, and pause filters.
+
+### Changed
+
+- `_execute` builds the LLM route via `build_route` and lets ghdag advance on quota/auth/environment failures instead of issuesmith-side fallback swapping.
+- Rate-limit retries rebuild the route once (excluding the failed engine and any paused engines) instead of manually picking a single fallback.
+- `engines.<role>.allowed` preserves YAML list order (`tuple`, not `frozenset`); duplicate engines raise `ConfigError` at load time.
+
+### Removed
+
+- **BREAKING:** `issuesmith.verbs.ROLE_ENGINES`. Use `route(role)` for the ordered engine list per role.
+
 ## 0.183.15 - 2026-11-14
 
 ### Changed

@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from issuesmith.engine import (
-    ROLE_ENGINES,
     exec_file,
     resolve,
+    route,
     run_guarded,
     run_verified,
 )
@@ -48,7 +48,6 @@ __all__ = [
     "ChildPlanEntry",
     "ChildPlanError",
     "WorktreeError",
-    "ROLE_ENGINES",
     "block_design_only_issue",
     "check_acceptance",
     "check_contract",
@@ -68,6 +67,7 @@ __all__ = [
     "publish_branch",
     "resolve",
     "resolve_base_ref",
+    "route",
     "review_tier",
     "run_guarded",
     "run_verified",

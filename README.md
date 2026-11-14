@@ -217,7 +217,7 @@ Supported Python imports are limited to seven modules (`issuesmith.__all__` is e
 | Module | Symbols |
 |---|---|
 | `issuesmith.contract` | `StepContext`, `StepResult`, `StepConfig`, `Andon`, `RetrySignal`, `RetryReason`, `parse_issue_metadata`, `validate_issue_metadata`, `MetadataViolation` |
-| `issuesmith.verbs` | `AcceptanceError`, `AcceptanceVerdict`, `ReviewFacts`, `ChildPlan`, `ChildPlanEntry`, `ChildPlanError`, `WorktreeError`, `ROLE_ENGINES`, `block_design_only_issue`, `check_acceptance`, `check_contract`, `cleanup_branches`, `cleanup_worktrees`, `close_issue`, `create_child`, `ensure_base_included`, `exec_file`, `extract_contract`, `find_pr`, `map_step_result`, `merge_pr`, `merge_state`, `plan_children`, `prepare_worktree`, `publish_branch`, `resolve`, `resolve_base_ref`, `review_tier`, `run_guarded`, `run_verified`, `unchecked_acceptance_count`, `validate_children`, `widen_allow_paths` |
+| `issuesmith.verbs` | `AcceptanceError`, `AcceptanceVerdict`, `ReviewFacts`, `ChildPlan`, `ChildPlanEntry`, `ChildPlanError`, `WorktreeError`, `block_design_only_issue`, `check_acceptance`, `check_contract`, `cleanup_branches`, `cleanup_worktrees`, `close_issue`, `create_child`, `ensure_base_included`, `exec_file`, `extract_contract`, `find_pr`, `map_step_result`, `merge_pr`, `merge_state`, `plan_children`, `prepare_worktree`, `publish_branch`, `resolve`, `resolve_base_ref`, `route`, `review_tier`, `run_guarded`, `run_verified`, `unchecked_acceptance_count`, `validate_children`, `widen_allow_paths` |
 | `issuesmith.gates` | `Verdict`, `GateBuildContext`, `GateBuildError`, `GateEntry`, `RequiresGate`, `GATE_REGISTRY`, `NON_REPAIRABLE_RULE_IDS`, `is_non_repairable_rule_id`, `resolve_gate`, `validate_step_requires`, `check_scope`, `check_pr_scope`, `check_ac_complete`, `check_deps`, `Violation`, `Gate`, `PreconditionContext`, `normalize_allow_path`, `external_target_state` |
 | `issuesmith.config` | `get_config`, `load_config`, `IssuesmithConfig`, `LanguagePack` |
 | `issuesmith.andon` | `Andon`, `AndonSink`, `AutoAnswerPlan`, `raise_andon`, `list_open`, `list_open_records`, `answer`, `from_comment`, `to_comment`, `plan_auto_answers`, `apply_auto_answers` |
@@ -450,7 +450,7 @@ A file that is not found is treated as empty, which fails validation because `re
 
 | Field | Default (`design` / `implementation`) | Description |
 |---|---|---|
-| `allowed` | `[claude, codex]` / `[claude, cursor]` | Engines the role may switch to |
+| `allowed` | `[claude, codex]` / `[claude, cursor]` | Ordered engine candidates for the role (current selection is always tried first, then the rest in list order) |
 | `default_model` | `claude: claude-opus-4-6`, `codex: gpt-5.6-sol` / `claude: claude-sonnet-4-6`, `cursor: auto` | Model per engine for the heavy tier |
 | `light_model` | `claude: claude-sonnet-4-6`, `codex: gpt-5.5` / `{}` | Model per engine for the light tier |
 | `timeout_sec` | `1800` / `3600` | LLM run timeout |

@@ -69,7 +69,7 @@ def test_builtin_defaults_match_legacy_constants(tmp_path, monkeypatch):
     assert ZoneInfo(cfg.timezone) == ZoneInfo("Asia/Tokyo")
 
     assert set(cfg.engines) == {"design", "implementation"}
-    assert cfg.engines["design"].allowed == frozenset({"claude", "codex"})
+    assert cfg.engines["design"].allowed == ("claude", "codex")
     assert cfg.engines["design"].default_model == {
         "claude": "claude-opus-4-6",
         "codex": "gpt-5.6-sol",
@@ -79,7 +79,7 @@ def test_builtin_defaults_match_legacy_constants(tmp_path, monkeypatch):
         "codex": "gpt-5.5",
     }
     assert cfg.engines["design"].timeout_sec == 1800
-    assert cfg.engines["implementation"].allowed == frozenset({"claude", "cursor"})
+    assert cfg.engines["implementation"].allowed == ("claude", "cursor")
     assert cfg.engines["implementation"].default_model == {
         "claude": "claude-sonnet-4-6",
         "cursor": "auto",
@@ -93,6 +93,14 @@ def test_builtin_defaults_match_legacy_constants(tmp_path, monkeypatch):
         "*.pid",
         "*.lock",
     )
+
+
+def test_engines_allowed_duplicate_raises():
+    """Refs sumipan/nexus#6681 — duplicate engines in allowed raise ConfigError."""
+    from issuesmith.config import _build_engines
+
+    with pytest.raises(ConfigError, match="duplicate engine"):
+        _build_engines({"design": {"allowed": ["claude", "claude"]}})
 
 
 def test_missing_repo_raises(tmp_path, monkeypatch):
