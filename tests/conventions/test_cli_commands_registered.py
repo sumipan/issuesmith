@@ -10,14 +10,12 @@ import pytest
 from issuesmith import cli
 from tests.conventions._util import REPO_ROOT, SRC, mentioned_commands, py_files
 
-# Sub-command groups dispatched by __main__ before cli._HANDLERS.
-_MAIN_GROUPS = {"andon", "labels"}
 # Words that appear after `issuesmith` in prose but are not commands.
 _NOT_COMMANDS = {"pipeline", "package", "queue-tick"}
 
 
 def _registered() -> set[str]:
-    return set(cli._HANDLERS) | _MAIN_GROUPS
+    return set(cli._HANDLERS)
 
 
 def test_every_handler_is_documented_in_usage():

@@ -9,23 +9,23 @@ The suite includes design and merge gates, a request queue with triage, lane pla
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.183.13-blue)
+![version](https://img.shields.io/badge/version-v0.184.0-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.183.13** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.184.0** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.183.13"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.184.0"
 ```
 
 The gates, forge access, `observe`, `andon`, `lanes` and `metrics` import ghdag, so install the `ghdag` extra unless another package already provides ghdag. The base package alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.183.13"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.184.0"
 ```
 
 | Item | Value |
@@ -98,11 +98,11 @@ Day-to-day operation uses `python3 -m issuesmith andon list`, `python3 -m issues
 
 ## CLI Reference
 
-Run a command as `python3 -m issuesmith <command>` or through the `issuesmith` console script. The top-level commands are the keys of `issuesmith.cli._HANDLERS`. `issuesmith.__main__` handles `andon` (and `labels`) before `_HANDLERS`, so `andon` is available only through `python3 -m issuesmith`.
+Run a command as `python3 -m issuesmith <command>` or through the `issuesmith` console script. Both entry points use the same `issuesmith.cli._HANDLERS` table.
 
 | Command | Description |
 |---|---|
-| `context` / `context_hook` / `context-hook` | ghdag context hook: Issue YAML metadata and step context |
+| `context` | ghdag context hook: Issue YAML metadata and step context |
 | `gate <name> --body-file F` | Same as `gate-preflight --gate <name> --body-file F` |
 | `gate design_lint <issue>` / `gate ac_complete <issue>` | Run the design-lint / AC-complete gate entry points on an Issue |
 | `gate-preflight` | Rule-class gate runner with the issuesmith rules registered |
@@ -121,7 +121,7 @@ Run a command as `python3 -m issuesmith <command>` or through the `issuesmith` c
 | `gen-live` | Generate shell step trampoline templates |
 | `version-bump --worktree W --base B` | Deterministic `pyproject.toml` bump and CHANGELOG fold (see below) |
 | `resume <issue> --from <step>` / `resume <issue> --phase <phase>` | Resume a workflow; `--workflow`, `--handler`, `--mark-done STEP` (repeatable) and `--force` apply to `--from` |
-| `redispatch` | Deprecated (see [Deprecated API](#deprecated-api)) |
+| `andon <subcommand>` | Andon commands (see [`andon`](#andon-subcommands)) |
 | `convert-to-milestone <issue> [--dry-run]` | Move an Issue that entered the develop path back to the milestone path |
 | `milestone <subcommand>` | Milestone chain (see [`milestone`](#milestone-subcommands)) |
 | `config show` | Print the resolved configuration as JSON and validate `steps.*.requires` (exit 1 when invalid) |
@@ -129,7 +129,6 @@ Run a command as `python3 -m issuesmith <command>` or through the `issuesmith` c
 | `lanes <subcommand>` | Lane ledger planning (see [`lanes`](#lanes-subcommands)) |
 | `metrics rework [--since YYYY-MM-DD] [--issue N] [--audit PATH] [--json]` | Rework report from `paths.metrics` and an optional ghdag audit JSONL; `--since` uses `timezone` |
 | `main-health` | Run `observe.main_health.command` on the base branch; writes `issuesmith-main-health.json` and command log `issuesmith-main-health.log` next to queue state (exit 2 on `MainHealthError`) |
-| `apply` / `ingest-review` | Moved to the host's `tools/stash/`; print a notice and exit 2 |
 
 `paths.metrics` JSONL contracts (backward compatible additions):
 
@@ -245,9 +244,7 @@ issuesmith is pre-1.0 and follows `0.Y.Z`: a `Y` bump may change or remove publi
 | Item | Replacement |
 |---|---|
 | `recover` command (**removed** in 0.173.0; was deprecated with `FutureWarning`) | `resume <issue> --from <step>` (see https://github.com/sumipan/issuesmith/pull/318) |
-| `redispatch` command (emits `FutureWarning`) | `resume <issue> --phase <phase>` |
 | `paths.brake_state` for engine pause / quota dispatch | `paths.quota_state` (legacy `halt*` fields are converted on read and not written back) |
-| `apply` / `ingest-review` commands (exit 2) | The host's `tools/stash/` scripts |
 | `issuesmith.yaml` keys `sections`, `sub_design_subsections`, `scope_size.delete_words` / `new_words` / `sub_plan_header` / `no_deps_word` (emit `DeprecationWarning`) | `language_pack` |
 
 ## Architecture
@@ -257,7 +254,7 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | Module | Role |
 |---|---|
 | `issuesmith/__init__.py` | Package marker; empty `__all__` |
-| `issuesmith/__main__.py` | `python3 -m issuesmith`: handles `andon` and `labels`, then calls `cli.main` |
+| `issuesmith/__main__.py` | `python3 -m issuesmith`: calls `cli.main` |
 | `issuesmith/ac_complete_entry.py` | `ac_complete` gate CLI and library entry (rules in `gate_rules/ac_complete_rules.py`) |
 | `issuesmith/ac_contract.py` | Extract and run the acceptance-criteria YAML contract |
 | `issuesmith/andon.py` | Andons (typed stop-the-line signals in Issue comments) and auto-answer rules |
@@ -331,7 +328,7 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/queue_store.py` | Queue store: JSONL requests, state and lock |
 | `issuesmith/queue_triage.py` | Deterministic checks and LLM triage for the queue |
 | `issuesmith/quota_gate.py` | GitHub API rate-limit brake |
-| `issuesmith/recovery.py` | `plan`, `list_recover_steps`, deprecated `redispatch` CLI |
+| `issuesmith/recovery.py` | `plan`, `list_recover_steps`, `requeue_phase` |
 | `issuesmith/repair.py` | `requires` evaluation and repair orchestration |
 | `issuesmith/resume.py` | `resume` entry point |
 | `issuesmith/rule_ids.py` | Legacy rule id alias normalization (`cp1`→`design_lint`, `m2`→`ac_complete`, …) |

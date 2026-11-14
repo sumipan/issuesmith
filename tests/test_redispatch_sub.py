@@ -20,12 +20,6 @@ def test_redispatch_label_plan_sub():
     )
 
 
-def test_build_parser_accepts_sub_phase():
-    parser = recovery.build_parser()
-    args = parser.parse_args(["redispatch", "42", "--phase", "sub"])
-    assert args.phase == "sub"
-
-
 def test_cmd_redispatch_sub_removes_in_flight_and_applies_labels(monkeypatch):
     store = MagicMock()
     client = MagicMock()
@@ -53,7 +47,7 @@ def test_cmd_redispatch_sub_removes_in_flight_and_applies_labels(monkeypatch):
     )
     store.enqueue.return_value = MagicMock(request_id="rid", created=True)
 
-    rc = recovery.cmd_redispatch(42, phase="sub", reason="restore")
+    rc = recovery.requeue_phase(42, phase="sub", reason="restore")
     assert rc == 0
     store.remove_in_flight.assert_called_once_with(42)
     store.enqueue.assert_called_once()
@@ -77,5 +71,5 @@ def test_cmd_redispatch_draft_also_clears_in_flight(monkeypatch):
     monkeypatch.setattr(recovery, "apply_redispatch_labels", lambda *_a, **_k: False)
     store.enqueue.return_value = MagicMock(request_id="rid", created=True)
 
-    assert recovery.cmd_redispatch(9, phase="draft") == 0
+    assert recovery.requeue_phase(9, phase="draft") == 0
     store.remove_in_flight.assert_called_once_with(9)

@@ -10,6 +10,7 @@ import sys
 import zipfile
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -123,10 +124,17 @@ def test_engine_show_runs(tmp_path: Path) -> None:
     assert via_cli.stdout.strip()
 
 
-def test_apply_moved_exits_2() -> None:
-    proc = _run_module("apply", "stash/x.md", check=False)
-    assert proc.returncode == 2
-    assert "tools/stash/" in proc.stderr
+def test_removed_commands_are_unknown(capsys) -> None:
+    """AC-3 (#6697): dropped commands are unknown like any other invalid name."""
+    from issuesmith import cli
+
+    for cmd in ("context_hook", "context-hook", "redispatch", "apply", "ingest-review"):
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main([cmd])
+        assert exc_info.value.code == 1
+        err = capsys.readouterr().err
+        assert f"Unknown command: {cmd}" in err
+        assert "resume" in err
 
 
 def test_queue_enqueue_after_argparse(tmp_path: Path) -> None:

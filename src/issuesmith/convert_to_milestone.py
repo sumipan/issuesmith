@@ -12,7 +12,7 @@ from ghdag.forge import ForgePort, get_forge
 
 from issuesmith.config import get_config
 from issuesmith.queue_store import QueueStore
-from issuesmith.recovery import cmd_redispatch
+from issuesmith.recovery import requeue_phase
 
 _DEVELOP_LABEL_RE = re.compile(r"^issuesmith:develop-")
 _SUB_LABEL_RE = re.compile(r"^issuesmith:sub-")
@@ -181,12 +181,12 @@ def convert_to_milestone(issue: int, *, dry_run: bool = False) -> int:
 
     if dry_run:
         print(f"[dry-run] remove_in_flight({issue})")
-        print(f"[dry-run] redispatch {issue} --phase draft")
+        print(f"[dry-run] requeue {issue} --phase draft")
         return 0
 
     store = _queue_store()
     store.remove_in_flight(issue)
-    return int(cmd_redispatch(issue, phase="draft", reason="convert-to-milestone"))
+    return int(requeue_phase(issue, phase="draft", reason="convert-to-milestone"))
 
 
 def build_parser() -> argparse.ArgumentParser:
