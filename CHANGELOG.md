@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.184.0 - 2026-11-14
+
 ### Added
 
 - `issuesmith.engine.route(role, tier=None)` and `issuesmith.verbs.route`: return the ordered (engine, model) candidate route for a role.
