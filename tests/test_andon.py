@@ -454,6 +454,55 @@ def test_answer_calls_resume_hook():
     assert resume_calls == [(client, "wf:15:s:0", "yes")]
 
 
+def test_answer_records_action_and_human_by_default(tmp_path):
+    a = _make_andon(issue=15, andon_id="wf:15:s:0", kind="decision")
+    comment_body = to_comment(a)
+    client = _fake_client(comments=[{"body": comment_body, "id": 10}])
+    mfile = tmp_path / "metrics.jsonl"
+    with (
+        patch("issuesmith.andon._iter_open_andon_issues") as mock_iter,
+        patch("issuesmith.andon.project_issue"),
+        patch("issuesmith.andon._call_resume_hook"),
+    ):
+        mock_iter.return_value = iter([{"number": 15}])
+        client._stored_comments = [{"body": comment_body, "id": 10}]
+        answer(client, "wf:15:s:0", "handoff", metrics_path=mfile)
+    line = json.loads(mfile.read_text().strip())
+    assert line["event"] == "andon_answered"
+    assert line["action"] == "handoff"
+    assert line["answered_by"] == "human"
+
+
+def test_answer_rejects_unknown_answered_by(tmp_path):
+    client = _fake_client()
+    mfile = tmp_path / "metrics.jsonl"
+    with pytest.raises(ValueError):
+        answer(client, "wf:15:s:0", "handoff", metrics_path=mfile, answered_by="robot")
+    assert not mfile.exists()
+    assert client.issue_comments == []
+
+
+def test_answer_if_open_records_observe_answerer(tmp_path):
+    a = _make_andon(issue=16, andon_id="wf:16:s:0", kind="broken")
+    comment_body = to_comment(a)
+    client = _fake_client(comments=[{"body": comment_body, "id": 10}])
+    mfile = tmp_path / "metrics.jsonl"
+    with (
+        patch("issuesmith.andon._iter_open_andon_issues", return_value=iter([{"number": 16}])),
+        patch("issuesmith.andon.project_issue"),
+    ):
+        client._stored_comments = [{"body": comment_body, "id": 10}]
+        answer_if_open(
+            client,
+            "wf:16:s:0",
+            "auto-resolved: condition cleared",
+            metrics_path=mfile,
+        )
+    line = json.loads(mfile.read_text().strip())
+    assert line["answered_by"] == "observe"
+    assert line["action"] == "auto-resolved: condition cleared"
+
+
 def test_answer_raises_if_andon_not_found():
     client = _fake_client(comments=[{"body": "no andon here", "id": 1}])
     with (

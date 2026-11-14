@@ -1,6 +1,7 @@
 """Tests for andon CLI subcommands and resume hook behavior (#3509)."""
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock, patch
 
 # ---------------------------------------------------------------------------
@@ -433,6 +434,46 @@ def test_andon_list_json_and_note_with_local_forge(tmp_path, monkeypatch, capsys
         assert _cmd_andon(["note", "wf:999:cp2:0", "--key", "k", "--value", "v"]) == 1
     finally:
         reset_config_cache()
+
+
+def test_cli_answer_by_agent_records_agent(tmp_path_factory):
+    """Refs sumipan/nexus#6611."""
+    from issuesmith.__main__ import _cmd_andon
+
+    andon = _make_andon(andon_id="wf:42:cp2:0", issue=42)
+    client = _fake_client_with_andon(andon)
+    metrics = tmp_path_factory.getbasetemp() / "metrics.jsonl"
+    with (
+        patch("ghdag.forge.get_forge", return_value=client),
+        patch("issuesmith.andon.project_issue"),
+        patch("issuesmith.andon._call_resume_hook"),
+    ):
+        assert _cmd_andon(["answer", andon.id, "handoff", "--by", "agent"]) == 0
+    line = json.loads(metrics.read_text().strip().splitlines()[-1])
+    assert line["answered_by"] == "agent"
+    assert line["action"] == "handoff"
+
+
+def test_cli_answer_by_unknown_exits_2(tmp_path, monkeypatch, capsys):
+    """Refs sumipan/nexus#6611."""
+    import dataclasses
+
+    import issuesmith.config as config_module
+    from issuesmith.__main__ import _cmd_andon
+
+    andon = _make_andon(andon_id="wf:42:cp2:0", issue=42)
+    client = _fake_client_with_andon(andon)
+    metrics = tmp_path / "metrics.jsonl"
+    cfg = config_module.get_config()
+    monkeypatch.setattr(
+        config_module,
+        "_cached",
+        dataclasses.replace(cfg, paths=dataclasses.replace(cfg.paths, metrics=metrics)),
+    )
+    with patch("ghdag.forge.get_forge", return_value=client):
+        assert _cmd_andon(["answer", andon.id, "handoff", "--by", "robot"]) == 2
+    assert not metrics.exists()
+    assert "andon answer:" in capsys.readouterr().err
 
 
 def test_andon_auto_answer_json_empty_rules(tmp_path, monkeypatch, capsys):

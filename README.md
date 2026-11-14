@@ -131,6 +131,14 @@ Run a command as `python3 -m issuesmith <command>` or through the `issuesmith` c
 
 - `requires_repair` may include optional `violations`: a list of `{"rule_id", "location", "message"}` objects (same shape as `serialize_violations`).
 - `verify_check` is written by design-doc verify (`issuesmith verify <step> <issue>`): `event`, `step`, `issue`, `rule_ids`, and `violations` (empty lists on PASS). Rework aggregation ignores `verify_check` rows.
+- `andon_answered` rows (from `andon.answer` / `andon answer`, `apply_auto_answers`, or `answer_if_open`) include `action` (the chosen action string) and `answered_by` (who answered). Vocabulary for `answered_by`:
+
+  | Value | Meaning | Written by |
+  |---|---|---|
+  | `human` | A person | `answer` default / `andon answer` default |
+  | `agent` | An agent | `answer(..., answered_by="agent")` / `andon answer ... --by agent` |
+  | `rule:<name>` | An `andon.auto_answer` rule (`<name>` is the rule name) | `apply_auto_answers` |
+  | `observe` | Observe auto-closed the andon when its condition cleared | `answer_if_open` only |
 
 `version-bump` prints `VERSION_BUMP_TYPE` and `VERSION_BUMP_REASON`, then commits `chore: bump version to <new>`. It bumps Y (minor) when the diff adds or removes a public `def` / `class`, an `__all__` entry or a `[project.scripts]` / entry-point key, or when a commit carries a Conventional Commits breaking marker (`type!:` or `BREAKING CHANGE:`); otherwise it bumps Z (patch). It never changes X (major). When `CHANGELOG.md` has a non-empty `## Unreleased` section, the bump inserts the new release heading under it, so the Unreleased entries become the release notes of the bumped version (`ops.version_bump.fold_unreleased`).
 
@@ -140,7 +148,7 @@ Run a command as `python3 -m issuesmith <command>` or through the `issuesmith` c
 |---|---|
 | `andon list [--all] [--json]` | List open (unanswered) andons; `--json` adds `raised_at` and `notes` |
 | `andon show <andon-id>` | Show one andon |
-| `andon answer <andon-id> <action>` | Post the answer, remove the label and call the resume hook |
+| `andon answer <andon-id> <action> [--by human\|agent]` | Post the answer, remove the label and call the resume hook |
 | `andon note <andon-id> --key K --value V` | Record a note on an open andon (no label change) |
 | `andon auto-answer [--apply] [--json]` | Plan (or apply) the `andon.auto_answer` rules |
 
