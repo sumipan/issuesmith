@@ -117,6 +117,7 @@ _ANSWER_RE = re.compile(
     r"<!-- andon-answer -->\s*\n"
     r"(?:<!-- andon-answer-id: (\S+) -->|andon `([^`]+)` answered:)"
 )
+_ANSWERED_BY_RE = re.compile(r"^(?:human|agent|rule:.+)$")
 
 
 def _answer_comment(andon_id: str, action: str) -> str:
@@ -235,19 +236,30 @@ def _iter_open_entries(client: Any) -> Iterator[_OpenEntry]:
         yield from entries
 
 
-def _write_metrics(path: Path, event: str, andon: Andon) -> None:
+def _validate_answered_by(value: str) -> str:
+    if not _ANSWERED_BY_RE.fullmatch(value):
+        raise ValueError(f"invalid answered_by: {value!r}")
+    return value
+
+
+def _write_metrics(
+    path: Path,
+    event: str,
+    andon: Andon,
+    extra: dict[str, str] | None = None,
+) -> None:
     from issuesmith.metrics_events import append_event
 
-    append_event(
-        path,
-        {
-            "event": event,
-            "andon_id": andon.id,
-            "issue": andon.issue,
-            "step": andon.step,
-            "kind": andon.kind,
-        },
-    )
+    row: dict[str, str | int] = {
+        "event": event,
+        "andon_id": andon.id,
+        "issue": andon.issue,
+        "step": andon.step,
+        "kind": andon.kind,
+    }
+    if extra:
+        row.update(extra)
+    append_event(path, row)
 
 
 def _call_resume_hook(client: Any, andon_id: str, action: str) -> None:
@@ -469,8 +481,10 @@ def answer(
     action: str,
     *,
     metrics_path: Path | None = None,
+    answered_by: str = "human",
 ) -> None:
     """Post answer comment, drop the andon kind from the projected labels, call resume hook."""
+    _validate_answered_by(answered_by)
 
     # Find the andon in open issues
     target: Andon | None = None
@@ -491,7 +505,12 @@ def answer(
     project_issue(client, target.issue, _without_andon(target.kind))
 
     path = metrics_path if metrics_path is not None else _default_metrics_path()
-    _write_metrics(path, "andon_answered", target)
+    _write_metrics(
+        path,
+        "andon_answered",
+        target,
+        {"action": action, "answered_by": answered_by},
+    )
     _release_hold_for_andon(target)
     _call_resume_hook(client, andon_id, action)
 
@@ -545,7 +564,12 @@ def answer_if_open(
         project_issue(client, target.issue, _without_andon(target.kind))
 
     path = metrics_path if metrics_path is not None else _default_metrics_path()
-    _write_metrics(path, "andon_answered", target)
+    _write_metrics(
+        path,
+        "andon_answered",
+        target,
+        {"action": action, "answered_by": "observe"},
+    )
     _release_hold_for_andon(target)
 
 
@@ -631,7 +655,7 @@ def apply_auto_answers(client: Any, plan: AutoAnswerPlan) -> AutoAnswerPlan:
         rule_name = str(entry["rule"])
         issue = int(entry["issue"])
         client.issue_comment(issue, _note_comment(andon_id, "auto_answer", rule_name))
-        answer(client, andon_id, action)
+        answer(client, andon_id, action, answered_by=f"rule:{rule_name}")
     return plan
 
 

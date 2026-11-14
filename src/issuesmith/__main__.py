@@ -11,7 +11,7 @@ usage: issuesmith andon <subcommand> ...
 subcommands:
   list [--all] [--json]    list open (unanswered) andons (--json: records with raised_at / notes)
   show <andon-id>          show a specific andon by id
-  answer <andon-id> <action>  post answer, remove label, call resume hook
+  answer <andon-id> <action> [--by human|agent]  post answer, remove label, call resume hook
   note <andon-id> --key <key> --value <value>  record a note on an open andon (no label change)
   auto-answer [--apply] [--json]  plan (or apply) configured auto-answer rules
 """
@@ -117,13 +117,30 @@ def _cmd_andon(argv: list[str]) -> int:
         return 0
 
     if sub == "answer":
-        if len(rest) < 2:
+        args = list(rest)
+        answered_by = "human"
+        i = 0
+        while i < len(args):
+            if args[i] == "--by":
+                if i + 1 >= len(args):
+                    print("andon answer: --by requires a value", file=sys.stderr)
+                    print(_ANDON_USAGE, end="", file=sys.stderr)
+                    return 2
+                answered_by = args[i + 1]
+                del args[i : i + 2]
+                continue
+            i += 1
+        if len(args) < 2:
             print("andon answer: <andon-id> <action> required", file=sys.stderr)
             return 2
-        andon_id, action = rest[0], rest[1]
+        andon_id, action = args[0], args[1]
         from ghdag.forge import get_forge
         client = get_forge()
-        answer(client, andon_id, action)
+        try:
+            answer(client, andon_id, action, answered_by=answered_by)
+        except ValueError as exc:
+            print(f"andon answer: {exc}", file=sys.stderr)
+            return 2
         print(f"answered {andon_id} with: {action}")
         return 0
 

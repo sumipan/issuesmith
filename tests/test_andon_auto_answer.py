@@ -1,6 +1,7 @@
 """Tests for andon auto-answer rules and rule_id round-trip (#4792)."""
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -140,6 +141,36 @@ def test_max_per_issue_counts_all_comments(tmp_path, monkeypatch):
     plan = plan_auto_answers(client, (_rule(),))
     assert plan.answers == []
     assert plan.escalations[0]["kind"] == "auto_answer_exhausted"
+
+
+def test_apply_auto_answers_records_rule_answerer(tmp_path_factory):
+    """Refs sumipan/nexus#6611."""
+    metrics = tmp_path_factory.getbasetemp() / "metrics.jsonl"
+    rule = AutoAnswerRule(
+        name="retry-blocked",
+        match={"kind": "blocked"},
+        action="handoff",
+        max_per_issue=1,
+    )
+    andon = Andon(
+        id="wf:42:observe:0",
+        kind="blocked",
+        issue=42,
+        step="observe",
+        summary="stuck",
+    )
+    client = _client_with_andons([andon])
+    plan = plan_auto_answers(client, (rule,))
+    assert len(plan.answers) == 1
+    with (
+        patch("issuesmith.andon.project_issue"),
+        patch("issuesmith.andon._call_resume_hook"),
+    ):
+        apply_auto_answers(client, plan)
+    line = json.loads(metrics.read_text().strip().splitlines()[-1])
+    assert line["event"] == "andon_answered"
+    assert line["answered_by"] == "rule:retry-blocked"
+    assert line["action"] == "handoff"
 
 
 @patch("issuesmith.andon.resume")

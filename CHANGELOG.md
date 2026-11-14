@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.183.9 - 2026-11-14
+
+### Added
+
+- `andon_answered` metrics rows record `action` and `answered_by` (`human`, `agent`, `rule:<name>`, or `observe`); `andon answer` accepts `--by human|agent`; `answer()` accepts keyword `answered_by` (default `human`).
+
 ## 0.183.4 - 2026-11-14
 
 ### Changed
