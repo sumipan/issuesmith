@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.183.15 - 2026-11-14
+
 ### Changed
 
 - `queue release` accepts in-flight entries of any role, not only design-slot entries (still refuses when the issue DAG is running).
