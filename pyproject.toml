@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "issuesmith"
-version = "0.183.7"
+version = "0.183.8"
 description = "GitHub Issue label-driven workflow framework on ghdag"
 readme = "README.md"
 license = "MIT"
@@ -23,14 +23,14 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-ghdag = ["ghdag @ git+https://github.com/sumipan/ghdag.git@v0.134.1"]
+ghdag = ["ghdag @ git+https://github.com/sumipan/ghdag.git@v0.134.2"]
 dev = [
   "pytest>=7.0.0",
   "pytest-timeout>=2.3.1",
   "pytest-cov>=4.0.0",
   "mypy>=1.10.0",
   "ruff>=0.4.0",
-  "ghdag @ git+https://github.com/sumipan/ghdag.git@v0.134.1",
+  "ghdag @ git+https://github.com/sumipan/ghdag.git@v0.134.2",
 ]
 
 [project.scripts]
