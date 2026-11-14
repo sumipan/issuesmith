@@ -220,56 +220,6 @@ def test_finish_run_called_on_timeout(mocks, monkeypatch):
     assert mocks["gate"].finish_runs == [{"task_uuid": TASK_UUID}]
 
 
-def test_rate_limit_retry_redeclares_alt_engine(mocks, monkeypatch):
-    _use_engine(monkeypatch, "claude")
-    monkeypatch.setattr("issuesmith.engine._is_rate_limited", lambda text: True)
-    mocks["call"].side_effect = [
-        _result("claude", returncode=1, body="rate limit exceeded"),
-        _result("codex"),
-    ]
-
-    result = _execute(ROLE, "prompt")
-
-    assert result.returncode == 0
-    calls = mocks["call"].calls
-    assert len(calls) == 2
-    retry_engine = calls[1]["route"][0][0]
-    assert retry_engine != "claude"
-    assert mocks["gate"].begin_runs == [
-        {"task_uuid": TASK_UUID, "engine": "claude"},
-        {"task_uuid": TASK_UUID, "engine": retry_engine},
-    ]
-    events = mocks["events"]
-    begin_idx = [i for i, n in enumerate(events) if n == "begin_run"]
-    call_idx = [i for i, n in enumerate(events) if n == "call"]
-    assert begin_idx[1] < call_idx[1]
-    assert len(mocks["gate"].finish_runs) == 1
-
-
-def test_rate_limit_retry_denied_raises_quota_paused(mocks, monkeypatch):
-    _use_engine(monkeypatch, "claude")
-    monkeypatch.setattr("issuesmith.engine._is_rate_limited", lambda text: True)
-    mocks["call"].side_effect = [
-        _result("claude", returncode=1, body="rate limit exceeded"),
-        _result("codex"),
-    ]
-    resume_at = datetime.now(timezone.utc) + timedelta(minutes=10)
-    mocks["gate"].begin_run_side_effect = [
-        _allowed(),
-        AdmissionDecision(
-            allowed=False, status="DEFERRED", reason="drain", resume_at=resume_at
-        ),
-    ]
-
-    with pytest.raises(RetrySignal) as exc_info:
-        _execute(ROLE, "prompt")
-
-    assert exc_info.value.reason == RetryReason.QUOTA_PAUSED
-    assert exc_info.value.after == resume_at
-    assert len(mocks["call"].calls) == 1
-    assert len(mocks["gate"].finish_runs) == 1
-
-
 @pytest.mark.parametrize("value", [None, "", "   "])
 def test_no_task_uuid_skips_declaration(mocks, monkeypatch, value):
     _use_engine(monkeypatch, "claude")

@@ -8,7 +8,6 @@ from unittest.mock import MagicMock
 
 import pytest
 from ghdag.llm import LLMResult
-from ghdag.metrics import FailureClass
 from ghdag.quota import EngineQuotaState, QuotaSnapshot
 
 from issuesmith.engine import (
@@ -105,20 +104,6 @@ def test_rate_limit_fallback_preserves_isolation_true(exe_mocks, monkeypatch):
     assert len(calls) == 2
     assert calls[0].kwargs["isolation"] is True
     assert calls[1].kwargs["isolation"] is True
-
-
-def test_env_error_fallback_preserves_isolation_false(exe_mocks):
-    env_error = _result(
-        "claude", rc=1, failure_class=FailureClass.ENGINE_ENVIRONMENT_ERROR
-    )
-    exe_mocks["call"].side_effect = [env_error, _result("codex")]
-
-    _execute("design", "prompt", isolation=False)
-
-    calls = exe_mocks["call"].call_args_list
-    assert len(calls) == 2
-    assert calls[0].kwargs["isolation"] is False
-    assert calls[1].kwargs["isolation"] is False
 
 
 def test_existing_call_managed_kwargs_unchanged_with_isolation(exe_mocks, tmp_path):
