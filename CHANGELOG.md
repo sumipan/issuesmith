@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.183.11 - 2026-11-14
+
 ### Changed
 
 - README positioning and `pyproject.toml` description describe issuesmith as an agent-first software-factory suite; Quick Start uses a host step module name and documents extension points for `steps.<id>.module`.
