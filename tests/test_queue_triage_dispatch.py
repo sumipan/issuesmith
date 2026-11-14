@@ -426,8 +426,7 @@ class TestTriage:
         snap = store.snapshot()
 
         def fake_llm(prompt, **kwargs):
-            assert kwargs.get("engine") == "claude"
-            assert kwargs.get("model") == "claude-sonnet-4-6"
+            assert kwargs.get("route") == [("claude", "claude-sonnet-4-6")]
             payload = {
                 "order": [r.request_id],
                 "decisions": [

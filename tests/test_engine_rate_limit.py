@@ -217,7 +217,7 @@ def test_fallback_still_used_and_resume_at_reported(exe_mocks):
     exe_mocks["call"].side_effect = _side_effect
     result = _execute("design", "prompt")
     assert result.returncode == 0
-    assert exe_mocks["call"].call_args.kwargs["engine"] == "codex"
+    assert exe_mocks["call"].call_args.kwargs["route"][0][0] == "codex"
     kwargs = _report_kwargs(exe_mocks)
     assert kwargs["engine"] == "claude"
     assert kwargs["reason"].startswith("rate_limit_detected: ")

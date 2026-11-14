@@ -230,7 +230,7 @@ def test_primary_paused_uses_fallback_without_sleep(execute_mocks):
     execute_mocks["sleep"].assert_not_called()
     assert execute_mocks["quota_gate"].snapshot_calls == 1
     assert len(execute_mocks["call"].calls) == 1
-    assert execute_mocks["call"].calls[0]["engine"] == "codex"
+    assert execute_mocks["call"].calls[0]["route"][0][0] == "codex"
 
 
 
@@ -264,7 +264,7 @@ def test_brake_only_paused_uses_fallback(execute_mocks, monkeypatch, tmp_path):
 
     assert result.returncode == 0
     execute_mocks["sleep"].assert_not_called()
-    assert execute_mocks["call"].calls[-1]["engine"] == "codex"
+    assert execute_mocks["call"].calls[-1]["route"][0][0] == "codex"
     assert execute_mocks["call"].calls[-1]["quota_gate"] is quota_gate
     assert brake_gate.reports == []
 
@@ -409,8 +409,7 @@ def test_brake_paused_engine_excluded_from_managed_fallbacks(
 
     _execute("design", "prompt")
 
-    assert execute_mocks["call"].calls[-1]["engine"] == "claude"
-    assert execute_mocks["call"].calls[-1]["fallback_candidates"] == []
+    assert execute_mocks["call"].calls[-1]["route"] == [("claude", execute_mocks["call"].calls[-1]["route"][0][1])]
 
 
 def test_quota_exhausted_raises_retry_signal(execute_mocks, monkeypatch):

@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.183.14 - 2026-11-14
+
+### Fixed
+
+- Call `ghdag.llm.call` with `route=[(engine, model), ...]` (ghdag 0.134.5 removed `engine`, `model`, and `fallback_candidates`). The role engine and its fallback candidates are passed as one ordered route; rate-limit and environment-error retries pass a single-entry route.
+
 ## 0.183.11 - 2026-11-14
 
 ### Changed

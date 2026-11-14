@@ -22,8 +22,8 @@ def captured_call(monkeypatch):
             stdout="done",
             stderr="",
             returncode=0,
-            engine_used=kwargs["engine"],
-            model_used=kwargs["model"],
+            engine_used=kwargs["route"][0][0],
+            model_used=kwargs["route"][0][1],
         )
 
     monkeypatch.setattr("issuesmith.engine.call", fake_call)
