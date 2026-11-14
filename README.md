@@ -1,37 +1,39 @@
 # issuesmith
 
-issuesmith is a toolkit for GitHub Issue workflows driven by labels, built on [ghdag](https://github.com/sumipan/ghdag). ghdag runs the DAGs, polls labels and moves Issues between phases. issuesmith supplies the Issue side of that loop: design and merge gates, a request queue with triage, lane planning, LLM role switching, label projection, andons, and the single CLI that workflow templates call.
+issuesmith is a suite for building an agent-first software factory: a production line that takes a GitHub Issue from design through implementation, inspection, and merge. Python gates check what the LLM wrote; when progress cannot continue, typed andons stop the line and ask for input; after an answer, the run resumes and the Issue can reach merge. issuesmith is meant to be adopted as a whole suite, not as isolated pieces.
 
-**What it is not:** issuesmith is not a scheduler or a DAG runner (that is ghdag), and it does not call an LLM API directly. LLM steps run through the engine CLIs (`claude`, `codex`, `cursor`) that ghdag dispatches.
+The suite includes design and merge gates, a request queue with triage, lane planning, LLM role switching, label projection, andons, and the single CLI that workflow templates call. [ghdag](https://github.com/sumipan/ghdag) runs the DAGs, polls labels, and moves Issues between phases; issuesmith supplies the Issue side of that loop.
+
+**What it is not:** issuesmith is not a scheduler or a DAG runner (that is ghdag), and it does not call an LLM API directly. LLM steps run through the engine CLIs (`claude`, `codex`, `cursor`) that ghdag dispatches. Step implementations and order templates live in the host repository; issuesmith does not bundle reference workflows or step modules.
 
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.183.10-blue)
+![version](https://img.shields.io/badge/version-v0.183.11-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.183.10** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.183.11** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.183.10"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.183.11"
 ```
 
 The gates, forge access, `observe`, `andon`, `lanes` and `metrics` import ghdag, so install the `ghdag` extra unless another package already provides ghdag. The base package alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.183.10"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.183.11"
 ```
 
 | Item | Value |
 |---|---|
 | Python | `>=3.10` (tested on 3.10, 3.11, 3.12) |
 | Runtime dependencies | `pyyaml`, `ruamel.yaml`, `packaging`, `python-dotenv` |
-| `[ghdag]` extra | `ghdag @ git+https://github.com/sumipan/ghdag.git@v0.134.1` |
-| `[dev]` extra | `pytest`, `pytest-cov`, `mypy`, `ruff`, ghdag `v0.134.1` |
+| `[ghdag]` extra | same ghdag git tag as pinned in this repo's `pyproject.toml` (`[project.optional-dependencies].ghdag`) |
+| `[dev]` extra | `pytest`, `pytest-cov`, `mypy`, `ruff`, plus the same ghdag pin as `[ghdag]` |
 | Console script | `issuesmith` (`issuesmith.cli:main`) |
 
 See [TESTING.md](./TESTING.md) for what tests should and should not pin.
@@ -66,10 +68,12 @@ phases:
     advance_when: [deps_terminal, closing_pr_exists]
 steps:
   implement:
-    module: issuesmith.steps.implement
+    module: my_project.steps.implement
     requires: [lint, tests, pr_scope]
     input_kind: worktree
 ```
+
+`steps.implement.module` is a host-side Python module (not shipped with issuesmith). Its shape is described under [Protocols and extension points](#protocols-and-extension-points).
 
 2. Check the environment and the resolved configuration:
 
@@ -226,6 +230,7 @@ Gate ids usable in `steps.*.requires`: `ac_complete`, `ac_contract`, `ac_format`
 
 ### Protocols and extension points
 
+- `steps.<id>.module` names a host-side Python module that implements `run(ctx: StepContext, step: StepConfig) -> StepResult` (types in `issuesmith.contract`). When `module` is omitted, the step is an LLM step executed via `engine run-guarded`.
 - `issuesmith.gates.base.Gate`: `check(body, labels) -> list` returns violations; `fix(inp: ContractInput) -> ContractInput` may only narrow its input (drop files, run `ruff --fix`, fast-forward a branch) and never widens allow_paths.
 - `phases[].advance_when` and `steps.*.requires` accept `module.path:attr` references, so a host can add predicates and gates without changing issuesmith.
 - `issuesmith.preconditions.register(name, fn)` adds a named predicate.
