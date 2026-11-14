@@ -222,7 +222,7 @@ def _recover_command(issue: int, failed_step: str) -> str:
     return f"python3 -m issuesmith resume {issue} --from {failed_step}"
 
 
-def _resume_phase_command(issue: int, phase: str, reason: str | None = None) -> str:
+def _resume_phase_command(issue: int, phase: str) -> str:
     return f"python3 -m issuesmith resume {issue} --phase {phase}"
 
 
