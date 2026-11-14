@@ -745,12 +745,64 @@ def test_release_cmd_no_entry(tmp_path, capsys):
     assert store.snapshot().in_flight == []
 
 
-def test_release_cmd_implementation_entry_rejected(tmp_path, capsys):
-    """release: implementation entries remain locked and return exit 1."""
+def test_release_cmd_implementation_entry_released(tmp_path, monkeypatch, capsys):
+    """Refs sumipan/nexus#6699: release removes implementation in_flight when DAG is done."""
+    import json
+
     from issuesmith import queue as qmod
 
     store = _store(tmp_path)
     store.add_in_flight(4163, "claude", role="implementation")
+
+    exec_path = tmp_path / "exec.jsonl"
+    done_dir = tmp_path / "done"
+    done_dir.mkdir()
+    running_dir = tmp_path / "running"
+    running_dir.mkdir()
+    exec_path.write_text(
+        json.dumps({"uuid": "impl-4163", "idempotency_key": "issuesmith:impl:4163"}) + "\n",
+        encoding="utf-8",
+    )
+    (done_dir / "impl-4163").write_text("0", encoding="utf-8")
+    monkeypatch.setattr(qmod, "EXEC_PATH", exec_path)
+    monkeypatch.setattr(qmod, "DONE_DIR", done_dir)
+
+    args = argparse.Namespace(
+        queue_path=str(store.queue_path),
+        state_path=str(store.state_path),
+        lock_path=str(store.lock_path),
+        issue=4163,
+    )
+    rc = qmod._cmd_release(args)
+    assert rc == 0
+    out, _err = capsys.readouterr()
+    assert "released in_flight #4163" in out
+    assert "role=implementation" in out
+    assert store.snapshot().in_flight == []
+
+
+def test_release_cmd_implementation_dag_running_rejected(tmp_path, monkeypatch, capsys):
+    """Refs sumipan/nexus#6699: release rejects implementation entry while DAG is running."""
+    import json
+
+    from issuesmith import queue as qmod
+
+    store = _store(tmp_path)
+    store.add_in_flight(4163, "claude", role="implementation")
+
+    exec_path = tmp_path / "exec.jsonl"
+    done_dir = tmp_path / "done"
+    done_dir.mkdir()
+    running_dir = tmp_path / "running"
+    running_dir.mkdir()
+    exec_path.write_text(
+        json.dumps({"uuid": "impl-4163", "idempotency_key": "issuesmith:impl:4163"}) + "\n",
+        encoding="utf-8",
+    )
+    (running_dir / "impl-4163.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(qmod, "EXEC_PATH", exec_path)
+    monkeypatch.setattr(qmod, "DONE_DIR", done_dir)
+
     args = argparse.Namespace(
         queue_path=str(store.queue_path),
         state_path=str(store.state_path),
@@ -760,8 +812,118 @@ def test_release_cmd_implementation_entry_rejected(tmp_path, capsys):
     rc = qmod._cmd_release(args)
     assert rc == 1
     _out, err = capsys.readouterr()
-    assert "not a design-slot" in err
+    assert "running" in err
+    assert "hint:" in err
     assert {e["issue"] for e in store.snapshot().in_flight} == {4163}
+
+
+def test_release_then_recover_does_not_reregister(tmp_path, monkeypatch):
+    """Refs sumipan/nexus#6699: after release, recover skips issue when DAG is not running."""
+    import json
+
+    from issuesmith import queue as qmod
+
+    store = _store(tmp_path)
+    store.add_in_flight(4163, "claude", role="implementation")
+
+    exec_path = tmp_path / "exec.jsonl"
+    done_dir = tmp_path / "done"
+    done_dir.mkdir()
+    running_dir = tmp_path / "running"
+    running_dir.mkdir()
+    exec_path.write_text(
+        json.dumps({"uuid": "impl-4163", "idempotency_key": "issuesmith:impl:4163"}) + "\n",
+        encoding="utf-8",
+    )
+    (done_dir / "impl-4163").write_text("0", encoding="utf-8")
+    monkeypatch.setattr(qmod, "EXEC_PATH", exec_path)
+    monkeypatch.setattr(qmod, "DONE_DIR", done_dir)
+
+    args = argparse.Namespace(
+        queue_path=str(store.queue_path),
+        state_path=str(store.state_path),
+        lock_path=str(store.lock_path),
+        issue=4163,
+    )
+    assert qmod._cmd_release(args) == 0
+    assert store.snapshot().in_flight == []
+
+    class Client:
+        def list_issues(self, label, state="open"):
+            if label == "issuesmith:develop-running":
+                return [{"number": 4163, "labels": [{"name": label}]}]
+            return []
+
+        def issue_get(self, number, fields=None):
+            return {
+                "number": number,
+                "state": "OPEN",
+                "body": _VALID_BODY,
+                "labels": [{"name": "issuesmith:develop-running"}],
+            }
+
+    snap = store.snapshot()
+    assert qmod._recover_untracked_in_flight(Client(), store, snap) == 0
+    assert store.snapshot().in_flight == []
+
+
+def test_release_cmd_json_output(tmp_path, monkeypatch, capsys):
+    """Refs sumipan/nexus#6699: --json prints issue, role, and dispatched_at on success."""
+    import json
+
+    from issuesmith import queue as qmod
+
+    store = _store(tmp_path)
+    store.add_in_flight(4163, "claude", role="implementation")
+    dispatched_at = store.snapshot().in_flight[0]["dispatched_at"]
+
+    exec_path = tmp_path / "exec.jsonl"
+    done_dir = tmp_path / "done"
+    done_dir.mkdir()
+    running_dir = tmp_path / "running"
+    running_dir.mkdir()
+    exec_path.write_text(
+        json.dumps({"uuid": "impl-4163", "idempotency_key": "issuesmith:impl:4163"}) + "\n",
+        encoding="utf-8",
+    )
+    (done_dir / "impl-4163").write_text("0", encoding="utf-8")
+    monkeypatch.setattr(qmod, "EXEC_PATH", exec_path)
+    monkeypatch.setattr(qmod, "DONE_DIR", done_dir)
+
+    args = argparse.Namespace(
+        queue_path=str(store.queue_path),
+        state_path=str(store.state_path),
+        lock_path=str(store.lock_path),
+        issue=4163,
+        json=True,
+    )
+    rc = qmod._cmd_release(args)
+    assert rc == 0
+    out, _err = capsys.readouterr()
+    payload = json.loads(out.strip())
+    assert payload == {
+        "issue": 4163,
+        "role": "implementation",
+        "dispatched_at": dispatched_at,
+    }
+
+
+def test_release_cmd_no_entry_hint(tmp_path, capsys):
+    """Refs sumipan/nexus#6699: missing entry prints hint pointing at queue status."""
+    from issuesmith import queue as qmod
+
+    store = _store(tmp_path)
+    args = argparse.Namespace(
+        queue_path=str(store.queue_path),
+        state_path=str(store.state_path),
+        lock_path=str(store.lock_path),
+        issue=9999,
+    )
+    rc = qmod._cmd_release(args)
+    assert rc == 1
+    _out, err = capsys.readouterr()
+    assert "hint:" in err
+    assert "queue status" in err
 
 
 def test_release_cmd_dag_running_rejected(tmp_path, monkeypatch, capsys):

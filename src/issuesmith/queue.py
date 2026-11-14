@@ -2866,12 +2866,7 @@ def _cmd_release(args: argparse.Namespace) -> int:
     )
     if entry is None:
         print(f"error: no in_flight entry for issue #{issue}", file=sys.stderr)
-        return 1
-    if entry.get("role") != "design":
-        print(
-            f"error: issue #{issue} is not a design-slot in_flight entry; cannot release",
-            file=sys.stderr,
-        )
+        print("hint: run 'queue status' to list in_flight entries", file=sys.stderr)
         return 1
     dag_states = load_dag_states(EXEC_PATH, DONE_DIR, DONE_DIR.parent / "running")
     state = dag_states.get(issue)
@@ -2880,11 +2875,28 @@ def _cmd_release(args: argparse.Namespace) -> int:
             f"error: issue #{issue} DAG is currently running; cannot release in_flight",
             file=sys.stderr,
         )
+        print(
+            "hint: wait for the DAG to finish (or cancel it), then retry",
+            file=sys.stderr,
+        )
         return 1
     store.remove_in_flight(issue)
     role = entry.get("role", "unknown")
     dispatched_at = entry.get("dispatched_at", "unknown")
-    print(f"released in_flight #{issue} (role={role}, dispatched_at={dispatched_at})")
+    if getattr(args, "json", False):
+        print(
+            json.dumps(
+                {
+                    "issue": issue,
+                    "role": role,
+                    "dispatched_at": dispatched_at,
+                }
+            )
+        )
+    else:
+        print(
+            f"released in_flight #{issue} (role={role}, dispatched_at={dispatched_at})"
+        )
     return 0
 
 
@@ -2953,9 +2965,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_release = sub.add_parser(
         "release",
-        help="Explicitly release a design-slot in_flight entry (recovery only)",
+        help=(
+            "Release an in-flight entry of any role when its DAG is not running "
+            "(recovery only)"
+        ),
     )
     p_release.add_argument("--issue", type=int, required=True)
+    p_release.add_argument("--json", action="store_true")
     p_release.set_defaults(func=_cmd_release)
 
     return parser
