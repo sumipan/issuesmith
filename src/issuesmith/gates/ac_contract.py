@@ -93,14 +93,28 @@ class AcContractGate:
         grep_entries = contract.get("greps_must_be_empty")
         if not isinstance(grep_entries, list):
             return violations
-        for raw in grep_entries:
+        for i, raw in enumerate(grep_entries):
             normalized, err = normalize_grep_entry(raw)
+            if err is None:
+                assert normalized is not None
+                try:
+                    hits = grep_matches(self._worktree_path, normalized)
+                except GrepError as exc:
+                    err = f"git grep failed: {exc}"
             if err is not None:
-                continue
-            assert normalized is not None
-            try:
-                hits = grep_matches(self._worktree_path, normalized)
-            except GrepError:
+                # Fail closed: an entry that cannot be evaluated must not pass.
+                violations.append(
+                    Violation(
+                        rule_id="ac_contract.greps_must_be_empty",
+                        severity="fail",
+                        message=(
+                            f"Acceptance contract greps_must_be_empty[{i}]: {err}"
+                        ),
+                        location=f"greps_must_be_empty[{i}]",
+                        auto_fixable=False,
+                        fix_hint=_GREP_FIX_HINT,
+                    )
+                )
                 continue
             for rel_path in hits:
                 violations.append(

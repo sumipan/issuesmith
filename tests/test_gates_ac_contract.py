@@ -221,6 +221,23 @@ def test_greps_must_be_empty_reports_matching_file(tmp_path: Path) -> None:
     assert v.rule_id == "ac_contract.greps_must_be_empty"
     assert v.location == "pkg/a.py"
 
+    (pkg / "a.py").write_text("OTHER = 1\n", encoding="utf-8")
+    assert _gate(repo).check(body, []) == []
+
+
+def test_greps_must_be_empty_fails_closed_on_invalid_entry(tmp_path: Path) -> None:
+    """Refs sumipan/nexus#6431 — an unevaluable grep entry is a violation, not a pass."""
+    repo = _git_repo(tmp_path)
+    body = _ac_body(
+        "paths_must_exist: []\n"
+        "paths_must_not_exist: []\n"
+        "greps_must_be_empty:\n"
+        "  - pattern: NEEDLE\n"
+    )
+    violations = _gate(repo).check(body, [])
+    assert [v.location for v in violations] == ["greps_must_be_empty[0]"]
+    assert violations[0].rule_id == "ac_contract.greps_must_be_empty"
+
 
 def test_greps_must_be_empty_respects_exclude(tmp_path: Path) -> None:
     """Refs sumipan/nexus#6431 — exclude pathspec suppresses grep violations."""
