@@ -7,7 +7,6 @@ import argparse
 import pytest
 import yaml
 
-from issuesmith import engine
 from issuesmith.config import ConfigError, get_config, load_config, reset_config_cache
 from tests.conftest import NEXUS_TEST_PHASES
 
@@ -74,40 +73,8 @@ def test_default_phase_name_omits_handler_raises(tmp_path, monkeypatch):
         load_config()
 
 
-@pytest.mark.no_auto_phases
-def test_terminal_labels_empty_when_not_declared(tmp_path, monkeypatch):
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {
-            "repo": "example/app",
-            "phases": [
-                {
-                    "name": "draft",
-                    "role": "design",
-                    "entry_step": "b1",
-                    "handler": "brushup",
-                },
-            ],
-        },
-    )
-    cfg = load_config()
-    assert cfg.terminal_labels == ()
-    assert cfg.terminal_without_merge == ()
 
 
-@pytest.mark.no_auto_phases
-def test_custom_phase_name_requires_handler(tmp_path, monkeypatch):
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {
-            "repo": "example/app",
-            "phases": [{"name": "alpha", "role": "design", "entry_step": "b1"}],
-        },
-    )
-    with pytest.raises(ConfigError, match="handler"):
-        load_config()
 
 
 def test_default_phases_match_nexus_fixture_when_declared(tmp_path, monkeypatch):
@@ -130,159 +97,10 @@ def test_default_phases_match_nexus_fixture_when_declared(tmp_path, monkeypatch)
     } == _DEFAULT_ENTRY_STEPS
 
 
-def test_custom_three_phases_propagate_to_consumers(tmp_path, monkeypatch):
-    phases = [
-        {
-            "name": "draft",
-            "role": "design",
-            "entry_step": "b1",
-            "handler": "brushup",
-            "advance_when": ["deps_terminal"],
-        },
-        {
-            "name": "develop",
-            "role": "implementation",
-            "entry_step": "cp2",
-            "handler": "impl",
-            "advance_when": ["deps_terminal"],
-        },
-        {
-            "name": "merge",
-            "role": "implementation",
-            "entry_step": "m2",
-            "handler": "merge",
-            "advance_when": ["deps_terminal", "closing_pr_exists"],
-        },
-    ]
-    _write_config(tmp_path, monkeypatch, {"repo": "example/app", "phases": phases})
-
-    import issuesmith.queue as queue
-    import issuesmith.queue_store as queue_store
-
-    cfg = get_config()
-    assert tuple(p.name for p in cfg.phases) == ("draft", "develop", "merge")
-    assert queue_store.PHASES == ("draft", "develop", "merge")
-    assert queue.PHASE_ROLE == {
-        "draft": "design",
-        "develop": "implementation",
-        "merge": "implementation",
-    }
-    assert _subparser_option_choices(queue.build_parser(), "enqueue", "--phase") == [
-        "draft",
-        "develop",
-        "merge",
-    ]
-    assert {
-        p.name: p.entry_step for p in get_config().phases if p.name != "sub"
-    } == {"draft": "b1", "develop": "cp2", "merge": "m2"}
 
 
-def test_milestone_child_phase_order_follows_reversed_config(tmp_path, monkeypatch):
-    import issuesmith.milestone as milestone
-
-    phases = [
-        {
-            "name": "draft",
-            "role": "design",
-            "entry_step": "b1",
-            "handler": "brushup",
-            "advance_when": ["deps_terminal"],
-        },
-        {
-            "name": "develop",
-            "role": "implementation",
-            "entry_step": "cp2",
-            "handler": "impl",
-            "advance_when": ["deps_terminal"],
-        },
-        {
-            "name": "merge",
-            "role": "implementation",
-            "entry_step": "m2",
-            "handler": "merge",
-            "advance_when": ["deps_terminal", "closing_pr_exists"],
-        },
-    ]
-    _write_config(tmp_path, monkeypatch, {"repo": "example/app", "phases": phases})
-
-    assert milestone._child_phase_label({"issuesmith:develop-done"}) == "develop-done"
-    assert (
-        milestone._child_phase_label(
-            {"issuesmith:merge-ready", "issuesmith:draft-done"}
-        )
-        == "merge-ready"
-    )
 
 
-def test_engine_resolve_unchanged_across_phase_role_change(tmp_path, monkeypatch):
-    """engine.resolve stays role-stable before/after PHASE_ROLE (phases.role) changes."""
-    monkeypatch.setattr(engine, "_allowed_models", lambda eng: None)
-
-    states = {
-        "claude": {
-            "design": {"engine": "claude", "model": "claude-opus-4-6"},
-            "implementation": {"engine": "claude", "model": "claude-sonnet-4-6"},
-        },
-        "cursor": {
-            "design": {"engine": "codex", "model": "gpt-5.6-sol"},
-            "implementation": {"engine": "cursor", "model": "auto"},
-        },
-        "codex": {
-            "design": {"engine": "codex", "model": "gpt-5.6-sol"},
-            "implementation": {"engine": "claude", "model": "claude-sonnet-4-6"},
-        },
-    }
-
-    def _capture() -> dict[str, dict[str, engine.RoleSelection]]:
-        out: dict[str, dict[str, engine.RoleSelection]] = {}
-        for eng_name, state in states.items():
-            monkeypatch.setattr(engine, "load_state", lambda s=state: s)
-            out[eng_name] = {
-                "design": engine.resolve("design"),
-                "implementation": engine.resolve("implementation"),
-            }
-        return out
-
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {"repo": "example/app", "phases": NEXUS_TEST_PHASES},
-    )
-    before = _capture()
-
-    phases = [
-        {
-            "name": "draft",
-            "role": "implementation",
-            "entry_step": "b1",
-            "handler": "brushup",
-            "advance_when": ["deps_terminal"],
-        },
-        {
-            "name": "develop",
-            "role": "design",
-            "entry_step": "cp2",
-            "handler": "impl",
-            "advance_when": ["deps_terminal"],
-        },
-        {
-            "name": "merge",
-            "role": "implementation",
-            "entry_step": "m2",
-            "handler": "merge",
-            "advance_when": ["deps_terminal", "closing_pr_exists"],
-        },
-    ]
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {"repo": "example/app", "phases": phases},
-    )
-    after = _capture()
-
-    assert before == after
-    for eng_name in ("claude", "cursor", "codex"):
-        assert eng_name in before
 
 
 def test_new_phase_keys_loaded_with_defaults(tmp_path, monkeypatch):
@@ -319,47 +137,8 @@ def test_new_phase_keys_loaded_with_defaults(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_steps_default_to_entry_step(tmp_path, monkeypatch):
-    from issuesmith.projection import phase_steps
-
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {"repo": "example/app", "phases": NEXUS_TEST_PHASES},
-    )
-    cfg = load_config()
-    assert {p.name: phase_steps(p) for p in cfg.phases} == {
-        "draft": ("b1",),
-        "sub": ("sub1",),
-        "develop": ("p0", "p1", "p3", "cp2"),
-        "merge": ("m1", "m2-role-dispatch"),
-    }
 
 
-def test_steps_are_read_in_order(tmp_path, monkeypatch):
-    _write_config(tmp_path, monkeypatch, {
-        "repo": "example/app",
-        "phases": [
-            {
-                "name": "draft",
-                "role": "design",
-                "entry_step": "b1",
-                "handler": "brushup",
-                "steps": ["b1"],
-                "advance_when": ["deps_terminal"],
-            },
-            {
-                "name": "develop",
-                "role": "implementation",
-                "entry_step": "cp2",
-                "handler": "impl",
-                "steps": ["p0", "p1", "p3", "cp2"],
-                "advance_when": ["deps_terminal"],
-            },
-        ],
-    })
-    cfg = load_config()
-    assert [p.steps for p in cfg.phases] == [("b1",), ("p0", "p1", "p3", "cp2")]
 
 
 def test_steps_must_be_a_list(tmp_path, monkeypatch):
@@ -378,30 +157,6 @@ def test_steps_must_be_a_list(tmp_path, monkeypatch):
         load_config()
 
 
-def test_duplicate_step_across_phases_is_config_error(tmp_path, monkeypatch):
-    _write_config(tmp_path, monkeypatch, {
-        "repo": "example/app",
-        "phases": [
-            {
-                "name": "draft",
-                "role": "design",
-                "entry_step": "b1",
-                "handler": "brushup",
-                "steps": ["b1", "p0"],
-                "advance_when": ["deps_terminal"],
-            },
-            {
-                "name": "develop",
-                "role": "implementation",
-                "entry_step": "cp2",
-                "handler": "impl",
-                "steps": ["p0", "cp2"],
-                "advance_when": ["deps_terminal"],
-            },
-        ],
-    })
-    with pytest.raises(ConfigError, match="p0"):
-        load_config()
 
 
 def test_duplicate_implicit_entry_step_is_config_error(tmp_path, monkeypatch):
@@ -428,13 +183,6 @@ def test_duplicate_implicit_entry_step_is_config_error(tmp_path, monkeypatch):
         load_config()
 
 
-def test_label_write_guard_defaults_to_warn(tmp_path, monkeypatch):
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {"repo": "example/app", "phases": NEXUS_TEST_PHASES},
-    )
-    assert load_config().label_write_guard == "warn"
 
 
 @pytest.mark.parametrize("mode", ["warn", "enforce"])

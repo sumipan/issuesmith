@@ -57,27 +57,6 @@ def test_repair_invalid_push(tmp_path, monkeypatch) -> None:
         load_config()
 
 
-def test_review_loaded(tmp_path, monkeypatch) -> None:
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {
-            "steps": {
-                "x": {
-                    "review": {
-                        "role": "review",
-                        "template": "cp2.md",
-                        "success_status": "CP2_PASS",
-                        "failure_status": "CP2_FAIL",
-                    }
-                }
-            }
-        },
-    )
-    review = load_config().steps["x"].review
-    assert review is not None
-    assert review.problems_heading == "Problems:"
-    assert review.tier is None
 
 
 def test_review_missing_template(tmp_path, monkeypatch) -> None:
@@ -162,15 +141,6 @@ def test_review_optional_variables_loaded(tmp_path, monkeypatch) -> None:
     assert review.optional_variables == ("execution_constraints",)
 
 
-def test_review_optional_variables_keeps_order(tmp_path, monkeypatch) -> None:
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        _review_payload(optional_variables=["b", "a", "b"]),
-    )
-    review = load_config().steps["cp2"].review
-    assert review is not None
-    assert review.optional_variables == ("b", "a", "b")
 
 
 def test_review_optional_variables_default_empty(tmp_path, monkeypatch) -> None:

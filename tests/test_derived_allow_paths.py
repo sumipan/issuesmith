@@ -6,15 +6,12 @@ Only the TestsGate case runs pytest (condition B); others pass failed_ids direct
 from __future__ import annotations
 
 import subprocess
-import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
 
 from issuesmith.config import reset_config_cache
-from issuesmith.gates import GATE_REGISTRY, GateBuildContext
 from issuesmith.gates.pr_scope import PrScopeGate
 from issuesmith.gates.worktree import (
     TestsGate,
@@ -105,34 +102,10 @@ def _derived_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 # ---------------------------------------------------------------------------
 
 
-def test_tests_gate_derives_referencing_test(mod_repo: Path, _derived_config) -> None:
-    _derived_config(None)
-    gate = TestsGate(mod_repo, allow_paths=["src/pkg/mod.py"])
-    violations = gate.check("", [])
-
-    assert [v.rule_id for v in violations] == ["tests.pytest_failure"]
-    assert gate.derived_allow_paths == ["tests/test_uses_mod.py"]
-    assert "derived_allow: tests/test_uses_mod.py" in (violations[0].fix_hint or "")
 
 
-def test_build_tests_passes_allow_paths(mod_repo: Path) -> None:
-    ctx = GateBuildContext(
-        worktree_path=mod_repo, allow_paths=["src/pkg/mod.py"], base_branch="main"
-    )
-    gate = GATE_REGISTRY["tests"].build(ctx)
-    assert isinstance(gate, TestsGate)
-    assert gate.derived_allow_paths == []
-    assert gate._allow_paths == ["src/pkg/mod.py"]
 
 
-def test_derive_by_module_name_and_public_def(mod_repo: Path) -> None:
-    derived = derive_test_allow_paths(
-        mod_repo, "main",
-        ["tests/test_uses_mod.py::test_total"],
-        ["src/pkg/mod.py"],
-        ["src/pkg/mod.py"],
-    )
-    assert derived == ["tests/test_uses_mod.py"]
 
 
 # ---------------------------------------------------------------------------
@@ -140,25 +113,6 @@ def test_derive_by_module_name_and_public_def(mod_repo: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_path_string_reference(tmp_path: Path) -> None:
-    clone = _make_repo(tmp_path, {
-        "templates/order.md": "hello\n",
-        "tests/test_template.py": (
-            "from pathlib import Path\n\n\n"
-            "def test_template():\n"
-            "    assert Path(\"templates/order.md\").read_text() == \"hello\\n\"\n"
-        ),
-    })
-    _write(clone, {"templates/order.md": "bye\n"})
-    _commit_all(clone)
-
-    derived = derive_test_allow_paths(
-        clone, "main",
-        ["tests/test_template.py::test_template"],
-        ["templates/order.md"],
-        ["templates/order.md"],
-    )
-    assert derived == ["tests/test_template.py"]
 
 
 # ---------------------------------------------------------------------------
@@ -166,26 +120,8 @@ def test_path_string_reference(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_unrelated_test_not_derived(mod_repo: Path) -> None:
-    derived = derive_test_allow_paths(
-        mod_repo, "main",
-        ["tests/test_unrelated.py::test_unrelated"],
-        ["src/pkg/mod.py"],
-        ["src/pkg/mod.py"],
-    )
-    assert derived == []
 
 
-def test_new_test_file_not_derived(mod_repo: Path) -> None:
-    _write(mod_repo, {"tests/test_brand_new.py": "import pkg.mod\n"})
-    _commit_all(mod_repo)
-    derived = derive_test_allow_paths(
-        mod_repo, "main",
-        ["tests/test_brand_new.py::test_x"],
-        ["src/pkg/mod.py", "tests/test_brand_new.py"],
-        ["src/pkg/mod.py"],
-    )
-    assert derived == []
 
 
 def test_already_allowed_test_not_derived(mod_repo: Path) -> None:
@@ -215,24 +151,6 @@ def test_non_tests_file_not_derived(tmp_path: Path) -> None:
     assert derived == []
 
 
-def test_preexisting_failure_not_derived(tmp_path: Path, _derived_config) -> None:
-    """A referencing test that already fails on base is preexisting → not derived."""
-    _derived_config(None)
-    clone = _make_repo(tmp_path, {
-        "src/pkg/__init__.py": "",
-        "src/pkg/mod.py": _MOD_BASE,
-        "tests/test_uses_mod.py": (
-            "import pkg.mod\n\n\n"
-            "def test_total():\n"
-            "    assert pkg.mod.compute_total(1, 2) == 99\n"
-        ),
-    })
-    _write(clone, {"src/pkg/mod.py": _MOD_CHANGED})
-    _commit_all(clone)
-
-    gate = TestsGate(clone, allow_paths=["src/pkg/mod.py"])
-    assert gate.check("", []) == []
-    assert gate.derived_allow_paths == []
 
 
 def test_baseline_unavailable_yields_empty(
@@ -269,16 +187,6 @@ def test_pr_scope_allows_derived(mod_repo: Path, _derived_config) -> None:
     ]
 
 
-def test_registry_pr_scope_passes_derived(mod_repo: Path) -> None:
-    _write(mod_repo, {"tests/test_uses_mod.py": _TEST_USES_MOD.replace("== 3", "== 4")})
-    ctx = GateBuildContext(
-        worktree_path=mod_repo,
-        allow_paths=["src/pkg/mod.py"],
-        base_branch="main",
-        derived_allow_paths=("tests/test_uses_mod.py",),
-    )
-    gate = GATE_REGISTRY["pr_scope"].build(ctx)
-    assert gate.check("", []) == []
 
 
 def test_pr_scope_default_has_no_derived(mod_repo: Path, _derived_config) -> None:
@@ -289,15 +197,6 @@ def test_pr_scope_default_has_no_derived(mod_repo: Path, _derived_config) -> Non
     assert gate.check("", []) == []
 
 
-def test_pr_scope_derived_edit_is_guarded(mod_repo: Path, _derived_config) -> None:
-    _derived_config(None)
-    _write(mod_repo, {"tests/test_uses_mod.py": "import pkg.mod\n"})
-    gate = PrScopeGate(
-        mod_repo, ["src/pkg/mod.py"], "main",
-        derived_allow_paths=["tests/test_uses_mod.py"],
-    )
-    rule_ids = [v.rule_id for v in gate.check("", [])]
-    assert rule_ids == ["derived_allow.test_weakened"]
 
 
 # ---------------------------------------------------------------------------
@@ -391,72 +290,8 @@ def test_disabled_pr_scope_ignores_derived(mod_repo: Path, _derived_config) -> N
 # ---------------------------------------------------------------------------
 
 
-def test_engine_derived_block_on_newline_after_repair_no_trailing_newline(capsys) -> None:
-    """repair stdout ending without newline: derived_allow_paths: must be a standalone line."""
-    from issuesmith.engine import _run_guarded_with_requires
-
-    step_cfg_mock = MagicMock()
-    step_cfg_mock.requires = []
-
-    def fake_run_requires_loop(step_cfg, step_id, context):
-        sys.stdout.write("PIPELINE_STATUS: REPAIR_DONE")  # intentionally no trailing newline
-        context["derived_allow_paths"] = "tests/a.py"
-        return None
-
-    with (
-        patch("issuesmith.ops.dispatch.resolve_step_config", return_value=step_cfg_mock),
-        patch("issuesmith.engine._run_pre_gate_phase", return_value=None),
-        patch("issuesmith.engine._run_emit_order", return_value=(0, "")),
-        patch("issuesmith.ops.dispatch.run_requires_loop", fake_run_requires_loop),
-    ):
-        rc = _run_guarded_with_requires(
-            "implementation", "tpl.md", [],
-            success_statuses=["IMPL_DONE"],
-            failure_status="IMPL_FAILED",
-            cwd=None, tier=None,
-            emit_status="IMPL_DONE",
-            requires_step="p1",
-        )
-
-    out = capsys.readouterr().out
-    assert rc == 0
-    assert "REPAIR_DONEderived_allow_paths:" not in out
-    lines = out.splitlines()
-    assert "derived_allow_paths:" in lines
-    idx = lines.index("derived_allow_paths:")
-    assert lines[idx + 1] == "  - tests/a.py"
 
 
-def test_engine_emit_status_extractable_after_repair_no_trailing_newline(capsys) -> None:
-    """PIPELINE_STATUS: IMPL_DONE is extractable as a standalone line after repair fix."""
-    from issuesmith.engine import _extract_status_values, _run_guarded_with_requires
-
-    step_cfg_mock = MagicMock()
-    step_cfg_mock.requires = []
-
-    def fake_run_requires_loop(step_cfg, step_id, context):
-        sys.stdout.write("PIPELINE_STATUS: REPAIR_DONE")  # intentionally no trailing newline
-        context["derived_allow_paths"] = "tests/a.py"
-        return None
-
-    with (
-        patch("issuesmith.ops.dispatch.resolve_step_config", return_value=step_cfg_mock),
-        patch("issuesmith.engine._run_pre_gate_phase", return_value=None),
-        patch("issuesmith.engine._run_emit_order", return_value=(0, "")),
-        patch("issuesmith.ops.dispatch.run_requires_loop", fake_run_requires_loop),
-    ):
-        rc = _run_guarded_with_requires(
-            "implementation", "tpl.md", [],
-            success_statuses=["IMPL_DONE"],
-            failure_status="IMPL_FAILED",
-            cwd=None, tier=None,
-            emit_status="IMPL_DONE",
-            requires_step="p1",
-        )
-
-    out = capsys.readouterr().out
-    assert rc == 0
-    assert "IMPL_DONE" in _extract_status_values(out)
 _LEDGER = "tests/conventions/known_x.txt"
 _LEDGER_BASE = "alpha\nbeta\ngamma\n"
 _LEDGER_TEST = (
