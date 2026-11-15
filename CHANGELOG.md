@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.188.3 - 2026-11-15
+
 ### Added
 
 - `queue doctor --json` returns queue health as one JSON object (`ok`, orphan ids, untracked Issue numbers, blocked dispatch count). Refs sumipan/nexus#6780.
