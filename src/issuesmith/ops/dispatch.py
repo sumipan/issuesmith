@@ -644,8 +644,23 @@ def _violation_gate_id(rule_id: str, gates: dict[str, object]) -> str | None:
     return None
 
 
+def _violation_source_gate(v, result, gates: dict[str, object]) -> str | None:
+    """Gate id that emitted this violation, from evaluation source map or prefix fallback."""
+    from issuesmith.repair import RequiresResult
+
+    if isinstance(result, RequiresResult):
+        gate_id = result.source_gate.get(_violation_fingerprint(v))
+        if gate_id is not None:
+            return gate_id
+    return _violation_gate_id(v.rule_id, gates)
+
+
 def _is_violation_repairable(
-    rule_id: str, gates: dict[str, object], step_id: str | None = None
+    rule_id: str,
+    gates: dict[str, object],
+    step_id: str | None = None,
+    *,
+    gate_id: str | None = None,
 ) -> bool:
     """Return True if the gate that produced this violation allows LLM repair."""
     from issuesmith.config import ConfigError, get_config
@@ -661,17 +676,33 @@ def _is_violation_repairable(
         step_cfg = get_config().steps.get(step_id)
         if step_cfg and rule_id in step_cfg.andon_when:
             return False
-    gate_id = _violation_gate_id(rule_id, gates)
-    if gate_id is None:
+    resolved_gate_id = gate_id if gate_id is not None else _violation_gate_id(rule_id, gates)
+    if resolved_gate_id is None:
         return True
     try:
-        entry = resolve_gate(gate_id)
+        entry = resolve_gate(resolved_gate_id)
     except ConfigError:
         return True
+    if entry.input_kind == "issue":
+        return False
     return entry.repairable
 
 
-def _build_andon_options(blocking: list) -> list[str]:
+def _design_step_id() -> str | None:
+    """First step id in config declaration order with verify=design_doc."""
+    from issuesmith.config import get_config
+
+    for step_id, step_cfg in get_config().steps.items():
+        if step_cfg.verify == "design_doc":
+            return step_id
+    return None
+
+
+def _build_andon_options(
+    blocking: list,
+    *,
+    resume_step: str | None = None,
+) -> list[str]:
     """Build andon decision options from blocking violations.
 
     pr_scope.out_of_allow → widen:<file1>,<file2> (sorted, deduplicated)
@@ -683,6 +714,8 @@ def _build_andon_options(blocking: list) -> list[str]:
         if v.rule_id == "pr_scope.out_of_allow" and v.location
     })
     options: list[str] = []
+    if resume_step:
+        options.append(f"resume_from_{resume_step}")
     if pr_scope_files:
         options.append(f"widen:{','.join(pr_scope_files)}")
     options.extend(["split", "reject"])
@@ -922,10 +955,28 @@ def run_requires_loop(
     # Non-repairable violations → andon(decision) without repair
     non_repairable = [
         v for v in result.blocking
-        if not _is_violation_repairable(v.rule_id, gates, step_id)
+        if not _is_violation_repairable(
+            v.rule_id,
+            gates,
+            step_id,
+            gate_id=_violation_source_gate(v, result, gates),
+        )
     ]
     if non_repairable:
-        options = _build_andon_options(result.blocking)
+        resume_step: str | None = None
+        for v in non_repairable:
+            src = _violation_source_gate(v, result, gates)
+            if src is None:
+                continue
+            try:
+                from issuesmith.gates import resolve_gate
+
+                if resolve_gate(src).input_kind == "issue":
+                    resume_step = _design_step_id()
+                    break
+            except Exception:
+                continue
+        options = _build_andon_options(result.blocking, resume_step=resume_step)
         summary = (
             f"non-repairable gate violation in step {step_id}: "
             + "; ".join(v.message for v in non_repairable)
