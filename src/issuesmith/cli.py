@@ -299,7 +299,7 @@ _LABELS_USAGE = (
 
 def _andon_parser() -> _Parser:
     parser = _Parser(command="andon")
-    sub = parser.add_subparsers(dest="sub", required=True)
+    sub = parser.add_subparsers(dest="subcmd", required=True)
     p_list = sub.add_parser("list")
     p_list.add_argument("--all", action="store_true")
     p_list.add_argument("--json", action="store_true")
@@ -358,7 +358,7 @@ def _cmd_andon(argv: list[str]) -> int:
 
     client = get_forge()
 
-    if args.sub == "list":
+    if args.subcmd == "list":
         if args.json:
             records = list_open_records(client)
             if not args.all:
@@ -376,7 +376,7 @@ def _cmd_andon(argv: list[str]) -> int:
             print(f"{a.id}\t{a.kind}\tissue #{a.issue}\t{a.summary}")
         return 0
 
-    if args.sub == "show":
+    if args.subcmd == "show":
         andons = list_open(client)
         matched = [a for a in andons if a.id == args.andon_id]
         if not matched:
@@ -384,7 +384,7 @@ def _cmd_andon(argv: list[str]) -> int:
         print(to_comment(matched[0]))
         return 0
 
-    if args.sub == "auto-answer":
+    if args.subcmd == "auto-answer":
         from issuesmith.config import get_config
 
         rules = get_config().andon.auto_answer
@@ -403,7 +403,7 @@ def _cmd_andon(argv: list[str]) -> int:
             print(f"escalation {entry.get('kind')} issue #{entry.get('issue', '-')}")
         return 0
 
-    if args.sub == "answer":
+    if args.subcmd == "answer":
         try:
             answer(client, args.andon_id, args.action, answered_by=args.by)
         except ValueError as exc:
@@ -411,7 +411,7 @@ def _cmd_andon(argv: list[str]) -> int:
         print(f"answered {args.andon_id} with: {args.action}")
         return 0
 
-    if args.sub == "note":
+    if args.subcmd == "note":
         try:
             note(client, args.andon_id, args.key, args.value)
         except KeyError:
@@ -421,12 +421,12 @@ def _cmd_andon(argv: list[str]) -> int:
         print(f"noted {args.andon_id}: {args.key}={args.value}")
         return 0
 
-    return _fail("UNKNOWN_COMMAND", f"unknown andon subcommand: {args.sub}")
+    return _fail("UNKNOWN_COMMAND", f"unknown andon subcommand: {args.subcmd}")
 
 
 def _labels_parser() -> _Parser:
     parser = _Parser(command="labels")
-    sub = parser.add_subparsers(dest="sub", required=True)
+    sub = parser.add_subparsers(dest="subcmd", required=True)
     p = sub.add_parser("reconcile")
     p.add_argument("--fix", action="store_true")
     p.add_argument("--json", action="store_true")
@@ -444,14 +444,14 @@ def _cmd_labels(argv: list[str]) -> int:
     if isinstance(parsed, int):
         return parsed
     args = parsed
-    if args.sub == "reconcile":
+    if args.subcmd == "reconcile":
         from ghdag.forge import get_forge
 
         from issuesmith.ops.labels import reconcile
 
         reconcile(get_forge(), fix=args.fix, as_json=args.json)
         return 0
-    return _fail("UNKNOWN_COMMAND", f"unknown labels subcommand: {args.sub}")
+    return _fail("UNKNOWN_COMMAND", f"unknown labels subcommand: {args.subcmd}")
 
 
 def _doctor_parser() -> _Parser:
@@ -604,7 +604,7 @@ def _json_default(o: object) -> object:
 
 def _config_parser() -> _Parser:
     parser = _Parser(command="config")
-    sub = parser.add_subparsers(dest="sub", required=True)
+    sub = parser.add_subparsers(dest="subcmd", required=True)
     sub.add_parser("show")
     return parser
 
@@ -623,8 +623,8 @@ def _cmd_config(argv: list[str]) -> int:
     if isinstance(parsed, int):
         return parsed
     args = parsed
-    if args.sub != "show":
-        return _fail("UNKNOWN_COMMAND", f"unknown config subcommand: {args.sub}")
+    if args.subcmd != "show":
+        return _fail("UNKNOWN_COMMAND", f"unknown config subcommand: {args.subcmd}")
     cfg = get_config()
     print(json.dumps(asdict(cfg), default=_json_default, indent=2))
     try:
@@ -728,7 +728,7 @@ def _lanes_role_engine_map(cfg: Any) -> dict[str, str]:
 
 def _lanes_parser() -> _Parser:
     parser = _Parser(command="lanes")
-    sub = parser.add_subparsers(dest="sub", required=True)
+    sub = parser.add_subparsers(dest="subcmd", required=True)
     p_check = sub.add_parser("check")
     p_check.add_argument("--apply", action="store_true")
     p_check.add_argument("--json", action="store_true")
@@ -853,7 +853,7 @@ def _cmd_lanes(argv: list[str]) -> int:
         role_engine_map=_lanes_role_engine_map(cfg),
     )
 
-    if args.sub == "check":
+    if args.subcmd == "check":
         if apply_enqueue and not api_low:
             apply(lane_plan, QueueStore())
         if as_json:
@@ -875,7 +875,7 @@ def _cmd_lanes(argv: list[str]) -> int:
             print(f"escalation {entry['kind']}")
         return 0
 
-    if args.sub == "report":
+    if args.subcmd == "report":
         auto_plan = plan_auto_answers(client, cfg.andon.auto_answer)
         since = resolve_report_since(ledger.report_since, now, cfg.timezone)
         merged = count_merge_done_since(client, since, cfg) if since.strip() else None
@@ -893,7 +893,7 @@ def _cmd_lanes(argv: list[str]) -> int:
         print(summary)
         return 0
 
-    return _fail("UNKNOWN_COMMAND", f"unknown lanes subcommand: {args.sub}")
+    return _fail("UNKNOWN_COMMAND", f"unknown lanes subcommand: {args.subcmd}")
 
 
 _HANDLERS = {
