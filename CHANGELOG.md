@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.188.2 - 2026-11-15
+
 ### Changed
 
 - `ENGINE_ERROR` from the LLM route now pauses the engine for 10 minutes and returns `WAIT_QUOTA` via `RetrySignal(ENGINE_TRANSIENT)` instead of failing the step immediately. Refs sumipan/nexus#6604.
