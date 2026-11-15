@@ -461,10 +461,9 @@ def test_dispatch_recovers_before_orphan_gate(tmp_path, monkeypatch):
                     "engine_state": ".pipeline-state/issuesmith-engine.yml",
                 },
                 "engines": {
-                    "design": {"allowed": ["claude"], "default_model": {"claude": "x"}},
+                    "design": {"heavy": [["claude", "x"]]},
                     "implementation": {
-                        "allowed": ["claude", "cursor"],
-                        "default_model": {"claude": "x", "cursor": "auto"},
+                        "heavy": [["claude", "x"], ["cursor", "auto"]],
                     },
                 },
                 "concurrency": {

@@ -69,21 +69,20 @@ def test_builtin_defaults_match_legacy_constants(tmp_path, monkeypatch):
     assert ZoneInfo(cfg.timezone) == ZoneInfo("Asia/Tokyo")
 
     assert set(cfg.engines) == {"design", "implementation"}
-    assert cfg.engines["design"].allowed == ("claude", "codex")
-    assert cfg.engines["design"].default_model == {
-        "claude": "claude-opus-4-6",
-        "codex": "gpt-5.6-sol",
-    }
-    assert cfg.engines["design"].light_model == {
-        "claude": "claude-sonnet-4-6",
-        "codex": "gpt-5.5",
-    }
+    assert cfg.engines["design"].heavy == (
+        ("claude", "claude-opus-4-6"),
+        ("codex", "gpt-5.6-sol"),
+    )
+    assert cfg.engines["design"].light == (
+        ("claude", "claude-sonnet-4-6"),
+        ("codex", "gpt-5.5"),
+    )
     assert cfg.engines["design"].timeout_sec == 1800
-    assert cfg.engines["implementation"].allowed == ("claude", "cursor")
-    assert cfg.engines["implementation"].default_model == {
-        "claude": "claude-sonnet-4-6",
-        "cursor": "auto",
-    }
+    assert cfg.engines["implementation"].heavy == (
+        ("claude", "claude-sonnet-4-6"),
+        ("cursor", "auto"),
+    )
+    assert cfg.engines["implementation"].light is None
     assert cfg.engines["implementation"].timeout_sec == 3600
     assert cfg.forbidden_pr_paths == (
         "jobs/**",
@@ -95,12 +94,58 @@ def test_builtin_defaults_match_legacy_constants(tmp_path, monkeypatch):
     )
 
 
-def test_engines_allowed_duplicate_raises():
-    """Refs sumipan/nexus#6681 — duplicate engines in allowed raise ConfigError."""
+def test_engines_heavy_duplicate_raises():
+    """Refs sumipan/nexus#6682 — duplicate engines in heavy raise ConfigError."""
     from issuesmith.config import _build_engines
 
     with pytest.raises(ConfigError, match="duplicate engine"):
-        _build_engines({"design": {"allowed": ["claude", "claude"]}})
+        _build_engines(
+            {"design": {"heavy": [["claude", "a"], ["claude", "b"]], "timeout_sec": 60}}
+        )
+
+
+def test_legacy_engine_keys_rejected():
+    """Refs sumipan/nexus#6682 AC4 — legacy engine keys raise ConfigError mentioning heavy."""
+    from issuesmith.config import _build_engines
+
+    with pytest.raises(ConfigError, match="heavy"):
+        _build_engines({"design": {"allowed": ["claude"]}})
+    with pytest.raises(ConfigError, match="heavy"):
+        _build_engines(
+            {
+                "design": {
+                    "default_model": {"claude": "m"},
+                    "heavy": [["claude", "m"]],
+                    "timeout_sec": 1,
+                }
+            }
+        )
+    with pytest.raises(ConfigError, match="heavy"):
+        _build_engines(
+            {
+                "design": {
+                    "light_model": {"claude": "m"},
+                    "heavy": [["claude", "m"]],
+                    "timeout_sec": 1,
+                }
+            }
+        )
+
+
+def test_light_engine_not_in_heavy_rejected():
+    """Refs sumipan/nexus#6682 AC6 — light engines must appear in heavy."""
+    from issuesmith.config import _build_engines
+
+    with pytest.raises(ConfigError, match="light"):
+        _build_engines(
+            {
+                "design": {
+                    "heavy": [["claude", "a"]],
+                    "light": [["cursor", "b"]],
+                    "timeout_sec": 1,
+                }
+            }
+        )
 
 
 def test_missing_repo_raises(tmp_path, monkeypatch):
@@ -144,13 +189,11 @@ def test_issuesmith_config_env_overrides_and_resolves_relative(tmp_path, monkeyp
         },
         "engines": {
             "design": {
-                "allowed": ["claude"],
-                "default_model": {"claude": "claude-sonnet-4-6"},
+                "heavy": [["claude", "claude-sonnet-4-6"]],
                 "timeout_sec": 100,
             },
             "implementation": {
-                "allowed": ["cursor"],
-                "default_model": {"cursor": "auto"},
+                "heavy": [["cursor", "auto"]],
                 "timeout_sec": 200,
             },
         },

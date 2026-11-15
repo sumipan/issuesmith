@@ -22,6 +22,13 @@ def _state(light_model: str | None = None) -> dict[str, dict[str, str]]:
     }
 
 
+def _patch_design_codex_light(monkeypatch, model: str) -> None:
+    light = engine.LIGHT_ROUTES["design"]
+    assert light is not None
+    patched = tuple((eng, model if eng == "codex" else existing) for eng, existing in light)
+    monkeypatch.setitem(engine.LIGHT_ROUTES, "design", patched)
+
+
 @pytest.fixture
 def codex_allowlist(monkeypatch):
     """codex values from nexus configs/llm-models.yml (2026-09-09)."""
@@ -53,7 +60,7 @@ def test_light_default_falls_back_when_config_default_not_allowed(
     monkeypatch, codex_allowlist
 ):
     monkeypatch.setattr(engine, "load_state", lambda: _state())
-    monkeypatch.setitem(engine.DEFAULT_LIGHT_MODELS, ("design", "codex"), "gpt-5.4-mini")
+    _patch_design_codex_light(monkeypatch, "gpt-5.4-mini")
     assert engine.resolve("design", tier="light").model == "gpt-5.6-sol"
 
 
@@ -70,16 +77,19 @@ def test_heavy_tier_ignores_light_model(monkeypatch, codex_allowlist):
 
 
 def test_builtin_codex_light_default_is_in_current_allowlist(codex_allowlist):
-    assert engine.DEFAULT_LIGHT_MODELS[("design", "codex")] in codex_allowlist
+    light = engine.LIGHT_ROUTES["design"]
+    assert light is not None
+    codex_model = next(model for eng, model in light if eng == "codex")
+    assert codex_model in codex_allowlist
 
 
 def test_light_model_errors_reports_config_default_source(monkeypatch, codex_allowlist):
-    monkeypatch.setitem(engine.DEFAULT_LIGHT_MODELS, ("design", "codex"), "gpt-5.4-mini")
+    _patch_design_codex_light(monkeypatch, "gpt-5.4-mini")
     errors = engine.light_model_errors(_state())
     assert len(errors) == 1
     assert "config default" in errors[0]
     assert "gpt-5.4-mini" in errors[0]
-    assert "engines.design.light_model.codex" in errors[0]
+    assert "engines.design.light (codex)" in errors[0]
 
 
 def test_light_model_errors_reports_state_source(codex_allowlist):
