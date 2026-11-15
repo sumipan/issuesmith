@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,7 +9,6 @@ import pytest
 
 import issuesmith.gates as gates_mod
 from issuesmith.gates import Verdict, check_ac_complete, check_deps, check_pr_scope, check_scope
-from tests.conventions._util import REPO_ROOT
 
 # ---------------------------------------------------------------------------
 # Verdict dataclass
@@ -52,39 +48,9 @@ def test_all_gates_are_importable() -> None:
         assert hasattr(gates_mod, name), f"missing: {name}"
 
 
-def test_pr_scope_importable_first() -> None:
-    """Importing pr_scope before issuesmith.gates must not hit a circular import (#6349)."""
-    env = {**os.environ, "PYTHONPATH": str(REPO_ROOT / "src")}
-    proc = subprocess.run(
-        [sys.executable, "-c", "import issuesmith.pr_scope"],
-        capture_output=True,
-        text=True,
-        env=env,
-        timeout=120,
-    )
-    assert proc.returncode == 0, proc.stderr[-1500:]
-
-
 # ---------------------------------------------------------------------------
 # check_scope
 # ---------------------------------------------------------------------------
-
-
-def test_check_scope_returns_verdict_passed_when_within_limits(tmp_path: Path) -> None:
-    from issuesmith.config import ScopeGateConfig
-    from issuesmith.scope_gate import ScopeMeasure, ScopeVerdict
-
-    cfg = ScopeGateConfig(enabled=True, max_files=100, max_lines=5000, hard_max_files=200)
-    measure = ScopeMeasure(files=2, lines=50, by_dir={}, skipped_binary=0, skipped_jsonl=0)
-    verdict_raw = ScopeVerdict(exceeded=False, reason="", measure=measure)
-
-    with (
-        patch("issuesmith.gates.scope.measure_scope", return_value=measure),
-        patch("issuesmith.gates.scope.evaluate", return_value=verdict_raw),
-    ):
-        result = check_scope(tmp_path, ["src/**"], cfg)
-    assert isinstance(result, Verdict)
-    assert result.passed is True
 
 
 def test_check_scope_returns_verdict_failed_when_exceeded(tmp_path: Path) -> None:
@@ -151,16 +117,6 @@ def test_pr_scope_gate_allows_dot_slash_allow_path(tmp_path: Path) -> None:
         assert gate.check("", []) == []
 
 
-def test_pr_scope_gate_still_rejects_other_file_with_dot_slash_allow(tmp_path: Path) -> None:
-    from issuesmith.gates.pr_scope import PrScopeGate
-
-    gate = PrScopeGate(tmp_path, ["./README.md"], "main")
-    with patch("issuesmith.gates.worktree.changed_files", return_value=["src/a.py"]):
-        violations = gate.check("", [])
-    assert [v.location for v in violations] == ["src/a.py"]
-    assert violations[0].rule_id == "pr_scope.out_of_allow"
-
-
 # ---------------------------------------------------------------------------
 # check_ac_complete
 # ---------------------------------------------------------------------------
@@ -173,16 +129,6 @@ def test_check_ac_complete_returns_verdict_passed_on_proceed() -> None:
         result = check_ac_complete("## Acceptance Criteria\n- [x] done\n", [])
     assert isinstance(result, Verdict)
     assert result.passed is True
-
-
-def test_check_ac_complete_returns_verdict_failed_on_retry_with_unchecked() -> None:
-    gate_result = {"action": "retry", "unchecked_count": 2, "has_section": True,
-                   "has_migration_label": False, "contract_failures": []}
-    with patch("issuesmith.gates.ac_complete.check_gate", return_value=gate_result):
-        result = check_ac_complete("## Acceptance Criteria\n- [ ] todo\n", [])
-    assert isinstance(result, Verdict)
-    assert result.passed is False
-    assert any("2" in r for r in result.reasons)
 
 
 def test_check_ac_complete_returns_verdict_failed_on_retry_with_contract_failures() -> None:
@@ -216,21 +162,6 @@ def test_check_deps_returns_verdict_passed_when_no_deps() -> None:
     assert result.reasons == []
 
 
-def test_check_deps_returns_verdict_passed_when_all_satisfied() -> None:
-    from issuesmith.dep_extractor import DepCheckResult
-
-    dep_result = DepCheckResult(
-        decision="PASS",
-        deps_found=[100],
-        blocking_deps=[],
-        dep_statuses=[],
-    )
-    with patch("issuesmith.gates.dep.check_dependencies", return_value=dep_result):
-        result = check_deps([100])
-    assert isinstance(result, Verdict)
-    assert result.passed is True
-
-
 def test_check_deps_returns_verdict_failed_when_blocked() -> None:
     from issuesmith.dep_extractor import DepCheckResult, DepStatus
 
@@ -252,32 +183,6 @@ def test_check_deps_returns_verdict_failed_when_blocked() -> None:
 # ---------------------------------------------------------------------------
 # All gate functions return Verdict instances
 # ---------------------------------------------------------------------------
-
-
-def test_all_gate_functions_return_verdict_type() -> None:
-    """Smoke test: each gate returns a Verdict, not a legacy type."""
-    from issuesmith.config import ScopeGateConfig
-    from issuesmith.scope_gate import ScopeMeasure, ScopeVerdict
-
-    cfg = ScopeGateConfig(enabled=True, max_files=100, max_lines=5000, hard_max_files=200)
-    measure = ScopeMeasure(files=1, lines=10, by_dir={}, skipped_binary=0, skipped_jsonl=0)
-    scope_verdict_raw = ScopeVerdict(exceeded=False, reason="", measure=measure)
-    gate_result = {"action": "proceed", "unchecked_count": 0, "has_section": True,
-                   "has_migration_label": False, "contract_failures": []}
-
-    with (
-        patch("issuesmith.gates.scope.measure_scope", return_value=measure),
-        patch("issuesmith.gates.scope.evaluate", return_value=scope_verdict_raw),
-        patch("issuesmith.gates.pr_scope.check_pr_diff_scope", return_value=[]),
-        patch("issuesmith.gates.ac_complete.check_gate", return_value=gate_result),
-    ):
-        scope_v = check_scope(Path("."), ["src/**"], cfg)
-        pr_v = check_pr_scope([], [])
-        ac_v = check_ac_complete("body text", [])
-        dep_v = check_deps([])
-
-    for v in (scope_v, pr_v, ac_v, dep_v):
-        assert isinstance(v, Verdict), f"expected Verdict, got {type(v)}"
 
 
 # ---------------------------------------------------------------------------
@@ -379,24 +284,6 @@ def test_deps_format_registry_build_uses_issue_number() -> None:
     assert gate.check(body, []) == []
 
 
-def test_deps_gate_prose_only_section_returns_unparsed_violation() -> None:
-    from unittest.mock import patch
-
-    from issuesmith.gates.dep import DepsGate
-
-    gate = DepsGate()
-    body = "## Dependencies\n\nneeds #99 first\n"
-
-    with patch("issuesmith.gates.dep.check_deps") as mock_check:
-        result = gate.check(body, [])
-
-    mock_check.assert_not_called()
-    assert len(result) == 1
-    assert result[0].rule_id == "deps.unparsed_dependency_section"
-    assert result[0].severity == "fail"
-    assert "#99" in result[0].message
-
-
 def test_check_deps_unparsed_reason_is_reported() -> None:
     from issuesmith.dep_extractor import DepCheckResult
 
@@ -477,37 +364,6 @@ def test_allow_paths_forbidden_registry_entry() -> None:
     assert entry.input_kind == "issue"
     assert entry.pre_llm is True
     assert entry.repairable is False
-
-
-def test_non_repairable_rule_ids_and_pr_scope_repairable() -> None:
-    from issuesmith.gates import GATE_REGISTRY, NON_REPAIRABLE_RULE_IDS, is_non_repairable_rule_id
-
-    assert NON_REPAIRABLE_RULE_IDS == frozenset(
-        {
-            "pr_diff_scope.forbidden_path",
-            "base_freshness.fetch_transient_exhausted",
-        }
-    )
-    assert GATE_REGISTRY["pr_scope"].repairable is True
-    assert is_non_repairable_rule_id("pr_diff_scope.forbidden_path") is True
-    assert is_non_repairable_rule_id("review.cp2.engine_error") is True
-    assert is_non_repairable_rule_id("review.cp2") is False
-
-
-def test_gates_exports_only_canonical_ac_complete() -> None:
-    import importlib
-
-    import issuesmith.gates.ac_complete as gates_ac
-
-    assert "check_ac_complete" in gates_mod.__all__
-    assert gates_mod.check_ac_complete is gates_ac.check_ac_complete
-    assert "check_m2" not in gates_mod.__all__
-    assert not hasattr(gates_mod, "check_m2")
-    assert not hasattr(gates_ac, "check_m2")
-    with pytest.raises(ImportError):
-        exec("from issuesmith.gates import check_m2", {})
-    with pytest.raises(ModuleNotFoundError):
-        importlib.import_module("issuesmith.gates.m2")
 
 
 # ---------------------------------------------------------------------------

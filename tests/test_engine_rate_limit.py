@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import dataclasses
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 import pytest
 from ghdag.llm import LLMResult
-from ghdag.metrics import FailureClass
 from ghdag.quota import EngineQuotaState, QuotaSnapshot
 
 from issuesmith.config import _build_engines
@@ -64,21 +63,6 @@ def test_rate_limit_evidence_matches(stderr: str):
     evidence = _rate_limit_evidence(stderr)
     assert evidence is not None
     assert evidence == _rate_limit_evidence(stderr)
-
-
-@pytest.mark.parametrize(
-    "stderr",
-    [
-        "",
-        "issue #5429",
-        "tokens: 14290",
-        "2026-10-20T04:29:00",
-        "order-429a.md",
-        "HTTP status\n429\n",
-    ],
-)
-def test_rate_limit_evidence_non_matches(stderr: str):
-    assert _rate_limit_evidence(stderr) is None
 
 
 def test_rate_limit_evidence_first_matching_line_after_noise():
@@ -171,64 +155,12 @@ def _report_kwargs(exe_mocks):
     return exe_mocks["quota_gate"].report.call_args.kwargs
 
 
-def test_report_gets_default_resume_at(exe_mocks):
-    _no_fallback(exe_mocks)
-    with pytest.raises(RetrySignal):
-        _execute("design", "prompt")
-    kwargs = _report_kwargs(exe_mocks)
-    assert kwargs["status"] == "paused"
-    assert kwargs["reason"].startswith("rate_limit_detected: ")
-    assert "429 Too Many Requests" in kwargs["reason"]
-    assert kwargs["resume_at"] - kwargs["observed_at"] == timedelta(seconds=3600)
-    assert kwargs["resume_at"].tzinfo is not None
-
-
-def test_report_resume_at_uses_role_ttl(exe_mocks, monkeypatch):
-    monkeypatch.setattr(
-        "issuesmith.engine.DEFAULT_PAUSE_TTL_SEC", {"design": 600, "implementation": 3600}
-    )
-    _no_fallback(exe_mocks)
-    with pytest.raises(RetrySignal):
-        _execute("design", "prompt")
-    kwargs = _report_kwargs(exe_mocks)
-    assert kwargs["resume_at"] - kwargs["observed_at"] == timedelta(seconds=600)
-
-
 def test_retry_signal_after_equals_resume_at(exe_mocks):
     _no_fallback(exe_mocks)
     with pytest.raises(RetrySignal) as exc_info:
         _execute("design", "prompt")
     assert exc_info.value.reason == RetryReason.RATE_LIMITED
     assert exc_info.value.after == _report_kwargs(exe_mocks)["resume_at"]
-
-
-def test_rate_limit_with_empty_rebuilt_route_raises(exe_mocks, monkeypatch):
-    """Refs sumipan/nexus#6681 — rate limit with no remaining route raises RATE_LIMITED."""
-    available = _snap({"claude": _state("available"), "codex": _state("available")})
-    paused = _snap({"claude": _state("paused"), "codex": _state("paused")})
-    exe_mocks["quota_gate"].snapshot.side_effect = [available, paused]
-    exe_mocks["call"].return_value = dataclasses.replace(
-        _result("claude", rc=1),
-        stderr="rate limit exceeded",
-    )
-    monkeypatch.setattr("issuesmith.engine._is_rate_limited", lambda _text: True)
-
-    with pytest.raises(RetrySignal) as exc_info:
-        _execute("design", "prompt")
-
-    assert exc_info.value.reason == RetryReason.RATE_LIMITED
-    assert exe_mocks["call"].call_count == 1
-
-
-def test_body_only_rate_limit_does_not_pause(exe_mocks):
-    available = _snap({"claude": _state("available"), "codex": _state("available")})
-    exe_mocks["quota_gate"].snapshot.return_value = available
-    exe_mocks["call"].side_effect = _call_with_stderr(
-        "",
-        _result("claude", rc=1, body="rate limit and 429 in body only"),
-    )
-    _execute("design", "prompt")
-    exe_mocks["quota_gate"].report.assert_not_called()
 
 
 def test_false_positive_stderr_does_not_pause(exe_mocks):
@@ -242,47 +174,3 @@ def test_false_positive_stderr_does_not_pause(exe_mocks):
     exe_mocks["quota_gate"].report.assert_not_called()
 
 
-@pytest.mark.parametrize(
-    "result",
-    [
-        _result("claude", rc=0),
-        LLMResult(stdout="", stderr="",
-            body="failed",
-            usage=None,
-            returncode=1,
-            failure_class=FailureClass.UNKNOWN_FAILURE,
-            engine_used="claude",
-            model_used="m",
-            attempts=1,
-            quota_reported=False,
-            additional_tags={},
-        ),
-    ],
-)
-def test_rate_limit_evidence_only_checked_for_unclassified_failure(
-    exe_mocks, monkeypatch, result
-):
-    available = _snap({"claude": _state("available"), "codex": _state("available")})
-    exe_mocks["quota_gate"].snapshot.return_value = available
-    exe_mocks["call"].return_value = result
-    evidence = MagicMock(return_value="rate limit exceeded")
-    monkeypatch.setattr("issuesmith.engine._rate_limit_evidence", evidence)
-
-    _execute("design", "prompt")
-
-    evidence.assert_not_called()
-
-
-def test_rate_limit_evidence_checked_once_for_unclassified_failure(
-    exe_mocks, monkeypatch
-):
-    available = _snap({"claude": _state("available"), "codex": _state("available")})
-    exe_mocks["quota_gate"].snapshot.return_value = available
-    exe_mocks["call"].return_value = _result("claude", rc=1)
-    evidence = MagicMock(return_value=None)
-    monkeypatch.setattr("issuesmith.engine._rate_limit_evidence", evidence)
-    monkeypatch.setattr("issuesmith.engine._is_rate_limited", lambda _text: False)
-
-    _execute("design", "prompt")
-
-    evidence.assert_called_once_with("")

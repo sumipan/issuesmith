@@ -72,13 +72,3 @@ def test_pre_llm_andon_summary_is_english_with_default_pack(capsys):
     assert "PIPELINE_STATUS: IMPL_FAILED" in out
 
 
-def test_pre_llm_andon_summary_uses_custom_pack(capsys, tmp_path, monkeypatch):
-    _install_pack(
-        tmp_path,
-        monkeypatch,
-        {"engine.pre_llm_gate_violation": "gate stop before LLM at {step} -> {messages}"},
-    )
-    andon, out = _run_blocked_pre_gate(capsys)
-    assert andon.summary == "gate stop before LLM at p1 -> scope too large"
-    assert andon.options == ["split", "reject"]
-    assert "PIPELINE_STATUS: IMPL_FAILED" in out

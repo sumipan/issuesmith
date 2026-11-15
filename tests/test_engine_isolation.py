@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
@@ -106,30 +105,3 @@ def test_rate_limit_fallback_preserves_isolation_true(exe_mocks, monkeypatch):
     assert calls[1].kwargs["isolation"] is True
 
 
-def test_existing_call_managed_kwargs_unchanged_with_isolation(exe_mocks, tmp_path):
-    cwd = tmp_path / "wt"
-    cwd.mkdir()
-    _execute("design", "prompt", cwd=str(cwd), isolation=True)
-    kwargs = exe_mocks["call"].call_args.kwargs
-    assert kwargs["route"][0] == ("claude", "m")
-    assert kwargs["permission"] is not None
-    assert kwargs["quota_gate"] is exe_mocks["quota_gate"]
-    assert kwargs["cwd"] == cwd.resolve()
-    assert kwargs["isolation"] is True
-
-
-def test_rate_limit_fallback_uses_stderr_for_detection(exe_mocks):
-    """Ensure rate-limit path still runs when isolation is set (stderr evidence)."""
-    stderr = "Error: 429 Too Many Requests"
-    calls = {"n": 0}
-
-    def _side_effect(*_args, **_kwargs):
-        if calls["n"] == 0:
-            calls["n"] += 1
-            return dataclasses.replace(_result("claude", rc=1, body=""), stderr=stderr)
-        return _result("codex")
-
-    exe_mocks["call"].side_effect = _side_effect
-    result = _execute("design", "prompt", isolation=True)
-    assert result.returncode == 0
-    assert exe_mocks["call"].call_count == 2

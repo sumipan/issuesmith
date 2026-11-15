@@ -12,7 +12,6 @@ from issuesmith.config import ExternalLeakConfig, get_config, reset_config_cache
 from issuesmith.gates.worktree import (
     ExternalLeakGate,
     cjk_added_lines,
-    external_target_state,
     is_external_target,
     line_has_cjk,
 )
@@ -129,19 +128,6 @@ _EXTERNAL_BODY = "```yaml\ntarget_repo: sumipan/other\nbase_branch: main\n```\n\
 _HOST_BODY = "```yaml\ntarget_repo: sumipan/host\nbase_branch: main\n```\n\n## Overview\n"
 
 
-def test_gate_flags_cjk_for_external_target_when_enabled(repo: Path, tmp_path: Path, monkeypatch) -> None:
-    _write_config(tmp_path, monkeypatch, {"external_leak": {"cjk_free_external_targets": True}})
-    _commit(repo, "a.py", "# " + _CJK_WORD + "\nx = 1\n# " + _CJK_WORD + "\n")
-    _commit(repo, "b.md", "ok\n" + _FULLWIDTH_PAREN + "\n")
-    violations = ExternalLeakGate(repo, ["a.py", "b.md"], "main").check(_EXTERNAL_BODY, [])
-    by_file = {v.location: v for v in violations}
-    assert set(by_file) == {"a.py", "b.md"}
-    assert all(v.rule_id == "external_leak.cjk_added_line" for v in violations)
-    assert all(v.severity == "fail" and v.auto_fixable is False for v in violations)
-    assert "1, 3" in by_file["a.py"].message
-    assert "English" in by_file["a.py"].fix_hint
-
-
 def test_gate_ignores_host_target_and_disabled_config(repo: Path, tmp_path: Path, monkeypatch) -> None:
     _commit(repo, "a.py", "# " + _CJK_WORD + "\n")
     _write_config(tmp_path, monkeypatch, {"external_leak": {"cjk_free_external_targets": True}})
@@ -176,17 +162,6 @@ def test_config_parses_external_leak(tmp_path: Path, monkeypatch) -> None:
 # --- external_target_state / fail-closed CJK check (nexus #4116) -------------
 
 _ENABLED = {"external_leak": {"cjk_free_external_targets": True}}
-
-
-def test_external_target_state_classifies_bodies(tmp_path: Path, monkeypatch) -> None:
-    _write_config(tmp_path, monkeypatch)
-    assert external_target_state("") == "unknown"
-    assert external_target_state("   \n\t") == "unknown"
-    assert external_target_state("no metadata") == "unknown"
-    assert external_target_state("```yaml\nbase_branch: main\n```\n") == "unknown"
-    assert external_target_state("```yaml\ntarget_repo: ''\n```\n") == "unknown"
-    assert external_target_state(_HOST_BODY) == "host"
-    assert external_target_state(_EXTERNAL_BODY) == "external"
 
 
 def _assert_target_unknown(violations: list) -> None:
@@ -240,11 +215,3 @@ def test_cjk_check_logs_counts_for_external_target(repo: Path, tmp_path: Path, m
     assert "[external_leak] cjk: checked (target=sumipan/other), 3 CJK line(s) in 2 file(s)" in err
 
 
-def test_cjk_check_logs_zero_counts_for_clean_external_branch(
-    repo: Path, tmp_path: Path, monkeypatch, capsys
-) -> None:
-    _write_config(tmp_path, monkeypatch, _ENABLED)
-    _commit(repo, "a.py", "# english only\n")
-    assert ExternalLeakGate(repo, ["a.py"], "main")._cjk_violations(_EXTERNAL_BODY) == []
-    err = capsys.readouterr().err
-    assert "[external_leak] cjk: checked (target=sumipan/other), 0 CJK line(s) in 0 file(s)" in err

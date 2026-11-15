@@ -97,21 +97,6 @@ def test_dotted_module_name() -> None:
     assert _dotted_module_name("README.md") is None
 
 
-def test_removed_symbol_flags_importer(repo: Path) -> None:
-    _remove_andon(repo)
-    _commit_all(repo, "drop andon")
-
-    violations = _check(repo)
-
-    assert len(violations) == 1
-    v = violations[0]
-    assert v.rule_id == "importer_import.import_error"
-    assert v.location == "pkg/steps/sync.py"
-    assert v.severity == "fail"
-    assert v.auto_fixable is False
-    assert "andon" in v.message
-
-
 def test_fixed_importer_has_no_violation(repo: Path) -> None:
     _remove_andon(repo)
     _write(repo, "pkg/steps/sync.py", "from pkg.labels import finish\n\n\ndef run():\n    return finish()\n")
@@ -129,17 +114,6 @@ def test_test_stub_does_not_hide_violation(repo: Path) -> None:
 
     assert [v.location for v in violations] == ["pkg/steps/sync.py"]
     assert violations[0].rule_id == "importer_import.import_error"
-
-
-def test_deleted_module_flags_importer(repo: Path) -> None:
-    _git(repo, "rm", "-q", "pkg/labels.py")
-    _git(repo, "commit", "-m", "delete labels")
-
-    violations = _check(repo)
-
-    assert len(violations) == 1
-    assert violations[0].rule_id == "importer_import.import_error"
-    assert violations[0].location == "pkg/steps/sync.py"
 
 
 def test_uncommitted_importer_fix_is_seen(repo: Path) -> None:

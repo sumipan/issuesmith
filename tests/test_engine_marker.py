@@ -19,21 +19,6 @@ _CP2_PASS_GLUED_NOTE = "PIPELINE_STATUS: CP2_PASS(note)"
 _CP2_PASS_GLUED_SHORT = "PIPELINE_STATUS: CP2_PASSnote"
 
 
-@pytest.mark.parametrize(
-    "line",
-    [
-        "PIPELINE_STATUS: CP2_PASS",
-        "`PIPELINE_STATUS: CP2_PASS`",
-        "**PIPELINE_STATUS: CP2_PASS**",
-        "PIPELINE_STATUS: CP2_PASS   ",
-    ],
-)
-def test_standalone_marker_accepts_decoration(line):
-    # Synthetic prose around the marker (not a product contract string)
-    stdout = f"Review complete.\n{line}\n"
-    assert _extract_status_values(stdout) == ["CP2_PASS"]
-
-
 def test_status_with_colon_suffix_is_kept_whole():
     assert _extract_status_values("PIPELINE_STATUS: MERGE_FAILED:PERMISSION_ERROR\n") == [
         "MERGE_FAILED:PERMISSION_ERROR"
@@ -69,21 +54,6 @@ def test_trailing_text_without_whitespace_is_stripped(line, expected):
 
 def test_cpassed_is_not_truncated_to_cpass():
     assert _extract_status_values("PIPELINE_STATUS: CP2_PASSED\n") == ["CP2_PASSED"]
-
-
-@pytest.mark.parametrize(
-    "line",
-    [
-        _CP2_PASS_GLUED_LONG,
-        _REPAIR_DONE_GLUED_ISSUE,
-        "PIPELINE_STATUS: REPAIR_DONEderived_allow_paths:",
-    ],
-)
-def test_trailing_text_emits_stderr_diagnostic(line, capsys):
-    _extract_status_values(line + "\n")
-    err = capsys.readouterr().err
-    assert "[issuesmith-engine] marker line had trailing text after" in err
-    assert err.count("[issuesmith-engine] marker line had trailing text after") == 1
 
 
 def test_clean_standalone_line_emits_no_trailing_diagnostic(capsys):

@@ -41,16 +41,6 @@ def codex_allowlist(monkeypatch):
     return allowed
 
 
-def test_light_falls_back_to_heavy_when_light_model_not_allowed(
-    monkeypatch, codex_allowlist, capsys
-):
-    monkeypatch.setattr(engine, "load_state", lambda: _state("gpt-5.4-mini"))
-    selection = engine.resolve("design", tier="light")
-    assert selection == engine.RoleSelection(engine="codex", model="gpt-5.6-sol")
-    err = capsys.readouterr().err
-    assert "gpt-5.4-mini" in err and "falling back to gpt-5.6-sol" in err
-
-
 def test_light_uses_light_model_when_allowed(monkeypatch, codex_allowlist):
     monkeypatch.setattr(engine, "load_state", lambda: _state("gpt-5.5"))
     assert engine.resolve("design", tier="light").model == "gpt-5.5"

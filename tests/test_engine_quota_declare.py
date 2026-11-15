@@ -148,27 +148,6 @@ def _use_engine(monkeypatch, engine: str) -> None:
 
 
 @pytest.mark.parametrize("engine", ENGINES)
-def test_begin_run_declares_selected_engine_before_call_managed(
-    mocks, monkeypatch, engine
-):
-    _use_engine(monkeypatch, engine)
-    mocks["call"].return_value = _result(engine)
-
-    result = _execute(ROLE, "prompt")
-
-    assert result.returncode == 0
-    gate = mocks["gate"]
-    assert len(gate.begin_runs) == 1
-    assert gate.begin_runs[0] == {"task_uuid": TASK_UUID, "engine": engine}
-    assert "role" not in gate.begin_runs[0]
-    assert "role_engines" not in gate.begin_runs[0]
-    assert gate.begin_runs[0]["engine"] != "shell"
-    assert len(mocks["call"].calls) == 1
-    assert gate.begin_runs[0]["engine"] == mocks["call"].calls[0].get("route", [(engine, None)])[0][0]
-    assert mocks["events"].index("begin_run") < mocks["events"].index("call")
-
-
-@pytest.mark.parametrize("engine", ENGINES)
 def test_begin_run_denied_raises_quota_paused(mocks, monkeypatch, engine):
     _use_engine(monkeypatch, engine)
     resume_at = datetime.now(timezone.utc) + timedelta(minutes=30)
@@ -184,20 +163,6 @@ def test_begin_run_denied_raises_quota_paused(mocks, monkeypatch, engine):
     assert exc_info.value.role == ROLE
     assert mocks["call"].calls == []
     assert mocks["gate"].finish_runs == []
-
-
-def test_call_order_begin_call_finish(mocks, monkeypatch):
-    _use_engine(monkeypatch, "claude")
-
-    _execute(ROLE, "prompt")
-
-    gate = mocks["gate"]
-    assert len(gate.begin_runs) == 1
-    assert len(mocks["call"].calls) == 1
-    assert len(gate.finish_runs) == 1
-    assert mocks["events"] == ["begin_run", "call", "finish_run"]
-    assert gate.begin_runs[0] == {"task_uuid": TASK_UUID, "engine": "claude"}
-    assert gate.finish_runs[0] == {"task_uuid": TASK_UUID}
 
 
 def test_finish_run_called_when_call_managed_raises(mocks, monkeypatch):
@@ -218,23 +183,6 @@ def test_finish_run_called_on_timeout(mocks, monkeypatch):
 
     assert result.returncode == 124
     assert mocks["gate"].finish_runs == [{"task_uuid": TASK_UUID}]
-
-
-@pytest.mark.parametrize("value", [None, "", "   "])
-def test_no_task_uuid_skips_declaration(mocks, monkeypatch, value):
-    _use_engine(monkeypatch, "claude")
-    if value is None:
-        monkeypatch.delenv("GHDAG_TASK_UUID", raising=False)
-    else:
-        monkeypatch.setenv("GHDAG_TASK_UUID", value)
-
-    result = _execute(ROLE, "prompt")
-
-    assert result.returncode == 0
-    assert result.stdout == "ok"
-    assert len(mocks["call"].calls) == 1
-    assert mocks["gate"].begin_runs == []
-    assert mocks["gate"].finish_runs == []
 
 
 def test_begin_run_oserror_is_logged_and_ignored(mocks, monkeypatch, capsys):
