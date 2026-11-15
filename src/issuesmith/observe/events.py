@@ -95,15 +95,6 @@ class DagTerminatedEvent(ObserveEvent):
 
 
 @dataclass(frozen=True)
-class DagDeferredEvent(ObserveEvent):
-    kind: str = "dag_deferred"
-    issue: int = 0
-    key: str = ""
-    step: str = ""
-    uuid: str = ""
-
-
-@dataclass(frozen=True)
 class GitHubApiLowEvent(ObserveEvent):
     kind: str = "github_api_low"
     remaining: int = 0

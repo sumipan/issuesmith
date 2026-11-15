@@ -17,7 +17,6 @@ from issuesmith.observe.dag_state import load_dag_states
 from issuesmith.observe.events import (
     AllEnginesPausedEvent,
     ChainHaltedEvent,
-    DagDeferredEvent,
     DagTerminatedEvent,
     GitHubApiLowEvent,
     GitHubApiRecoveredEvent,
@@ -147,7 +146,6 @@ def observe(
     if github_api_low:
         reduced: list[ObserveEvent] = []
         reduced.extend(_detect_dag_terminated_local(snapshot, config, dag_states))
-        reduced.extend(_detect_dag_deferred(dag_states))
         reduced.extend(_detect_orphan_exec(snapshot, config, dag_states))
         reduced.extend(_detect_main_health(snapshot, config))
         reduced.extend(transition_events)
@@ -157,14 +155,13 @@ def observe(
     events: list[ObserveEvent] = []
 
     events.extend(
-        _detect_stall(snapshot, config, now, obs.stall_minutes, dag_states=dag_states),
+        _detect_stall(snapshot, config, now, obs.stall_minutes),
     )
     events.extend(_detect_task_timeout(snapshot, now, obs.task_timeout_minutes))
     events.extend(_detect_orphan_exec(snapshot, config, dag_states))
     obs_snapshot = _prefetch(snapshot, client, obs.max_api_calls)
     events.extend(_detect_dag_terminated(snapshot, client, config, obs_snapshot, dag_states))
     events.extend(_detect_dag_terminated_workflows(client, config, obs_snapshot))
-    events.extend(_detect_dag_deferred(dag_states))
     events.extend(_detect_label_drift(snapshot, client, config, obs_snapshot))
     events.extend(_detect_chain_halted(snapshot))
     events.extend(_detect_systemic_failure(
@@ -226,10 +223,7 @@ def _detect_stall(
     config: "IssuesmithConfig",
     now: datetime,
     stall_minutes: int,
-    dag_states: dict | None = None,
 ) -> list[ObserveEvent]:
-    from issuesmith.observe.dag_state import DagState
-
     events: list[ObserveEvent] = []
     phase_by_issue = _active_phase_by_issue(snapshot)
 
@@ -239,10 +233,6 @@ def _detect_stall(
         issue = entry.get("issue")
         if not isinstance(issue, int):
             continue
-        if dag_states is not None:
-            state = dag_states.get(issue)
-            if isinstance(state, DagState) and state.status == "deferred":
-                continue
         dispatched_raw = entry.get("dispatched_at")
         if not dispatched_raw:
             continue
@@ -264,23 +254,6 @@ def _detect_stall(
                     phase = _role_to_phase(entry.get("role", ""), config)
             events.append(IssueStallEvent(issue=issue, phase=phase, minutes=elapsed_min))
 
-    return events
-
-
-def _detect_dag_deferred(dag_states: dict) -> list[ObserveEvent]:
-    from issuesmith.observe.dag_state import DagState
-
-    events: list[ObserveEvent] = []
-    for issue_num in sorted(dag_states):
-        state = dag_states.get(issue_num)
-        if not isinstance(state, DagState) or state.status != "deferred":
-            continue
-        events.append(DagDeferredEvent(
-            issue=issue_num,
-            key=state.key,
-            step=state.deferred_step,
-            uuid=state.deferred_uuid,
-        ))
     return events
 
 

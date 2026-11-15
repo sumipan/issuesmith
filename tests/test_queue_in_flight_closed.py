@@ -197,10 +197,10 @@ def test_release_closed_draft_done_when_no_dag_entry(tmp_path, monkeypatch):
     assert store.snapshot().in_flight == []
 
 
-@pytest.mark.parametrize("status", ["failed", "deferred"])
 def test_release_closed_with_stale_running_label_when_dag_terminal(
-    tmp_path, monkeypatch, status
+    tmp_path, monkeypatch,
 ):
+    status = "failed"
     from issuesmith import queue as qmod
 
     store = _store(tmp_path)

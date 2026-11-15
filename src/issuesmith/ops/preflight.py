@@ -65,7 +65,6 @@ REQUIRED_UPSTREAM_APIS: tuple[tuple[str, str, str | None], ...] = (
     ("ghdag.quota", "QuotaGate", "read_state"),
     ("ghdag.quota", "QuotaGate", "modify"),
     ("ghdag.forge", "GitHubClient", "graphql"),
-    ("ghdag.dag", "LEGACY_DONE_DEFERRED", None),
     ("ghdag.dag", "PIPELINE_WAIT_QUOTA", None),
     ("ghdag.dag", "WAIT_QUOTA_COMPANION_RE", None),
     ("ghdag.dag", "plan_recover", None),
