@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.189.0 - 2026-11-16
+
 ### Removed
 
 - **BREAKING:** `DagDeferredEvent`, `DagState.deferred_step` / `deferred_uuid`, and `DagStatus` value `"deferred"`. Done markers with body `DEFERRED` are no longer read as deferred; they follow `ghdag.io.done.interpret_done` like other unknown markers (typically `failed`). `REQUIRED_UPSTREAM_APIS` no longer requires `LEGACY_DONE_DEFERRED`.
