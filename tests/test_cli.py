@@ -131,10 +131,32 @@ def test_removed_commands_are_unknown(capsys) -> None:
     for cmd in ("context_hook", "context-hook", "redispatch", "apply", "ingest-review"):
         with pytest.raises(SystemExit) as exc_info:
             cli.main([cmd])
-        assert exc_info.value.code == 1
+        assert exc_info.value.code == 2
         err = capsys.readouterr().err
-        assert f"Unknown command: {cmd}" in err
-        assert "resume" in err
+        assert err.splitlines()[0].startswith("error[UNKNOWN_COMMAND]:")
+        assert "hint:" in err
+
+
+@pytest.mark.parametrize(
+    ("argv", "code"),
+    [
+        (["nosuch"], "UNKNOWN_COMMAND"),
+        (["andon", "list", "--bogus"], "UNKNOWN_ARGUMENT"),
+        (["config", "show", "--bogus"], "UNKNOWN_ARGUMENT"),
+        (["andon", "answer"], "MISSING_ARGUMENT"),
+    ],
+)
+def test_usage_errors_exit_2_with_code_and_hint(capsys, argv: list[str], code: str) -> None:
+    """#6779: usage errors use the shared CLI error contract."""
+    from issuesmith import cli
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(argv)
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    lines = [ln for ln in err.splitlines() if ln.strip()]
+    assert lines[0].startswith(f"error[{code}]:")
+    assert any(ln.startswith("hint:") for ln in lines)
 
 
 def test_queue_enqueue_after_argparse(tmp_path: Path) -> None:

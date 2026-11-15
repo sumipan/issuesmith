@@ -26,6 +26,7 @@ real Python environment** and confirm exit 0 before merging.
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import re
 import subprocess
@@ -310,30 +311,48 @@ def _check_requires_chain() -> tuple[bool, str]:
         return False, f"requires_chain: FAIL (error: {exc})"
 
 
-def main() -> int:
-    print("=== issuesmith preflight ===")
+_PREFLIGHT_CHECKS = (
+    _check_pyproject_no_direct_pin,
+    _check_installed_ghdag,
+    _check_upstream_apis,
+    _check_shell_adapter,
+    _check_agent_skill_manifests,
+    _check_requires_chain,
+    _check_advance_when,
+)
+
+
+def _check_item_name(fn: Callable[..., tuple[bool, str]]) -> str:
+    name = fn.__name__
+    if name.startswith("_check_"):
+        return name[len("_check_") :]
+    return name
+
+
+def main(*, as_json: bool = False) -> int:
+    rows: list[dict[str, object]] = []
     failures: list[str] = []
 
-    for fn in (
-        _check_pyproject_no_direct_pin,
-        _check_installed_ghdag,
-        _check_upstream_apis,
-        _check_shell_adapter,
-        _check_agent_skill_manifests,
-        _check_requires_chain,
-        _check_advance_when,
-    ):
+    for fn in _PREFLIGHT_CHECKS:
         ok, msg = fn()
-        print(("OK " if ok else "FAIL ") + msg)
+        rows.append({"name": _check_item_name(fn), "ok": ok, "detail": msg})
         if not ok:
             failures.append(msg)
 
-    print()
-    if failures:
-        print(f"=== PREFLIGHT FAILED ({len(failures)} item(s)) ===")
-        return 1
-    print("=== PREFLIGHT PASSED ===")
-    return 0
+    if as_json:
+        print(json.dumps(rows))
+    else:
+        print("=== issuesmith preflight ===")
+        for row in rows:
+            prefix = "OK " if row["ok"] else "FAIL "
+            print(prefix + str(row["detail"]))
+        print()
+        if failures:
+            print(f"=== PREFLIGHT FAILED ({len(failures)} item(s)) ===")
+        else:
+            print("=== PREFLIGHT PASSED ===")
+
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":

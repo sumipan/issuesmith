@@ -2,10 +2,22 @@
 
 from __future__ import annotations
 
+import json
 import re
 
-from issuesmith.milestone import main, milestone_resume, milestone_status
+import pytest
+
+from issuesmith.milestone import milestone_resume, milestone_status
 from issuesmith.queue_store import QueueStore
+
+
+def _cli_main(argv: list[str]) -> int:
+    from issuesmith import cli
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["milestone", *argv])
+    code = exc_info.value.code
+    return 0 if code is None else int(code)
 
 
 class FakeClient:
@@ -37,6 +49,19 @@ allow_paths:
                 "milestone": {"number": 1},
                 "labels": [{"name": "issuesmith:draft-done"}],
             },
+            102: {
+                "number": 102,
+                "state": "OPEN",
+                "title": "child two",
+                "body": """```yaml
+target_repo: sumipan/nexus
+base_branch: main
+allow_paths:
+  - src/**
+```""",
+                "milestone": {"number": 1},
+                "labels": [{"name": "issuesmith:draft-done"}],
+            },
         }
 
     def issue_get(self, number, fields=None):
@@ -47,12 +72,12 @@ allow_paths:
 
     def list_sub_issues(self, parent_number):
         if parent_number == 100:
-            return [self.issues[101]]
+            return [self.issues[101], self.issues[102]]
         return []
 
     def api_request(self, path, paginate=False):
         if path.startswith("issues?state=all&milestone="):
-            return [self.issues[101]]
+            return [self.issues[101], self.issues[102]]
         return []
 
 
@@ -170,7 +195,7 @@ def test_milestone_prune_dry_run(tmp_path, capsys, monkeypatch):
     store.update_milestone_chain(150, {"stage": "active"})
     before = store.state_path.read_bytes()
     monkeypatch.setattr("issuesmith.milestone.QueueStore", lambda: store)
-    code = main(["prune", "--dry-run"])
+    code = _cli_main(["prune", "--dry-run"])
     assert code == 0
     out = capsys.readouterr().out
     assert "would prune" in out
@@ -186,7 +211,7 @@ def test_milestone_prune_applies(tmp_path, capsys, monkeypatch):
     store.update_milestone_chain(100, {"stage": "children_validated", "closed_parent": True})
     store.update_milestone_chain(150, {"stage": "active"})
     monkeypatch.setattr("issuesmith.milestone.QueueStore", lambda: store)
-    code = main(["prune"])
+    code = _cli_main(["prune"])
     assert code == 0
     out = capsys.readouterr().out
     assert "pruned" in out
@@ -200,7 +225,7 @@ def test_milestone_prune_empty(tmp_path, capsys, monkeypatch):
     store.update_milestone_chain(150, {"stage": "active"})
     before = store.state_path.read_bytes()
     monkeypatch.setattr("issuesmith.milestone.QueueStore", lambda: store)
-    code = main(["prune"])
+    code = _cli_main(["prune"])
     assert code == 0
     out = capsys.readouterr().out
     assert "0" in out
@@ -212,7 +237,10 @@ def test_milestone_prune_unknown_option(tmp_path, capsys, monkeypatch):
     store.update_milestone_chain(100, {"stage": "children_validated", "closed_parent": True})
     before = store.state_path.read_bytes()
     monkeypatch.setattr("issuesmith.milestone.QueueStore", lambda: store)
-    code = main(["prune", "--unknown"])
+    with pytest.raises(SystemExit) as exc_info:
+        from issuesmith import cli
+        cli.main(["milestone", "prune", "--unknown"])
+    code = int(exc_info.value.code)
     assert code == 2
     assert store.state_path.read_bytes() == before
 
@@ -254,7 +282,7 @@ class ConsolidateClient:
 def test_milestone_consolidate_marks_rejects_and_closes(capsys, monkeypatch):
     client = ConsolidateClient()
     monkeypatch.setattr("issuesmith.milestone.get_forge", lambda: client)
-    assert main(["consolidate", "101", "--into", "102"]) == 0
+    assert _cli_main(["consolidate", "101", "--into", "102"]) == 0
     assert "milestone consolidate: #101 -> #102" in capsys.readouterr().out
     assert len(client.posted) == 1
     number, body = client.posted[0]
@@ -265,7 +293,7 @@ def test_milestone_consolidate_marks_rejects_and_closes(capsys, monkeypatch):
     assert client.closed == [101]
 
     # Second run is idempotent.
-    assert main(["consolidate", "101", "--into", "102"]) == 0
+    assert _cli_main(["consolidate", "101", "--into", "102"]) == 0
     assert len(client.posted) == 1
     assert len(client.updates) == 1
     assert client.closed == [101]
@@ -276,7 +304,7 @@ def test_milestone_consolidate_already_rejected_and_closed(monkeypatch):
         child_state="CLOSED", child_labels=[{"name": "issuesmith:rejected"}]
     )
     monkeypatch.setattr("issuesmith.milestone.get_forge", lambda: client)
-    assert main(["consolidate", "101", "--into", "102"]) == 0
+    assert _cli_main(["consolidate", "101", "--into", "102"]) == 0
     assert len(client.posted) == 1
     assert client.updates == []
     assert client.closed == []
@@ -285,11 +313,17 @@ def test_milestone_consolidate_already_rejected_and_closed(monkeypatch):
 def test_milestone_consolidate_bad_args(capsys, monkeypatch):
     client = ConsolidateClient()
     monkeypatch.setattr("issuesmith.milestone.get_forge", lambda: client)
-    assert main(["consolidate", "101", "--into", "101"]) == 2
-    assert main(["consolidate", "101"]) == 2
-    assert main(["consolidate", "101", "--into"]) == 2
-    assert main(["consolidate", "abc", "--into", "102"]) == 2
-    assert main(["consolidate", "101", "--into", "x"]) == 2
+    for argv in (
+        ["consolidate", "101", "--into", "101"],
+        ["consolidate", "101"],
+        ["consolidate", "101", "--into"],
+        ["consolidate", "abc", "--into", "102"],
+        ["consolidate", "101", "--into", "x"],
+    ):
+        with pytest.raises(SystemExit) as exc_info:
+            from issuesmith import cli
+            cli.main(["milestone", *argv])
+        assert int(exc_info.value.code) == 2
     assert client.posted == []
     assert client.closed == []
 
@@ -297,5 +331,33 @@ def test_milestone_consolidate_bad_args(capsys, monkeypatch):
 def test_milestone_consolidate_fetch_failure(monkeypatch):
     client = ConsolidateClient(fail_get=True)
     monkeypatch.setattr("issuesmith.milestone.get_forge", lambda: client)
-    assert main(["consolidate", "101", "--into", "102"]) == 1
+    assert _cli_main(["consolidate", "101", "--into", "102"]) == 1
     assert client.posted == []
+
+
+def test_status_non_integer_is_invalid_value(capsys) -> None:
+    """refs #6779: non-integer parent for milestone status is INVALID_VALUE."""
+    from issuesmith import cli
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["milestone", "status", "abc"])
+    assert int(exc_info.value.code) == 2
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    assert err.splitlines()[0].startswith("error[INVALID_VALUE]:")
+
+
+def test_status_json_has_stage_and_children(capsys, monkeypatch) -> None:
+    """refs #6779: milestone status --json includes stage and child numbers."""
+    monkeypatch.setattr("issuesmith.milestone.get_forge", lambda: FakeClient())
+    monkeypatch.setattr("issuesmith.milestone.QueueStore", lambda: FakeStore())
+
+    from issuesmith import cli
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["milestone", "status", "100", "--json"])
+    assert int(exc_info.value.code) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert "stage" in payload
+    numbers = [child["number"] for child in payload["children"]]
+    assert numbers == [101, 102]

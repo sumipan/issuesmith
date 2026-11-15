@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import json
 import re
-import sys
 from dataclasses import asdict, dataclass, field
 from functools import lru_cache
 
@@ -328,7 +326,7 @@ def check_dependencies(
     )
 
 
-def _result_to_dict(result: DepCheckResult) -> dict:
+def check_result_to_dict(result: DepCheckResult) -> dict:
     return {
         "decision": result.decision,
         "deps_found": result.deps_found,
@@ -351,16 +349,3 @@ def check_issue(issue_number: int, *, client: ForgePort | None = None) -> DepChe
     )
 
 
-def main() -> None:
-    """CLI: python -m issuesmith.dep_extractor check <issue_number>"""
-    if len(sys.argv) < 3 or sys.argv[1] != "check":
-        print("Usage: python -m issuesmith.dep_extractor check <issue_number>", file=sys.stderr)
-        sys.exit(1)
-
-    issue_number = int(sys.argv[2])
-    result = check_issue(issue_number)
-    print(json.dumps(_result_to_dict(result)))
-
-
-if __name__ == "__main__":
-    main()

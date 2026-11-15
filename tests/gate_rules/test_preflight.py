@@ -26,19 +26,25 @@ def run_preflight_direct(argv):
         return mock_stdout.getvalue(), rc
 
 
-def test_unknown_gate_exits_1():
+def test_unknown_gate_is_invalid_value():
+    """#6779: unregistered gate-preflight gate names are INVALID_VALUE (exit 2)."""
     result = run_preflight_subprocess("--gate", "nope", "--body-file", "/dev/null")
-    assert result.returncode == 1
-    assert "Error: gate 'nope' is not registered" in result.stderr
+    assert result.returncode == 2
+    first = result.stderr.strip().splitlines()[0]
+    assert first.startswith("error[INVALID_VALUE]:")
+    assert "hint:" in result.stderr
+    assert "ac_format" in result.stderr or "design_lint" in result.stderr
 
 
-def test_nonexistent_body_file_exits_1():
+def test_nonexistent_body_file_is_not_found():
     missing = "/nonexistent/path/to/body.md"
     result = run_preflight_subprocess(
         "--gate", "ac_format", "--body-file", missing,
     )
     assert result.returncode == 1
-    assert f"Error: body file '{missing}' does not exist" in result.stderr
+    first = result.stderr.strip().splitlines()[0]
+    assert first.startswith("error[NOT_FOUND]:")
+    assert missing in result.stderr
 
 
 def test_known_gate_outputs_json_array():

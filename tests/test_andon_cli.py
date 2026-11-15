@@ -366,7 +366,22 @@ def test_andon_note_not_found_exit_1(capsys):
         ret = _cmd_andon(["note", "wf:1:cp2:0", "--key", "k", "--value", "v"])
 
     assert ret == 1
-    assert "andon not found: wf:1:cp2:0" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert err.splitlines()[0].startswith("error[NOT_FOUND]:")
+    assert "wf:1:cp2:0" in err
+
+
+def test_show_missing_andon_is_not_found(capsys):
+    """refs #6779: andon show on a missing id is NOT_FOUND."""
+    from issuesmith.cli import _cmd_andon
+
+    with patch("issuesmith.andon.list_open", return_value=[]), \
+         patch("ghdag.forge.get_forge", return_value=MagicMock()):
+        ret = _cmd_andon(["show", "wf:1:cp2:0"])
+
+    assert ret == 1
+    err = capsys.readouterr().err
+    assert err.splitlines()[0].startswith("error[NOT_FOUND]:")
 
 
 def test_andon_usage_mentions_json_and_note():
@@ -451,7 +466,7 @@ def test_cli_answer_by_unknown_exits_2(tmp_path, monkeypatch, capsys):
     with patch("ghdag.forge.get_forge", return_value=client):
         assert _cmd_andon(["answer", andon.id, "handoff", "--by", "robot"]) == 2
     assert not metrics.exists()
-    assert "andon answer:" in capsys.readouterr().err
+    assert capsys.readouterr().err.splitlines()[0].startswith("error[INVALID_VALUE]:")
 
 
 def test_andon_auto_answer_json_empty_rules(tmp_path, monkeypatch, capsys):
@@ -511,6 +526,6 @@ def test_module_and_console_entry_agree(cmd, capsys):
     with pytest.raises(SystemExit) as exc:
         cli.main([cmd])
     console_err = capsys.readouterr().err
-    assert mod.returncode == 1
-    assert exc.value.code == 1
+    assert mod.returncode == 2
+    assert exc.value.code == 2
     assert mod.stderr.strip() == console_err.strip()
