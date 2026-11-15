@@ -284,7 +284,6 @@ issuesmith is pre-1.0 and follows `0.Y.Z`: a `Y` bump may change or remove publi
 
 | Item | Replacement |
 |---|---|
-| `recover` command (**removed** in 0.173.0; was deprecated with `FutureWarning`) | `resume <issue> --from <step>` (see https://github.com/sumipan/issuesmith/pull/318) |
 | `paths.brake_state` for engine pause / quota dispatch | `paths.quota_state` (legacy `halt*` fields are converted on read and not written back) |
 | `issuesmith.yaml` keys `sections`, `sub_design_subsections`, `scope_size.delete_words` / `new_words` / `sub_plan_header` / `no_deps_word` (emit `DeprecationWarning`) | `language_pack` |
 
@@ -310,6 +309,7 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/dep_extractor.py` | Dependency extraction and checks |
 | `issuesmith/design_lint_entry.py` | `design_lint` gate CLI and library entry (rules in `gate_rules/design_lint_rules.py`) |
 | `issuesmith/engine.py` | LLM role switcher, `run-guarded`, `run-verified`, rate-limit pause and engine wait |
+| `issuesmith/engine_route.py` | Pure `build_route`: assemble `(engine, model)` candidates into a ghdag `call(route=...)` list for heavy / light tier and pause filtering |
 | `issuesmith/forge.py` | Public re-exports of `ghdag.forge` for host consumers |
 | `issuesmith/forge_api.py` | Typed raw REST calls on forge clients |
 | `issuesmith/forge_guard.py` | Label-write guard for step dispatch |
@@ -576,6 +576,7 @@ Logs, exception messages, CLI help and violation text stay English and are not p
 | `DerivedAllowPathsError` | `issuesmith.pr_scope` | `ValueError` | `derived_allow_paths_from_result` finds malformed entries |
 | `GateBuildError` | `issuesmith.gates` | `ValueError` | A gate cannot be built from its `GateBuildContext` |
 | `GateMaterializationError` | `issuesmith.ac_contract` | `RuntimeError` | The temporary `origin/<base>` worktree for gate checks could not be created |
+| `GrepError` | `issuesmith.ac_contract` | `RuntimeError` | `git grep` for acceptance-contract `greps_must_be_empty` failed with a non-zero exit other than 1 (no matches) |
 | `LabelWriteForbidden` | `issuesmith.contract` | `RuntimeError` | A step wrote labels while `label_write_guard` is `enforce` |
 | `MainHealthError` | `issuesmith.observe.main_health` | `RuntimeError` | The base-branch health check could not run (git, worktree, timeout); state is not updated |
 | `MergeStateTimeoutError` | `issuesmith.merge` | `Exception` | The PR merge state did not settle before the timeout |
