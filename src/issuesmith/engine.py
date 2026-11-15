@@ -968,11 +968,12 @@ def _execute(
                 failure_class=FailureClass.TIMEOUT.value,
                 failure_detail=timeout_detail,
             )
-            return subprocess.CompletedProcess(
+            return _EngineProcess(
                 args=[],
                 returncode=124,
                 stdout="",
                 stderr=f"[issuesmith-engine] {timeout_detail}",
+                failure_class=FailureClass.TIMEOUT.value,
             )
 
         # F2: nexus-side workaround until ghdag classifies RATE_LIMIT.

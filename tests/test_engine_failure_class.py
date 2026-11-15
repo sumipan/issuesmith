@@ -160,6 +160,7 @@ def test_execute_timeout_expired_records_metrics_and_returns_124(execute_mocks, 
     assert proc.returncode == 124
     assert proc.stdout == ""
     assert "TimeoutExpired after 3599s" in proc.stderr
+    assert proc.failure_class == FailureClass.TIMEOUT.value
     recorded = execute_mocks["recorded"][-1]
     assert recorded["status"] == "timeout"
     assert recorded["failure_class"] == FailureClass.TIMEOUT.value
