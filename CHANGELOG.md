@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Fixed
+
+- Table row splitting treats backtick runs (not single backticks) as inline-code delimiters so cells with nested fence-like spans parse correctly. Refs sumipan/nexus#6247.
+
 ## 0.187.0 - 2026-11-15
 
 ### Added

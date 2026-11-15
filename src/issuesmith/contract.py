@@ -125,28 +125,60 @@ def get_section(body: str, heading: str) -> str | None:
     return match.group(1) if match else None
 
 
-def _split_table_row(line: str) -> list[str]:
-    """Split a ``| a | b |`` row, ignoring ``|`` inside inline-code spans (#3481).
+def _backtick_run_len(line: str, i: int) -> int:
+    n = 0
+    while i + n < len(line) and line[i + n] == "`":
+        n += 1
+    return n
 
-    An unmatched backtick is literal (CommonMark), so it never opens a span.
-    """
-    cells: list[str] = []
-    current: list[str] = []
-    in_tick = False
-    for i, ch in enumerate(line):
-        if ch == "`" and (in_tick or "`" in line[i + 1 :]):
-            in_tick = not in_tick
-        if ch == "|" and not in_tick:
-            cells.append("".join(current).strip())
-            current = []
+
+def _has_closing_backtick_run(line: str, start: int, open_len: int) -> bool:
+    """Whether a matching-length backtick run appears later on ``line``."""
+    i = start
+    while i < len(line):
+        if line[i] == "`":
+            run_len = _backtick_run_len(line, i)
+            if run_len == open_len:
+                return True
+            i += run_len
         else:
-            current.append(ch)
-    cells.append("".join(current).strip())
-    if cells and not cells[0]:
-        cells = cells[1:]
-    if cells and not cells[-1]:
-        cells = cells[:-1]
-    return cells
+            i += 1
+    return False
+
+
+def _table_cell_spans(line: str) -> list[tuple[int, int]]:
+    """``(start, end)`` slice bounds for each cell of a ``| a | b |`` row (#6247)."""
+    bounds: list[int] = []
+    in_code = False
+    open_len = 0
+    i = 0
+    while i < len(line):
+        if line[i] == "`":
+            run_len = _backtick_run_len(line, i)
+            if in_code:
+                if run_len == open_len:
+                    in_code = False
+                    open_len = 0
+            elif _has_closing_backtick_run(line, i + run_len, run_len):
+                in_code = True
+                open_len = run_len
+            i += run_len
+            continue
+        if line[i] == "|" and not in_code:
+            bounds.append(i)
+        i += 1
+    edges = [-1, *bounds, len(line)]
+    spans = [(a + 1, b) for a, b in zip(edges, edges[1:])]
+    if spans and not line[slice(*spans[0])].strip():
+        spans = spans[1:]
+    if spans and not line[slice(*spans[-1])].strip():
+        spans = spans[:-1]
+    return spans
+
+
+def _split_table_row(line: str) -> list[str]:
+    """Split a ``| a | b |`` row, ignoring ``|`` inside inline-code spans (#3481)."""
+    return [line[s:e].strip() for s, e in _table_cell_spans(line)]
 
 
 def parse_table_rows(section: str) -> list[list[str]]:

@@ -12,6 +12,7 @@ from issuesmith.context_hook import parse_issue_metadata, parse_issue_metadata_b
 from issuesmith.contract import (  # noqa: F401 — re-exported for legacy importers
     SUB_HEADER_RE,
     _normalize_path,
+    _table_cell_spans,
     change_paths_for_repo,
     extract_change_table_rows,
     get_section,
@@ -795,24 +796,6 @@ def apply_sub_plan_dep_format_fixes(body: str) -> tuple[str, list[str]]:
         return body, []
     new_body = body[: plan.start(1)] + "".join(lines) + body[plan.end(1) :]
     return new_body, [_SUB_PLAN_DEP_FORMAT_ID]
-
-
-def _table_cell_spans(line: str) -> list[tuple[int, int]]:
-    """``(start, end)`` of each cell of a ``| a | b |`` row (same split as parse_table_rows)."""
-    bounds: list[int] = []
-    in_tick = False
-    for i, ch in enumerate(line):
-        if ch == "`" and (in_tick or "`" in line[i + 1 :]):
-            in_tick = not in_tick
-        if ch == "|" and not in_tick:
-            bounds.append(i)
-    edges = [-1, *bounds, len(line)]
-    spans = [(a + 1, b) for a, b in zip(edges, edges[1:])]
-    if spans and not line[slice(*spans[0])].strip():
-        spans = spans[1:]
-    if spans and not line[slice(*spans[-1])].strip():
-        spans = spans[:-1]
-    return spans
 
 
 def apply_inferred_dependency_fixes(body: str) -> tuple[str, list[str]]:
