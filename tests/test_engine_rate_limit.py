@@ -1,4 +1,5 @@
 """Tests for rate limit pause TTL (engines.<role>.pause_ttl_sec, #4987)."""
+
 from __future__ import annotations
 
 import dataclasses
@@ -10,90 +11,166 @@ from ghdag.llm import LLMResult
 from ghdag.quota import EngineQuotaState, QuotaSnapshot
 
 from issuesmith.config import _build_engines
-from issuesmith.engine import RetryReason, RetrySignal, RoleSelection, _execute, _rate_limit_evidence
+from issuesmith.engine import (
+    RetryReason,
+    RetrySignal,
+    RoleSelection,
+    _execute,
+    _rate_limit_evidence,
+)
+
+# ---- config ----
 
 
 def test_pause_ttl_defaults_to_3600():
     engines = _build_engines(None)
-    assert {role: cfg.pause_ttl_sec for role, cfg in engines.items()} == {'design': 3600, 'implementation': 3600}
+    assert {role: cfg.pause_ttl_sec for role, cfg in engines.items()} == {
+        "design": 3600,
+        "implementation": 3600,
+    }
+
 
 def test_pause_ttl_override():
-    engines = _build_engines({'design': {'pause_ttl_sec': 600}})
-    assert engines['design'].pause_ttl_sec == 600
-    assert engines['implementation'].pause_ttl_sec == 3600
+    engines = _build_engines({"design": {"pause_ttl_sec": 600}})
+    assert engines["design"].pause_ttl_sec == 600
+    assert engines["implementation"].pause_ttl_sec == 3600
 
-@pytest.mark.parametrize('bad', [0, -1, '600', 1.5, True])
+
+@pytest.mark.parametrize("bad", [0, -1, "600", 1.5, True])
 def test_pause_ttl_invalid_raises(bad):
-    with pytest.raises(ValueError, match='engines\\.design\\.pause_ttl_sec must be a positive integer'):
-        _build_engines({'design': {'pause_ttl_sec': bad}})
+    with pytest.raises(
+        ValueError, match=r"engines\.design\.pause_ttl_sec must be a positive integer"
+    ):
+        _build_engines({"design": {"pause_ttl_sec": bad}})
 
-@pytest.mark.parametrize('stderr', ['Error: 429 Too Many Requests', 'HTTP status 429', 'rate_limit_exceeded', 'rate-limited', 'ratelimit', 'RESOURCE_EXHAUSTED', 'quota exceeded'])
+
+# ---- _rate_limit_evidence ----
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        "Error: 429 Too Many Requests",
+        "HTTP status 429",
+        "rate_limit_exceeded",
+        "rate-limited",
+        "ratelimit",
+        "RESOURCE_EXHAUSTED",
+        "quota exceeded",
+    ],
+)
 def test_rate_limit_evidence_matches(stderr: str):
     evidence = _rate_limit_evidence(stderr)
     assert evidence is not None
     assert evidence == _rate_limit_evidence(stderr)
 
+
 def test_rate_limit_evidence_first_matching_line_after_noise():
-    stderr = 'issue #5429\nError: 429 Too Many Requests\nrate limit again'
-    assert _rate_limit_evidence(stderr) == 'Error: 429 Too Many Requests'
+    stderr = "issue #5429\nError: 429 Too Many Requests\nrate limit again"
+    assert _rate_limit_evidence(stderr) == "Error: 429 Too Many Requests"
+
 
 def test_rate_limit_evidence_truncates_to_200_chars():
-    long_tail = 'x' * 250
-    stderr = f'rate limit exceeded {long_tail}'
+    long_tail = "x" * 250
+    stderr = f"rate limit exceeded {long_tail}"
     evidence = _rate_limit_evidence(stderr)
     assert evidence is not None
     assert len(evidence) == 200
 
+
 def test_rate_limit_evidence_normalizes_whitespace():
-    stderr = 'rate   limit\texceeded'
-    assert _rate_limit_evidence(stderr) == 'rate limit exceeded'
+    stderr = "rate   limit\texceeded"
+    assert _rate_limit_evidence(stderr) == "rate limit exceeded"
+
+
+# ---- engine ----
+
 
 def _state(status, resume_at=None):
-    return EngineQuotaState(status=status, observed_at=datetime.now(timezone.utc), resume_at=resume_at, reason=None)
+    return EngineQuotaState(
+        status=status,
+        observed_at=datetime.now(timezone.utc),
+        resume_at=resume_at,
+        reason=None,
+    )
+
 
 def _snap(engines):
-    return QuotaSnapshot(engines=engines, draining_engines={}, running_tasks={}, limits={})
+    return QuotaSnapshot(
+        engines=engines,
+        draining_engines={},
+        running_tasks={},
+        limits={},
+    )
 
-def _result(engine='claude', *, rc=0, body='ok'):
-    return LLMResult(stdout='', stderr='', body=body, usage=None, returncode=rc, failure_class=None, engine_used=engine, model_used='m', attempts=1, quota_reported=False, additional_tags={})
+
+def _result(engine="claude", *, rc=0, body="ok"):
+    return LLMResult(stdout="", stderr="",
+        body=body,
+        usage=None,
+        returncode=rc,
+        failure_class=None,
+        engine_used=engine,
+        model_used="m",
+        attempts=1,
+        quota_reported=False,
+        additional_tags={},
+    )
+
 
 @pytest.fixture
 def exe_mocks(monkeypatch):
-    monkeypatch.setattr('issuesmith.engine.resolve', lambda role, tier=None: RoleSelection(engine='claude', model='m'))
-    monkeypatch.setattr('issuesmith.engine._record_task_metrics', lambda **kwargs: None)
-    monkeypatch.setattr('issuesmith.engine._resolve_timeout_sec', lambda role: 600.0)
+    monkeypatch.setattr(
+        "issuesmith.engine.resolve",
+        lambda role, tier=None: RoleSelection(engine="claude", model="m"),
+    )
+    monkeypatch.setattr("issuesmith.engine._record_task_metrics", lambda **kwargs: None)
+    monkeypatch.setattr("issuesmith.engine._resolve_timeout_sec", lambda role: 600.0)
     cm = MagicMock(return_value=_result())
-    monkeypatch.setattr('issuesmith.engine.call', cm)
+    monkeypatch.setattr("issuesmith.engine.call", cm)
     qg = MagicMock()
-    monkeypatch.setattr('issuesmith.engine.QuotaGate', lambda state_path: qg)
-    return {'call': cm, 'quota_gate': qg}
+    monkeypatch.setattr("issuesmith.engine.QuotaGate", lambda state_path: qg)
+    return {"call": cm, "quota_gate": qg}
+
 
 def _call_with_stderr(stderr: str, result: LLMResult):
-
     def _inner(*_args, **_kwargs):
         return dataclasses.replace(result, stderr=stderr)
+
     return _inner
 
-def _no_fallback(exe_mocks, *, stderr: str='Error: 429 Too Many Requests'):
-    available = _snap({'claude': _state('available'), 'codex': _state('available')})
-    paused = _snap({'claude': _state('paused'), 'codex': _state('paused')})
-    exe_mocks['quota_gate'].snapshot.side_effect = [available, paused]
-    exe_mocks['call'].side_effect = _call_with_stderr(stderr, _result('claude', rc=1, body='issue #5429 only in body'))
+
+def _no_fallback(exe_mocks, *, stderr: str = "Error: 429 Too Many Requests"):
+    available = _snap({"claude": _state("available"), "codex": _state("available")})
+    paused = _snap({"claude": _state("paused"), "codex": _state("paused")})
+    exe_mocks["quota_gate"].snapshot.side_effect = [available, paused]
+    exe_mocks["call"].side_effect = _call_with_stderr(
+        stderr,
+        _result("claude", rc=1, body="issue #5429 only in body"),
+    )
+
 
 def _report_kwargs(exe_mocks):
-    exe_mocks['quota_gate'].report.assert_called_once()
-    return exe_mocks['quota_gate'].report.call_args.kwargs
+    exe_mocks["quota_gate"].report.assert_called_once()
+    return exe_mocks["quota_gate"].report.call_args.kwargs
+
 
 def test_retry_signal_after_equals_resume_at(exe_mocks):
     _no_fallback(exe_mocks)
     with pytest.raises(RetrySignal) as exc_info:
-        _execute('design', 'prompt')
+        _execute("design", "prompt")
     assert exc_info.value.reason == RetryReason.RATE_LIMITED
-    assert exc_info.value.after == _report_kwargs(exe_mocks)['resume_at']
+    assert exc_info.value.after == _report_kwargs(exe_mocks)["resume_at"]
+
 
 def test_false_positive_stderr_does_not_pause(exe_mocks):
-    available = _snap({'claude': _state('available'), 'codex': _state('available')})
-    exe_mocks['quota_gate'].snapshot.return_value = available
-    exe_mocks['call'].side_effect = _call_with_stderr('issue #5429', _result('claude', rc=1, body='failed'))
-    _execute('design', 'prompt')
-    exe_mocks['quota_gate'].report.assert_not_called()
+    available = _snap({"claude": _state("available"), "codex": _state("available")})
+    exe_mocks["quota_gate"].snapshot.return_value = available
+    exe_mocks["call"].side_effect = _call_with_stderr(
+        "issue #5429",
+        _result("claude", rc=1, body="failed"),
+    )
+    _execute("design", "prompt")
+    exe_mocks["quota_gate"].report.assert_not_called()
+
+

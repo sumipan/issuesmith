@@ -16,10 +16,23 @@ import pytest
 
 from issuesmith.ops.labels import ExecRecord, project
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _ns() -> str:
     from issuesmith.config import get_config
     return get_config().label_namespace
+
+
+# ---------------------------------------------------------------------------
+# Final-step projection: the done of a phase's last step projects <phase>-done
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# map_step_result: the done of the merge phase's final step projects merge-done
+# ---------------------------------------------------------------------------
 
 class TestMapStepResultLabelProjection:
     """StepResult(done) of ``m2`` (merge's final step by default) projects merge-done."""
@@ -27,11 +40,16 @@ class TestMapStepResultLabelProjection:
     def _run(self) -> tuple[int, MagicMock]:
         from issuesmith.contract import StepResult
         from issuesmith.ops.dispatch import map_step_result
+
         forge = MagicMock()
-        forge.issue_get.return_value = {'labels': [{'name': f'{_ns()}:merge-running'}]}
-        with patch('issuesmith.ops.dispatch.get_forge', return_value=forge):
-            rc = map_step_result(StepResult(status='done', markers=['MERGE_DONE']), step_id='m2', context={'issue_number': '42', 'workflow_name': 'issuesmith'})
-        return (rc, forge)
+        forge.issue_get.return_value = {"labels": [{"name": f"{_ns()}:merge-running"}]}
+        with patch("issuesmith.ops.dispatch.get_forge", return_value=forge):
+            rc = map_step_result(
+                StepResult(status="done", markers=["MERGE_DONE"]),
+                step_id="m2",
+                context={"issue_number": "42", "workflow_name": "issuesmith"},
+            )
+        return rc, forge
 
     def test_merge_done_exits_zero(self):
         rc, _ = self._run()
@@ -42,8 +60,13 @@ class TestMapStepResultLabelProjection:
         _, forge = self._run()
         forge.issue_update.assert_called_once()
         _, kwargs = forge.issue_update.call_args
-        assert f'{ns}:merge-done' in kwargs['labels_add']
-        assert f'{ns}:merge-running' in kwargs['labels_remove']
+        assert f"{ns}:merge-done" in kwargs["labels_add"]
+        assert f"{ns}:merge-running" in kwargs["labels_remove"]
+
+
+# ---------------------------------------------------------------------------
+# labels.project(): precondition labels preserved for active phases
+# ---------------------------------------------------------------------------
 
 class TestProjectPreservePreconditions:
     """Phase precondition labels are not stripped when the phase is active."""
@@ -53,9 +76,36 @@ class TestProjectPreservePreconditions:
         import yaml
 
         from issuesmith.config import load_config, reset_config_cache
-        cfg_path = tmp_path / 'issuesmith.yaml'
-        cfg_path.write_text(yaml.safe_dump({'repo': 'sumipan/issuesmith', 'phases': [{'name': 'draft', 'role': 'design', 'entry_step': 'b1', 'handler': 'brushup'}, {'name': 'develop', 'role': 'implementation', 'entry_step': 'cp2', 'handler': 'impl', 'preconditions': ['draft-done']}, {'name': 'merge', 'role': 'implementation', 'entry_step': 'm2', 'handler': 'merge'}]}), encoding='utf-8')
-        monkeypatch.setenv('ISSUESMITH_CONFIG', str(cfg_path))
+
+        cfg_path = tmp_path / "issuesmith.yaml"
+        cfg_path.write_text(
+            yaml.safe_dump({
+                "repo": "sumipan/issuesmith",
+                "phases": [
+                    {
+                        "name": "draft",
+                        "role": "design",
+                        "entry_step": "b1",
+                        "handler": "brushup",
+                    },
+                    {
+                        "name": "develop",
+                        "role": "implementation",
+                        "entry_step": "cp2",
+                        "handler": "impl",
+                        "preconditions": ["draft-done"],
+                    },
+                    {
+                        "name": "merge",
+                        "role": "implementation",
+                        "entry_step": "m2",
+                        "handler": "merge",
+                    },
+                ],
+            }),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
         reset_config_cache()
         return load_config()
 
@@ -66,20 +116,25 @@ class TestProjectPreservePreconditions:
         yield
         reset_config_cache()
 
+
+# ---------------------------------------------------------------------------
+# labels.project(): CLOSED issue terminal label
+# ---------------------------------------------------------------------------
+
 class TestClosedIssueTerminalLabel:
     """A CLOSED issue that has a terminal-phase exec record gets the done label."""
 
     def test_closed_merge_done_exec_record_gives_merge_done_label(self):
         ns = _ns()
-        exec_recs = [ExecRecord(phase='merge', status='done')]
+        exec_recs = [ExecRecord(phase="merge", status="done")]
         desired = project(99, queue_state=None, exec_records=exec_recs, andon_inbox=[])
-        assert f'{ns}:merge-done' in desired
+        assert f"{ns}:merge-done" in desired
 
     def test_closed_develop_done_exec_record_gives_develop_done_label(self):
         ns = _ns()
-        exec_recs = [ExecRecord(phase='develop', status='done')]
+        exec_recs = [ExecRecord(phase="develop", status="done")]
         desired = project(99, queue_state=None, exec_records=exec_recs, andon_inbox=[])
-        assert f'{ns}:develop-done' in desired
+        assert f"{ns}:develop-done" in desired
 
     def test_project_without_exec_records_returns_empty(self):
         desired = project(99, queue_state=None, exec_records=[], andon_inbox=[])

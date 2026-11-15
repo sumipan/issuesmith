@@ -1,4 +1,5 @@
 """Tests for exec_file / _execute isolation passthrough to call (#5542)."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -8,58 +9,99 @@ import pytest
 from ghdag.llm import LLMResult
 from ghdag.quota import EngineQuotaState, QuotaSnapshot
 
-from issuesmith.engine import RoleSelection, _execute, exec_file
+from issuesmith.engine import (
+    RoleSelection,
+    _execute,
+    exec_file,
+)
 
 
 def _available():
-    return EngineQuotaState(status='available', observed_at=datetime.now(timezone.utc), resume_at=None, reason=None)
+    return EngineQuotaState(
+        status="available",
+        observed_at=datetime.now(timezone.utc),
+        resume_at=None,
+        reason=None,
+    )
+
 
 def _snap(engines):
-    return QuotaSnapshot(engines=engines, draining_engines={}, running_tasks={}, limits={})
+    return QuotaSnapshot(
+        engines=engines,
+        draining_engines={},
+        running_tasks={},
+        limits={},
+    )
 
-def _result(engine='claude', *, rc=0, body='ok', failure_class=None):
-    return LLMResult(stdout='', stderr='', body=body, usage=None, returncode=rc, failure_class=failure_class, engine_used=engine, model_used='m', attempts=1, quota_reported=False, additional_tags={})
+
+def _result(engine="claude", *, rc=0, body="ok", failure_class=None):
+    return LLMResult(stdout="", stderr="",
+        body=body,
+        usage=None,
+        returncode=rc,
+        failure_class=failure_class,
+        engine_used=engine,
+        model_used="m",
+        attempts=1,
+        quota_reported=False,
+        additional_tags={},
+    )
+
 
 @pytest.fixture
 def exe_mocks(monkeypatch):
-    monkeypatch.setattr('issuesmith.engine.resolve', lambda role, tier=None: RoleSelection(engine='claude', model='m'))
-    monkeypatch.setattr('issuesmith.engine._record_task_metrics', lambda **kwargs: None)
-    monkeypatch.setattr('issuesmith.engine._resolve_timeout_sec', lambda role: 600.0)
+    monkeypatch.setattr(
+        "issuesmith.engine.resolve",
+        lambda role, tier=None: RoleSelection(engine="claude", model="m"),
+    )
+    monkeypatch.setattr("issuesmith.engine._record_task_metrics", lambda **kwargs: None)
+    monkeypatch.setattr("issuesmith.engine._resolve_timeout_sec", lambda role: 600.0)
     cm = MagicMock(return_value=_result())
-    monkeypatch.setattr('issuesmith.engine.call', cm)
+    monkeypatch.setattr("issuesmith.engine.call", cm)
     qg = MagicMock()
-    monkeypatch.setattr('issuesmith.engine.QuotaGate', lambda state_path: qg)
-    snap = _snap({'claude': _available(), 'codex': _available()})
+    monkeypatch.setattr("issuesmith.engine.QuotaGate", lambda state_path: qg)
+    snap = _snap({"claude": _available(), "codex": _available()})
     qg.snapshot.return_value = snap
-    return {'call': cm, 'quota_gate': qg}
+    return {"call": cm, "quota_gate": qg}
+
 
 def test_exec_file_forwards_isolation_to_execute(monkeypatch, tmp_path):
     captured: dict[str, object] = {}
 
     def _fake_execute(*_args, **kwargs):
         captured.update(kwargs)
-        return MagicMock(returncode=0, stdout='', stderr='')
-    monkeypatch.setattr('issuesmith.engine._execute', _fake_execute)
-    order = tmp_path / 'order.md'
-    order.write_text('prompt', encoding='utf-8')
-    assert exec_file('design', str(order), isolation=True) == 0
-    assert captured.get('isolation') is True
+        return MagicMock(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("issuesmith.engine._execute", _fake_execute)
+    order = tmp_path / "order.md"
+    order.write_text("prompt", encoding="utf-8")
+    assert exec_file("design", str(order), isolation=True) == 0
+    assert captured.get("isolation") is True
+
 
 def test_call_managed_receives_isolation_true_on_success(exe_mocks):
-    _execute('design', 'prompt', isolation=True)
-    assert exe_mocks['call'].call_args.kwargs['isolation'] is True
+    _execute("design", "prompt", isolation=True)
+    assert exe_mocks["call"].call_args.kwargs["isolation"] is True
+
 
 def test_call_managed_receives_isolation_none_when_omitted(exe_mocks):
-    _execute('design', 'prompt')
-    assert exe_mocks['call'].call_args.kwargs['isolation'] is None
+    _execute("design", "prompt")
+    assert exe_mocks["call"].call_args.kwargs["isolation"] is None
+
 
 def test_rate_limit_fallback_preserves_isolation_true(exe_mocks, monkeypatch):
-    rate_limited = _result('claude', rc=1, body='fail')
-    exe_mocks['call'].side_effect = [rate_limited, _result('codex')]
-    monkeypatch.setattr('issuesmith.engine._is_rate_limited', lambda _text: True)
-    monkeypatch.setattr('issuesmith.engine._rate_limit_evidence', lambda _text: 'rate limit')
-    _execute('design', 'prompt', isolation=True)
-    calls = exe_mocks['call'].call_args_list
+    rate_limited = _result("claude", rc=1, body="fail")
+    exe_mocks["call"].side_effect = [rate_limited, _result("codex")]
+    monkeypatch.setattr("issuesmith.engine._is_rate_limited", lambda _text: True)
+    monkeypatch.setattr(
+        "issuesmith.engine._rate_limit_evidence", lambda _text: "rate limit"
+    )
+
+    _execute("design", "prompt", isolation=True)
+
+    calls = exe_mocks["call"].call_args_list
     assert len(calls) == 2
-    assert calls[0].kwargs['isolation'] is True
-    assert calls[1].kwargs['isolation'] is True
+    assert calls[0].kwargs["isolation"] is True
+    assert calls[1].kwargs["isolation"] is True
+
+
