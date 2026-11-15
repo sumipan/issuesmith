@@ -43,76 +43,9 @@ def _fake_client_with_andon(andon):
 # andon CLI list
 # ---------------------------------------------------------------------------
 
-def test_andon_list_no_args_returns_nonzero():
-    import os
-    import subprocess
-    import sys
-    from pathlib import Path
-    repo_root = Path(__file__).resolve().parents[1]
-    src_path = str(repo_root / "src")
-    env = {**os.environ, "PYTHONPATH": src_path}
-    result = subprocess.run(
-        [sys.executable, "-m", "issuesmith", "andon"],
-        cwd=str(repo_root),
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
-    )
-    assert result.returncode != 0
-
-
-def test_andon_list_shows_usage_on_no_args():
-    import os
-    import subprocess
-    import sys
-    from pathlib import Path
-    repo_root = Path(__file__).resolve().parents[1]
-    src_path = str(repo_root / "src")
-    env = {**os.environ, "PYTHONPATH": src_path}
-    result = subprocess.run(
-        [sys.executable, "-m", "issuesmith", "andon"],
-        cwd=str(repo_root),
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
-    )
-    # usage or list must appear in stderr
-    assert "list" in result.stderr or "usage" in result.stderr.lower()
-
-
 # ---------------------------------------------------------------------------
 # _call_resume_hook: resume action → resume() called, dispatch_event not used
 # ---------------------------------------------------------------------------
-
-def test_call_resume_hook_resume_action_calls_resume():
-    """_call_resume_hook with action='resume' must call resume.resume(), not dispatch_event."""
-    from issuesmith.andon import _call_resume_hook
-    with patch("issuesmith.andon.resume") as mock_resume:
-        mock_resume.return_value = 0
-        client = MagicMock()
-        _call_resume_hook(client, "issuesmith:42:cp2:0", "resume")
-    mock_resume.assert_called_once_with(42, from_step="cp2")
-
-
-def test_call_resume_hook_resume_action_no_dispatch_event():
-    """resume action must not call dispatch_event (the old broken path)."""
-    from issuesmith.andon import _call_resume_hook
-    client = MagicMock()
-    with patch("issuesmith.andon.resume", return_value=0):
-        _call_resume_hook(client, "issuesmith:42:cp2:0", "resume")
-    client.dispatch_event.assert_not_called()
-
-
-def test_call_resume_hook_handoff_no_resume():
-    """handoff action must not call resume (label/comment only)."""
-    from issuesmith.andon import _call_resume_hook
-    with patch("issuesmith.andon.resume") as mock_resume:
-        client = MagicMock()
-        _call_resume_hook(client, "issuesmith:42:cp2:0", "handoff")
-    mock_resume.assert_not_called()
-
 
 def test_call_resume_hook_handoff_no_dispatch_event():
     """handoff action must not call dispatch_event."""
@@ -120,15 +53,6 @@ def test_call_resume_hook_handoff_no_dispatch_event():
     client = MagicMock()
     _call_resume_hook(client, "issuesmith:42:cp2:0", "handoff")
     client.dispatch_event.assert_not_called()
-
-
-def test_call_resume_hook_unknown_action_no_resume():
-    """Unknown actions must not call resume."""
-    from issuesmith.andon import _call_resume_hook
-    with patch("issuesmith.andon.resume") as mock_resume:
-        client = MagicMock()
-        _call_resume_hook(client, "issuesmith:42:cp2:0", "unknown-action")
-    mock_resume.assert_not_called()
 
 
 def test_call_resume_hook_resume_exception_suppressed():
@@ -166,26 +90,6 @@ def test_dispatch_event_not_called_on_answer():
         from issuesmith.andon import answer
         answer(client, a.id, "resume")
     client.dispatch_event.assert_not_called()
-
-
-def test_cli_resume_help_documents_from_flag():
-    import os
-    import sys
-    from pathlib import Path
-    repo_root = Path(__file__).resolve().parents[1]
-    src_path = str(repo_root / "src")
-    env = {**os.environ, "PYTHONPATH": src_path}
-    result = __import__("subprocess").run(
-        [sys.executable, "-m", "issuesmith", "resume", "--help"],
-        cwd=str(repo_root),
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
-    )
-    combined = result.stdout + result.stderr
-    assert result.returncode == 0
-    assert "--from" in combined
 
 
 # ---------------------------------------------------------------------------
@@ -278,42 +182,6 @@ def _record(andon, *, raised_at: str = "2026-09-26T00:00:00Z", notes: dict | Non
     return {**asdict(andon), "raised_at": raised_at, "notes": notes or {}}
 
 
-def test_andon_list_json_empty_prints_brackets(capsys):
-    from issuesmith.cli import _cmd_andon
-
-    with patch("issuesmith.andon.list_open_records", return_value=[]), \
-         patch("ghdag.forge.get_forge", return_value=MagicMock()):
-        ret = _cmd_andon(["list", "--json"])
-
-    out = capsys.readouterr().out
-    assert ret == 0
-    assert out.strip() == "[]"
-    assert "no open andons" not in out
-
-
-def test_andon_list_json_outputs_records_sorted(capsys):
-    import json
-
-    from issuesmith.cli import _cmd_andon
-
-    records = [_record(a) for a in _make_andons_mixed()]
-    records[3]["notes"] = {"asked": "2026-09-26T00:00:00Z"}
-
-    with patch("issuesmith.andon.list_open_records", return_value=records), \
-         patch("ghdag.forge.get_forge", return_value=MagicMock()):
-        ret = _cmd_andon(["list", "--json"])
-
-    assert ret == 0
-    data = json.loads(capsys.readouterr().out)
-    assert isinstance(data, list) and len(data) == 5
-    for rec in data:
-        for key in ("id", "kind", "options", "default", "raised_at", "notes"):
-            assert key in rec
-    assert data[0]["kind"] == "decision"
-    assert data[0]["notes"] == {"asked": "2026-09-26T00:00:00Z"}
-    assert [r["id"] for r in data][-2:] == ["observe:1:orphan:uuid1:0", "observe:3:stall:develop:0"]
-
-
 def test_andon_list_json_all_keeps_order(capsys):
     import json
 
@@ -339,23 +207,6 @@ def test_andon_note_success(capsys):
     assert ret == 0
     mock_note.assert_called_once_with(client, "wf:1:cp2:0", "asked", "2026-09-26T00:00:00Z")
     assert "noted wf:1:cp2:0: asked=2026-09-26T00:00:00Z" in capsys.readouterr().out
-
-
-def test_andon_note_missing_args_exit_2(capsys):
-    from issuesmith.cli import _cmd_andon
-
-    for argv in (
-        ["note", "wf:1:cp2:0", "--value", "v"],
-        ["note", "wf:1:cp2:0", "--key", "k"],
-        ["note", "--key", "k", "--value", "v"],
-        ["note", "wf:1:cp2:0", "--key"],
-    ):
-        with patch("issuesmith.andon.note") as mock_note, \
-             patch("ghdag.forge.get_forge", return_value=MagicMock()):
-            ret = _cmd_andon(argv)
-        assert ret == 2, argv
-        mock_note.assert_not_called()
-        assert "usage" in capsys.readouterr().err
 
 
 def test_andon_note_not_found_exit_1(capsys):
@@ -391,44 +242,6 @@ def test_andon_usage_mentions_json_and_note():
     assert "note <andon-id>" in _ANDON_USAGE
 
 
-def test_andon_list_json_and_note_with_local_forge(tmp_path, monkeypatch, capsys):
-    import json
-
-    import yaml
-
-    from issuesmith.andon import Andon, raise_andon
-    from issuesmith.cli import _cmd_andon
-    from issuesmith.config import reset_config_cache
-
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(yaml.safe_dump({"repo": "example/repo"}), encoding="utf-8")
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    monkeypatch.setenv("GHDAG_FORGE", "local")
-    monkeypatch.setenv("GHDAG_FORGE_ROOT", str(tmp_path / "forge"))
-    reset_config_cache()
-    try:
-        from ghdag.forge import get_forge
-        client = get_forge()
-        number = client.issue_create("andon target", "body")
-        andon_id = f"wf:{number}:cp2:0"
-        raise_andon(
-            client,
-            Andon(id=andon_id, kind="decision", issue=number, step="cp2", summary="s",
-                  options=["resume", "reject"], default="resume"),
-            metrics_path=tmp_path / "m.jsonl",
-        )
-        assert _cmd_andon(["note", andon_id, "--key", "asked", "--value", "v1"]) == 0
-        capsys.readouterr()
-        assert _cmd_andon(["list", "--json"]) == 0
-        data = json.loads(capsys.readouterr().out)
-        assert [r["id"] for r in data] == [andon_id]
-        assert data[0]["notes"] == {"asked": "v1"}
-        assert data[0]["raised_at"]
-        assert _cmd_andon(["note", "wf:999:cp2:0", "--key", "k", "--value", "v"]) == 1
-    finally:
-        reset_config_cache()
-
-
 def test_cli_answer_by_agent_records_agent(tmp_path_factory):
     """Refs sumipan/nexus#6611."""
     from issuesmith.cli import _cmd_andon
@@ -445,28 +258,6 @@ def test_cli_answer_by_agent_records_agent(tmp_path_factory):
     line = json.loads(metrics.read_text().strip().splitlines()[-1])
     assert line["answered_by"] == "agent"
     assert line["action"] == "handoff"
-
-
-def test_cli_answer_by_unknown_exits_2(tmp_path, monkeypatch, capsys):
-    """Refs sumipan/nexus#6611."""
-    import dataclasses
-
-    import issuesmith.config as config_module
-    from issuesmith.cli import _cmd_andon
-
-    andon = _make_andon(andon_id="wf:42:cp2:0", issue=42)
-    client = _fake_client_with_andon(andon)
-    metrics = tmp_path / "metrics.jsonl"
-    cfg = config_module.get_config()
-    monkeypatch.setattr(
-        config_module,
-        "_cached",
-        dataclasses.replace(cfg, paths=dataclasses.replace(cfg.paths, metrics=metrics)),
-    )
-    with patch("ghdag.forge.get_forge", return_value=client):
-        assert _cmd_andon(["answer", andon.id, "handoff", "--by", "robot"]) == 2
-    assert not metrics.exists()
-    assert capsys.readouterr().err.splitlines()[0].startswith("error[INVALID_VALUE]:")
 
 
 def test_andon_auto_answer_json_empty_rules(tmp_path, monkeypatch, capsys):

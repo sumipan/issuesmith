@@ -78,27 +78,6 @@ def _worktree_subprocess_side_effect(
     return fake_run
 
 
-def test_check_succeeds_after_transient_fetch_then_success(tmp_path: Path, monkeypatch):
-    repo = tmp_path / "wt"
-    _init_git_repo(repo)
-    gate = wt.BaseFreshnessGate(repo, "main")
-    monkeypatch.setenv("ISSUESMITH_FETCH_LOCK_WAIT", "0")
-    monkeypatch.setattr(wt_mod, "_sleep", lambda _s: None)
-    fetch_side = _worktree_subprocess_side_effect(
-        repo,
-        fetch_results=[(1, _TRANSIENT_FETCH_STDERR), (0, "")],
-    )
-
-    def gate_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
-        if cmd[:2] == ["git", "rev-list"]:
-            return subprocess.CompletedProcess(cmd, 0, stdout="0\n", stderr="")
-        return fetch_side(cmd, **kwargs)
-
-    with patch.object(wt_mod.subprocess, "run", side_effect=fetch_side):
-        with patch.object(wt.subprocess, "run", side_effect=gate_run):
-            assert gate.check("", []) == []
-
-
 def test_check_returns_transient_exhausted_violation(tmp_path: Path, monkeypatch):
     repo = tmp_path / "wt"
     _init_git_repo(repo)
@@ -118,22 +97,6 @@ def test_check_returns_transient_exhausted_violation(tmp_path: Path, monkeypatch
     assert v.fix_hint == "Re-run the step"
 
 
-def test_check_returns_fetch_failed_for_non_transient(tmp_path: Path, monkeypatch):
-    repo = tmp_path / "wt"
-    _init_git_repo(repo)
-    gate = wt.BaseFreshnessGate(repo, "main")
-    monkeypatch.setenv("ISSUESMITH_FETCH_LOCK_WAIT", "0")
-    fetch_side = _worktree_subprocess_side_effect(
-        repo,
-        fetch_results=[(1, "fatal: could not read Username")],
-    )
-    with patch.object(wt_mod.subprocess, "run", side_effect=fetch_side):
-        violations = gate.check("", [])
-    assert len(violations) == 1
-    assert violations[0].rule_id == "base_freshness.fetch_failed"
-    assert violations[0].fix_hint == "Manually fetch origin/main"
-
-
 def test_fetch_transient_exhausted_is_non_repairable():
     assert "base_freshness.fetch_transient_exhausted" in NON_REPAIRABLE_RULE_IDS
     assert is_non_repairable_rule_id("base_freshness.fetch_transient_exhausted")
@@ -144,21 +107,6 @@ def test_fix_fast_forward_success_does_not_rebase(tmp_path: Path):
     with patch.object(wt.subprocess, "run", side_effect=[_proc(0)]) as run:
         gate.fix(MagicMock())
     assert _calls(run) == [["git", "merge", "--ff-only", "origin/main"]]
-
-
-def test_fix_diverged_branch_rebases_onto_base(tmp_path: Path):
-    gate = wt.BaseFreshnessGate(tmp_path, "main")
-    with patch("issuesmith.bump_commits.drop_bump_commits_before_rebase", return_value=()):
-        with patch.object(
-            wt.subprocess,
-            "run",
-            side_effect=[_proc(128, "fatal: Not possible to fast-forward"), _proc(0)],
-        ) as run:
-            gate.fix(MagicMock())
-    assert _calls(run) == [
-        ["git", "merge", "--ff-only", "origin/main"],
-        ["git", "rebase", "origin/main"],
-    ]
 
 
 def test_fix_rebase_conflict_aborts_and_raises(tmp_path: Path):

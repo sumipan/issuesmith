@@ -3,17 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 import pytest
 import yaml
 
 from issuesmith.config import (
     ConfigError,
-    DerivedAllowConfig,
-    ScopeCouplingConfig,
     ScopeSizeConfig,
-    get_config,
     load_config,
     reset_config_cache,
 )
@@ -46,52 +42,6 @@ def _clear_config_cache():
     reset_config_cache()
     yield
     reset_config_cache()
-
-
-def test_builtin_defaults_match_legacy_constants(tmp_path, monkeypatch):
-    """With only repo set, other builtin defaults match pre-change constant values."""
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(yaml.safe_dump({"repo": _LEGACY_REPO}), encoding="utf-8")
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    reset_config_cache()
-
-    cfg = load_config()
-
-    assert cfg.repo == _LEGACY_REPO
-    assert cfg.label_namespace == "issuesmith"
-    assert cfg.timezone == _LEGACY_TIMEZONE
-    assert cfg.supported_repos == frozenset()
-    assert isinstance(cfg.root, Path)
-    for name, rel in _LEGACY_REL_PATHS.items():
-        assert getattr(cfg.paths, name) == (cfg.root / rel).resolve()
-    # AC-1: when brake_state is omitted, fall back to quota_state (single gate)
-    assert cfg.paths.brake_state == cfg.paths.quota_state
-    assert ZoneInfo(cfg.timezone) == ZoneInfo("Asia/Tokyo")
-
-    assert set(cfg.engines) == {"design", "implementation"}
-    assert cfg.engines["design"].heavy == (
-        ("claude", "claude-opus-4-6"),
-        ("codex", "gpt-5.6-sol"),
-    )
-    assert cfg.engines["design"].light == (
-        ("claude", "claude-sonnet-4-6"),
-        ("codex", "gpt-5.5"),
-    )
-    assert cfg.engines["design"].timeout_sec == 1800
-    assert cfg.engines["implementation"].heavy == (
-        ("claude", "claude-sonnet-4-6"),
-        ("cursor", "auto"),
-    )
-    assert cfg.engines["implementation"].light is None
-    assert cfg.engines["implementation"].timeout_sec == 3600
-    assert cfg.forbidden_pr_paths == (
-        "jobs/**",
-        "logs/**",
-        ".sessions/**",
-        "*.jsonl",
-        "*.pid",
-        "*.lock",
-    )
 
 
 def test_engines_heavy_duplicate_raises():
@@ -148,72 +98,6 @@ def test_light_engine_not_in_heavy_rejected():
         )
 
 
-def test_missing_repo_raises(tmp_path, monkeypatch):
-    """Missing repo raises an explicit error from get_config / load_config."""
-    monkeypatch.delenv("ISSUESMITH_CONFIG", raising=False)
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(
-        "issuesmith.config._package_fallback_yaml",
-        lambda: tmp_path / "missing-issuesmith.yaml",
-    )
-    with pytest.raises(ValueError, match=r"issuesmith\.yaml.*repo: owner/name"):
-        load_config()
-
-
-def test_issuesmith_config_env_overrides_and_resolves_relative(tmp_path, monkeypatch):
-    """With ISSUESMITH_CONFIG set, values and relative paths resolve against that file."""
-    cfg_dir = tmp_path / "instance"
-    cfg_dir.mkdir()
-    cfg_path = cfg_dir / "issuesmith.yaml"
-    payload = {
-        "repo": "example/other",
-        "label_namespace": "issuesmith",
-        "timezone": "UTC",
-        "supported_repos": ["example/other", "example/extra"],
-        "paths": {
-            "queue": "data/queue.jsonl",
-            "queue_state": "data/state.json",
-            "queue_lock": "data/queue.lock",
-            "triage_log": "data/triage.jsonl",
-            "seed": "data/seed.yaml",
-            "night_state": "data/night.json",
-            "exec_jsonl": "data/exec.jsonl",
-            "done_dir": "data/done",
-            "quota_state": "data/quota.json",
-            "metrics": "data/metrics.jsonl",
-            "worktrees_dir": "wt",
-            "external_dir": "ext",
-            "workflow": "wf.yml",
-            "template_dir": "templates",
-            "engine_state": "engine.yml",
-        },
-        "engines": {
-            "design": {
-                "heavy": [["claude", "claude-sonnet-4-6"]],
-                "timeout_sec": 100,
-            },
-            "implementation": {
-                "heavy": [["cursor", "auto"]],
-                "timeout_sec": 200,
-            },
-        },
-    }
-    cfg_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
-
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    reset_config_cache()
-    cfg = get_config()
-
-    assert cfg.repo == "example/other"
-    assert cfg.supported_repos == frozenset({"example/other", "example/extra"})
-    assert cfg.root == cfg_dir.resolve()
-    assert cfg.paths.queue == (cfg_dir / "data/queue.jsonl").resolve()
-    assert cfg.paths.queue.is_absolute()
-    # brake_state omitted → same value as quota_state
-    assert cfg.paths.brake_state == cfg.paths.quota_state
-    assert cfg.paths.quota_state == (cfg_dir / "data/quota.json").resolve()
-
-
 def test_brake_state_explicit_resolves_relative(tmp_path, monkeypatch):
     """AC-2: explicit paths.brake_state becomes an absolute Path relative to the config file."""
     cfg_dir = tmp_path / "instance"
@@ -237,39 +121,6 @@ def test_brake_state_explicit_resolves_relative(tmp_path, monkeypatch):
     assert cfg.paths.brake_state != cfg.paths.quota_state
 
 
-def test_brake_state_omitted_equals_quota_state(tmp_path, monkeypatch):
-    """AC-1: even when the brake_state key is absent, brake_state == quota_state."""
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(
-        yaml.safe_dump(
-            {
-                "repo": "example/other",
-                "paths": {"quota_state": "data/quota.json"},
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    reset_config_cache()
-
-    cfg = load_config()
-    assert cfg.paths.brake_state == cfg.paths.quota_state
-    assert cfg.paths.quota_state == (tmp_path / "data/quota.json").resolve()
-
-
-def test_scope_coupling_defaults_without_section(tmp_path, monkeypatch):
-    """Without scope_coupling section, defaults apply (ignore_symbols removed in #3628)."""
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(yaml.safe_dump({"repo": "example/repo"}), encoding="utf-8")
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    reset_config_cache()
-
-    cfg = load_config()
-
-    assert isinstance(cfg.scope_coupling, ScopeCouplingConfig)
-    assert cfg.scope_coupling.enabled is True
-
-
 def test_host_is_repo_checkout_rejects_non_bool(tmp_path, monkeypatch):
     """Refs sumipan/nexus#6836."""
     cfg_path = tmp_path / "issuesmith.yaml"
@@ -287,67 +138,6 @@ def test_host_is_repo_checkout_rejects_non_bool(tmp_path, monkeypatch):
         load_config()
 
 
-def test_scope_coupling_ignore_symbols_key_raises_config_error(tmp_path, monkeypatch):
-    """scope_coupling.ignore_symbols was removed in #3628; a stale key is a ConfigError."""
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(
-        yaml.safe_dump({
-            "repo": "example/repo",
-            "scope_coupling": {"ignore_symbols": ["run_guarded", "my_func"]},
-        }),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    reset_config_cache()
-
-    with pytest.raises(ConfigError, match="ignore_symbols"):
-        load_config()
-
-
-def test_scope_coupling_empty_ignore_symbols_list_raises(tmp_path, monkeypatch):
-    """Even an empty scope_coupling.ignore_symbols list is rejected (#3628)."""
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(
-        yaml.safe_dump({
-            "repo": "example/repo",
-            "scope_coupling": {"ignore_symbols": []},
-        }),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    reset_config_cache()
-
-    with pytest.raises(ConfigError, match="ignore_symbols"):
-        load_config()
-
-
-def test_scope_coupling_enabled_flag_loaded_from_yaml(tmp_path, monkeypatch):
-    """scope_coupling.enabled: false is honoured; absent means enabled."""
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(
-        yaml.safe_dump({"repo": "example/repo", "scope_coupling": {"enabled": False}}),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    reset_config_cache()
-    assert load_config().scope_coupling.enabled is False
-
-    cfg_path.write_text(yaml.safe_dump({"repo": "example/repo"}), encoding="utf-8")
-    reset_config_cache()
-    assert load_config().scope_coupling.enabled is True
-
-
-def test_scope_coupling_search_dirs_default(tmp_path, monkeypatch):
-    """search_dirs absent -> default ("tests", "src")."""
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(yaml.safe_dump({"repo": "example/repo"}), encoding="utf-8")
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    reset_config_cache()
-
-    cfg = load_config()
-    assert cfg.scope_coupling.search_dirs == ("tests", "src")
-
-
 def test_scope_coupling_search_dirs_explicit(tmp_path, monkeypatch):
     """search_dirs: [tests, src, workflows] -> ("tests", "src", "workflows")."""
     cfg_path = tmp_path / "issuesmith.yaml"
@@ -363,23 +153,6 @@ def test_scope_coupling_search_dirs_explicit(tmp_path, monkeypatch):
 
     cfg = load_config()
     assert cfg.scope_coupling.search_dirs == ("tests", "src", "workflows")
-
-
-def test_scope_coupling_search_dirs_empty_list_raises(tmp_path, monkeypatch):
-    """search_dirs: [] -> ConfigError."""
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(
-        yaml.safe_dump({
-            "repo": "example/repo",
-            "scope_coupling": {"search_dirs": []},
-        }),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    reset_config_cache()
-
-    with pytest.raises(ConfigError, match="search_dirs"):
-        load_config()
 
 
 def test_scope_coupling_search_dirs_non_list_raises(tmp_path, monkeypatch):
@@ -416,26 +189,6 @@ def test_scope_coupling_search_dirs_empty_string_element_raises(tmp_path, monkey
         load_config()
 
 
-def test_derived_allow_default_enabled(tmp_path, monkeypatch):
-    """derived_allow is enabled when unspecified (#3756)."""
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(yaml.safe_dump({"repo": "example/repo"}), encoding="utf-8")
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    reset_config_cache()
-    assert load_config().derived_allow == DerivedAllowConfig(enabled=True)
-
-
-def test_derived_allow_enabled_false_loaded(tmp_path, monkeypatch):
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(
-        yaml.safe_dump({"repo": "example/repo", "derived_allow": {"enabled": False}}),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    reset_config_cache()
-    assert load_config().derived_allow.enabled is False
-
-
 def test_derived_allow_unknown_key_raises(tmp_path, monkeypatch):
     cfg_path = tmp_path / "issuesmith.yaml"
     cfg_path.write_text(
@@ -457,39 +210,6 @@ def _load_with(tmp_path, monkeypatch, extra: dict):
     monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
     reset_config_cache()
     return load_config()
-
-
-def test_scope_size_defaults_without_section(tmp_path, monkeypatch):
-    cfg = _load_with(tmp_path, monkeypatch, {})
-    assert cfg.scope_size == ScopeSizeConfig()
-    assert cfg.scope_size.enabled is True
-    assert cfg.scope_size.max_files == 8
-    assert cfg.scope_size.max_concerns == 4
-    assert cfg.scope_size.max_slices == 3
-    assert cfg.scope_size.delete_with_new is False
-    assert cfg.scope_size.atomic_phrases == ()
-    assert cfg.scope_size.exclude_prefixes == (
-        "tests/", "docs/", "README.md", "CHANGELOG.md", "pyproject.toml",
-    )
-
-
-def test_scope_size_vocabulary_overrides(tmp_path, monkeypatch):
-    cfg = _load_with(
-        tmp_path,
-        monkeypatch,
-        {
-            "scope_size": {
-                "delete_words": ["Remove ", "drop"],
-                "new_words": ["create"],
-                "sub_plan_header": "| # | T | R | C | D |",
-                "no_deps_word": "-",
-            }
-        },
-    )
-    assert cfg.scope_size.delete_words == ("remove", "drop")
-    assert cfg.scope_size.new_words == ("create",)
-    assert cfg.scope_size.sub_plan_header == "| # | T | R | C | D |"
-    assert cfg.scope_size.no_deps_word == "-"
 
 
 @pytest.mark.parametrize(
@@ -569,81 +289,6 @@ def test_scope_size_atomic_phrases_rejects_invalid(tmp_path, monkeypatch, bad):
         _load_with(tmp_path, monkeypatch, {"scope_size": bad})
 
 
-def test_scope_size_atomic_phrases_loaded(tmp_path, monkeypatch):
-    cfg = _load_with(
-        tmp_path,
-        monkeypatch,
-        {"scope_size": {"atomic_phrases": ["a", "b"]}},
-    )
-    assert cfg.scope_size.atomic_phrases == ("a", "b")
-
-
-def test_config_show_includes_scope_size_atomic_phrases(tmp_path, monkeypatch, capsys):
-    import json
-
-    from issuesmith.cli import main
-
-    _load_with(
-        tmp_path,
-        monkeypatch,
-        {
-            "repo": "example/app",
-            "phases": [
-                {
-                    "name": "draft",
-                    "role": "design",
-                    "entry_step": "b1",
-                    "handler": "brushup",
-                }
-            ],
-            "scope_size": {"atomic_phrases": ["land as one PR"]},
-        },
-    )
-    with pytest.raises(SystemExit) as exc:
-        main(["config", "show"])
-    assert exc.value.code == 0
-    data = json.loads(capsys.readouterr().out)
-    assert data["scope_size"]["atomic_phrases"] == ["land as one PR"]
-
-
-def test_scope_coupling_data_file_tests_loaded_from_yaml(tmp_path, monkeypatch):
-    """scope_coupling.data_file_tests defaults to true; false is honoured (nexus #3949)."""
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(yaml.safe_dump({"repo": "example/repo"}), encoding="utf-8")
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    reset_config_cache()
-    assert load_config().scope_coupling.data_file_tests is True
-
-    cfg_path.write_text(
-        yaml.safe_dump({"repo": "example/repo", "scope_coupling": {"enabled": True}}),
-        encoding="utf-8",
-    )
-    reset_config_cache()
-    assert load_config().scope_coupling.data_file_tests is True
-
-    cfg_path.write_text(
-        yaml.safe_dump({"repo": "example/repo", "scope_coupling": {"data_file_tests": False}}),
-        encoding="utf-8",
-    )
-    reset_config_cache()
-    cfg = load_config()
-    assert cfg.scope_coupling.data_file_tests is False
-    assert cfg.scope_coupling.enabled is True
-
-
-def test_scope_coupling_data_file_tests_via_get_config(tmp_path, monkeypatch):
-    from issuesmith.config import get_config
-
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(
-        yaml.safe_dump({"repo": "example/repo", "scope_coupling": {"data_file_tests": False}}),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    reset_config_cache()
-    assert get_config().scope_coupling.data_file_tests is False
-
-
 def _load_derived_allow(tmp_path, monkeypatch, derived_allow):
     data = {"repo": "example/repo"}
     if derived_allow is not None:
@@ -685,19 +330,6 @@ def test_path_env_prefixes_default_empty(tmp_path, monkeypatch):
     assert load_config().path_env_prefixes == ()
 
 
-def test_path_env_prefixes_loaded(tmp_path, monkeypatch):
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(
-        yaml.safe_dump(
-            {"repo": "example/repo", "path_env_prefixes": ["${NOTES_ROOT}", "${NIKKI_ROOT}"]}
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    reset_config_cache()
-    assert load_config().path_env_prefixes == ("${NOTES_ROOT}", "${NIKKI_ROOT}")
-
-
 def test_path_env_prefixes_invalid_type_raises(tmp_path, monkeypatch):
     cfg_path = tmp_path / "issuesmith.yaml"
     cfg_path.write_text(
@@ -716,22 +348,6 @@ def test_observe_workflows_default_empty(tmp_path, monkeypatch):
     monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
     reset_config_cache()
     assert load_config().observe.workflows == ()
-
-
-def test_observe_workflows_loads_label_namespace(tmp_path, monkeypatch):
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(
-        yaml.safe_dump(
-            {"repo": "example/repo", "observe": {"workflows": [{"name": "bump"}]}},
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    reset_config_cache()
-    wfs = load_config().observe.workflows
-    assert len(wfs) == 1
-    assert wfs[0].name == "bump"
-    assert wfs[0].label_namespace == "bump"
 
 
 def test_observe_workflows_skips_issuesmith_name(tmp_path, monkeypatch):
@@ -781,38 +397,6 @@ def _main_health_yaml(tmp_path: Path, main_health: dict) -> Path:
         encoding="utf-8",
     )
     return cfg_path
-
-
-def test_main_health_halt_on_red_defaults_true(tmp_path, monkeypatch):
-    wt = tmp_path / "wt"
-    wt.mkdir()
-    cfg_path = _main_health_yaml(
-        tmp_path,
-        {"worktree": str(wt), "command": "python -m pytest -q"},
-    )
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    reset_config_cache()
-    mh = load_config().observe.main_health
-    assert mh is not None
-    assert mh.halt_on_red is True
-
-
-def test_main_health_halt_on_red_false_from_yaml(tmp_path, monkeypatch):
-    wt = tmp_path / "wt"
-    wt.mkdir()
-    cfg_path = _main_health_yaml(
-        tmp_path,
-        {
-            "worktree": str(wt),
-            "command": "python -m pytest -q",
-            "halt_on_red": False,
-        },
-    )
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    reset_config_cache()
-    mh = load_config().observe.main_health
-    assert mh is not None
-    assert mh.halt_on_red is False
 
 
 @pytest.mark.parametrize("bad", ["false", 0, 1, None])

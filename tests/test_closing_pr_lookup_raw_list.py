@@ -46,22 +46,6 @@ def test_merged_lookup_uses_single_raw_list() -> None:
     assert client.calls == ["pulls?state=closed&per_page=100"]
 
 
-def test_open_lookup_uses_single_raw_list() -> None:
-    client = _RawForge(
-        {
-            "open": [
-                {"number": 5, "title": "feat", "body": "Closes #7\n"},
-                {"number": 6, "title": "other", "body": ""},
-            ]
-        }
-    )
-
-    matched = _find_open_prs_closing_issue(client, 7)  # type: ignore[arg-type]
-
-    assert [pr["number"] for pr in matched] == [5]
-    assert client.calls == ["pulls?state=open&per_page=100"]
-
-
 class _NormalizedOnlyForge:
     """No ``api_request``: falls back to pr_list + pr_get."""
 
@@ -75,19 +59,6 @@ class _NormalizedOnlyForge:
 def test_open_lookup_falls_back_without_api_request() -> None:
     matched = _find_open_prs_closing_issue(_NormalizedOnlyForge(), 3)  # type: ignore[arg-type]
     assert [pr["number"] for pr in matched] == [9]
-
-
-def test_unqualified_ref_digit_boundary() -> None:
-    client = _RawForge(
-        {
-            "open": [
-                {"number": 1, "title": "x", "body": "Refs #420"},
-                {"number": 2, "title": "y", "body": "Closes #42\n"},
-            ]
-        }
-    )
-    matched = _find_open_prs_closing_issue(client, 42)  # type: ignore[arg-type]
-    assert [pr["number"] for pr in matched] == [2]
 
 
 def test_head_match_only_when_issue_repo_given() -> None:

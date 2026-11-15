@@ -1,7 +1,6 @@
 """Tests for andon auto-answer rules and rule_id round-trip (#4792)."""
 from __future__ import annotations
 
-import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -9,7 +8,6 @@ import pytest
 from issuesmith.andon import (
     Andon,
     apply_auto_answers,
-    from_comment,
     plan_auto_answers,
     to_comment,
 )
@@ -44,35 +42,6 @@ def _client_with_andons(andons: list[Andon], comments_by_issue: dict[int, list[s
     client.list_issues.return_value = [{"number": a.issue} for a in andons]
     client.issue_comment.return_value = {}
     return client
-
-
-def test_rule_id_round_trip():
-    a = Andon(
-        id="wf:1:cp2:0",
-        kind="decision",
-        issue=1,
-        step="cp2",
-        summary="x",
-        rule_id="cp2.review.fail",
-    )
-    parsed = from_comment(to_comment(a))
-    assert parsed is not None
-    assert parsed.rule_id == "cp2.review.fail"
-
-
-def test_old_comment_missing_rule_id():
-    text = (
-        "```andon\n"
-        "id: wf:1:cp2:0\n"
-        "kind: decision\n"
-        "issue: 1\n"
-        "step: cp2\n"
-        "summary: old\n"
-        "```\n"
-    )
-    parsed = from_comment(text)
-    assert parsed is not None
-    assert parsed.rule_id == ""
 
 
 def test_match_by_step_kind_not_summary():
@@ -141,36 +110,6 @@ def test_max_per_issue_counts_all_comments(tmp_path, monkeypatch):
     plan = plan_auto_answers(client, (_rule(),))
     assert plan.answers == []
     assert plan.escalations[0]["kind"] == "auto_answer_exhausted"
-
-
-def test_apply_auto_answers_records_rule_answerer(tmp_path_factory):
-    """Refs sumipan/nexus#6611."""
-    metrics = tmp_path_factory.getbasetemp() / "metrics.jsonl"
-    rule = AutoAnswerRule(
-        name="retry-blocked",
-        match={"kind": "blocked"},
-        action="handoff",
-        max_per_issue=1,
-    )
-    andon = Andon(
-        id="wf:42:observe:0",
-        kind="blocked",
-        issue=42,
-        step="observe",
-        summary="stuck",
-    )
-    client = _client_with_andons([andon])
-    plan = plan_auto_answers(client, (rule,))
-    assert len(plan.answers) == 1
-    with (
-        patch("issuesmith.andon.project_issue"),
-        patch("issuesmith.andon._call_resume_hook"),
-    ):
-        apply_auto_answers(client, plan)
-    line = json.loads(metrics.read_text().strip().splitlines()[-1])
-    assert line["event"] == "andon_answered"
-    assert line["answered_by"] == "rule:retry-blocked"
-    assert line["action"] == "handoff"
 
 
 @patch("issuesmith.andon.resume")

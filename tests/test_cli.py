@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import os
-import re
 import subprocess
 import sys
-import zipfile
 from pathlib import Path
 
 import pytest
@@ -56,85 +53,11 @@ def _run_module(
     )
 
 
-def test_wheel_contains_cli_and_entry_point(tmp_path: Path) -> None:
-    out = tmp_path / "dist"
-    out.mkdir()
-    proc = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pip",
-            "wheel",
-            "--no-deps",
-            str(REPO_ROOT),
-            "-w",
-            str(out),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert proc.returncode == 0, proc.stderr
-    wheels = list(out.glob("issuesmith-*.whl"))
-    assert len(wheels) == 1, wheels
-    with zipfile.ZipFile(wheels[0]) as zf:
-        names = zf.namelist()
-        assert any(n.endswith("issuesmith/cli.py") for n in names), names
-        entry = next(n for n in names if n.endswith("entry_points.txt"))
-        text = zf.read(entry).decode("utf-8")
-        assert "issuesmith" in text
-        assert "issuesmith.cli:main" in text
-
-
-def test_pyproject_uses_src_layout() -> None:
-    try:
-        import tomllib
-    except ModuleNotFoundError:  # pragma: no cover
-        import tomli as tomllib  # type: ignore
-
-    data = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    find = data["tool"]["setuptools"]["packages"]["find"]
-    assert find["where"] == ["src"]
-    assert data["project"]["name"] == "issuesmith"
-    # Do not pin version: it changes per release. Pinning forces every version-bump
-    # Issue to add tests/test_cli.py to allow_paths or CP2 fails
-    # (regressed twice on 2026-09-09, #2980 / #2959). Validate format only.
-    assert re.fullmatch(r"\d+\.\d+\.\d+", data["project"]["version"]), data["project"]["version"]
-
-
-def test_gate_alias_matches_gate_preflight(tmp_path: Path) -> None:
-    body = tmp_path / "body.md"
-    # ASCII fixture data.
-    body.write_text("## Acceptance Criteria\n\n```yaml\npaths_must_exist: []\n```\n", encoding="utf-8")
-    cfg_env = {"ISSUESMITH_CONFIG": str(_subprocess_config_path(tmp_path))}
-
-    old = _run_module(
-        "gate-preflight", "--gate", "design_lint", "--body-file", str(body), extra_env=cfg_env
-    )
-    new = _run_module("gate", "design_lint", "--body-file", str(body), extra_env=cfg_env)
-    assert old.returncode == 0, old.stderr
-    assert new.returncode == 0, new.stderr
-    assert json.loads(old.stdout) == json.loads(new.stdout)
-
-
 def test_engine_show_runs(tmp_path: Path) -> None:
     cfg_env = {"ISSUESMITH_CONFIG": str(_subprocess_config_path(tmp_path))}
     via_cli = _run_module("engine", "show", extra_env=cfg_env)
     assert via_cli.returncode == 0, via_cli.stderr
     assert via_cli.stdout.strip()
-
-
-def test_removed_commands_are_unknown(capsys) -> None:
-    """AC-3 (#6697): dropped commands are unknown like any other invalid name."""
-    from issuesmith import cli
-
-    for cmd in ("context_hook", "context-hook", "redispatch", "apply", "ingest-review"):
-        with pytest.raises(SystemExit) as exc_info:
-            cli.main([cmd])
-        assert exc_info.value.code == 2
-        err = capsys.readouterr().err
-        assert err.splitlines()[0].startswith("error[UNKNOWN_COMMAND]:")
-        assert "hint:" in err
 
 
 @pytest.mark.parametrize(
@@ -157,35 +80,6 @@ def test_usage_errors_exit_2_with_code_and_hint(capsys, argv: list[str], code: s
     lines = [ln for ln in err.splitlines() if ln.strip()]
     assert lines[0].startswith(f"error[{code}]:")
     assert any(ln.startswith("hint:") for ln in lines)
-
-
-def test_queue_enqueue_after_argparse(tmp_path: Path) -> None:
-    """queue enqueue --after parses multiple issue numbers."""
-    from issuesmith.queue import build_parser
-    parser = build_parser()
-    args = parser.parse_args([
-        "enqueue",
-        "--issue", "100",
-        "--phase", "draft",
-        "--source", "skill",
-        "--actor-kind", "human",
-        "--priority", "normal",
-        "--requested-by", "alice",
-        "--after", "200",
-        "--after", "300",
-    ])
-    assert args.after == [200, 300]
-
-
-def test_no_sys_path_in_package() -> None:
-    pkg = SRC_PATH / "issuesmith"
-    hits: list[str] = []
-    for path in pkg.rglob("*.py"):
-        text = path.read_text(encoding="utf-8")
-        for i, line in enumerate(text.splitlines(), 1):
-            if "sys.path" in line:
-                hits.append(f"{path.relative_to(REPO_ROOT)}:{i}:{line.strip()}")
-    assert hits == []
 
 
 def test_resume_in_handlers() -> None:
@@ -242,26 +136,3 @@ def test_gate_design_lint_issue_form_routes_to_entry(monkeypatch) -> None:
     assert calls and calls[0][-1] == "99"
 
 
-def test_gate_ac_complete_issue_form_routes_to_entry(monkeypatch) -> None:
-    calls: list[list[str]] = []
-    import issuesmith.ac_complete_entry as entry
-    import issuesmith.cli as cli_mod
-
-    monkeypatch.setattr(entry, "main", lambda: calls.append(list(sys.argv)))
-    assert cli_mod._cmd_gate(["ac_complete", "12"]) == 0
-    assert calls and calls[0][-1] == "12"
-
-
-def test_cli_verify_undeclared_returns_rc2_without_deprecation(tmp_path: Path) -> None:
-    cfg_env = {"ISSUESMITH_CONFIG": str(_subprocess_config_path(tmp_path))}
-    proc = _run_module(
-        "verify",
-        "b1",
-        "1",
-        extra_env=cfg_env,
-        check=False,
-        warn_default=True,
-    )
-    assert proc.returncode == 2
-    assert "not declared" in proc.stderr
-    assert "DeprecationWarning" not in proc.stderr

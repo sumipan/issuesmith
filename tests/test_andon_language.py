@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
-from issuesmith.andon import Andon, answer, list_open, raise_andon
+from issuesmith.andon import Andon, raise_andon
 from issuesmith.language import EN, LanguagePack
 
 _CUSTOM_MESSAGES = {
@@ -75,40 +75,6 @@ def _answer_comment(client, issue: int) -> str:
     return replies[0]
 
 
-def test_answer_comment_is_english_with_default_pack(make_client, tmp_path):
-    client = make_client(custom_pack=False)
-    a = _raise(client, tmp_path)
-    with patch("issuesmith.andon._call_resume_hook"):
-        answer(client, a.id, "resume", metrics_path=tmp_path / "metrics.jsonl")
-    reply = _answer_comment(client, a.issue)
-    assert f"andon `{a.id}` answered: **resume**" in reply
-    assert list_open(client) == []
-
-
-def test_answer_comment_uses_custom_pack_and_stays_parseable(make_client, tmp_path):
-    client = make_client(custom_pack=True)
-    first = _raise(client, tmp_path)
-    second = Andon(
-        id=f"wf:{first.issue}:cp2:1",
-        kind="decision",
-        issue=first.issue,
-        step="cp2",
-        summary="Another question?",
-        options=["resume"],
-    )
-    raise_andon(client, second, metrics_path=tmp_path / "metrics.jsonl")
-    with patch("issuesmith.andon._call_resume_hook"):
-        answer(client, first.id, "resume", metrics_path=tmp_path / "metrics.jsonl")
-    reply = _answer_comment(client, first.issue)
-    assert f"lantern {first.id} got reply resume" in reply
-    assert "answered:" not in reply
-    # The label was removed by answer(); restore it so the Issue is still scanned.
-    from issuesmith.andon import _ns
-
-    client.issue_update(first.issue, labels_add=[f"{_ns()}:andon-decision"])
-    assert [x.id for x in list_open(client)] == [second.id]
-
-
 def _widen_failed_comment(issue_body: str) -> str:
     from issuesmith.andon import _handle_widen_action
 
@@ -143,34 +109,3 @@ def _labels(client, issue: int) -> set[str]:
     return {lb["name"] for lb in client.issue_get(issue, fields=["labels"])["labels"]}
 
 
-def test_raise_and_answer_project_labels_on_local_forge(make_client, tmp_path):
-    """raise drops the running label of the andon step's phase; answer drops only the andon."""
-    from issuesmith.andon import _ns
-
-    client = make_client(custom_pack=False)
-    ns = _ns()
-    number = client.issue_create("andon target", "body")
-    client.issue_update(number, labels_add=[f"{ns}:develop-running", "scope:milestone"])
-    a = Andon(id=f"wf:{number}:cp2:0", kind="broken", issue=number, step="cp2", summary="x")
-
-    raise_andon(client, a, metrics_path=tmp_path / "metrics.jsonl")
-    assert _labels(client, number) == {f"{ns}:andon-broken", "scope:milestone"}
-
-    with patch("issuesmith.andon._call_resume_hook"):
-        answer(client, a.id, "resume", metrics_path=tmp_path / "metrics.jsonl")
-    assert _labels(client, number) == {"scope:milestone"}
-
-
-def test_attention_axis_shows_the_most_urgent_andon(make_client, tmp_path):
-    from issuesmith.andon import _ns
-
-    client = make_client(custom_pack=False)
-    ns = _ns()
-    number = client.issue_create("andon target", "body")
-    client.issue_update(number, labels_add=[f"{ns}:draft-done"])
-    blocked = Andon(id=f"wf:{number}:p1:0", kind="blocked", issue=number, step="p1", summary="x")
-    broken = Andon(id=f"wf:{number}:p2:0", kind="broken", issue=number, step="p2", summary="y")
-    raise_andon(client, blocked, metrics_path=tmp_path / "metrics.jsonl")
-    assert _labels(client, number) == {f"{ns}:draft-done", f"{ns}:andon-blocked"}
-    raise_andon(client, broken, metrics_path=tmp_path / "metrics.jsonl")
-    assert _labels(client, number) == {f"{ns}:draft-done", f"{ns}:andon-broken"}

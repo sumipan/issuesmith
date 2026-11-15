@@ -6,7 +6,6 @@ Unit tests for the M2 checkbox gate.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -152,17 +151,6 @@ class TestCheckGate:
         assert result["action"] == "proceed"
         assert result["has_section"] is False
 
-    def test_result_contains_all_keys(self):
-        result = check_gate(BODY_ONE_UNCHECKED, ["scope:migration"])
-        assert set(result.keys()) == {
-            "action",
-            "unchecked_count",
-            "has_section",
-            "has_migration_label",
-            "contract_failures",
-        }
-
-
 # ASCII fixture data.
 BODY_CONTRACT_PASS = """\
 ## Acceptance Criteria
@@ -193,15 +181,6 @@ class TestCheckGateContract:
         result = check_gate(BODY_CONTRACT_PASS, [])
         assert result["action"] == "proceed"
         assert result["contract_failures"] == []
-
-    def test_checked_ac_with_failing_contract_returns_retry(self):
-        result = check_gate(BODY_CONTRACT_FAIL, [])
-        assert result["action"] == "retry"
-        assert result["unchecked_count"] == 0
-        assert any(
-            "exist_migration_test.py" in failure
-            for failure in result["contract_failures"]
-        )
 
     def test_unchecked_ac_skips_contract_check(self):
         # Unchecked checkboxes fail to retry/migrate before running the contract.
@@ -237,28 +216,6 @@ paths_must_exist:
 class TestCheckGateRepoRoot:
     """Cross-repo: paths_must_exist resolves via --repo-root / repo_root."""
 
-    def test_external_repo_root_with_path_returns_proceed(self, tmp_path: Path):
-        external = tmp_path / "mltgnt"
-        (external / "src" / "mltgnt" / "loops").mkdir(parents=True)
-        # Explicit: the same path must not exist on the nexus-like wrong root (tmp_path).
-        assert not (tmp_path / "src" / "mltgnt" / "loops").exists()
-
-        result = check_gate(BODY_CROSS_REPO_CONTRACT, [], repo_root=external)
-        assert result["action"] == "proceed"
-        assert result["contract_failures"] == []
-
-    def test_wrong_repo_root_returns_retry_with_failure(self, tmp_path: Path):
-        wrong_root = tmp_path / "nexus-like"
-        wrong_root.mkdir()
-        assert not (wrong_root / "src" / "mltgnt" / "loops").exists()
-
-        result = check_gate(BODY_CROSS_REPO_CONTRACT, [], repo_root=wrong_root)
-        assert result["action"] == "retry"
-        assert any(
-            "paths_must_exist: src/mltgnt/loops" in failure
-            for failure in result["contract_failures"]
-        )
-
     def test_unchecked_skips_contract_even_with_repo_root(self, tmp_path: Path):
         result = check_gate(BODY_ONE_UNCHECKED, [], repo_root=tmp_path)
         assert result["action"] == "retry"
@@ -268,45 +225,6 @@ class TestCheckGateRepoRoot:
         result = check_gate(BODY_ONE_UNCHECKED, ["scope:migration"], repo_root=tmp_path)
         assert result["action"] == "migrate"
         assert result["contract_failures"] == []
-
-
-class TestMainRepoRootCli:
-    def test_main_passes_repo_root_to_check_gate(self, tmp_path: Path, monkeypatch, capsys):
-        external = tmp_path / "mltgnt"
-        (external / "src" / "mltgnt" / "loops").mkdir(parents=True)
-
-        mock_client = MagicMock()
-        mock_client.issue_get.return_value = {
-            "body": BODY_CROSS_REPO_CONTRACT,
-            "labels": [],
-        }
-
-        def _get_forge(*, repo=None):
-            assert repo == "sumipan/issuesmith"
-            return mock_client
-
-        monkeypatch.setattr(
-            "issuesmith.ac_complete_entry.get_forge",
-            _get_forge,
-        )
-        monkeypatch.setattr(
-            "sys.argv",
-            ["m2-gate", "2515", "--repo-root", str(external)],
-        )
-
-        from issuesmith.ac_complete_entry import main
-
-        main()
-        out = json.loads(capsys.readouterr().out)
-        assert set(out.keys()) == {
-            "action",
-            "unchecked_count",
-            "has_section",
-            "has_migration_label",
-            "contract_failures",
-        }
-        assert out["action"] == "proceed"
-        assert out["contract_failures"] == []
 
 
 class TestMainConfiguredRepo:

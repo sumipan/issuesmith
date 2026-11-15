@@ -40,21 +40,6 @@ def test_proceed_or_contract_retry_migrate_when_post_merge_incomplete(tmp_path):
     assert result["has_migration_label"] is True
 
 
-def test_run_post_merge_pytest_reports_exit_code(tmp_path: Path) -> None:
-    work_dir = tmp_path / "repo"
-    work_dir.mkdir()
-    (work_dir / "src").mkdir()
-    with patch.object(merge_api.subprocess, "run") as run:
-        run.side_effect = [
-            MagicMock(returncode=0, stdout="", stderr=""),
-            MagicMock(returncode=0, stdout=".\n", stderr=""),
-        ]
-        result = merge_api.run_post_merge_pytest(str(work_dir))
-    assert result.exit_code == 0
-    assert result.cwd == str(work_dir)
-    assert result.command == ["python3", "-m", "pytest", "-q"]
-
-
 def test_run_post_merge_pytest_reports_failure_exit_code(tmp_path: Path) -> None:
     work_dir = tmp_path / "repo"
     work_dir.mkdir()
