@@ -457,6 +457,7 @@ A file that is not found is treated as empty, which fails validation because `re
 | `label_namespace` | `issuesmith` | Managed label prefix |
 | `timezone` | `Asia/Tokyo` | IANA timezone for reports and `--since` |
 | `supported_repos` | `[]` | Repositories allowed as cross-repo targets |
+| `host_is_repo_checkout` | `true` | Whether the config directory is a checkout of the issue repository. When false, issues targeting that repository (or with no target_repo) use the clone under paths.external_dir like other targets, and the repository must be listed in supported_repos |
 | `paths` | see below | Queue, state, metrics, worktree, template and ledger paths |
 | `engines.<role>` | see below | Per role (`design`, `implementation`): `heavy`, optional `light`, `timeout_sec`, `pause_ttl_sec` |
 | `concurrency` | `default: 1` | `default`, `per_engine`, `strict_order` (`false`), `max_dispatch_per_tick` (`1`: requests started per queue tick; each engine still stops at its `per_engine` limit) |

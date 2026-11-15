@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Added
+
+- `host_is_repo_checkout` configuration key. Refs sumipan/nexus#6836.
+
 ## 0.188.3 - 2026-11-15
 
 ### Added

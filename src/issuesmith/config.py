@@ -393,6 +393,7 @@ class IssuesmithConfig:
     installs: Mapping[str, Path] = field(default_factory=dict)
     andon: AndonConfig = field(default_factory=AndonConfig)
     path_env_prefixes: tuple[str, ...] = ()
+    host_is_repo_checkout: bool = True
 
     def phase(self, name: str) -> PhaseConfig:
         for ph in self.phases:
@@ -747,6 +748,14 @@ def _build_label_write_guard(raw: Any) -> Literal["warn", "enforce"]:
     if raw == "warn" or raw == "enforce":
         return raw
     raise ConfigError(f"label_write_guard must be 'warn' or 'enforce', got {raw!r}")
+
+
+def _build_host_is_repo_checkout(raw: object) -> bool:
+    if raw is None:
+        return True
+    if isinstance(raw, bool):
+        return raw
+    raise ConfigError(f"host_is_repo_checkout must be true or false, got {raw!r}")
 
 
 def _build_sections(raw: Mapping[str, Any] | None, base: Mapping[str, str]) -> dict[str, str]:
@@ -1512,6 +1521,9 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         installs=_build_installs(data.get("installs"), root.resolve()),
         andon=_build_andon(andon_raw),
         path_env_prefixes=_build_path_env_prefixes(data.get("path_env_prefixes")),
+        host_is_repo_checkout=_build_host_is_repo_checkout(
+            data.get("host_is_repo_checkout")
+        ),
     )
 
 

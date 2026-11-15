@@ -270,6 +270,23 @@ def test_scope_coupling_defaults_without_section(tmp_path, monkeypatch):
     assert cfg.scope_coupling.enabled is True
 
 
+def test_host_is_repo_checkout_rejects_non_bool(tmp_path, monkeypatch):
+    """Refs sumipan/nexus#6836."""
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": _LEGACY_REPO, "host_is_repo_checkout": "false"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+
+    with pytest.raises(
+        ConfigError,
+        match=r"host_is_repo_checkout must be true or false",
+    ):
+        load_config()
+
+
 def test_scope_coupling_ignore_symbols_key_raises_config_error(tmp_path, monkeypatch):
     """scope_coupling.ignore_symbols was removed in #3628; a stale key is a ConfigError."""
     cfg_path = tmp_path / "issuesmith.yaml"
