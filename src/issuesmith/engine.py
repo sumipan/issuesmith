@@ -102,27 +102,25 @@ _PERMISSION_OVERRIDES: dict[str, Permission] = {
     "cursor": DANGEROUS_FULL_ACCESS,
 }
 
+def _role_in_config(role: str) -> bool:
+    return _configured_roles is None or role in _configured_roles
+
+
+HEAVY_ROUTES: dict[str, tuple[tuple[str, str], ...]] = {
+    role: role_cfg.heavy
+    for role, role_cfg in _cfg.engines.items()
+    if _role_in_config(role)
+}
+
+LIGHT_ROUTES: dict[str, tuple[tuple[str, str], ...] | None] = {
+    role: role_cfg.light
+    for role, role_cfg in _cfg.engines.items()
+    if _role_in_config(role)
+}
+
 ROLE_ENGINES: dict[str, tuple[str, ...]] = {
-    role: role_cfg.allowed
-    for role, role_cfg in _cfg.engines.items()
-    if _configured_roles is None or role in _configured_roles
-}
-
-DEFAULT_MODELS: dict[tuple[str, str], str] = {
-    (role, engine): model
-    for role, role_cfg in _cfg.engines.items()
-    if _configured_roles is None or role in _configured_roles
-    for engine, model in role_cfg.default_model.items()
-}
-
-# Default models of the light tier. The heavy tier always uses the state's model.
-# A light_model key in the state takes precedence.
-# A (role, engine) missing here falls back to the state model even for light.
-DEFAULT_LIGHT_MODELS: dict[tuple[str, str], str] = {
-    (role, engine): model
-    for role, role_cfg in _cfg.engines.items()
-    if _configured_roles is None or role in _configured_roles
-    for engine, model in role_cfg.light_model.items()
+    role: tuple(engine for engine, _ in HEAVY_ROUTES[role])
+    for role in HEAVY_ROUTES
 }
 
 TIERS = frozenset({"light", "heavy"})
@@ -261,18 +259,22 @@ def _yaml_loader() -> YAML:
 
 
 def _default_engine_for_role(role: str) -> str:
-    allowed = sorted(ROLE_ENGINES[role])
-    for engine_name in allowed:
-        if (role, engine_name) in DEFAULT_MODELS:
-            return engine_name
-    return allowed[0]
+    engine, _model = HEAVY_ROUTES[role][0]
+    return engine
+
+
+def _heavy_model_for(role: str, engine: str) -> str:
+    for eng, model in HEAVY_ROUTES[role]:
+        if eng == engine:
+            return model
+    raise KeyError(f"no heavy route entry for {role!r} engine {engine!r}")
 
 
 def _default_state() -> dict[str, dict[str, str]]:
     result: dict[str, dict[str, str]] = {}
     for role in ROLE_ENGINES:
-        eng = _default_engine_for_role(role)
-        result[role] = {"engine": eng, "model": DEFAULT_MODELS[(role, eng)]}
+        eng, mod = HEAVY_ROUTES[role][0]
+        result[role] = {"engine": eng, "model": mod}
     return result
 
 
@@ -352,28 +354,25 @@ def state_source_label() -> str:
 
 
 def resolve(role: str, tier: str | None = None) -> RoleSelection:
-    """Resolve the engine/model of a role.
-
-    Only tier="light" downgrades the model: state light_model ->
-    DEFAULT_LIGHT_MODELS -> the state model when undefined / not allowlisted (fail-safe).
-    tier=None / "heavy" uses the state's model as is.
-    """
+    """Resolve the engine/model of a role (``route(role, tier)[0]``)."""
     if tier is not None and tier not in TIERS:
         raise ValueError(f"tier must be one of: {', '.join(sorted(TIERS))}")
-    state = load_state()
-    selected = state[role]
-    engine = selected["engine"]
-    model = selected["model"]
+    head = route(role, tier)[0]
     if tier == "light":
+        state = load_state()
+        selected = state[role]
+        engine = str(selected["engine"])
         light_model, source = _effective_light_model(selected, role, engine)
-        model = _apply_light_or_fallback(
-            role=role,
-            engine=engine,
-            heavy_model=model,
-            light_model=light_model,
-            source=source,
-        )
-    return RoleSelection(engine=engine, model=model)
+        if light_model and head.engine == engine and head.model != light_model:
+            if not _light_model_allowed(engine, light_model):
+                _apply_light_or_fallback(
+                    role=role,
+                    engine=engine,
+                    heavy_model=str(selected["model"]),
+                    light_model=light_model,
+                    source=source,
+                )
+    return head
 
 
 def route(role: str, tier: str | None = None) -> tuple[RoleSelection, ...]:
@@ -384,31 +383,11 @@ def route(role: str, tier: str | None = None) -> tuple[RoleSelection, ...]:
     """
     if tier is not None and tier not in TIERS:
         raise ValueError(f"tier must be one of: {', '.join(sorted(TIERS))}")
-    selection = resolve(role, tier)
+    state = load_state()
+    selected = state[role]
+    selection = RoleSelection(engine=selected["engine"], model=selected["model"])
     pairs = _build_role_route(role, selection, tier, ())
     return tuple(RoleSelection(engine=eng, model=mod) for eng, mod in pairs)
-
-
-def _route_model_maps(
-    role: str, tier: str | None, selection_engine: str
-) -> tuple[dict[str, str], dict[str, str]]:
-    allowed = ROLE_ENGINES[role]
-    heavy = {
-        engine: DEFAULT_MODELS[(role, engine)]
-        for engine in allowed
-        if (role, engine) in DEFAULT_MODELS
-    }
-    light = {
-        engine: DEFAULT_LIGHT_MODELS[(role, engine)]
-        for engine in allowed
-        if (role, engine) in DEFAULT_LIGHT_MODELS
-    }
-    if tier == "light":
-        state = load_state()
-        from_state = state[role].get("light_model")
-        if from_state:
-            light[selection_engine] = str(from_state)
-    return heavy, light
 
 
 def _build_role_route(
@@ -417,13 +396,21 @@ def _build_role_route(
     tier: str | None,
     paused: Collection[str],
 ) -> list[tuple[str, str]]:
-    heavy, light = _route_model_maps(role, tier, selection.engine)
+    state = load_state()
+    # state light_model belongs to the state engine; do not apply it to another engine
+    # (light-route head differing from the state engine, or an ``engine=`` override).
+    from_state = (
+        state[role].get("light_model")
+        if str(state[role].get("engine")) == selection.engine
+        else None
+    )
+    selected_light = str(from_state).strip() if from_state else None
     return build_route(
-        allowed=ROLE_ENGINES[role],
-        heavy_model=heavy,
-        light_model=light,
+        heavy=HEAVY_ROUTES[role],
+        light=LIGHT_ROUTES[role],
         selected_engine=selection.engine,
         selected_model=selection.model,
+        selected_light_model=selected_light,
         tier=tier,
         paused=paused,
         model_allowed=_light_model_allowed if tier == "light" else lambda _e, _m: True,
@@ -445,9 +432,11 @@ def _effective_light_model(
     from_state = selected.get("light_model")
     if from_state:
         return str(from_state), "state"
-    from_default = DEFAULT_LIGHT_MODELS.get((role, engine))
-    if from_default:
-        return from_default, "config default"
+    light_route = LIGHT_ROUTES.get(role)
+    if light_route:
+        for eng, model in light_route:
+            if eng == engine:
+                return model, "config default"
     return None, ""
 
 
@@ -505,21 +494,22 @@ def light_allowlist_status(role: str) -> tuple[bool, str | None]:
 
 
 def light_model_errors(state: dict[str, dict[str, Any]] | None = None) -> list[str]:
-    """Check every DEFAULT_LIGHT_MODELS entry and state light_model overrides against the allowlist."""
+    """Check every configured light-route pair and state light_model overrides."""
     state = state if state is not None else load_state()
     errors: list[str] = []
 
-    # Check every config default (issuesmith.yaml engines.<role>.light_model.<engine>),
-    # regardless of the current state engine, so engine check defuses switch-time traps.
-    for (role, eng), model in sorted(DEFAULT_LIGHT_MODELS.items()):
-        if _light_model_allowed(eng, model):
+    for role, light_route in sorted(LIGHT_ROUTES.items()):
+        if not light_route:
             continue
-        yaml_key = f"engines.{role}.light_model.{eng}"
-        errors.append(
-            f"{role}: light_model (config default) not in configs/llm-models.yml "
-            f"allowlist for {eng}: {model}; "
-            f"fix issuesmith.yaml `{yaml_key}` to an allowlisted model"
-        )
+        for eng, model in light_route:
+            if _light_model_allowed(eng, model):
+                continue
+            yaml_key = f"engines.{role}.light ({eng})"
+            errors.append(
+                f"{role}: light_model (config default) not in configs/llm-models.yml "
+                f"allowlist for {eng}: {model}; "
+                f"fix issuesmith.yaml `{yaml_key}` to an allowlisted model"
+            )
 
     # state overrides (existing behavior kept)
     for role in ROLE_ENGINES:
@@ -575,7 +565,7 @@ def switch_role(
         allowed = ", ".join(sorted(ROLE_ENGINES[role]))
         raise ValueError(f"{role} engine must be one of: {allowed}")
 
-    selected_model = model or DEFAULT_MODELS[(role, engine)]
+    selected_model = model or _heavy_model_for(role, engine)
     state = load_state()
     previous = state[role]
     entry: dict[str, Any] = {"engine": engine, "model": selected_model}
@@ -887,19 +877,8 @@ def _execute(
             allowed = ", ".join(sorted(ROLE_ENGINES[role]))
             raise ValueError(f"{role} engine must be one of: {allowed}")
         if engine != selection.engine:
-            heavy = DEFAULT_MODELS[(role, engine)]
-            if tier == "light":
-                light = DEFAULT_LIGHT_MODELS.get((role, engine))
-                model = _apply_light_or_fallback(
-                    role=role,
-                    engine=engine,
-                    heavy_model=heavy,
-                    light_model=light,
-                    source="config default",
-                )
-            else:
-                model = heavy
-            selection = RoleSelection(engine=engine, model=model)
+            heavy = _heavy_model_for(role, engine)
+            selection = RoleSelection(engine=engine, model=heavy)
 
     working_directory = _working_directory(cwd)
     timeout_sec = _resolve_timeout_sec(role)

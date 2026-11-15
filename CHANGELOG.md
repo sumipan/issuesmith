@@ -7,6 +7,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.188.1 - 2026-11-15
+
+### Removed
+
+- **BREAKING:** `engines.<role>.allowed`, `default_model`, and `light_model`. Configure ordered `[engine, model]` routes under `heavy` and optional `light` instead. Example migration:
+
+```yaml
+# before
+engines:
+  design:
+    allowed: [claude, codex]
+    default_model:
+      claude: claude-opus-4-6
+      codex: gpt-5.6-sol
+    light_model:
+      claude: claude-sonnet-4-6
+      codex: gpt-5.5
+
+# after
+engines:
+  design:
+    heavy:
+      - [claude, claude-opus-4-6]
+      - [codex, gpt-5.6-sol]
+    light:
+      - [claude, claude-sonnet-4-6]
+      - [codex, gpt-5.5]
+```
+
+- **BREAKING:** `issuesmith.engine.DEFAULT_MODELS` and `DEFAULT_LIGHT_MODELS`. Use `HEAVY_ROUTES` / `LIGHT_ROUTES` or `route(role, tier)`.
+- **BREAKING:** `build_route(allowed=, heavy_model=, light_model=)`. Pass `heavy` / `light` route sequences and `selected_light_model` instead. Refs sumipan/nexus#6682.
+
 ## 0.188.0 - 2026-11-15
 
 ### Fixed

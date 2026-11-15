@@ -742,7 +742,7 @@ def _detect_all_engines_paused(config: "IssuesmithConfig") -> list[ObserveEvent]
 
     paused_roles: list[str] = []
     for role, role_cfg in config.engines.items():
-        role_engines = list(role_cfg.allowed)
+        role_engines = [engine for engine, _ in role_cfg.heavy]
         if not role_engines:
             continue
         all_paused = all(

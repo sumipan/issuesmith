@@ -62,13 +62,11 @@ def issuesmith_config(tmp_path, monkeypatch):
         },
         "engines": {
             "design": {
-                "allowed": ["claude", "codex"],
-                "default_model": {"claude": "claude-sonnet-4-6"},
+                "heavy": [["claude", "claude-sonnet-4-6"], ["codex", "gpt-5.6-sol"]],
                 "timeout_sec": 1800,
             },
             "implementation": {
-                "allowed": ["claude", "cursor"],
-                "default_model": {"claude": "claude-sonnet-4-6", "cursor": "auto"},
+                "heavy": [["claude", "claude-sonnet-4-6"], ["cursor", "auto"]],
                 "timeout_sec": 3600,
             },
         },

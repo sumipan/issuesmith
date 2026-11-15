@@ -73,25 +73,12 @@ _DEFAULT_REL_PATHS: dict[str, str] = {
 
 _DEFAULT_ENGINES: dict[str, dict[str, Any]] = {
     "design": {
-        "allowed": ["claude", "codex"],
-        "default_model": {
-            "claude": "claude-opus-4-6",
-            "codex": "gpt-5.6-sol",
-        },
-        "light_model": {
-            "claude": "claude-sonnet-4-6",
-            # gpt-5.4-mini returns 400 on codex with ChatGPT account auth and was
-            # dropped from the nexus allowlist (2026-09-09, B1 light tier stopped twice).
-            "codex": "gpt-5.5",
-        },
+        "heavy": [["claude", "claude-opus-4-6"], ["codex", "gpt-5.6-sol"]],
+        "light": [["claude", "claude-sonnet-4-6"], ["codex", "gpt-5.5"]],
         "timeout_sec": 1800,
     },
     "implementation": {
-        "allowed": ["claude", "cursor"],
-        "default_model": {
-            "claude": "claude-sonnet-4-6",
-            "cursor": "auto",
-        },
+        "heavy": [["claude", "claude-sonnet-4-6"], ["cursor", "auto"]],
         "timeout_sec": 3600,
     },
 }
@@ -138,10 +125,9 @@ class AndonConfig:
 
 @dataclass(frozen=True)
 class RoleConfig:
-    allowed: tuple[str, ...]
-    default_model: Mapping[str, str]
+    heavy: tuple[tuple[str, str], ...]
     timeout_sec: float
-    light_model: Mapping[str, str] = field(default_factory=dict)
+    light: tuple[tuple[str, str], ...] | None = None
     # Rate-limit pause lifetime; resume_at = observed_at + pause_ttl_sec (#4987).
     pause_ttl_sec: int = 3600
 
@@ -558,26 +544,58 @@ def _build_pause_ttl_sec(raw: Any, role: str) -> int:
     return raw
 
 
-def _build_role(raw: Mapping[str, Any], role: str) -> RoleConfig:
-    allowed_raw = [str(x) for x in (raw.get("allowed") or ())]
+_LEGACY_ENGINE_KEYS = ("allowed", "default_model", "light_model")
+_ROUTE_EXAMPLE = "heavy: [[claude, <model>], ...]"
+
+
+def _parse_route_pairs(raw: Any, role: str, key: str) -> tuple[tuple[str, str], ...]:
+    if not isinstance(raw, (list, tuple)) or not raw:
+        raise ConfigError(f"engines.{role}.{key} must be a non-empty list of [engine, model] pairs")
+    pairs: list[tuple[str, str]] = []
     seen: set[str] = set()
-    for engine in allowed_raw:
-        if engine in seen:
+    for item in raw:
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
             raise ConfigError(
-                f"engines.{role}.allowed contains duplicate engine: {engine!r}"
+                f"engines.{role}.{key} entries must be [engine, model] pairs with two non-empty strings"
             )
+        engine = str(item[0]).strip()
+        model = str(item[1]).strip()
+        if not engine or not model:
+            raise ConfigError(
+                f"engines.{role}.{key} entries must be [engine, model] pairs with two non-empty strings"
+            )
+        if engine in seen:
+            raise ConfigError(f"engines.{role}.{key} contains duplicate engine: {engine!r}")
         seen.add(engine)
-    allowed = tuple(allowed_raw)
-    default_model = {
-        str(k): str(v) for k, v in dict(raw.get("default_model") or {}).items()
-    }
-    light_raw = raw.get("light_model") or {}
-    light_model = {str(k): str(v) for k, v in dict(light_raw).items()}
+        pairs.append((engine, model))
+    return tuple(pairs)
+
+
+def _build_role(raw: Mapping[str, Any], role: str) -> RoleConfig:
+    for old_key in _LEGACY_ENGINE_KEYS:
+        if old_key in raw:
+            raise ConfigError(
+                f"engines.{role}.{old_key} was removed; use {_ROUTE_EXAMPLE} "
+                f"(optional light: [[engine, model], ...])"
+            )
+    if "heavy" not in raw:
+        raise ConfigError(f"engines.{role}.heavy is required ({_ROUTE_EXAMPLE})")
+    heavy = _parse_route_pairs(raw["heavy"], role, "heavy")
+    light: tuple[tuple[str, str], ...] | None
+    if "light" in raw and raw["light"] is not None:
+        light = _parse_route_pairs(raw["light"], role, "light")
+        heavy_engines = {engine for engine, _ in heavy}
+        for engine, _ in light:
+            if engine not in heavy_engines:
+                raise ConfigError(
+                    f"engines.{role}.light engine {engine!r} is not present in engines.{role}.heavy"
+                )
+    else:
+        light = None
     timeout = float(raw.get("timeout_sec") or 0)
     return RoleConfig(
-        allowed=allowed,
-        default_model=default_model,
-        light_model=light_model,
+        heavy=heavy,
+        light=light,
         timeout_sec=timeout,
         pause_ttl_sec=_build_pause_ttl_sec(raw.get("pause_ttl_sec"), role),
     )
@@ -591,6 +609,8 @@ def _build_engines(raw: Mapping[str, Any] | None) -> dict[str, RoleConfig]:
                 continue
             merged = dict(base.get(str(role), {}))
             merged.update(conf)
+            if "heavy" in conf and "light" not in conf:
+                merged.pop("light", None)
             base[str(role)] = merged
     return {role: _build_role(conf, role) for role, conf in base.items()}
 

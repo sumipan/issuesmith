@@ -9,23 +9,23 @@ The suite includes design and merge gates, a request queue with triage, lane pla
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.188.0-blue)
+![version](https://img.shields.io/badge/version-v0.188.1-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.188.0** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.188.1** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.188.0"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.188.1"
 ```
 
 The gates, forge access, `observe`, `andon`, `lanes` and `metrics` import ghdag, so install the `ghdag` extra unless another package already provides ghdag. The base package alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.188.0"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.188.1"
 ```
 
 | Item | Value |
@@ -417,7 +417,7 @@ A file that is not found is treated as empty, which fails validation because `re
 | `timezone` | `Asia/Tokyo` | IANA timezone for reports and `--since` |
 | `supported_repos` | `[]` | Repositories allowed as cross-repo targets |
 | `paths` | see below | Queue, state, metrics, worktree, template and ledger paths |
-| `engines.<role>` | see below | Per role (`design`, `implementation`): `allowed`, `default_model`, `light_model`, `timeout_sec`, `pause_ttl_sec` |
+| `engines.<role>` | see below | Per role (`design`, `implementation`): `heavy`, optional `light`, `timeout_sec`, `pause_ttl_sec` |
 | `concurrency` | `default: 1` | `default`, `per_engine`, `strict_order` (`false`), `max_dispatch_per_tick` (`1`: requests started per queue tick; each engine still stops at its `per_engine` limit) |
 | `milestone_chain` | `enabled: false` | `enabled`, `child_priority` (`normal`), `auto_develop` (`true`), `auto_close_parent` (`true`) |
 | `triage` | `enabled: true` | Queue LLM triage: `engine` (`claude`), `model` (`claude-sonnet-4-6`), `timeout` (`60`), `body_chars` (`500`), `circuit_breaker_threshold` (`3`), `circuit_breaker_reset_seconds` (`1800`) |
@@ -447,9 +447,8 @@ A file that is not found is treated as empty, which fails validation because `re
 
 | Field | Default (`design` / `implementation`) | Description |
 |---|---|---|
-| `allowed` | `[claude, codex]` / `[claude, cursor]` | Ordered engine candidates for the role (current selection is always tried first, then the rest in list order) |
-| `default_model` | `claude: claude-opus-4-6`, `codex: gpt-5.6-sol` / `claude: claude-sonnet-4-6`, `cursor: auto` | Model per engine for the heavy tier |
-| `light_model` | `claude: claude-sonnet-4-6`, `codex: gpt-5.5` / `{}` | Model per engine for the light tier |
+| `heavy` | `[[claude, claude-opus-4-6], [codex, gpt-5.6-sol]]` / `[[claude, claude-sonnet-4-6], [cursor, auto]]` | Ordered `[engine, model]` pairs for the heavy tier (state selection is tried first, then the rest in list order) |
+| `light` | `[[claude, claude-sonnet-4-6], [codex, gpt-5.5]]` / omitted | Optional light-tier route; omitted means the heavy route is used for light tier |
 | `timeout_sec` | `1800` / `3600` | LLM run timeout |
 | `pause_ttl_sec` | `3600` | How long an engine stays paused after a rate limit (`resume_at = observed_at + pause_ttl_sec`); must be a positive integer |
 
