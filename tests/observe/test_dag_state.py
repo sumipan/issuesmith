@@ -155,8 +155,8 @@ def test_non_issuesmith_rows_ignored(dirs):
     assert states[300].status == "succeeded"
 
 
-def test_p1_success_p2_deferred(dirs):
-    """p1 success, p2 DEFERRED -> status deferred with step and uuid."""
+def test_p2_done_deferred_reads_as_failed(dirs):
+    """Legacy done marker DEFERRED is read as failed like other unknown markers."""
     exec_path, done_dir, running_dir = dirs
     p2_with_name = {**_DAG_A_P2, "annotations": {"step_name": "p2"}}
     _write_exec(exec_path, [_DAG_A_P1, p2_with_name])
@@ -164,48 +164,8 @@ def test_p1_success_p2_deferred(dirs):
     _write_done(done_dir, "p2", "DEFERRED")
 
     states = load_dag_states(exec_path, done_dir, running_dir)
-    assert states[101].status == "deferred"
-    assert states[101].deferred_step == "p2"
-    assert states[101].deferred_uuid == "p2"
-
-
-def test_p2_deferred_with_trailing_newline(dirs):
-    """Done body DEFERRED with trailing newline is still deferred."""
-    exec_path, done_dir, running_dir = dirs
-    _write_exec(exec_path, [_DAG_A_P1, _DAG_A_P2])
-    _write_done(done_dir, "p1", "0")
-    _write_done(done_dir, "p2", "DEFERRED\n")
-
-    states = load_dag_states(exec_path, done_dir, running_dir)
-    assert states[101].status == "deferred"
-    assert states[101].deferred_uuid == "p2"
-
-
-def test_failed_takes_priority_over_deferred(dirs):
-    """Mixed failed and deferred steps -> status failed, first failed step reported."""
-    exec_path, done_dir, running_dir = dirs
-    p1_named = {**_DAG_A_P1, "annotations": {"step_name": "p1"}}
-    p2_named = {**_DAG_A_P2, "annotations": {"step_name": "p2"}}
-    _write_exec(exec_path, [p1_named, p2_named])
-    _write_done(done_dir, "p1", "1")
-    _write_done(done_dir, "p2", "DEFERRED")
-
-    states = load_dag_states(exec_path, done_dir, running_dir)
     assert states[101].status == "failed"
-    assert states[101].failed_step == "p1"
-
-
-def test_deferred_with_running_step_is_running(dirs):
-    """Deferred step plus a running step -> status running."""
-    exec_path, done_dir, running_dir = dirs
-    p3 = {"uuid": "p3", "idempotency_key": "issuesmith:impl:101", "depends": ["p2"]}
-    _write_exec(exec_path, [_DAG_A_P1, _DAG_A_P2, p3])
-    _write_done(done_dir, "p1", "0")
-    _write_done(done_dir, "p2", "DEFERRED")
-    _write_running(running_dir, "p3")
-
-    states = load_dag_states(exec_path, done_dir, running_dir)
-    assert states[101].status == "running"
+    assert states[101].failed_step == "p2"
 
 
 def test_p1_failed_first_returned_as_failed_step(dirs):

@@ -9,7 +9,6 @@ from issuesmith.observe.dag_state import load_dag_states
 from issuesmith.observe.events import (
     AllEnginesPausedEvent,
     ChainHaltedEvent,
-    DagDeferredEvent,
     DagTerminatedEvent,
     DispatchBlockedEvent,
     ForgeUnavailableEvent,
@@ -120,11 +119,6 @@ def evaluate(
 
 
 def _evaluate_one(event: ObserveEvent, config: "ObserveConfig") -> list[Action]:
-    if isinstance(event, DagDeferredEvent):
-        return [
-            WaitAction(reason=f"DAG {event.key} deferred at step {event.step}"),
-        ]
-
     if isinstance(event, DagTerminatedEvent):
         reason = f"DAG {event.key} terminated at step {event.failed_step}"
         if event.namespace:

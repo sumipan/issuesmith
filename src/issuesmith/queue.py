@@ -838,7 +838,7 @@ def _issue_dag_live(issue_number: int) -> bool:
         return False
     if state.status in {"running", "pending"}:
         return True
-    if state.status in {"failed", "deferred", "succeeded"}:
+    if state.status in {"failed", "succeeded"}:
         return False
     return True
 
