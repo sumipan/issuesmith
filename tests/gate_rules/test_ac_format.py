@@ -1,8 +1,12 @@
 """tests/gate_rules/test_ac_format.py — unit tests for the b1_ac_format gate."""
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
+
 import issuesmith.gate_rules.ac_format_rules  # noqa: F401 — registers on import
 from issuesmith.gate_rules import GATE_REGISTRY
+from issuesmith.gate_rules.ac_format_rules import check_greps_against_base
 
 
 def _check(body: str, labels: list[str]):
@@ -613,3 +617,113 @@ def test_paths_invalid_entry_without_milestone_label_when_yaml_present():
 
 def test_paths_no_check_without_yaml_block_when_unstructured():
     assert _check(BODY_WITH_AC_NO_YAML, NON_MILESTONE_LABELS) == []
+
+
+def _git_repo(tmp_path: Path) -> Path:
+    """Refs sumipan/nexus#6431 — git repo with origin/main for base grep checks."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["git", "init", "-q", "-b", "main", str(tmp_path)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "user.email", "t@example.com"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "user.name", "t"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "remote", "add", "origin", str(tmp_path)],
+        check=True,
+        capture_output=True,
+    )
+    return tmp_path
+
+
+def test_grep_match_outside_allow_paths(tmp_path):
+    """Refs sumipan/nexus#6431 — base grep hit outside allow_paths is reported."""
+    repo = _git_repo(tmp_path)
+    pkg = repo / "pkg"
+    pkg.mkdir()
+    (pkg / "a.py").write_text("TOKEN = 1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "-m", "init"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "update-ref", "refs/remotes/origin/main", "HEAD"],
+        check=True,
+        capture_output=True,
+    )
+    entry = {"pattern": "TOKEN", "paths": ["pkg"], "exclude": []}
+    violations = check_greps_against_base([entry], repo, "origin/main", ["other/**"])
+    assert len(violations) == 1
+    assert violations[0].rule_id == "ac_format.grep_outside_allow_paths"
+    assert violations[0].location == "pkg/a.py"
+
+    cleared = check_greps_against_base([entry], repo, "origin/main", ["pkg/**"])
+    assert cleared == []
+
+    excluded = check_greps_against_base(
+        [{**entry, "exclude": ["pkg/a.py"]}],
+        repo,
+        "origin/main",
+        ["other/**"],
+    )
+    assert excluded == []
+
+
+def test_grep_entry_invalid():
+    """Refs sumipan/nexus#6431 — invalid greps_must_be_empty entries fail ac_format."""
+    bodies = [
+        (
+            "```yaml\ngreps_must_be_empty:\n  - pattern: x\n"
+            "```"
+        ),
+        (
+            "```yaml\ngreps_must_be_empty:\n  - paths:\n      - pkg\n"
+            "```"
+        ),
+        (
+            "```yaml\ngreps_must_be_empty:\n  - pattern: '('\n    paths:\n      - pkg\n"
+            "```"
+        ),
+    ]
+    template_missing_paths = """\
+## Acceptance Criteria
+
+{yaml}
+
+- [ ] ac
+"""
+    for block in bodies:
+        body = template_missing_paths.format(yaml=block)
+        violations = _check(body, MILESTONE_LABELS)
+        assert any(v.rule_id == "ac_format.grep_entry_invalid" for v in violations)
+
+
+def test_greps_must_be_empty_is_allowed_key():
+    """Refs sumipan/nexus#6431 — greps_must_be_empty is an allowed AC YAML key."""
+    body = """\
+## Acceptance Criteria
+
+```yaml
+greps_must_be_empty:
+  - pattern: foo
+    paths:
+      - src
+paths_must_exist: []
+paths_must_not_exist: []
+```
+
+- [ ] ac
+"""
+    violations = _check(body, MILESTONE_LABELS)
+    assert not any(v.rule_id == "ac_format.yaml_invalid" for v in violations)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -177,3 +178,67 @@ def test_validate_step_requires_issue_rejects_ac_contract(
     cfg = load_config()
     with pytest.raises(ConfigError, match="worktree gate 'ac_contract'"):
         validate_step_requires(cfg.steps)
+
+
+def _git_repo(tmp_path: Path) -> Path:
+    """Refs sumipan/nexus#6431 — minimal git repo for AcContractGate grep checks."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["git", "init", "-q", "-b", "main", str(tmp_path)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "user.email", "t@example.com"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "user.name", "t"],
+        check=True,
+        capture_output=True,
+    )
+    return tmp_path
+
+
+def test_greps_must_be_empty_reports_matching_file(tmp_path: Path) -> None:
+    """Refs sumipan/nexus#6431 — matching file yields ac_contract.greps_must_be_empty."""
+    repo = _git_repo(tmp_path)
+    pkg = repo / "pkg"
+    pkg.mkdir()
+    (pkg / "a.py").write_text("NEEDLE = 1\n", encoding="utf-8")
+    body = _ac_body(
+        "paths_must_exist: []\n"
+        "paths_must_not_exist: []\n"
+        "greps_must_be_empty:\n"
+        "  - pattern: NEEDLE\n"
+        "    paths:\n"
+        "      - pkg\n"
+    )
+    violations = _gate(repo).check(body, [])
+    assert len(violations) == 1
+    v = violations[0]
+    assert v.rule_id == "ac_contract.greps_must_be_empty"
+    assert v.location == "pkg/a.py"
+
+
+def test_greps_must_be_empty_respects_exclude(tmp_path: Path) -> None:
+    """Refs sumipan/nexus#6431 — exclude pathspec suppresses grep violations."""
+    repo = _git_repo(tmp_path)
+    pkg = repo / "pkg"
+    pkg.mkdir()
+    (pkg / "a.py").write_text("NEEDLE = 1\n", encoding="utf-8")
+    (pkg / "b.py").write_text("NEEDLE = 2\n", encoding="utf-8")
+    body = _ac_body(
+        "paths_must_exist: []\n"
+        "paths_must_not_exist: []\n"
+        "greps_must_be_empty:\n"
+        "  - pattern: NEEDLE\n"
+        "    paths:\n"
+        "      - pkg\n"
+        "    exclude:\n"
+        "      - pkg/a.py\n"
+    )
+    violations = _gate(repo).check(body, [])
+    assert len(violations) == 1
+    assert violations[0].location == "pkg/b.py"

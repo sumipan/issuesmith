@@ -1,12 +1,22 @@
 from __future__ import annotations
 
+import fnmatch
 import re
+from pathlib import Path
 
 import yaml
 
-from issuesmith.ac_contract import is_invalid_contract_path, normalize_reference_entry
+from issuesmith.ac_contract import (
+    GrepError,
+    grep_matches,
+    is_invalid_contract_path,
+    normalize_grep_entry,
+    normalize_reference_entry,
+)
 from issuesmith.config import get_config
+from issuesmith.context_hook import parse_issue_metadata
 from issuesmith.gate_registry import GATE_REGISTRY, Violation
+from issuesmith.scope_gate import resolve_scope_root
 
 _SCOPE_MILESTONE = "scope:" + "milestone"
 _SCOPE_MIGRATION = "scope:" + "migration"
@@ -15,10 +25,63 @@ _ALLOWED_KEYS = frozenset({
     "paths_must_exist",
     "paths_must_not_exist",
     "references_must_resolve",
+    "greps_must_be_empty",
     # scope:migration contract keys (required by migration_plan_rules, read by ac_contract / ac_complete_entry)
     "post_merge",
     "removed_trees",
 })
+
+
+def _allow_path_matches(path: str, allow_paths: list[str]) -> bool:
+    return any(fnmatch.fnmatch(path, pat) for pat in allow_paths)
+
+
+def check_greps_against_base(
+    entries: list[dict],
+    root: Path,
+    ref: str,
+    allow_paths: list[str],
+) -> list[Violation]:
+    """Flag grep hits on ``ref`` that fall outside ``allow_paths``."""
+    violations: list[Violation] = []
+    for i, entry in enumerate(entries):
+        try:
+            hits = grep_matches(root, entry, ref=ref)
+        except GrepError as exc:
+            violations.append(
+                Violation(
+                    rule_id="ac_format.grep_outside_allow_paths",
+                    severity="fail",
+                    message=f"greps_must_be_empty[{i}]: git grep failed: {exc}",
+                    location=f"greps_must_be_empty[{i}]",
+                    auto_fixable=False,
+                    fix_hint=(
+                        "Narrow greps_must_be_empty paths, add exclude entries, "
+                        "or extend allow_paths for intentional matches."
+                    ),
+                )
+            )
+            continue
+        for rel_path in hits:
+            if _allow_path_matches(rel_path, allow_paths):
+                continue
+            violations.append(
+                Violation(
+                    rule_id="ac_format.grep_outside_allow_paths",
+                    severity="fail",
+                    message=(
+                        f"greps_must_be_empty[{i}] matches {rel_path} on {ref}, "
+                        "which is outside allow_paths"
+                    ),
+                    location=rel_path,
+                    auto_fixable=False,
+                    fix_hint=(
+                        "Add the file to allow_paths, add it to exclude, or "
+                        "narrow greps_must_be_empty paths."
+                    ),
+                )
+            )
+    return violations
 
 
 def get_ac_section(body: str) -> str | None:
@@ -225,6 +288,59 @@ class AcFormatRules:
                             auto_fixable=False,
                             fix_hint=None,
                         ))
+
+        grep_raw = data.get("greps_must_be_empty")
+        valid_grep_entries: list[dict] = []
+        if grep_raw is not None:
+            if not isinstance(grep_raw, list):
+                violations.append(
+                    Violation(
+                        rule_id="ac_format.grep_entry_invalid",
+                        severity="fail",
+                        message="greps_must_be_empty must be a list",
+                        location="greps_must_be_empty",
+                        auto_fixable=False,
+                        fix_hint=None,
+                    )
+                )
+            else:
+                for i, entry in enumerate(grep_raw):
+                    normalized, err = normalize_grep_entry(entry)
+                    if err is not None:
+                        violations.append(
+                            Violation(
+                                rule_id="ac_format.grep_entry_invalid",
+                                severity="fail",
+                                message=f"greps_must_be_empty[{i}]: {err}",
+                                location=f"greps_must_be_empty[{i}]",
+                                auto_fixable=False,
+                                fix_hint=None,
+                            )
+                        )
+                    else:
+                        assert normalized is not None
+                        valid_grep_entries.append(normalized)
+
+        if valid_grep_entries:
+            metadata = parse_issue_metadata(body)
+            scope_root = resolve_scope_root(metadata, get_config())
+            if scope_root is not None:
+                allow_paths_raw = metadata.get("allow_paths", [])
+                if isinstance(allow_paths_raw, str):
+                    allow_paths = [allow_paths_raw]
+                elif isinstance(allow_paths_raw, list):
+                    allow_paths = [str(p) for p in allow_paths_raw]
+                else:
+                    allow_paths = []
+                base_branch = str(metadata.get("base_branch") or "main")
+                violations.extend(
+                    check_greps_against_base(
+                        valid_grep_entries,
+                        scope_root,
+                        f"origin/{base_branch}",
+                        allow_paths,
+                    )
+                )
         return violations
 
 

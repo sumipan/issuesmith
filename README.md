@@ -290,7 +290,7 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/gate_rules/scope_size.py` | Issue size rules and promotion of oversized Issues to sub plans |
 | `issuesmith/gates/__init__.py` | Unified gate API: `GATE_REGISTRY`, `resolve_gate`, `validate_step_requires` |
 | `issuesmith/gates/ac_complete.py` | `check_ac_complete` wrapper around `ac_complete_entry.check_gate` |
-| `issuesmith/gates/ac_contract.py` | Worktree gate: acceptance contract `paths_must_exist` / `paths_must_not_exist` |
+| `issuesmith/gates/ac_contract.py` | Worktree gate: acceptance contract `paths_must_exist` / `paths_must_not_exist` / `greps_must_be_empty` |
 | `issuesmith/gates/base.py` | `Gate` protocol and `ContractInput` |
 | `issuesmith/gates/dep.py` | Dependency gate |
 | `issuesmith/gates/pr_scope.py` | PR scope gate |
@@ -353,7 +353,7 @@ Gate ids in `GATE_REGISTRY` (usable in `steps.*.requires`). `input_kind` is the 
 | id | input_kind | pre_llm | repairable | Responsibility |
 |---|---|---|---|---|
 | `ac_complete` | issue | no | yes | M2 merge readiness rules |
-| `ac_contract` | worktree | no | yes | Enforce acceptance-contract `paths_must_exist` / `paths_must_not_exist` on the worktree diff |
+| `ac_contract` | worktree | no | yes | Enforce acceptance-contract `paths_must_exist` / `paths_must_not_exist` / `greps_must_be_empty` on the worktree |
 | `ac_format` | issue | no | yes | Acceptance-criteria YAML format in the Issue body |
 | `allow_paths_forbidden` | issue | yes | no | allow_paths / host_allow_paths overlap with `forbidden_pr_paths` (no repair loop) |
 | `base_freshness` | worktree | yes | yes | Worktree includes the configured base branch (P0 fetch / rebase) |

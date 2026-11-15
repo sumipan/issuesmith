@@ -2,7 +2,8 @@
 
 Interprets the ```yaml block in the Issue body's acceptance criteria section
 (heading from the language pack) as a contract and checks paths_must_exist /
-paths_must_not_exist / references_must_resolve against the repository.
+paths_must_not_exist / references_must_resolve / greps_must_be_empty against
+the repository.
 
 Callers:
 - scripts/milestone-postcheck.py (CLI, with schema validation)
@@ -26,6 +27,10 @@ from issuesmith.config import get_config
 
 class GateMaterializationError(RuntimeError):
     """origin/base temporary worktree could not be materialized."""
+
+
+class GrepError(RuntimeError):
+    """git grep failed while evaluating greps_must_be_empty."""
 
 
 def _git(cmd: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -206,6 +211,84 @@ def _resolve_reference_path(repo_root: Path, value: str, source_file: str) -> bo
         elif (root / value).exists():
             return True
     return False
+
+
+def normalize_grep_entry(entry: object) -> tuple[dict | None, str | None]:
+    """Normalize one greps_must_be_empty entry.
+
+    Returns ``(normalized_dict, None)`` when valid, else ``(None, reason)``.
+    """
+    if not isinstance(entry, dict):
+        return None, "grep entry must be a mapping"
+    pattern = entry.get("pattern")
+    if not isinstance(pattern, str) or not pattern.strip():
+        return None, "pattern must be a non-empty string"
+    try:
+        re.compile(pattern)
+    except re.error as exc:
+        return None, f"pattern is not a valid regex: {exc}"
+    paths = entry.get("paths")
+    if not isinstance(paths, list) or not paths:
+        return None, "paths must be a non-empty list"
+    for path in paths:
+        if is_invalid_contract_path(path):
+            return None, f"invalid path in paths: {path!r}"
+    exclude_raw = entry.get("exclude", [])
+    if exclude_raw is None:
+        exclude_raw = []
+    if not isinstance(exclude_raw, list):
+        return None, "exclude must be a list when present"
+    exclude: list[str] = []
+    for path in exclude_raw:
+        if is_invalid_contract_path(path):
+            return None, f"invalid path in exclude: {path!r}"
+        exclude.append(path)
+    extra = set(entry.keys()) - {"pattern", "paths", "exclude"}
+    if extra:
+        return None, f"unexpected keys in grep entry: {sorted(extra)}"
+    return {"pattern": pattern, "paths": list(paths), "exclude": exclude}, None
+
+
+def grep_matches(repo_root: Path, entry: dict, *, ref: str | None = None) -> list[str]:
+    """Return sorted repo-relative paths matching ``entry`` via ``git grep``.
+
+    ``ref=None`` searches the working tree (including untracked files). When
+    ``ref`` is set, uses ``git grep <ref>`` and strips the ``<ref>:`` prefix.
+    Exit code 1 (no matches) yields ``[]``; other non-zero exits raise :class:`GrepError`.
+    """
+    pattern = entry["pattern"]
+    pathspecs = list(entry["paths"])
+    for ex in entry.get("exclude", []):
+        pathspecs.append(f":(exclude){ex}")
+    if ref is None:
+        cmd = [
+            "git",
+            "grep",
+            "--untracked",
+            "-l",
+            "-E",
+            "-e",
+            pattern,
+            "--",
+            *pathspecs,
+        ]
+    else:
+        cmd = ["git", "grep", "-l", "-E", "-e", pattern, ref, "--", *pathspecs]
+    result = subprocess.run(
+        cmd, cwd=repo_root, capture_output=True, text=True, check=False
+    )
+    if result.returncode == 1:
+        return []
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise GrepError(detail or f"git grep failed (exit {result.returncode})")
+    lines = [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+    if ref:
+        prefix = f"{ref}:"
+        lines = [
+            line[len(prefix) :] if line.startswith(prefix) else line for line in lines
+        ]
+    return sorted(lines)
 
 
 def normalize_reference_entry(ref: Any) -> tuple[str | None, str | None, str | None]:
@@ -527,6 +610,49 @@ def run_checks(contract: dict, repo_root: Path, *, base_ref: str = "HEAD") -> li
                     if not tracked
                     else f"{len(tracked)} files remain (e.g. {tracked[0]})"
                 ),
+                "git_log": "",
+            }
+        )
+
+    for raw_entry in contract.get("greps_must_be_empty", []):
+        normalized, err = normalize_grep_entry(raw_entry)
+        if err is not None:
+            pattern_label = (
+                raw_entry.get("pattern")
+                if isinstance(raw_entry, dict)
+                else str(raw_entry)
+            )
+            records.append(
+                {
+                    "check": "greps_must_be_empty",
+                    "path": str(pattern_label),
+                    "result": "FAIL",
+                    "detail": err,
+                    "git_log": "",
+                }
+            )
+            continue
+        assert normalized is not None
+        pattern = normalized["pattern"]
+        try:
+            hits = grep_matches(repo_root, normalized)
+        except GrepError as exc:
+            records.append(
+                {
+                    "check": "greps_must_be_empty",
+                    "path": pattern,
+                    "result": "FAIL",
+                    "detail": str(exc),
+                    "git_log": "",
+                }
+            )
+            continue
+        records.append(
+            {
+                "check": "greps_must_be_empty",
+                "path": pattern,
+                "result": "FAIL" if hits else "PASS",
+                "detail": ", ".join(hits) if hits else "",
                 "git_log": "",
             }
         )

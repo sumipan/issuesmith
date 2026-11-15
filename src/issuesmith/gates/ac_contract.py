@@ -1,12 +1,15 @@
-"""Acceptance contract gate — paths_must_exist / paths_must_not_exist on a worktree."""
+"""Acceptance contract gate — paths and greps_must_be_empty on a worktree."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 from issuesmith.ac_contract import (
+    GrepError,
     extract_contract_from_body,
+    grep_matches,
     is_invalid_contract_path,
+    normalize_grep_entry,
     run_checks,
 )
 from issuesmith.gate_registry import Violation
@@ -15,6 +18,11 @@ _FIX_HINT = (
     "Do not delete, rename, or merge paths covered by the acceptance contract "
     "(restore paths listed in paths_must_exist; remove paths listed in "
     "paths_must_not_exist)."
+)
+
+_GREP_FIX_HINT = (
+    "Remove grep matches in the worktree. If a match cannot be removed, add the "
+    "path to greps_must_be_empty exclude in the Issue body (B1 phase)."
 )
 
 
@@ -80,7 +88,35 @@ class AcContractGate:
             ),
         }
         records = run_checks(sub_contract, self._worktree_path)
-        return _violations_from_records(records)
+        violations = _violations_from_records(records)
+
+        grep_entries = contract.get("greps_must_be_empty")
+        if not isinstance(grep_entries, list):
+            return violations
+        for raw in grep_entries:
+            normalized, err = normalize_grep_entry(raw)
+            if err is not None:
+                continue
+            assert normalized is not None
+            try:
+                hits = grep_matches(self._worktree_path, normalized)
+            except GrepError:
+                continue
+            for rel_path in hits:
+                violations.append(
+                    Violation(
+                        rule_id="ac_contract.greps_must_be_empty",
+                        severity="fail",
+                        message=(
+                            f"Acceptance contract greps_must_be_empty: "
+                            f"{normalized['pattern']} matched {rel_path}"
+                        ),
+                        location=rel_path,
+                        auto_fixable=False,
+                        fix_hint=_GREP_FIX_HINT,
+                    )
+                )
+        return violations
 
 
 __all__ = ["AcContractGate"]

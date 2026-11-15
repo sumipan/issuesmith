@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Added
+
+- Acceptance-criteria YAML contract key `greps_must_be_empty`: evaluated deterministically in `ac_format` (shape and base-branch allow_paths overlap) and `ac_contract` / `run_checks` (worktree grep). Refs sumipan/nexus#6431.
+
 ## 0.186.1 - 2026-11-15
 
 ### Changed
