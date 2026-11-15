@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.186.1 - 2026-11-15
+
 ### Changed
 
 - Requires loop: violations from issue-input gates no longer launch the worktree repair step; they raise a decision andon with optional `resume_from_<design_step>` (Refs sumipan/nexus#6523).
