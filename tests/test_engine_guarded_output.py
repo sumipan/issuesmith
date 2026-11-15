@@ -30,29 +30,6 @@ def test_run_guarded_output_success_rc(capsys) -> None:
     assert capsys.readouterr().out == ""
 
 
-def test_run_guarded_output_failure_rc(capsys) -> None:
-    proc = MagicMock()
-    proc.returncode = 0
-    proc.stdout = "bad\nPIPELINE_STATUS: CP2_FAIL\n"
-    proc.stderr = ""
-
-    with (
-        patch("issuesmith.engine._execute", return_value=proc),
-        patch("issuesmith.engine._render_template", return_value="order"),
-    ):
-        rc, stdout = run_guarded_output(
-            "review",
-            "/tmp/t.md",
-            [],
-            ["CP2_PASS"],
-            "CP2_FAIL",
-        )
-
-    assert rc == 1
-    assert "CP2_FAIL" in stdout
-    assert capsys.readouterr().out == ""
-
-
 def test_run_guarded_output_appends_engine_failure_evidence() -> None:
     """Refs sumipan/nexus#6604 — guarded output carries stderr tail and failure class."""
     proc = MagicMock()

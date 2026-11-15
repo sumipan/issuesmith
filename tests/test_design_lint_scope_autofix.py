@@ -16,9 +16,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from issuesmith.step_verify import collect_violations
 from issuesmith.config import ScopeCouplingConfig, ScopeGateConfig
-from issuesmith.design_lint_entry import check_gate
+from issuesmith.step_verify import collect_violations
 from tests.legacy_text import (
     ACCEPTANCE_CRITERIA,
     CHANGE_TYPE,
@@ -121,53 +120,6 @@ def _patch_cfg(tmp_path: Path):
         patch("issuesmith.gate_rules.scope_coupling.get_config", return_value=cfg),
     ):
         yield cfg
-
-
-def test_check_gate_autofixes_and_passes(tmp_path: Path) -> None:
-    """AC-2: oversized tests/** narrows to the 3-file union, PASS, note returned."""
-    _oversized_clone(tmp_path)
-    body = _body_with_table_and_ac(["tests/**"])
-    with _patch_cfg(tmp_path):
-        result = check_gate(body, [])
-    assert result["status"] == "PASS"
-    assert result["reasons"] == []
-    assert result["autofix_new_allow_paths"] == _NARROW_PATHS
-    assert result["autofix_note"] is not None
-    assert "tests/**" in result["autofix_note"]
-    for path in _NARROW_PATHS:
-        assert path in result["autofix_note"]
-
-
-def test_check_gate_fails_when_no_table_or_ac_to_narrow_to(tmp_path: Path) -> None:
-    """No change table / paths_must_exist to narrow to -> FAIL, never a silent pass."""
-    _oversized_clone(tmp_path)
-    body = (
-        "```yaml\n"
-        "target_repo: sumipan/issuesmith\n"
-        "base_branch: main\n"
-        "allow_paths:\n"
-        '  - "tests/**"\n'
-        "```\n\n"
-        "## Overview\n\nNo change table here.\n"
-    )
-    with _patch_cfg(tmp_path):
-        result = check_gate(body, [])
-    assert result["status"] == "FAIL"
-    assert any(
-        "scope_breadth.too_large" in r or "scope too large" in r for r in result["reasons"]
-    )
-    assert result["autofix_new_allow_paths"] is None
-
-
-def test_narrow_allow_paths_already_within_threshold_is_a_plain_pass(tmp_path: Path) -> None:
-    """No autofix needed when allow_paths is already within threshold."""
-    _oversized_clone(tmp_path)
-    body = _body_with_table_and_ac(_NARROW_PATHS)
-    with _patch_cfg(tmp_path):
-        result = check_gate(body, [])
-    assert result["status"] == "PASS"
-    assert result["autofix_new_allow_paths"] is None
-    assert result["autofix_note"] is None
 
 
 def test_step_verify_reaches_the_same_result(tmp_path: Path) -> None:

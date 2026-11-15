@@ -1,5 +1,4 @@
 # Existing wall-clock-dependent tests (T13). Shrink-only ledger; do not add paths.
-tests/test_dispatch_deferred.py
 tests/test_engine_cli_wait_quota.py
 tests/test_engine_defer.py
 tests/test_engine_failure_class.py

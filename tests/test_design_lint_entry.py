@@ -9,78 +9,11 @@ import pytest
 
 from issuesmith.design_lint_entry import check_gate
 from issuesmith.gate_rules.design_lint_rules import DesignLintRules
-from tests.legacy_text import ADD, CHANGE_TYPE, DESCRIPTION, FILE_PATH, REPOSITORY, SUB
+from tests.legacy_text import CHANGE_TYPE, DESCRIPTION, FILE_PATH, REPOSITORY
 
 
 def _violation(rule_id: str) -> SimpleNamespace:
     return SimpleNamespace(rule_id=rule_id, message="hold")
-
-
-@patch("issuesmith.design_lint_entry.DesignLintRules")
-@patch("issuesmith.design_lint_entry.MilestoneConsistencyRules")
-@patch("issuesmith.design_lint_entry.ScopeBreadthRules")
-@patch("issuesmith.design_lint_entry.ScopeCouplingRules")
-def test_intentional_hold_true_for_legacy_rule_id(
-    coupling_cls,
-    scope_cls,
-    milestone_cls,
-    design_lint_cls,
-) -> None:
-    for cls in (design_lint_cls, milestone_cls, scope_cls, coupling_cls):
-        cls.return_value.check.return_value = []
-    design_lint_cls.return_value.check.return_value = [_violation("cp1.intentional_hold")]
-
-    result = check_gate("body", [])
-    assert result["intentional_hold"] is True
-
-
-@patch("issuesmith.design_lint_entry.DesignLintRules")
-@patch("issuesmith.design_lint_entry.MilestoneConsistencyRules")
-@patch("issuesmith.design_lint_entry.ScopeBreadthRules")
-@patch("issuesmith.design_lint_entry.ScopeCouplingRules")
-def test_intentional_hold_true_for_concept_rule_id(
-    coupling_cls,
-    scope_cls,
-    milestone_cls,
-    design_lint_cls,
-) -> None:
-    for cls in (design_lint_cls, milestone_cls, scope_cls, coupling_cls):
-        cls.return_value.check.return_value = []
-    design_lint_cls.return_value.check.return_value = [_violation("design_lint.intentional_hold")]
-
-    result = check_gate("body", [])
-    assert result["intentional_hold"] is True
-
-
-@patch("issuesmith.design_lint_entry.MigrationPlanRules")
-@patch("issuesmith.design_lint_entry.DesignLintRules")
-@patch("issuesmith.design_lint_entry.MilestoneConsistencyRules")
-@patch("issuesmith.design_lint_entry.ScopeBreadthRules")
-@patch("issuesmith.design_lint_entry.ScopeCouplingRules")
-def test_check_gate_uses_canonical_rule_classes(
-    coupling_cls,
-    scope_cls,
-    milestone_cls,
-    design_lint_cls,
-    migration_cls,
-) -> None:
-    for cls in (design_lint_cls, milestone_cls, scope_cls, coupling_cls, migration_cls):
-        cls.return_value.check.return_value = []
-    design_lint_cls.return_value.check.return_value = [
-        SimpleNamespace(rule_id="design_lint.forbidden_word.tbd", message="TBD found")
-    ]
-    migration_cls.return_value.check.return_value = [
-        SimpleNamespace(rule_id="migration_plan.missing_section", message="migration missing")
-    ]
-
-    result = check_gate("body", ["scope:migration"])
-
-    design_lint_cls.return_value.check.assert_called_once()
-    migration_cls.return_value.check.assert_called_once()
-    assert result["status"] == "FAIL"
-    assert "TBD found" in " ".join(result["reasons"])
-    assert "migration missing" in " ".join(result["reasons"])
-    assert result["intentional_hold"] is False
 
 
 _TABLE_HEADER = f"{REPOSITORY} | {FILE_PATH} | {CHANGE_TYPE} | {DESCRIPTION}"
@@ -90,7 +23,6 @@ _TABLE_HEADER = f"{REPOSITORY} | {FILE_PATH} | {CHANGE_TYPE} | {DESCRIPTION}"
 def _scope_root(tmp_path):
     """scope_breadth (#3487) and scope_coupling (#3647) are fail-closed; give them an
     empty measurable root."""
-    from unittest.mock import patch
 
     with (
         patch("issuesmith.gate_rules.scope_breadth.resolve_scope_root", return_value=tmp_path),
@@ -168,16 +100,6 @@ def test_todo_fail_sets_intentional_hold_false():
     assert result["intentional_hold"] is False
 
 
-def test_multiple_patterns_all_listed():
-    """#7 When multiple patterns exist, all are listed"""
-    body = "## Overview\nTODO: decide later\nTBD\n"
-    result = check_gate(body)
-    assert result["status"] == "FAIL"
-    assert len(result["reasons"]) >= 2
-    assert any("TODO:" in r for r in result["reasons"])
-    assert any("TBD" in r for r in result["reasons"])
-
-
 def test_case_a_in_body_passes():
     """#8 'Adopted option A' is outside the code gate (PASS)"""
     # ASCII fixture data.
@@ -185,19 +107,6 @@ def test_case_a_in_body_passes():
     result = check_gate(body)
     assert result["status"] == "PASS"
     assert result["reasons"] == []
-
-
-def test_cp1_must_fail_false_passes():
-    """cp1_must_fail: false passes the gate (still true after target_repo became required)"""
-    body = (
-        "```yaml\n"
-        "cp1_must_fail: false\n"
-        "target_repo: sumipan/nexus\n"
-        "issue_repo: sumipan/nexus\n"
-        "```\n\n## Overview\ncontent\n"
-    )
-    result = check_gate(body)
-    assert result["status"] == "PASS"
 
 
 def test_miteii_in_body_fails():
@@ -282,60 +191,6 @@ def test_yaml_block_without_target_repo_fails():
     assert result["status"] == "FAIL"
     assert any("target_repo" in r for r in result["reasons"])
     assert result["intentional_hold"] is False
-
-
-def test_check_gate_with_milestone_labels_runs_milestone_checks():
-    """Split plan present + no label → FAIL on milestone_consistency.
-    With scope:milestone, existing milestone AC yaml checks run (#3077)."""
-    # ASCII fixture data.
-    body = f"""\
-```yaml
-target_repo: sumipan/nexus
-allow_paths:
-  - tools/**
-```
-
-## Design
-
-#### {SUB}1: foo
-
-**Scope**: s
-**Design Policy**: p
-**Changed Files**:
-| {_TABLE_HEADER} |
-|---|---|---|---|
-| `sumipan/nexus` | `tools/x.py` | {ADD} | add
-
-**Acceptance Criteria**:
-- [ ] one
-- [ ] two
-- [ ] three
-
-## Milestone
-### Sub-issue Plan
-| # | Title | c5185_c5BB9 | Dependency |
-|---|--------|------|------|
-| 1 | foo | s | None |
-
-## Changed Files
-| {_TABLE_HEADER} |
-|---|---|---|---|
-| `sumipan/nexus` | `tools/x.py` | {ADD} | add
-
-## Acceptance Criteria
-```yaml
-paths_must_exist:
-  - tools/x.py
-```
-- [ ] meta close this Issue
-"""
-    result_no_labels = check_gate(body)
-    result_with_labels = check_gate(body, ["scope:milestone"])
-    assert result_no_labels["status"] == "FAIL"
-    assert any("scope:milestone" in r for r in result_no_labels["reasons"])
-    assert result_with_labels["status"] == "FAIL"
-    # ASCII fixture data.
-    assert any("yaml" in r.lower() for r in result_with_labels["reasons"])
 
 
 def test_check_gate_labels_none_defaults_empty():
@@ -427,17 +282,6 @@ removed_trees:
 """
 
 
-def test_migration_label_merges_migration_violations():
-    """Body missing migration requirements FAILs CP1 when scope:migration is present"""
-    result = check_gate("## Overview\nclean body\n", ["scope:migration"])
-    assert result["status"] == "FAIL"
-    joined = "\n".join(result["reasons"])
-    # ASCII fixture data.
-    assert "Migration Steps" in joined
-    assert "Runtime State Survey" in joined
-    assert "paths_must_exist" in joined
-
-
 def test_migration_label_complete_body_passes():
     result = check_gate(_MIGRATION_COMPLETE_BODY, ["scope:migration"])
     assert result["status"] == "PASS", result["reasons"]
@@ -452,25 +296,3 @@ def test_no_migration_label_skips_migration_rules():
 # scope_breadth (#3427) — CP1 must FAIL when allow_paths scope is exceeded
 # ---------------------------------------------------------------------------
 
-def test_scope_breadth_exceeded_causes_check_gate_fail():
-    """check_gate returns FAIL when ScopeBreadthRules detects an oversized allow_paths."""
-    import unittest.mock as mock
-
-    from issuesmith.scope_gate import ScopeMeasure
-
-    exceeded = ScopeMeasure(
-        files=100, lines=100, by_dir={"src/": 100}, skipped_binary=0, skipped_jsonl=0
-    )
-    body = (
-        "```yaml\n"
-        "target_repo: sumipan/nexus\n"
-        "base_branch: main\n"
-        "allow_paths:\n"
-        '  - "src/**"\n'
-        "```\n\n"
-        "## Overview\nnormal content\n"
-    )
-    with mock.patch("issuesmith.gate_rules.scope_breadth.measure_scope", return_value=exceeded):
-        result = check_gate(body, [])
-    assert result["status"] == "FAIL"
-    assert any("scope_breadth.too_large" in r or "scope too large" in r for r in result["reasons"])

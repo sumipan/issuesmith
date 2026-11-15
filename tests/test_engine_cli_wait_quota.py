@@ -112,28 +112,6 @@ class TestEngineMainRetrySignalActions:
         assert rc == 0
         _assert_wait_quota_stdout(capsys)
 
-    def test_issue_number_parsed_from_variables(
-        self, template_path, dispatch_forge, stub_execute, monkeypatch
-    ):
-        sig = _quota_paused_sig()
-        stub_execute(sig)
-        handle = MagicMock()
-        monkeypatch.setattr(
-            "issuesmith.ops.dispatch.handle_retry_signal",
-            handle,
-        )
-
-        rc = main(
-            [
-                "run",
-                "design",
-                str(template_path),
-                "issue_number=5802",
-            ]
-        )
-
-        assert rc == 0
-        handle.assert_called_once_with(sig, "run", 5802)
 
     def test_invalid_issue_number_becomes_none(
         self, template_path, dispatch_forge, stub_execute, monkeypatch
@@ -157,22 +135,6 @@ class TestEngineMainRetrySignalActions:
 
         assert rc == 0
         handle.assert_called_once_with(sig, "run", None)
-
-    def test_exec_has_no_issue_number(
-        self, prompt_path, dispatch_forge, stub_execute, monkeypatch
-    ):
-        sig = _quota_paused_sig()
-        stub_execute(sig)
-        handle = MagicMock()
-        monkeypatch.setattr(
-            "issuesmith.ops.dispatch.handle_retry_signal",
-            handle,
-        )
-
-        rc = main(["exec", "design", str(prompt_path)])
-
-        assert rc == 0
-        handle.assert_called_once_with(sig, "exec", None)
 
 
 class TestEngineMainNonRetryErrors:

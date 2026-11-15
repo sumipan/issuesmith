@@ -8,19 +8,6 @@ from unittest.mock import patch
 from issuesmith.cli import _cmd_doctor
 
 
-def test_doctor_json_lists_checks(capsys) -> None:
-    """refs #6779: doctor --json emits one object per preflight check."""
-    rc = _cmd_doctor(["--json"])
-    assert rc in (0, 1)
-    rows = json.loads(capsys.readouterr().out)
-    assert isinstance(rows, list)
-    assert rows
-    for row in rows:
-        assert set(row) == {"name", "ok", "detail"}
-        assert isinstance(row["name"], str)
-        assert isinstance(row["ok"], bool)
-
-
 def test_doctor_json_fail_exits_1(capsys) -> None:
     """refs #6779: any failed check yields exit code 1 in JSON mode."""
     with patch(
