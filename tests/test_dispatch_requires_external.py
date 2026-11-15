@@ -148,29 +148,6 @@ class TestDepsUnmergedRequires:
         assert _raised_andons(forge)[0].kind == "decision"
         assert repair.launches == []
 
-    def test_unparsed_dependency_section_still_triggers_repair(self):
-        from issuesmith.config import RepairConfig, StepConfig
-        from issuesmith.ops.dispatch import run_requires_loop
-
-        cfg = StepConfig(
-            module="", requires=("deps",), repair=RepairConfig(max=1)
-        )
-        gate = _fail_gate("deps.unparsed_dependency_section")
-        repair = RepairStepBoundary()
-        with (
-            patch(
-                "issuesmith.ops.dispatch._build_requires_gates",
-                return_value={"deps": gate},
-            ),
-            patch("issuesmith.ops.dispatch.get_forge") as mock_forge,
-            stand_in_repair_step(repair),
-        ):
-            forge = _RecordingForge()
-            mock_forge.return_value = forge
-            run_requires_loop(cfg, "b1", _make_ctx())
-        assert len(repair.launches) == 1
-
-
 class TestTargetUnknownNotRepairable:
     def test_is_violation_repairable_excludes_target_unknown(self):
         from issuesmith.ops.dispatch import _is_violation_repairable

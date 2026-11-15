@@ -347,3 +347,134 @@ class TestAutoFixRoundLimit:
                     )
         assert rc != 0
         assert gate.fix.call_count == 1
+
+
+class TestIssueInputViolationAndon:
+    """Issue-body gates skip worktree repair and raise decision andon instead (nexus #6523)."""
+
+    def test_issue_input_gate_violation_raises_decision_andon_without_repair(self):
+        from issuesmith.config import StepConfig
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        cfg = StepConfig(module="", requires=("deps",))
+        gate = _fail_gate(
+            "deps.unparsed_dependency_section",
+            auto_fixable=False,
+        )
+        repair = RepairStepBoundary()
+        with (
+            patch(
+                "issuesmith.ops.dispatch._build_requires_gates",
+                return_value={"deps": gate},
+            ),
+            patch("issuesmith.ops.dispatch.get_forge") as mock_forge,
+            stand_in_repair_step(repair),
+        ):
+            forge = _RecordingForge()
+            mock_forge.return_value = forge
+            rc = run_requires_loop(cfg, "p0", _make_ctx())
+        assert rc == 1
+        assert repair.launches == []
+        raised = _raised_andons(forge)[0]
+        assert raised.kind == "decision"
+
+    def test_host_gate_violation_with_unprefixed_rule_id_skips_repair(
+        self, tmp_path, monkeypatch
+    ):
+        from issuesmith.config import StepConfig
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        mod_name = "mypkg_host_gate_issue_input"
+        gate_ref = f"{mod_name}:MY_GATE"
+        (tmp_path / f"{mod_name}.py").write_text(
+            """
+from issuesmith.gates import GateEntry
+from issuesmith.gate_registry import Violation
+
+class _G:
+    def check(self, body, labels):
+        return [
+            Violation(
+                rule_id="test_policy.removal_name",
+                severity="fail",
+                message="removed test name",
+                location=None,
+                auto_fixable=False,
+                fix_hint=None,
+            )
+        ]
+
+MY_GATE = GateEntry(input_kind="issue", build=lambda ctx: _G())
+""",
+            encoding="utf-8",
+        )
+        monkeypatch.syspath_prepend(str(tmp_path))
+
+        cfg = StepConfig(module="", requires=(gate_ref,))
+        built_gate = __import__(mod_name, fromlist=["MY_GATE"]).MY_GATE.build({})
+        repair = RepairStepBoundary()
+        with (
+            patch(
+                "issuesmith.ops.dispatch._build_requires_gates",
+                return_value={gate_ref: built_gate},
+            ),
+            patch("issuesmith.ops.dispatch.get_forge") as mock_forge,
+            stand_in_repair_step(repair),
+        ):
+            forge = _RecordingForge()
+            mock_forge.return_value = forge
+            rc = run_requires_loop(cfg, "p0", _make_ctx())
+        assert rc == 1
+        assert repair.launches == []
+        raised = _raised_andons(forge)[0]
+        assert raised.kind == "decision"
+
+    def test_decision_andon_options_start_with_design_step_resume(self):
+        from issuesmith.config import StepConfig
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        cfg = StepConfig(module="", requires=("deps",))
+        gate = _fail_gate(
+            "deps.unparsed_dependency_section",
+            auto_fixable=False,
+        )
+        repair = RepairStepBoundary()
+        with (
+            patch(
+                "issuesmith.ops.dispatch._build_requires_gates",
+                return_value={"deps": gate},
+            ),
+            patch("issuesmith.ops.dispatch._design_step_id", return_value="b1"),
+            patch("issuesmith.ops.dispatch.get_forge") as mock_forge,
+            stand_in_repair_step(repair),
+        ):
+            forge = _RecordingForge()
+            mock_forge.return_value = forge
+            run_requires_loop(cfg, "p0", _make_ctx())
+        raised = _raised_andons(forge)[0]
+        assert raised.options == ["resume_from_b1", "split", "reject"]
+
+    def test_decision_andon_options_without_design_step_are_split_reject(self):
+        from issuesmith.config import StepConfig
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        cfg = StepConfig(module="", requires=("deps",))
+        gate = _fail_gate(
+            "deps.unparsed_dependency_section",
+            auto_fixable=False,
+        )
+        repair = RepairStepBoundary()
+        with (
+            patch(
+                "issuesmith.ops.dispatch._build_requires_gates",
+                return_value={"deps": gate},
+            ),
+            patch("issuesmith.ops.dispatch._design_step_id", return_value=None),
+            patch("issuesmith.ops.dispatch.get_forge") as mock_forge,
+            stand_in_repair_step(repair),
+        ):
+            forge = _RecordingForge()
+            mock_forge.return_value = forge
+            run_requires_loop(cfg, "p0", _make_ctx())
+        raised = _raised_andons(forge)[0]
+        assert raised.options == ["split", "reject"]

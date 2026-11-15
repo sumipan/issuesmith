@@ -23,6 +23,10 @@ from typing import Any
 from issuesmith.gate_registry import Violation
 
 
+def _violation_fingerprint(v) -> tuple[str, str, str]:
+    return (v.rule_id, v.location or "", v.message)
+
+
 @dataclass
 class RequiresResult:
     """Result of one requires evaluation pass."""
@@ -32,6 +36,7 @@ class RequiresResult:
     warnings: list = field(default_factory=list)    # non-fail severity (e.g. tests.flaky)
     auto_fixed: list = field(default_factory=list)  # rule_ids auto-fixed this pass
     gate_error: Exception | None = None             # set if any gate raised
+    source_gate: dict[tuple[str, str, str], str] = field(default_factory=dict)
 
 
 def evaluate_requires(
@@ -47,9 +52,12 @@ def evaluate_requires(
     violations — dispatch should treat this as andon(broken).
     """
     all_violations: list = []
-    for gate in gates.values():
+    source_gate: dict[tuple[str, str, str], str] = {}
+    for gate_id, gate in gates.items():
         try:
             vs = gate.check(body, labels)
+            for v in vs:
+                source_gate[_violation_fingerprint(v)] = gate_id
             all_violations.extend(vs)
         except Exception as exc:
             from issuesmith.engine import RetrySignal
@@ -69,7 +77,10 @@ def evaluate_requires(
         v for v in non_preexisting if getattr(v, "severity", "fail") != "fail"
     ]
     return RequiresResult(
-        blocking=blocking, preexisting=preexisting, warnings=warnings
+        blocking=blocking,
+        preexisting=preexisting,
+        warnings=warnings,
+        source_gate=source_gate,
     )
 
 
@@ -106,6 +117,7 @@ def apply_auto_fixes(
         preexisting=result.preexisting,
         warnings=result.warnings,
         auto_fixed=auto_fixed,
+        source_gate=result.source_gate,
     )
     return updated, inp
 
