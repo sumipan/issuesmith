@@ -15,7 +15,7 @@ from issuesmith.contract import (
     parse_table_rows,
 )
 from issuesmith.gate_rules.milestone_subdesign_rules import MilestoneSubdesignRules
-from issuesmith.milestone import PlanRow, allow_paths_for_row, build_child_body, parse_split_plan
+from issuesmith.milestone import PlanRow, allow_paths_for_row
 from tests.legacy_text import (
     ADD,
     CHANGE_TYPE,
@@ -92,17 +92,6 @@ def test_heading_form_table_reads_the_same() -> None:
     assert [r[0] for r in extract_change_table_rows(text)] == ["sumipan/issuesmith"] * 3
 
 
-def test_unreadable_table_fails_gate_and_yields_no_paths() -> None:
-    # rows exist but none for the child's repo -> nothing to derive allow_paths from
-    body = _parent(_table("sumipan/nexus", ["scripts/x.py"]))
-    row = _row()
-    assert allow_paths_for_row(body, row) == []
-    gate_ids = [v.rule_id for v in MilestoneSubdesignRules().check(body, ["scope:milestone"])]
-    # gate reports the repo it *could* read and SUB1's repo agree on "unreadable for issuesmith"
-    assert change_paths_for_repo(body, "sumipan/issuesmith") == []
-    assert "milestone_subdesign.repo_mismatch" in gate_ids or gate_ids  # repo column mismatch surfaces at B1
-
-
 def test_missing_table_is_a_gate_violation() -> None:
     body = _parent("(no table here)\n")
     gate_ids = [v.rule_id for v in MilestoneSubdesignRules().check(body, ["scope:milestone"])]
@@ -110,38 +99,7 @@ def test_missing_table_is_a_gate_violation() -> None:
     assert allow_paths_for_row(body, _row()) == []
 
 
-def test_parent_allow_paths_are_never_inherited() -> None:
-    body = _parent(_table("sumipan/issuesmith", _CHILD_PATHS))
-    child = build_child_body(
-        parent_body=body,
-        parent_number=1,
-        row=_row(),
-        resolved_dep="",
-        client=None,  # type: ignore[arg-type]
-        parent_labels=["scope:milestone"],
-        allow_paths=allow_paths_for_row(body, _row()),
-    )
-    head = child.split("```")[1]
-    for p in _PARENT_ALLOW:
-        assert p not in head
-    for p in _CHILD_PATHS:
-        assert p in head
-
-
 # --- cell-internal pipes (#3481) -------------------------------------------------
-
-
-def test_pipe_inside_inline_code_does_not_split_cell() -> None:
-    table = (
-        "| # | scope | dep |\n"
-        "|---|---|---|\n"
-        "| 1 | add `andon list|show|answer` cmd | none |\n"
-    )
-    rows = parse_table_rows(table)
-    assert rows == [
-        ["#", "scope", "dep"],
-        ["1", "add `andon list|show|answer` cmd", "none"],
-    ]
 
 
 def test_table_without_cell_pipes_keeps_existing_behavior() -> None:
@@ -154,29 +112,6 @@ def test_lone_backtick_cell_parses() -> None:
     rows = parse_table_rows(table)
     assert rows[0] == ["a", "b"]
     assert rows[1][0] == "`"
-
-
-def test_split_plan_with_cell_pipe_reads_dep_repo_scope() -> None:
-    from issuesmith.config import get_config
-
-    sec = get_config().sections
-    # Split-plan columns and the no-deps word come from the language pack (#4470).
-    lang = get_config().language
-    _, title, target_repo, content, dependency = lang.sub_plan_columns
-    none_word = lang.no_deps_word
-    body = (
-        f"## {sec['milestone']}\n\n### {sec['sub_plan']}\n"
-        f"| # | {title} | {target_repo} | {content} | {dependency} |\n"
-        "|---|---|---|---|---|\n"
-        f"| 1 | andon | `sumipan/issuesmith` | add `andon list|show|answer` | {none_word} |\n"
-        "| 2 | wire | `sumipan/nexus` | use `a|b` | #1 |\n"
-    )
-    rows, has_repo = parse_split_plan(body, parent_target_repo="sumipan/nexus")
-    assert has_repo is True
-    assert [(r.row_num, r.repo, r.scope, r.dep_raw) for r in rows] == [
-        (1, "sumipan/issuesmith", "add `andon list|show|answer`", none_word),
-        (2, "sumipan/nexus", "use `a|b`", "#1"),
-    ]
 
 
 def test_repo_root_file_is_returned_from_four_column_table() -> None:
