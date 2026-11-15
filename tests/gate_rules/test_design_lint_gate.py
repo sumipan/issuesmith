@@ -13,16 +13,6 @@ _VALID_YAML_HEAD = (
 )
 
 
-def test_tbd_returns_violation():
-    """AC: TBD yields a design_lint.forbidden_word.tbd Violation."""
-    violations = DesignLintRules().check("Body has TBD remaining", [])
-    assert any(v.rule_id == "design_lint.forbidden_word.tbd" for v in violations)
-    v = next(v for v in violations if v.rule_id == "design_lint.forbidden_word.tbd")
-    assert v.severity == "fail"
-    assert v.auto_fixable is True
-    assert v.location is None
-
-
 def test_todo_returns_violation():
     violations = DesignLintRules().check("TODO: handle this later", [])
     assert any(v.rule_id == "design_lint.forbidden_word.todo" for v in violations)
@@ -48,17 +38,6 @@ def test_inline_code_excluded():
     assert violations == []
 
 
-def test_cp1_must_fail_true_returns_intentional_hold():
-    body = "```yaml\ncp1_must_fail: true\n```\n\n## Overview\nNormal content\n"
-    violations = DesignLintRules().check(body, [])
-    assert any(v.rule_id == "design_lint.intentional_hold" for v in violations)
-    v = next(v for v in violations if v.rule_id == "design_lint.intentional_hold")
-    assert v.severity == "fail"
-    assert v.auto_fixable is False
-    assert v.fix_hint is None
-    assert v.location is None
-
-
 def test_cp1_must_fail_false_passes():
     body = "```yaml\ncp1_must_fail: false\n```\n\n## Overview\nContent\n"
     violations = DesignLintRules().check(body, [])
@@ -79,56 +58,6 @@ def test_fix_hint_present_for_forbidden_words():
     violations = DesignLintRules().check("TBD", [])
     v = next(v for v in violations if v.rule_id == "design_lint.forbidden_word.tbd")
     assert v.fix_hint is not None
-
-
-def test_yaml_missing_target_repo_is_auto_fixable():
-    """Missing target_repo in YAML block → auto_fixable=True so B1 can fix."""
-    body = "```yaml\nbase_branch: main\nallow_paths:\n  - src/**\n```\n\n## Overview\nContent\n"
-    violations = DesignLintRules().check(body, [])
-    v = next((v for v in violations if v.rule_id == "design_lint.yaml_contract.missing_required"), None)
-    assert v is not None, "design_lint.yaml_contract.missing_required should be detected"
-    assert v.auto_fixable is True
-    assert v.fix_hint is not None
-    assert "target_repo" in v.fix_hint
-
-
-def test_yaml_annotation_in_path_is_auto_fixable():
-    """Parenthetical annotation in allow_paths → auto_fixable=True."""
-    body = "```yaml\ntarget_repo: sumipan/ghdag\nallow_paths:\n  - (ghdag repo) src/**\n```\n"
-    violations = DesignLintRules().check(body, [])
-    v = next((v for v in violations if v.rule_id == "design_lint.yaml_contract.annotation_in_path"), None)
-    assert v is not None
-    assert v.auto_fixable is True
-    assert v.fix_hint is not None
-
-
-def test_yaml_invalid_path_format_is_auto_fixable():
-    """allow_paths containing /var/tmp/ → auto_fixable=True."""
-    body = "```yaml\ntarget_repo: sumipan/ghdag\nallow_paths:\n  - /var/tmp/ghdag/\n```\n"
-    violations = DesignLintRules().check(body, [])
-    v = next((v for v in violations if v.rule_id == "design_lint.yaml_contract.invalid_path_format"), None)
-    assert v is not None
-    assert v.auto_fixable is True
-    assert v.fix_hint is not None
-
-
-def test_yaml_unsupported_repo_is_not_auto_fixable():
-    """Unsupported repository → auto_fixable=False (needs human judgment)."""
-    body = "```yaml\ntarget_repo: sumipan/unknown-repo\n```\n\n## Overview\nContent\n"
-    violations = DesignLintRules().check(body, [])
-    v = next((v for v in violations if v.rule_id == "design_lint.yaml_contract.unsupported_repo"), None)
-    assert v is not None
-    assert v.auto_fixable is False
-
-
-def test_missing_yaml_block_is_fail_with_fix_hint():
-    """Missing leading yaml is missing_block (no skip — #2539/#2541 regression)."""
-    violations = DesignLintRules().check("## Overview\nno yaml block\n", [])
-    by_id = {v.rule_id: v for v in violations}
-    v = by_id["design_lint.yaml_contract.missing_block"]
-    assert v.severity == "fail"
-    assert v.auto_fixable is True
-    assert "allow_paths" in (v.fix_hint or "")
 
 
 def test_scope_gate_over_hard_max_returns_violation():

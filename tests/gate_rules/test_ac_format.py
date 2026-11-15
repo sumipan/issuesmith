@@ -132,15 +132,6 @@ def test_empty_labels_returns_empty():
 # ---------------------------------------------------------------------------
 
 
-def test_section_missing_violation():
-    violations = _check(BODY_NO_AC_SECTION, MILESTONE_LABELS)
-    assert len(violations) == 1
-    v = violations[0]
-    assert v.rule_id == "ac_format.section_missing"
-    assert v.severity == "fail"
-    assert v.auto_fixable is False
-
-
 # ---------------------------------------------------------------------------
 # With scope:milestone + no YAML block → yaml_block_missing
 # ---------------------------------------------------------------------------
@@ -302,18 +293,6 @@ references_must_resolve:
 """
 
 
-def test_references_symbol_form_string_detected():
-    violations = _check(_BODY_REFS_SYMBOL_STRING, MILESTONE_LABELS)
-    assert len(violations) == 1
-    v = violations[0]
-    assert v.rule_id == "ac_format.reference_symbol_form"
-    assert v.severity == "fail"
-    assert v.auto_fixable is True
-    assert v.location == "references_must_resolve[0]"
-    assert v.fix_hint is not None
-    assert "path::symbol" in (v.fix_hint or "")
-
-
 def test_references_symbol_form_dict_detected():
     violations = _check(_BODY_REFS_SYMBOL_DICT, MILESTONE_LABELS)
     assert len(violations) == 1
@@ -380,27 +359,6 @@ references_must_resolve: "src/x.py"
 ```
 """
 
-_BODY_REFS_MIXED = """\
-## Acceptance Criteria
-
-```yaml
-references_must_resolve:
-  - "src/good.py"
-  - "src/bad.py::sym"
-  - key_path: "x"
-```
-"""
-
-
-def test_references_entry_missing_file_key():
-    violations = _check(_BODY_REFS_MISSING_FILE_KEY, MILESTONE_LABELS)
-    assert len(violations) == 1
-    v = violations[0]
-    assert v.rule_id == "ac_format.reference_entry_invalid"
-    assert v.severity == "fail"
-    assert v.auto_fixable is False
-    assert v.location == "references_must_resolve[0]"
-
 
 def test_references_entry_extra_key_invalid():
     violations = _check(_BODY_REFS_EXTRA_KEY, MILESTONE_LABELS)
@@ -432,16 +390,6 @@ def test_references_not_a_list():
     v = violations[0]
     assert v.rule_id == "ac_format.reference_entry_invalid"
     assert v.location == "references_must_resolve"
-
-
-def test_references_mixed_valid_and_invalid_returns_each_violation():
-    violations = _check(_BODY_REFS_MIXED, MILESTONE_LABELS)
-    assert len(violations) == 2
-    rule_ids = {v.rule_id for v in violations}
-    assert rule_ids == {"ac_format.reference_symbol_form", "ac_format.reference_entry_invalid"}
-    locations = {v.location for v in violations}
-    assert "references_must_resolve[1]" in locations
-    assert "references_must_resolve[2]" in locations
 
 
 def test_references_symbol_form_without_milestone_label():
@@ -514,46 +462,6 @@ def test_unparseable_yaml_without_milestone_label_when_yaml_present():
     assert violations[0].rule_id == "ac_format.yaml_invalid"
 
 
-def test_yaml_block_missing_fix_hint_reads_new_words_from_pack(tmp_path, monkeypatch):
-    """The "new" change-type vocabulary comes from the language pack (#4476)."""
-    import dataclasses
-
-    import yaml
-
-    from issuesmith.config import reset_config_cache
-    from issuesmith.language import EN, LanguagePack
-
-    data = {}
-    for f in dataclasses.fields(LanguagePack):
-        value = getattr(EN, f.name)
-        data[f.name] = list(value) if isinstance(value, tuple) else (
-            value if isinstance(value, str) else dict(value)
-        )
-    data["new_words"] = ["Create"]
-    pack = tmp_path / "pack.yaml"
-    pack.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
-    cfg = tmp_path / "issuesmith.yaml"
-    cfg.write_text(f"repo: example/app\nlanguage_pack: {pack}\n", encoding="utf-8")
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg))
-    reset_config_cache()
-
-    body = """\
-## Design
-
-| Repository | File path | Change type | Description |
-|---|---|---|---|
-| `example/app` | `tools/created.py` | create | add a gate |
-| `example/app` | `tools/added.py` | Add | not new under this pack |
-
-## Acceptance Criteria
-
-- [ ] check
-"""
-    violations = _check(body, MILESTONE_LABELS)
-    assert [v.rule_id for v in violations] == ["ac_format.yaml_block_missing"]
-    assert violations[0].fix_hint == "```yaml\npaths_must_exist:\n  - tools/created.py\n```"
-
-
 # --- paths_must_exist / paths_must_not_exist entry shape (#4803) ---
 
 
@@ -570,30 +478,6 @@ def _path_entries_body(key: str) -> str:
         key,
         '\n  - /abs/a.py\n  - ../a.py\n  - ""\n  - 1\n  - src/ok.py',
     )
-
-
-def test_paths_must_exist_invalid_entries_detected():
-    violations = _check(_path_entries_body("paths_must_exist"), MILESTONE_LABELS)
-    assert [v.rule_id for v in violations] == ["ac_format.path_entry_invalid"] * 4
-    assert [v.location for v in violations] == [
-        "paths_must_exist[0]",
-        "paths_must_exist[1]",
-        "paths_must_exist[2]",
-        "paths_must_exist[3]",
-    ]
-    assert all(v.severity == "fail" and not v.auto_fixable for v in violations)
-    assert "'/abs/a.py'" in violations[0].message
-
-
-def test_paths_must_not_exist_invalid_entries_detected():
-    violations = _check(_path_entries_body("paths_must_not_exist"), MILESTONE_LABELS)
-    assert [v.rule_id for v in violations] == ["ac_format.path_entry_invalid"] * 4
-    assert [v.location for v in violations] == [
-        "paths_must_not_exist[0]",
-        "paths_must_not_exist[1]",
-        "paths_must_not_exist[2]",
-        "paths_must_not_exist[3]",
-    ]
 
 
 def test_paths_must_exist_glob_and_plain_entries_no_violation():

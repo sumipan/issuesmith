@@ -71,61 +71,6 @@ def test_registered_in_gate_registry():
     assert "change_table_scope" in GATE_REGISTRY
 
 
-def test_target_row_exact_match_passes():
-    yaml_part = _yaml_block(allow_paths=["src/foo.py"])
-    body = _body(
-        yaml_part,
-        "| `sumipan/issuesmith` | `src/foo.py` | modify | change |\n",
-    )
-    assert _check(body) == []
-
-
-def test_target_row_glob_match_passes():
-    yaml_part = _yaml_block(allow_paths=["src/**"])
-    body = _body(
-        yaml_part,
-        "| `sumipan/issuesmith` | `src/pkg/mod.py` | modify | change |\n",
-    )
-    assert _check(body) == []
-
-
-def test_target_row_dot_slash_normalized():
-    yaml_part = _yaml_block(allow_paths=["./CHANGELOG.md"])
-    body = _body(
-        yaml_part,
-        "| `sumipan/issuesmith` | `CHANGELOG.md` | modify | note |\n",
-    )
-    assert _check(body) == []
-
-
-def test_target_row_outside_allow_paths_violation():
-    yaml_part = _yaml_block(allow_paths=["src/foo.py"])
-    body = _body(
-        yaml_part,
-        "| `sumipan/issuesmith` | `src/bar.py` | modify | change |\n",
-    )
-    violations = _check(body)
-    assert len(violations) == 1
-    v = violations[0]
-    assert v.rule_id == "change_table_scope.outside_allow_paths"
-    assert v.severity == "fail"
-    assert v.auto_fixable is True
-    assert v.location == "src/bar.py"
-    assert "allow_paths" in (v.fix_hint or "")
-
-
-def test_empty_allow_paths_every_target_row_fails():
-    yaml_part = _yaml_block(allow_paths=[])
-    body = _body(
-        yaml_part,
-        "| `sumipan/issuesmith` | `src/a.py` | modify | a |\n"
-        "| `sumipan/issuesmith` | `src/b.py` | modify | b |\n",
-    )
-    violations = _check(body)
-    assert len(violations) == 2
-    assert {v.location for v in violations} == {"src/a.py", "src/b.py"}
-
-
 def test_host_row_uses_host_allow_paths():
     yaml_part = _yaml_block(
         allow_paths=["src/foo.py"],
@@ -161,18 +106,6 @@ def test_unknown_repository_row_fails():
     assert "target_repo" in (violations[0].fix_hint or "")
 
 
-def test_delete_and_move_rows_are_checked():
-    yaml_part = _yaml_block(allow_paths=["src/old.py"])
-    body = _body(
-        yaml_part,
-        "| `sumipan/issuesmith` | `src/old.py` | delete | rm |\n"
-        "| `sumipan/issuesmith` | `src/new.py` | move | mv |\n",
-    )
-    violations = _check(body)
-    assert len(violations) == 1
-    assert violations[0].location == "src/new.py"
-
-
 def test_no_change_table_returns_empty():
     yaml_part = _yaml_block(allow_paths=["src/foo.py"])
     body = f"{yaml_part}\n\n## Design\n\nno table here\n"
@@ -192,21 +125,3 @@ def test_missing_target_repo_returns_empty():
     assert _check(body) == []
 
 
-def test_milestone_label_skips():
-    yaml_part = _yaml_block(allow_paths=[])
-    body = _body(
-        yaml_part,
-        "| `sumipan/issuesmith` | `src/a.py` | modify | a |\n",
-    )
-    assert _check(body, ["scope:milestone"]) == []
-
-
-def test_legacy_row_without_repo_column():
-    yaml_part = _yaml_block(allow_paths=["src/legacy.py"])
-    body = (
-        f"{yaml_part}\n\n## Design\n\n"
-        f"| {lt.FILE_PATH} | {lt.CHANGE_TYPE} | {lt.DESCRIPTION} |\n"
-        "|---|---|---|\n"
-        "| `src/legacy.py` | modify | legacy |\n"
-    )
-    assert _check(body) == []

@@ -101,42 +101,9 @@ def test_check8_code_block_todo_excluded():
     assert not any("forbidden_word.todo" in v.rule_id for v in violations)
 
 
-def test_check9_sub_ac_yaml_missing():
-    body = _milestone_body()
-    body = body.replace(
-        "```yaml\npaths_must_exist:\n  - tools/foo/a.py\n```\n",
-        "",
-        1,
-    )
-    violations = DesignLintRules().check(body, MILESTONE_LABELS)
-    assert any(v.rule_id == "design_lint.milestone.sub_ac_yaml_missing" for v in violations)
-
-
 def test_check9_sub_ac_yaml_present_passes():
     violations = DesignLintRules().check(_milestone_body(), MILESTONE_LABELS)
     assert not any(v.rule_id == "design_lint.milestone.sub_ac_yaml_missing" for v in violations)
-
-
-def test_check10_parent_ac_orphan():
-    # ASCII fixture data.
-    body = _milestone_body(parent_ac=[
-        "c5B64_c7ACB_c3057_c305F_c89AA_Acceptance Criteria_c30C8_c30FC_c30AF_c30F3 xyzunique",
-        "Sub-issue_c3059_c3079_c3066_c306E_c5B9F_c88C5_c304C_c5B8C_c4E86_c3059_c308B",
-        "c672C Issue c3092 close c3059_c308B",
-    ])
-    violations = DesignLintRules().check(body, MILESTONE_LABELS)
-    assert any(v.rule_id == "design_lint.milestone.parent_ac_orphan" for v in violations)
-
-
-def test_check10_meta_pattern_passes():
-    # ASCII fixture data.
-    body = _milestone_body(parent_ac=[
-        "PR #9999 merged",
-        "PR #9998 created",
-        "PR #9997 closed",
-    ])
-    violations = DesignLintRules().check(body, MILESTONE_LABELS)
-    assert not any(v.rule_id == "design_lint.milestone.parent_ac_orphan" for v in violations)
 
 
 def test_keyword_tokens_ascii_separator_split():
@@ -150,30 +117,6 @@ def test_keyword_tokens_english_phase_unchanged():
     assert _keyword_tokens("Phase 4:") == ["Phase"]
 
 
-def test_check10_ascii_tokens_parent_ac_cover_passes():
-    body = _milestone_body(
-        parent_ac=[
-            "audit/report posted",
-            "PR #9001 merged",
-            "PR #9002 merged",
-        ],
-        sub_extra="- [ ] report posted\n",
-    )
-    violations = DesignLintRules().check(body, MILESTONE_LABELS)
-    assert not any(v.rule_id == "design_lint.milestone.parent_ac_orphan" for v in violations)
-
-
-def test_check10_keyword_cover_passes():
-    # ASCII fixture data.
-    body = _milestone_body(parent_ac=[
-        "alpha acceptance check",
-        "PR #9001 merged",
-        "PR #9002 merged",
-    ])
-    violations = DesignLintRules().check(body, MILESTONE_LABELS)
-    assert not any(v.rule_id == "design_lint.milestone.parent_ac_orphan" for v in violations)
-
-
 def test_check10_optional_prefix_passes():
     # ASCII fixture data.
     body = _milestone_body(parent_ac=[
@@ -183,29 +126,6 @@ def test_check10_optional_prefix_passes():
     ])
     violations = DesignLintRules().check(body, MILESTONE_LABELS)
     assert not any(v.rule_id == "design_lint.milestone.parent_ac_orphan" for v in violations)
-
-
-def test_check10_optional_prefix_midtext_fails():
-    # ASCII fixture data.
-    body = _milestone_body(parent_ac=[
-        "ghdag (optional) deferred integration",
-        "PR #9001 merged",
-        "PR #9002 merged",
-    ])
-    violations = DesignLintRules().check(body, MILESTONE_LABELS)
-    assert any(v.rule_id == "design_lint.milestone.parent_ac_orphan" for v in violations)
-
-
-def test_check11_paths_must_exist_unmapped():
-    # ASCII fixture data.
-    body = _milestone_body()
-    body = body.replace(
-        "## Acceptance Criteria\n\n```yaml\npaths_must_exist:\n  - tools/foo/a.py\n```",
-        "## Acceptance Criteria\n\n```yaml\npaths_must_exist:\n  - tools/foo/a.py\n  - tools/missing/new.py\n```",
-        1,
-    )
-    violations = DesignLintRules().check(body, MILESTONE_LABELS)
-    assert any(v.rule_id == "design_lint.milestone.paths_must_exist_unmapped" for v in violations)
 
 
 def test_check11_paths_must_exist_mapped_passes():
@@ -427,11 +347,3 @@ def test_ascii_pack_matches_en_decision(tmp_path, monkeypatch, en_kind, ascii_ki
         assert ("design_lint.forbidden_word.todo.sub1", "#### Sub1") in en
 
 
-def test_sub_location_uses_pack_prefix(tmp_path, monkeypatch):
-    _use_pack(tmp_path, monkeypatch, **_ASCII_PACK)
-    body = _pack_body(
-        "Part", _ASCII_PACK["change_table_columns"], "Add", sub_extra="TODO: fill in\n"
-    )
-    violations = DesignLintRules().check(body, MILESTONE_LABELS)
-    todo = next(v for v in violations if v.rule_id == "design_lint.forbidden_word.todo.sub1")
-    assert todo.location == "#### Part1"

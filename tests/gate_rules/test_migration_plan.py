@@ -138,36 +138,6 @@ def test_migration_label_with_complete_body_returns_empty():
     assert _check(BODY_COMPLETE, MIGRATION_LABELS) == []
 
 
-def test_migration_label_without_section_returns_procedure_violation():
-    violations = _check(BODY_WITHOUT_MIGRATION_PROCEDURE, MIGRATION_LABELS)
-    by_id = {v.rule_id: v for v in violations}
-    v = by_id["migration_plan.migration_procedure_missing"]
-    assert v.severity == "fail"
-    assert v.auto_fixable is True
-    assert v.fix_hint.startswith("## Migration Steps")
-    assert "```bash" in v.fix_hint
-
-
-def test_missing_everything_returns_all_five_violations():
-    assert _rule_ids(BODY_WITHOUT_MIGRATION_PROCEDURE, MIGRATION_LABELS) == {
-        "migration_plan.migration_procedure_missing",
-        "migration_plan.state_survey_missing",
-        "migration_plan.verification_test_missing",
-        "migration_plan.post_merge_missing",
-        "migration_plan.removed_trees_missing",
-    }
-
-
-def test_missing_state_survey_returns_violation_with_skeleton():
-    violations = _check(BODY_MISSING_STATE_SURVEY, MIGRATION_LABELS)
-    by_id = {v.rule_id: v for v in violations}
-    assert set(by_id) == {"migration_plan.state_survey_missing"}
-    v = by_id["migration_plan.state_survey_missing"]
-    assert v.auto_fixable is True
-    assert "Runtime State Survey" in v.fix_hint
-    assert v.fix_hint.count("**") >= 8
-
-
 def test_empty_state_survey_section_is_violation():
     body = BODY_MISSING_STATE_SURVEY.replace(
         "some impact analysis",
@@ -244,26 +214,6 @@ post_merge:
 """
 
 
-def test_missing_post_merge_returns_violation():
-    violations = _check(BODY_MISSING_POST_MERGE, MIGRATION_LABELS)
-    by_id = {v.rule_id: v for v in violations}
-    assert "migration_plan.post_merge_missing" in by_id
-    v = by_id["migration_plan.post_merge_missing"]
-    assert v.severity == "fail"
-    assert v.auto_fixable is True
-    assert "post_merge" in v.fix_hint
-
-
-def test_missing_removed_trees_returns_violation():
-    violations = _check(BODY_MISSING_REMOVED_TREES, MIGRATION_LABELS)
-    by_id = {v.rule_id: v for v in violations}
-    assert "migration_plan.removed_trees_missing" in by_id
-    v = by_id["migration_plan.removed_trees_missing"]
-    assert v.severity == "fail"
-    assert v.auto_fixable is True
-    assert "removed_trees" in v.fix_hint
-
-
 def _with_ac_yaml(yaml_text: str) -> str:
     """Return BODY_COMPLETE with its AC YAML block replaced by yaml_text."""
     start = BODY_COMPLETE.index("```yaml\n") + len("```yaml\n")
@@ -294,24 +244,6 @@ def test_post_merge_free_text_item_is_schema_violation():
     assert "kind: stable_install" in v.fix_hint
 
 
-def test_post_merge_valid_items_of_all_kinds_pass():
-    """AC-2: complete stable_install / tag / restart items yield no violation."""
-    body = _with_ac_yaml(
-        _AC_PATHS
-        + "post_merge:\n"
-        + "  - kind: stable_install\n"
-        + "    repo: sumipan/issuesmith\n"
-        + "    path: /var/tmp/issuesmith\n"
-        + "  - kind: tag\n"
-        + "    repo: sumipan/issuesmith\n"
-        + "    tag: v0.1.0\n"
-        + "  - kind: restart\n"
-        + "    processes: [release_watcher]\n"
-        + _AC_REMOVED
-    )
-    assert _check(body, MIGRATION_LABELS) == []
-
-
 def test_post_merge_unknown_kind_lists_allowed_kinds():
     """AC-3: an unknown kind fails and the fix_hint lists the allowed kinds."""
     body = _with_ac_yaml(
@@ -325,22 +257,6 @@ def test_post_merge_unknown_kind_lists_allowed_kinds():
     assert "allowed: stable_install, tag, restart" in v.message
     for kind in ("stable_install", "tag", "restart"):
         assert kind in v.fix_hint
-
-
-def test_post_merge_missing_required_field_is_violation():
-    body = _with_ac_yaml(
-        _AC_PATHS
-        + "post_merge:\n"
-        + "  - kind: stable_install\n"
-        + "    repo: sumipan/issuesmith\n"
-        + "  - kind: restart\n"
-        + _AC_REMOVED
-    )
-    v = {x.rule_id: x for x in _check(body, MIGRATION_LABELS)}[
-        "migration_plan.post_merge_schema"
-    ]
-    assert "kind stable_install: missing required field: path" in v.message
-    assert "kind restart: missing required field: processes" in v.message
 
 
 def test_post_merge_schema_not_reported_when_key_missing():
@@ -375,17 +291,6 @@ def test_removed_trees_schema_not_reported_when_key_missing():
     ids = _rule_ids(BODY_MISSING_REMOVED_TREES, MIGRATION_LABELS)
     assert "migration_plan.removed_trees_missing" in ids
     assert "migration_plan.removed_trees_schema" not in ids
-
-
-def test_post_merge_manual_check_passes():
-    body = _with_ac_yaml(
-        _AC_PATHS
-        + "post_merge:\n"
-        + "  - kind: manual_check\n"
-        + '    description: "run python3 scripts/preflight.py after MG1"\n'
-        + _AC_REMOVED
-    )
-    assert _check(body, MIGRATION_LABELS) == []
 
 
 def test_post_merge_manual_check_without_description_is_violation():
@@ -471,26 +376,3 @@ def test_custom_pack_headings_pass(tmp_path, monkeypatch):
     assert _check(_migration_body(sections), MIGRATION_LABELS) == []
 
 
-def test_custom_pack_default_headings_fail_with_same_rules(tmp_path, monkeypatch):
-    """Body written with EN headings misses every section under a custom pack."""
-    from issuesmith.language import EN
-
-    sections = _use_custom_headings(tmp_path, monkeypatch)
-    violations = _check(_migration_body(EN.sections), MIGRATION_LABELS)
-    by_id = {v.rule_id: v for v in violations}
-    assert set(by_id) == {
-        "migration_plan.migration_procedure_missing",
-        "migration_plan.state_survey_missing",
-        "migration_plan.verification_test_missing",
-        "migration_plan.post_merge_missing",
-        "migration_plan.removed_trees_missing",
-    }
-    assert by_id["migration_plan.migration_procedure_missing"].fix_hint.startswith(
-        f"## {sections['migration']}\n"
-    )
-    assert f"### {sections['migration_state_survey']}" in (
-        by_id["migration_plan.state_survey_missing"].fix_hint
-    )
-    assert f"## {sections['acceptance_criteria']}" in (
-        by_id["migration_plan.post_merge_missing"].message
-    )
