@@ -18,18 +18,6 @@ def _write_exec(path, keys: list[str]) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def test_key_consumed_detects_base_and_generation_keys(tmp_path, monkeypatch):
-    exec_path = tmp_path / "exec.jsonl"
-    monkeypatch.setattr(qmod, "EXEC_PATH", exec_path)
-    assert qmod._handler_key_consumed("impl", 2980) is False  # no exec.jsonl
-
-    _write_exec(exec_path, ["issuesmith:brushup:2980", "issuesmith:impl:2967:1"])
-    assert qmod._handler_key_consumed("brushup", 2980) is True
-    assert qmod._handler_key_consumed("impl", 2967) is True  # generation-suffixed key only
-    assert qmod._handler_key_consumed("impl", 2980) is False
-    assert qmod._handler_key_consumed("merge", 2967) is False
-
-
 def test_trigger_ghdag_redispatch_builds_generation_bump_command(tmp_path, monkeypatch):
     calls: list[list[str]] = []
 

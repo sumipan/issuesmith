@@ -15,7 +15,6 @@ tests/test_queue_api_brake.py
 tests/test_queue_blocks.py
 tests/test_queue_concurrency.py
 tests/test_queue_dequeue.py
-tests/test_queue_in_flight_closed.py
 tests/test_queue_language_pack.py
 tests/test_queue_migration.py
 tests/test_queue_no_last_issue_gate.py

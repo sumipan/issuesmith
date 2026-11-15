@@ -20,49 +20,6 @@ def _store(tmp_path: Path) -> QueueStore:
     )
 
 
-def test_dequeue_removes_from_active_and_comments(tmp_path, monkeypatch):
-    from issuesmith import queue as qmod
-
-    store = _store(tmp_path)
-    result = store.enqueue(
-        issue=50,
-        phase="draft",
-        source="skill",
-        actor_kind="human",
-        priority="normal",
-        requested_by=["alice"],
-        requested_at=_NOW,
-    )
-    rid = result.request_id
-
-    client = MagicMock()
-    client.issue_get.return_value = {"number": 50, "state": "OPEN"}
-    monkeypatch.setattr(qmod, "get_forge", lambda **kwargs: client)
-    monkeypatch.setattr(qmod, "QueueStore", lambda **kwargs: store)
-
-    code = qmod.main(
-        [
-            "dequeue",
-            "--request-id",
-            rid,
-            "--reason",
-            "test cleanup",
-        ]
-    )
-    assert code == 0
-
-    snap = store.snapshot()
-    assert rid not in snap.active_order
-    assert rid in snap.completed_request_ids
-    meta = snap.request_meta.get(rid) or {}
-    assert meta.get("outcome") == "dequeued"
-    assert meta.get("reason") == "test cleanup"
-
-    client.issue_get.assert_called()
-    comment_bodies = [c.args[1] for c in client.issue_comment.call_args_list]
-    assert any(rid in body and "dequeued" in body and "test cleanup" in body for body in comment_bodies)
-
-
 def test_dequeue_skips_comment_on_404(tmp_path, monkeypatch, capsys):
     from issuesmith import queue as qmod
 

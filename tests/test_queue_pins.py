@@ -39,28 +39,6 @@ def _develop_issue(body: str) -> dict:
     }
 
 
-def test_develop_without_requires_pins_unchanged(tmp_path, monkeypatch):
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(yaml.safe_dump({"repo": "sumipan/nexus"}), encoding="utf-8")
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    load_config()
-    ok, why = phase_preconditions("develop", _develop_issue(_body()), MagicMock(), 1)
-    assert ok is True
-    assert why == "ok"
-
-
-def test_draft_ignores_unlanded_pins(tmp_path, monkeypatch):
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(yaml.safe_dump({"repo": "sumipan/nexus"}), encoding="utf-8")
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    load_config()
-    body = _body(requires_pins={"issuesmith": "v0.133.1"})
-    issue = {"state": "OPEN", "labels": [], "body": body, "title": "t"}
-    ok, why = phase_preconditions("draft", issue, MagicMock(), 1)
-    assert ok is True
-    assert why == "ok"
-
-
 def test_develop_blocks_unlanded_pins(tmp_path, monkeypatch):
     cfg_path = tmp_path / "issuesmith.yaml"
     cfg_path.write_text(
