@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Literal, Sequence
 
@@ -58,6 +59,94 @@ def _lint_fix_hint(e: dict, auto_fixable: bool) -> str | None:
     if code in _LINT_NO_AUTOFIX_RULES:
         return _LINT_NO_AUTOFIX_HINT.format(code=code)
     return None
+
+
+def _lint_error_key(e: dict, lines: list[str]) -> tuple[str, str]:
+    """Stable ruff violation key: rule code plus stripped source line (not row number)."""
+    code = str(e.get("code", ""))
+    loc = e.get("location")
+    row = int(loc.get("row", 0)) if isinstance(loc, dict) else 0
+    if row < 1 or row > len(lines):
+        return code, ""
+    return code, lines[row - 1].strip()
+
+
+def _lint_baseline_keys(root: Path, ref: str, rel_path: str) -> Counter[tuple[str, str]]:
+    """Ruff violations on ``git show <ref>:<rel_path>`` using the worktree ruff config."""
+    proc = subprocess.run(
+        ["git", "show", f"{ref}:{rel_path}"],
+        capture_output=True, text=True, check=False, cwd=str(root),
+    )
+    if proc.returncode != 0:
+        return Counter()
+    content = proc.stdout
+    lines = content.splitlines()
+    ruff = subprocess.run(
+        [
+            "ruff", "check", "--output-format=json",
+            "--stdin-filename", rel_path, "-",
+        ],
+        input=content, capture_output=True, text=True, check=False, cwd=str(root),
+    )
+    try:
+        errors = json.loads(ruff.stdout or "[]")
+    except Exception:
+        return Counter()
+    if not isinstance(errors, list):
+        return Counter()
+    keys: list[tuple[str, str]] = []
+    for e in errors:
+        if isinstance(e, dict):
+            keys.append(_lint_error_key(e, lines))
+    return Counter(keys)
+
+
+def _error_rel_path(root: Path, filename: str) -> str:
+    try:
+        return Path(filename).resolve().relative_to(root.resolve()).as_posix()
+    except (ValueError, OSError):
+        return filename
+
+
+def _lint_errors_minus_baseline(
+    root: Path,
+    base_branch: str,
+    errors: list[dict],
+) -> list[dict]:
+    """Drop ruff errors that already exist on the baseline ref for the same file content key."""
+    if not errors:
+        return []
+    baseline_ref = _baseline_ref(root, base_branch)
+    by_file: dict[str, list[dict]] = {}
+    for e in errors:
+        rel = _error_rel_path(root, str(e.get("filename", "")))
+        by_file.setdefault(rel, []).append(e)
+
+    remaining: list[dict] = []
+    for rel, file_errors in by_file.items():
+        baseline = _lint_baseline_keys(root, baseline_ref, rel)
+        if not baseline:
+            remaining.extend(file_errors)
+            continue
+        try:
+            wt_lines = (root / rel).read_text(encoding="utf-8").splitlines()
+        except OSError:
+            wt_lines = []
+        counts = Counter(baseline)
+        for e in sorted(
+            file_errors,
+            key=lambda item: (
+                (item.get("location") or {}).get("row", 0)
+                if isinstance(item.get("location"), dict)
+                else 0
+            ),
+        ):
+            key = _lint_error_key(e, wt_lines)
+            if counts[key] > 0:
+                counts[key] -= 1
+                continue
+            remaining.append(e)
+    return remaining
 
 
 def changed_files(worktree_path: Path, base_branch: str) -> list[str]:
@@ -143,6 +232,9 @@ class LintGate:
                 auto_fixable=True,
                 fix_hint="ruff check --fix",
             )]
+        errors = _lint_errors_minus_baseline(self._root, self._base_branch, errors)
+        if not errors:
+            return []
         violations: list[Violation] = []
         for e in errors:
             auto_fixable = _lint_auto_fixable(e)

@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.189.15 - 2026-11-16
+
+### Changed
+
+- `LintGate.check` reports only ruff violations that are new on the branch; violations already present on the baseline ref for the same file are skipped (line-content key, not row number). Refs sumipan/nexus#6670.
+
 ## 0.189.0 - 2026-11-16
 
 ### Removed
