@@ -1,6 +1,8 @@
 """test_ac_contract.py — unit tests for acceptance-criteria YAML contract extract/run."""
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -10,6 +12,7 @@ from issuesmith.ac_contract import (
     contract_failures,
     dual_gate_roots,
     extract_contract_from_body,
+    grep_matches,
     is_invalid_contract_path,
     normalize_reference_entry,
     pending_manual_checks,
@@ -578,3 +581,66 @@ def test_paths_must_not_exist_plain_path(tmp_path):
 )
 def test_is_invalid_contract_path(value, expected):
     assert is_invalid_contract_path(value) is expected
+
+
+def _git_repo(tmp_path: Path) -> Path:
+    """Refs sumipan/nexus#6431 — minimal git repo for greps_must_be_empty checks."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["git", "init", "-q", "-b", "main", str(tmp_path)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "user.email", "t@example.com"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "user.name", "t"],
+        check=True,
+        capture_output=True,
+    )
+    return tmp_path
+
+
+def test_run_checks_greps_must_be_empty(tmp_path):
+    """Refs sumipan/nexus#6431 — run_checks records PASS/FAIL per grep contract."""
+    repo = _git_repo(tmp_path)
+    pkg = repo / "pkg"
+    pkg.mkdir()
+    (pkg / "a.py").write_text("MARKER = 1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "pkg/a.py"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "-m", "add"],
+        check=True,
+        capture_output=True,
+    )
+    contract = {
+        "greps_must_be_empty": [
+            {
+                "pattern": "MARKER",
+                "paths": ["pkg"],
+            },
+            {
+                "pattern": "ABSENT",
+                "paths": ["pkg"],
+            },
+        ]
+    }
+    records = run_checks(contract, repo)
+    by_pattern = {r["path"]: r for r in records if r["check"] == "greps_must_be_empty"}
+    assert by_pattern["MARKER"]["result"] == "FAIL"
+    assert by_pattern["MARKER"]["detail"] == "pkg/a.py"
+    assert by_pattern["ABSENT"]["result"] == "PASS"
+    assert by_pattern["ABSENT"]["detail"] == ""
+
+
+def test_grep_matches_finds_untracked_file(tmp_path):
+    """Refs sumipan/nexus#6431 — worktree grep includes untracked files."""
+    repo = _git_repo(tmp_path)
+    pkg = repo / "pkg"
+    pkg.mkdir()
+    (pkg / "new.py").write_text("HIT = True\n", encoding="utf-8")
+    entry = {"pattern": "HIT", "paths": ["pkg"], "exclude": []}
+    assert grep_matches(repo, entry) == ["pkg/new.py"]
