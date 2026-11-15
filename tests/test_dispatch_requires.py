@@ -715,6 +715,43 @@ class TestDerivedAllowPaths:
         )
 
 
+class TestReviewEngineErrorAndon:
+    """Refs sumipan/nexus#6604 — review engine_error offers resume_from_<step>."""
+
+    def test_cp2_engine_error_andon_includes_resume(self):
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        engine_v = Violation(
+            rule_id="review.cp2.engine_error",
+            severity="fail",
+            message="review failed without output",
+            location=None,
+            auto_fixable=False,
+            fix_hint=None,
+        )
+        result = RequiresResult(blocking=[engine_v])
+        step_cfg = StepConfig(module="issuesmith.steps.test", requires=("review",))
+
+        with (
+            patch(
+                "issuesmith.ops.dispatch._build_requires_gates",
+                return_value={"review": MagicMock()},
+            ),
+            patch("issuesmith.ops.dispatch._fetch_fresh_issue_body", return_value=""),
+            patch("issuesmith.ops.dispatch._get_issue_labels", return_value=[]),
+            patch("issuesmith.repair.evaluate_requires", return_value=result),
+            patch("issuesmith.ops.dispatch.get_forge") as mock_forge,
+        ):
+            forge = _RecordingForge()
+            mock_forge.return_value = forge
+            rc = run_requires_loop(step_cfg, "cp2", _make_ctx())
+
+        assert rc == 1
+        andon = _raised_andons(forge)[0]
+        assert andon.kind == "decision"
+        assert andon.options == ["resume_from_cp2", "split", "reject"]
+
+
 class TestRequiresRepairMetricsViolations:
     """Blocking violations are serialized on requires_repair (#6207)."""
 

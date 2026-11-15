@@ -90,6 +90,22 @@ METRICS_ENV_VAR = "METRICS_JSONL_PATH"
 QUOTA_STATE_PATH = _cfg.paths.quota_state
 BRAKE_STATE_PATH = _cfg.paths.brake_state or _cfg.paths.quota_state
 
+_ENGINE_TRANSIENT_PAUSE_SEC = 600
+
+
+class _EngineProcess(subprocess.CompletedProcess[str]):
+    """CompletedProcess plus failure_class for guarded-order diagnostics."""
+
+    def __init__(
+        self,
+        *,
+        failure_class: str | None,
+        **kwargs: object,
+    ) -> None:
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self.failure_class = failure_class
+
+
 # Permission for the claude attempt. codex / cursor do not take stream output, so
 # each attempt on those engines uses the plain full-access preset instead.
 _ISSUESMITH_PERMISSION = Permission(
@@ -952,11 +968,12 @@ def _execute(
                 failure_class=FailureClass.TIMEOUT.value,
                 failure_detail=timeout_detail,
             )
-            return subprocess.CompletedProcess(
+            return _EngineProcess(
                 args=[],
                 returncode=124,
                 stdout="",
                 stderr=f"[issuesmith-engine] {timeout_detail}",
+                failure_class=FailureClass.TIMEOUT.value,
             )
 
         # F2: nexus-side workaround until ghdag classifies RATE_LIMIT.
@@ -1030,6 +1047,9 @@ def _execute(
     if result.returncode != 0:
         diagnostic_stderr = _truncate_failure_stderr(result.stderr or "")
 
+    failure_class_value = (
+        result.failure_class.value if result.failure_class else None
+    )
     _record_task_metrics(
         role=role,
         engine=result.engine_used,
@@ -1039,8 +1059,8 @@ def _execute(
         started_at=started_at,
         finished_at=finished_at,
         usage=result.usage,
-        failure_class=result.failure_class.value if result.failure_class else None,
-        failure_detail=diagnostic_stderr or None,
+        failure_class=failure_class_value,
+        failure_detail=diagnostic_stderr or failure_class_value or None,
     )
     if (
         result.returncode != 0
@@ -1051,11 +1071,28 @@ def _execute(
             list(ROLE_ENGINES[role]), post_quota_snap, post_brake_snap
         )
         raise RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=after, role=role)
-    return subprocess.CompletedProcess(
+    if (
+        result.returncode != 0
+        and result.failure_class is FailureClass.ENGINE_ERROR
+    ):
+        now = datetime.now(timezone.utc)
+        resume_at = now + timedelta(seconds=_ENGINE_TRANSIENT_PAUSE_SEC)
+        quota_gate.report(
+            engine=result.engine_used,
+            status="paused",
+            observed_at=now,
+            resume_at=resume_at,
+            reason="engine_transient: ENGINE_ERROR",
+        )
+        raise RetrySignal(
+            reason=RetryReason.ENGINE_TRANSIENT, after=resume_at, role=role
+        )
+    return _EngineProcess(
         args=[],
         returncode=result.returncode,
         stdout=result.body,
         stderr=diagnostic_stderr,
+        failure_class=failure_class_value,
     )
 
 
@@ -1282,7 +1319,19 @@ def _run_guarded_order(
             file=sink,
         )
     _mirror_stdout_tail("run-guarded", proc.stdout)
-    return 1, proc.stdout
+    out_stdout = proc.stdout
+    if proc.returncode != 0:
+        evidence_lines: list[str] = []
+        stderr_tail = _truncate_failure_stderr(proc.stderr or "")
+        for line in stderr_tail.splitlines():
+            evidence_lines.append(f"ENGINE_STDERR_TAIL: {line}")
+        fc = getattr(proc, "failure_class", None)
+        evidence_lines.append(f"ENGINE_FAILURE: {fc if fc else 'none'}")
+        if evidence_lines:
+            if out_stdout and not out_stdout.endswith("\n"):
+                out_stdout += "\n"
+            out_stdout += "\n".join(evidence_lines) + "\n"
+    return 1, out_stdout
 
 
 def run_guarded_output(

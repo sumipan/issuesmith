@@ -700,12 +700,14 @@ def _design_step_id() -> str | None:
 
 def _build_andon_options(
     blocking: list,
+    step_id: str,
     *,
     resume_step: str | None = None,
 ) -> list[str]:
     """Build andon decision options from blocking violations.
 
     pr_scope.out_of_allow → widen:<file1>,<file2> (sorted, deduplicated)
+    review.<step>.engine_error → resume_from_<step> at the front.
     Always append split and reject.
     """
     pr_scope_files = sorted({
@@ -714,6 +716,8 @@ def _build_andon_options(
         if v.rule_id == "pr_scope.out_of_allow" and v.location
     })
     options: list[str] = []
+    if any(v.rule_id == f"review.{step_id}.engine_error" for v in blocking):
+        options.append(f"resume_from_{step_id}")
     if resume_step:
         options.append(f"resume_from_{resume_step}")
     if pr_scope_files:
@@ -935,7 +939,7 @@ def run_requires_loop(
         and result.blocking
         and _prev_blocking_fingerprints.issubset(current_fingerprints)
     ):
-        options = _build_andon_options(result.blocking)
+        options = _build_andon_options(result.blocking, step_id)
         summary = (
             f"repair oscillation detected in step {step_id} "
             f"after {_total_repair_count} repair(s): "
@@ -976,7 +980,9 @@ def run_requires_loop(
                     break
             except Exception:
                 continue
-        options = _build_andon_options(result.blocking, resume_step=resume_step)
+        options = _build_andon_options(
+            result.blocking, step_id, resume_step=resume_step
+        )
         summary = (
             f"non-repairable gate violation in step {step_id}: "
             + "; ".join(v.message for v in non_repairable)
@@ -995,7 +1001,7 @@ def run_requires_loop(
     blocking_messages = [v.message for v in result.blocking]
 
     if no_progress_count >= step_cfg.repair.max:
-        options = _build_andon_options(result.blocking)
+        options = _build_andon_options(result.blocking, step_id)
         summary = _repair_limit_summary(
             step_id,
             repairs=_total_repair_count,
@@ -1015,7 +1021,7 @@ def run_requires_loop(
 
     safety_limit = step_cfg.repair.max + _initial_blocking_count
     if _total_repair_count >= safety_limit:
-        options = _build_andon_options(result.blocking)
+        options = _build_andon_options(result.blocking, step_id)
         summary = _repair_limit_summary(
             step_id,
             repairs=_total_repair_count,
