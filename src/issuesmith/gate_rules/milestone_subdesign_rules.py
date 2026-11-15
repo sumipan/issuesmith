@@ -18,6 +18,7 @@ from issuesmith.contract import (  # noqa: F401 — re-exported for legacy impor
     iter_sub_blocks,
     parse_table_rows,
     plan_dep_refs,
+    table_cell_spans,
 )
 from issuesmith.gate_registry import GATE_REGISTRY, Violation
 from issuesmith.targets import companion_allow_paths_raw
@@ -784,7 +785,7 @@ def apply_sub_plan_dep_format_fixes(body: str) -> tuple[str, list[str]]:
         if len(cells) <= dep_i or not cells[num_i].strip().isdigit():
             continue
         content = line.rstrip("\r\n")
-        start, end = _table_cell_spans(content)[dep_i]
+        start, end = table_cell_spans(content)[dep_i]
         old_cell = content[start:end]
         if not _dep_cell_needs_format_fix(old_cell):
             continue
@@ -795,24 +796,6 @@ def apply_sub_plan_dep_format_fixes(body: str) -> tuple[str, list[str]]:
         return body, []
     new_body = body[: plan.start(1)] + "".join(lines) + body[plan.end(1) :]
     return new_body, [_SUB_PLAN_DEP_FORMAT_ID]
-
-
-def _table_cell_spans(line: str) -> list[tuple[int, int]]:
-    """``(start, end)`` of each cell of a ``| a | b |`` row (same split as parse_table_rows)."""
-    bounds: list[int] = []
-    in_tick = False
-    for i, ch in enumerate(line):
-        if ch == "`" and (in_tick or "`" in line[i + 1 :]):
-            in_tick = not in_tick
-        if ch == "|" and not in_tick:
-            bounds.append(i)
-    edges = [-1, *bounds, len(line)]
-    spans = [(a + 1, b) for a, b in zip(edges, edges[1:])]
-    if spans and not line[slice(*spans[0])].strip():
-        spans = spans[1:]
-    if spans and not line[slice(*spans[-1])].strip():
-        spans = spans[:-1]
-    return spans
 
 
 def apply_inferred_dependency_fixes(body: str) -> tuple[str, list[str]]:
@@ -857,7 +840,7 @@ def apply_inferred_dependency_fixes(body: str) -> tuple[str, list[str]]:
         if consumer not in missing:
             continue
         content = line.rstrip("\r\n")
-        spans = _table_cell_spans(content)
+        spans = table_cell_spans(content)
         if len(spans) <= dep_i:
             continue
         start, end = spans[dep_i]
