@@ -36,5 +36,3 @@ def test_sub_header_re_escapes_prefix(use_pack):
 def test_sub_header_re_requires_h4_and_colon(use_pack):
     use_pack(sub_header_prefix="Sub")
     assert sub_header_re().findall("### Sub1: a\n#### Sub2 b\n#### Sub3: c\n") == ["3"]
-
-

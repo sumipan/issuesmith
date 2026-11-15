@@ -26,5 +26,3 @@ def test_split_table_row_pipe_inside_code_span() -> None:
 def test_split_table_row_unclosed_backtick_run_is_literal() -> None:
     """Refs sumipan/nexus#6247: unclosed ``` does not swallow following delimiters."""
     assert _split_table_row(_ROW_C) == _EXPECT_C
-
-
