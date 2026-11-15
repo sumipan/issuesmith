@@ -606,12 +606,10 @@ def build_context(
 
     # Resolve target_repo / cross-repo before pipeline_id (branch_reuse searches there)
     target_repo = str(metadata.get("target_repo", ""))
-    if target_repo and target_repo == issue_repo:
-        # target_repo equal to issue_repo itself (e.g. sumipan/nexus) is not cross-repo.
-        # On the external clone/worktree path the M2 acceptance gate checks the contract
-        # against a feature worktree that disappears after merge and yields false negatives
-        # (#2567). Normalize to the native path.
-        target_repo = ""
+    if not target_repo or target_repo == issue_repo:
+        # Host root is the issue_repo checkout: use it directly (#2567).
+        # Otherwise treat issue_repo like any other target and use its clone.
+        target_repo = "" if get_config().host_is_repo_checkout else issue_repo
     if target_repo and target_repo not in _supported_repos():
         raise ValueError(
             f"target_repo '{target_repo}' is not supported."

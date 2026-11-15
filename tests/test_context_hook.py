@@ -528,6 +528,53 @@ base_branch: main
     assert ctx["worktree_path"].endswith(f"/.claude/worktrees/{ctx['pipeline_id']}")
 
 
+def test_self_target_uses_clone_when_host_is_not_checkout():
+    """Refs sumipan/nexus#6836."""
+    import dataclasses
+
+    from issuesmith.config import get_config
+
+    cfg = dataclasses.replace(get_config(), host_is_repo_checkout=False)
+    body = """```yaml
+target_repo: sumipan/issuesmith
+base_branch: main
+```
+
+# Title
+"""
+    with patch("issuesmith.context_hook.get_config", return_value=cfg):
+        ctx = build_context(62, body=body)
+    assert ctx["is_cross_repo"] == "true"
+    assert ctx["target_repo"] == "sumipan/issuesmith"
+    assert ctx["target_clone_path"] == ".claude/external/issuesmith"
+    pid = ctx["pipeline_id"]
+    assert ctx["target_worktree_path"] == f".claude/external/issuesmith/worktrees/{pid}"
+    assert ctx["worktree_path"] == ctx["target_worktree_path"]
+
+
+def test_omitted_target_uses_clone_when_host_is_not_checkout():
+    """Refs sumipan/nexus#6836."""
+    import dataclasses
+
+    from issuesmith.config import get_config
+
+    cfg = dataclasses.replace(get_config(), host_is_repo_checkout=False)
+    body = """```yaml
+base_branch: main
+```
+
+# Title
+"""
+    with patch("issuesmith.context_hook.get_config", return_value=cfg):
+        ctx = build_context(63, body=body)
+    assert ctx["is_cross_repo"] == "true"
+    assert ctx["target_repo"] == "sumipan/issuesmith"
+    assert ctx["target_clone_path"] == ".claude/external/issuesmith"
+    pid = ctx["pipeline_id"]
+    assert ctx["target_worktree_path"] == f".claude/external/issuesmith/worktrees/{pid}"
+    assert ctx["worktree_path"] == ctx["target_worktree_path"]
+
+
 def test_external_target_repo_still_cross_repo():
     body = """```yaml
 target_repo: sumipan/ghdag

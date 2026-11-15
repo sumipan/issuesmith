@@ -9,23 +9,23 @@ The suite includes design and merge gates, a request queue with triage, lane pla
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.188.10-blue)
+![version](https://img.shields.io/badge/version-v0.188.11-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.188.10** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.188.11** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.188.10"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.188.11"
 ```
 
 The gates, forge access, `observe`, `andon`, `lanes` and `metrics` import ghdag, so install the `ghdag` extra unless another package already provides ghdag. The base package alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.188.10"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.188.11"
 ```
 
 | Item | Value |
@@ -457,6 +457,7 @@ A file that is not found is treated as empty, which fails validation because `re
 | `label_namespace` | `issuesmith` | Managed label prefix |
 | `timezone` | `Asia/Tokyo` | IANA timezone for reports and `--since` |
 | `supported_repos` | `[]` | Repositories allowed as cross-repo targets |
+| `host_is_repo_checkout` | `true` | Whether the config directory is a checkout of the issue repository. When false, issues targeting that repository (or with no target_repo) use the clone under paths.external_dir like other targets, and the repository must be listed in supported_repos |
 | `paths` | see below | Queue, state, metrics, worktree, template and ledger paths |
 | `engines.<role>` | see below | Per role (`design`, `implementation`): `heavy`, optional `light`, `timeout_sec`, `pause_ttl_sec` |
 | `concurrency` | `default: 1` | `default`, `per_engine`, `strict_order` (`false`), `max_dispatch_per_tick` (`1`: requests started per queue tick; each engine still stops at its `per_engine` limit) |
