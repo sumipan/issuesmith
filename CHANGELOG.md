@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Changed
+
+- `ENGINE_ERROR` from the LLM route now pauses the engine for 10 minutes and returns `WAIT_QUOTA` via `RetrySignal(ENGINE_TRANSIENT)` instead of failing the step immediately. Refs sumipan/nexus#6604.
+- `run_guarded_output` appends `ENGINE_STDERR_TAIL` and `ENGINE_FAILURE` lines on non-zero engine exits so review gate messages retain failure classification.
+- `review.<step>.engine_error` andon decisions include `resume_from_<step>` as the first option.
+
 ## 0.188.1 - 2026-11-15
 
 ### Removed
