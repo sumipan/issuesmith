@@ -173,13 +173,7 @@ class TestEngineEnvironmentError:
 
 # ==================== dispatch.main() handles RetrySignal ====================
 
-try:  # contract constant for the waiting-state label suffix (parent #4788)
-    from issuesmith.contract import WAITING as _WAITING_SUFFIX
-except ImportError:  # pragma: no cover - until the contract constant lands
-    _WAITING_SUFFIX = "waiting"
-
 _NS = "issuesmith"
-_UNMANAGED = "scope:docs"
 
 
 class _FakeForge:
@@ -252,10 +246,6 @@ def dispatch_mocks(monkeypatch, tmp_path):
         "forge": forge,
         "cfg": cfg_mock,
     }
-
-
-def _waiting_label(cfg) -> str:
-    return f"{cfg.label_namespace}:{_WAITING_SUFFIX}"
 
 
 class TestDispatchHandlesRetrySignal:

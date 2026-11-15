@@ -15,21 +15,6 @@ from tests.test_derived_allow_paths import _git, _make_repo, _write
 # #5134: structural-change parent dirs and hunk-enclosing def/class names as keys
 # ---------------------------------------------------------------------------
 
-_TEST_GLOBS_WORKFLOWS = (
-    "from pathlib import Path\n\n"
-    "ROOT = Path(__file__).resolve().parents[2]\n\n\n"
-    "def test_names():\n"
-    "    names = sorted(p.stem for p in (ROOT / \"workflows\").glob(\"*.yml\"))\n"
-    "    assert names == [\"base\"]\n"
-)
-_TEST_GLOBS_LEGACY = _TEST_GLOBS_WORKFLOWS.replace('"workflows"', '"legacy"')
-
-
-def _derive_one(root: Path, test_path: str, changed: list[str]) -> list[str]:
-    return derive_test_allow_paths(
-        root, "main", [f"{test_path}::test_names"], changed, ["workflows/*"]
-    )
-
 
 def test_root_level_add_and_delete_adds_no_empty_or_dot_key(tmp_path: Path) -> None:
     from issuesmith.gates.worktree import _parent_dir_keys, _reference_keys
