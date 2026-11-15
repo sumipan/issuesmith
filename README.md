@@ -9,23 +9,23 @@ The suite includes design and merge gates, a request queue with triage, lane pla
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.188.2-blue)
+![version](https://img.shields.io/badge/version-v0.188.3-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.188.2** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.188.3** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.188.2"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.188.3"
 ```
 
 The gates, forge access, `observe`, `andon`, `lanes` and `metrics` import ghdag, so install the `ghdag` extra unless another package already provides ghdag. The base package alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.188.2"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.188.3"
 ```
 
 | Item | Value |
@@ -159,7 +159,7 @@ Run a command as `python3 -m issuesmith <command>` or through the `issuesmith` c
 
 | Subcommand | Description |
 |---|---|
-| `engine show` | Print the effective engine and model per role |
+| `engine show [--json]` | Print the effective engine and model per role |
 | `engine check` | Validate commands, models and workflow drift |
 | `engine clear <engine> [--kind {budget,failure,manual,drain}]` | Clear quota pause sources for an engine (all kinds when `--kind` is omitted) |
 | `engine switch <role> <engine> [--model M] [--light-model M]` | Switch one role (`design` or `implementation`) |
@@ -178,7 +178,7 @@ Global options: `--queue-path`, `--state-path`, `--lock-path`.
 | `queue enqueue --issue N --phase P --source S --actor-kind {human,automation} --priority {high,normal,low} --requested-by X [--force] [--after N]` | Queue an Issue for a configured phase (`--after` is repeatable) |
 | `queue tick [--seed PATH]` | Triage and dispatch queued requests |
 | `queue status [--json]` | Show queue state including `blocks[]` (scope, kind, reason, until, set_by); `--json` also emits legacy `halt` fields (read-only migration) plus a dispatch `plan` snapshot |
-| `queue doctor` | Report untracked in-flight Issues |
+| `queue doctor [--json]` | Report untracked in-flight Issues |
 | `queue reset` | Acknowledge reset without changing queue blocks (use `queue unblock` to remove blocks) |
 | `queue unblock [--kind K] [--scope S]` | Remove matching entries from `blocks[]` |
 | `queue dequeue --request-id ID [--reason R]` | Remove a request |
@@ -208,6 +208,47 @@ Ledger keys: `lanes` (lane name to Issue numbers), `hold`, `backlog`, `auto_lane
 | `milestone resume <parent>` | Resume milestone chain progress |
 | `milestone prune [--dry-run]` | Prune finished milestone chain state |
 | `milestone consolidate <child> --into <sibling>` | Mark a child as consolidated into a sibling so the chain treats it as merged when the sibling merges |
+
+## Output contract
+
+Commands routed through `issuesmith.cli` print usage errors to **stderr** in a machine-readable form:
+
+- The first line is `error[<CODE>]: <message>` where `<CODE>` is one of the codes below.
+- When a fix is obvious, following lines use `hint: <text>` (for example a list of valid commands or options).
+- Invalid user input must not print a Python traceback.
+- `--help` / `-h` exits **0** and prints usage on stdout.
+
+### Error codes (`issuesmith.cli`)
+
+| Code | Exit | When |
+|---|---|---|
+| `UNKNOWN_COMMAND` | 2 | Unknown command or subcommand name |
+| `UNKNOWN_ARGUMENT` | 2 | Undeclared option or extra positional argument |
+| `MISSING_ARGUMENT` | 2 | Required argument missing (including omitted subcommand) |
+| `INVALID_VALUE` | 2 | Value shape is wrong (for example a non-integer Issue number) |
+| `NOT_FOUND` | 1 | Named object does not exist (andon, body file, …) |
+| `CONFIG_ERROR` | 1 | Resolved configuration fails validation |
+| `FAILED` | 1 | External failure (for example forge API error) |
+
+`queue`, `engine`, `gh`, `dispatch`, `publish`, `smoke`, and other module-level argparse entry points keep argparse-style usage lines and exit **2** on usage mistakes; only stderr wording standardized in this section applies to commands implemented in `issuesmith.cli`.
+
+### `--json` commands
+
+| Command | JSON top-level shape |
+|---|---|
+| `andon list --json` | `list` of andon records (adds `raised_at` and `notes` vs plain list) |
+| `andon auto-answer --json` | plan object |
+| `config show` | resolved configuration object (always JSON on stdout) |
+| `doctor --json` | `list` of `{"name", "ok", "detail"}` checks |
+| `labels reconcile --json` | report object |
+| `lanes check --json` / `lanes report --json` | lane plan objects |
+| `metrics rework --json` | rework report object |
+| `milestone status <parent> --json` | `parent`, `state`, `stage`, `children`, `next`, … |
+| `observe --json` | `list` of observe events |
+| `queue status --json` | queue snapshot plus `plan` entries |
+| `queue doctor --json` | `ok`, `orphan_active_order_ids`, `untracked_running_issues`, `dispatch_blocked` |
+| `queue release --issue N --json` | release result object |
+| `engine show --json` | `state_source`, `roles` (`role` / `engine` / `model` per row) |
 
 ## Public API
 
