@@ -44,22 +44,16 @@ def test_child_issue_line_excluded():
     assert extract_dependencies(body) == []
 
 
-
-
 def test_section_without_table_returns_empty():
     # ASCII fixture data.
     body = "## Dependencies\n\nmentions #300\n"
     assert extract_dependencies(body) == []
 
 
-
-
 def test_section_list_item_inside_code_block_ignored():
     # ASCII fixture data.
     body = "## Dependencies\n\n```\n- #400\n```\n\n- #401\n"
     assert extract_dependencies(body) == [401]
-
-
 
 
 # --- unparsed_dependency_refs ---
@@ -69,8 +63,6 @@ def test_unparsed_refs_empty_without_section():
     # ASCII fixture data.
     body = "## Overview\n\nsee #300\n"
     assert unparsed_dependency_refs(body) == []
-
-
 
 
 def test_unparsed_refs_reports_prose_only_mentions():
@@ -150,8 +142,6 @@ def _mock_issue_get(responses: dict[int, dict]):
     return fake_get
 
 
-
-
 def test_open_dependency_blocks():
     client = MagicMock()
     client.issue_get = _mock_issue_get(
@@ -199,8 +189,6 @@ def test_rescue_path_merged_pr_passes():
     client.pr_get.assert_called_once_with(42)
 
 
-
-
 def test_exempt_rejected_issue_passes():
     client = MagicMock()
     client.issue_get = _mock_issue_get(
@@ -219,15 +207,11 @@ def test_exempt_rejected_issue_passes():
     client.issue_timeline.assert_not_called()
 
 
-
-
 def test_empty_deps_passes():
     result = check_dependencies([])
     assert result.decision == "PASS"
     assert result.deps_found == []
     assert result.blocking_deps == []
-
-
 
 
 def test_unparsed_refs_block_even_with_declared_deps():
@@ -237,8 +221,6 @@ def test_unparsed_refs_block_even_with_declared_deps():
     assert result.deps_found == [100]
     assert result.reason == UNPARSED_DEPENDENCY_SECTION
     client.issue_get.assert_not_called()
-
-
 
 
 def test_cli_check_outputs_json(capsys):
@@ -288,33 +270,5 @@ def test_is_exempt_milestone_without_sub_done_is_not_exempt():
     from issuesmith.dep_extractor import _is_exempt
     labels = [{"name": "scope:milestone"}, {"name": "issuesmith:draft-done"}]
     assert _is_exempt("some milestone", labels) is False
-
-
-
-
-# --- language pack vocabulary ---
-
-
-def _use_custom_pack(tmp_path, monkeypatch, **overrides):
-    """Write an ASCII pack that differs from EN to tmp YAML and make it the default."""
-    import dataclasses
-
-    import yaml
-
-    import issuesmith.config as config_module
-    from issuesmith.config import reset_config_cache
-    from issuesmith.language import LanguagePack, load_language_pack
-
-    data = {}
-    for f in dataclasses.fields(LanguagePack):
-        value = getattr(EN, f.name)
-        data[f.name] = list(value) if isinstance(value, tuple) else (
-            value if isinstance(value, str) else dict(value)
-        )
-    data.update(overrides)
-    path = tmp_path / "pack.yaml"
-    path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
-    monkeypatch.setattr(config_module, "EN", load_language_pack(path))
-    reset_config_cache()
 
 

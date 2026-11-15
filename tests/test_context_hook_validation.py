@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import textwrap
 from unittest.mock import patch
 
 import pytest
@@ -11,49 +10,6 @@ from issuesmith.context_hook import (
     build_context,
     validate_context_hook_security,
     validate_issue_metadata,
-)
-
-# Leading YAML blocks from real nexus Issues (regression fixtures).
-_FIXTURE_911 = textwrap.dedent(
-    """\
-    ```yaml
-    base_branch: main
-    allow_paths:
-      - "src/**"
-      - "tests/**"
-    target_repo: sumipan/mltgnt
-    ```
-
-    Refs #905
-    """
-)
-
-_FIXTURE_905 = textwrap.dedent(
-    """\
-    ```yaml
-    base_branch: main
-    allow_paths:
-      - "docs/MLTGNT-ROADMAP.md"
-    cp1_must_fail: true
-    ```
-
-    # tracker
-    """
-)
-
-_FIXTURE_5369 = textwrap.dedent(
-    """\
-    ```yaml
-    target_repo: sumipan/issuesmith
-    base_branch: main
-    allow_paths:
-      - "src/issuesmith/context_hook.py"
-      - "src/issuesmith/lang/en.yaml"
-      - "tests/test_context_hook_validation.py"
-    ```
-
-    ## Scope
-    """
 )
 
 
@@ -75,20 +31,12 @@ def _metadata(**kwargs: object) -> dict:
     return base
 
 
-
-
 def test_allow_paths_command_substitution_rejected():
     meta = _metadata(allow_paths=["src/$(id)/**"])
     violations = validate_issue_metadata(meta)
     assert any(
         v.code in ("invalid_allow_path", "annotation_in_path") for v in violations
     )
-
-
-
-
-
-
 
 
 def test_pipeline_branch_accepted_for_issue_author():
@@ -138,8 +86,6 @@ def test_pipeline_branch_author_as_login_string():
         assert build_context(42)["pipeline_id"] != "issue-42-deadbeef"
 
 
-
-
 _UNICODE_ALLOW_PATHS = [
     "docs/caf\u00e9.md",
     "agents/\u03a9mega.md",
@@ -154,8 +100,6 @@ def test_unicode_allow_paths_accepted(path: str):
     assert not any(v.code == "invalid_allow_path" for v in sec)
     full = validate_issue_metadata(meta)
     assert not any(v.code == "invalid_allow_path" for v in full)
-
-
 
 
 @pytest.mark.parametrize(

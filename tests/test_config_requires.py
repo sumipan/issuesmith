@@ -57,10 +57,6 @@ def test_gate_registry_worktree_kinds() -> None:
     assert GATE_REGISTRY["pr_scope"].input_kind == "worktree"
 
 
-
-
-
-
 # ---------------------------------------------------------------------------
 # StepConfig dataclass
 # ---------------------------------------------------------------------------
@@ -76,15 +72,9 @@ def test_step_config_default_input_kind_issue() -> None:
     assert s.input_kind == "issue"
 
 
-
-
 # ---------------------------------------------------------------------------
 # ConfigError raised for unknown gate id in requires (via _build_steps)
 # ---------------------------------------------------------------------------
-
-
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -109,12 +99,6 @@ def test_artifact_step_with_issue_gate_raises_config_error(tmp_path, monkeypatch
     )
     with pytest.raises(ConfigError, match="artifact"):
         validate_step_requires(load_config().steps)
-
-
-
-
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -160,24 +144,14 @@ def test_validate_requires_chain_no_violations_for_empty_steps() -> None:
 # ---------------------------------------------------------------------------
 
 
-
-
-
-
 # ---------------------------------------------------------------------------
 # AC-1: worktree step can use any combination of gate types (#3671)
 # ---------------------------------------------------------------------------
 
 
-
-
 # ---------------------------------------------------------------------------
 # AC-1b: worktree gate rejected for issue/artifact steps, missing gate id message
 # ---------------------------------------------------------------------------
-
-
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -210,17 +184,9 @@ def test_validate_requires_chain_missing_gate_id_is_violation() -> None:
     assert any("missing gate ids" in v for v in violations)
 
 
-
-
 # ---------------------------------------------------------------------------
 # accepts column — unknown gate ids and input_kind (#4804 / sub3)
 # ---------------------------------------------------------------------------
-
-
-
-
-
-
 
 
 def test_worktree_step_with_worktree_gate_in_accepts_is_valid() -> None:
@@ -232,32 +198,6 @@ def test_worktree_step_with_worktree_gate_in_accepts_is_valid() -> None:
         ),
     }
     validate_step_requires(steps)
-
-
-def _write_external_gate_module(tmp_path, mod_name: str, *, pre_llm: bool, repairable: bool) -> str:
-    gate_ref = f"{mod_name}:MY_GATE"
-    (tmp_path / f"{mod_name}.py").write_text(
-        f"""
-from issuesmith.gates import GateEntry
-
-class _G:
-    def check(self, body, labels):
-        return []
-
-MY_GATE = GateEntry(
-    input_kind="worktree",
-    build=lambda ctx: _G(),
-    pre_llm={pre_llm!r},
-    repairable={repairable!r},
-)
-""",
-        encoding="utf-8",
-    )
-    return gate_ref
-
-
-
-
 
 
 def test_resolve_gate_errors_and_registry_unchanged(tmp_path, monkeypatch) -> None:
