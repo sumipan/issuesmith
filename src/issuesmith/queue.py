@@ -2614,8 +2614,8 @@ def _cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_doctor(args: argparse.Namespace) -> int:
-    """Report queue health; flags orphan active_order ids and untracked running Issues."""
+def _queue_doctor_payload(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
+    """Collect queue doctor findings and an exit code."""
     store = QueueStore(
         queue_path=Path(args.queue_path) if getattr(args, "queue_path", None) else None,
         state_path=Path(args.state_path) if getattr(args, "state_path", None) else None,
@@ -2636,24 +2636,44 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
                 if isinstance(rid, str) and rid not in requests:
                     orphan_ids.append(rid)
     if orphan_ids:
-        print(f"orphan active_order ids: {', '.join(orphan_ids)}")
-        return 1
+        payload = {
+            "ok": False,
+            "orphan_active_order_ids": orphan_ids,
+            "untracked_running_issues": [],
+            "dispatch_blocked": 0,
+        }
+        return 1, payload
 
     snap = store.snapshot()
     try:
         client = get_forge(repo=REPO)
     except Exception as exc:
         print(f"error: forge client unavailable: {exc}", file=sys.stderr)
-        return 1
+        return 1, {
+            "ok": False,
+            "orphan_active_order_ids": [],
+            "untracked_running_issues": [],
+            "dispatch_blocked": 0,
+        }
     try:
         untracked = _find_untracked_running(client, snap)
     except Exception as exc:
         print(f"error: untracked check failed: {exc}", file=sys.stderr)
-        return 1
+        return 1, {
+            "ok": False,
+            "orphan_active_order_ids": [],
+            "untracked_running_issues": [],
+            "dispatch_blocked": 0,
+        }
     if untracked:
-        nums = ", ".join(f"#{n}" for n in sorted(untracked))
-        print(f"untracked running issues: {nums}")
-        return 1
+        sorted_untracked = sorted(untracked)
+        payload = {
+            "ok": False,
+            "orphan_active_order_ids": [],
+            "untracked_running_issues": sorted_untracked,
+            "dispatch_blocked": 0,
+        }
+        return 1, payload
 
     dispatch_blocked = 0
     for rid in snap.active_order:
@@ -2669,10 +2689,35 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
                 dispatch_blocked += 1
         except Exception:
             pass
+    payload = {
+        "ok": True,
+        "orphan_active_order_ids": [],
+        "untracked_running_issues": [],
+        "dispatch_blocked": dispatch_blocked,
+    }
+    return 0, payload
+
+
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    """Report queue health; flags orphan active_order ids and untracked running Issues."""
+    code, payload = _queue_doctor_payload(args)
+    if getattr(args, "json", False):
+        print(json.dumps(payload, ensure_ascii=False))
+        return code
+    orphan_ids = list(payload.get("orphan_active_order_ids") or [])
+    if orphan_ids:
+        print(f"orphan active_order ids: {', '.join(orphan_ids)}")
+        return code
+    untracked = list(payload.get("untracked_running_issues") or [])
+    if untracked:
+        nums = ", ".join(f"#{n}" for n in untracked)
+        print(f"untracked running issues: {nums}")
+        return code
+    dispatch_blocked = int(payload.get("dispatch_blocked") or 0)
     if dispatch_blocked:
         print(f"dispatch_blocked: {dispatch_blocked} requests")
     print("doctor ok: no untracked running issues")
-    return 0
+    return code
 
 
 def _cmd_reset(args: argparse.Namespace) -> int:
@@ -2934,6 +2979,7 @@ def build_parser() -> argparse.ArgumentParser:
         "doctor",
         help="Check for untracked in-flight Issues (queue health)",
     )
+    p_doctor.add_argument("--json", action="store_true")
     p_doctor.set_defaults(func=_cmd_doctor)
 
     p_reset = sub.add_parser("reset")

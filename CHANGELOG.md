@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Added
+
+- `queue doctor --json` returns queue health as one JSON object (`ok`, orphan ids, untracked Issue numbers, blocked dispatch count). Refs sumipan/nexus#6780.
+- `engine show --json` returns effective role routes as `state_source` plus a `roles` list. Refs sumipan/nexus#6780.
+- README **Output contract** documents error codes (`error[<CODE>]:`) and `--json` command shapes. Refs sumipan/nexus#6780.
+
 ## 0.188.2 - 2026-11-15
 
 ### Changed

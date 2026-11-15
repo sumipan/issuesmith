@@ -14,6 +14,7 @@ tracked workflow definition.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -1816,7 +1817,8 @@ def _cmd_clear(args: argparse.Namespace) -> int:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Switch issuesmith design/implementation LLMs")
     subparsers = parser.add_subparsers(dest="action", required=True)
-    subparsers.add_parser("show", help="show effective role assignments")
+    show_parser = subparsers.add_parser("show", help="show effective role assignments")
+    show_parser.add_argument("--json", action="store_true")
     subparsers.add_parser("check", help="validate commands, models, and workflow drift")
 
     clear_parser = subparsers.add_parser("clear", help="clear quota pause sources for an engine")
@@ -1885,6 +1887,21 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
         if args.action == "show":
+            if getattr(args, "json", False):
+                payload = {
+                    "state_source": state_source_label(),
+                    "roles": [
+                        {
+                            "role": role,
+                            "engine": selection.engine,
+                            "model": selection.model,
+                        }
+                        for role in ROLE_ENGINES
+                        for selection in [resolve(role)]
+                    ],
+                }
+                print(json.dumps(payload, ensure_ascii=False))
+                return 0
             print(f"state_source\t{state_source_label()}")
             for role in ROLE_ENGINES:
                 selection = resolve(role)
