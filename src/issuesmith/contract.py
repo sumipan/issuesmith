@@ -146,7 +146,7 @@ def _has_closing_backtick_run(line: str, start: int, open_len: int) -> bool:
     return False
 
 
-def _table_cell_spans(line: str) -> list[tuple[int, int]]:
+def table_cell_spans(line: str) -> list[tuple[int, int]]:
     """``(start, end)`` slice bounds for each cell of a ``| a | b |`` row (#6247)."""
     bounds: list[int] = []
     in_code = False
@@ -178,7 +178,7 @@ def _table_cell_spans(line: str) -> list[tuple[int, int]]:
 
 def _split_table_row(line: str) -> list[str]:
     """Split a ``| a | b |`` row, ignoring ``|`` inside inline-code spans (#3481)."""
-    return [line[s:e].strip() for s, e in _table_cell_spans(line)]
+    return [line[s:e].strip() for s, e in table_cell_spans(line)]
 
 
 def parse_table_rows(section: str) -> list[list[str]]:

@@ -2,7 +2,6 @@
 # Remove a line when the import is replaced by a public API; never add lines.
 issuesmith.config _DEFAULT_FORBIDDEN_PR_PATHS
 issuesmith.contract _normalize_path
-issuesmith.contract _table_cell_spans
 issuesmith.convert_to_milestone _ensure_milestone
 issuesmith.gate_rules.milestone_subdesign_rules _extract_paths_from_change_table
 issuesmith.ops.labels _exec_records_from_labels

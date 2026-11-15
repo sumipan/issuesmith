@@ -12,13 +12,13 @@ from issuesmith.context_hook import parse_issue_metadata, parse_issue_metadata_b
 from issuesmith.contract import (  # noqa: F401 — re-exported for legacy importers
     SUB_HEADER_RE,
     _normalize_path,
-    _table_cell_spans,
     change_paths_for_repo,
     extract_change_table_rows,
     get_section,
     iter_sub_blocks,
     parse_table_rows,
     plan_dep_refs,
+    table_cell_spans,
 )
 from issuesmith.gate_registry import GATE_REGISTRY, Violation
 from issuesmith.targets import companion_allow_paths_raw
@@ -785,7 +785,7 @@ def apply_sub_plan_dep_format_fixes(body: str) -> tuple[str, list[str]]:
         if len(cells) <= dep_i or not cells[num_i].strip().isdigit():
             continue
         content = line.rstrip("\r\n")
-        start, end = _table_cell_spans(content)[dep_i]
+        start, end = table_cell_spans(content)[dep_i]
         old_cell = content[start:end]
         if not _dep_cell_needs_format_fix(old_cell):
             continue
@@ -840,7 +840,7 @@ def apply_inferred_dependency_fixes(body: str) -> tuple[str, list[str]]:
         if consumer not in missing:
             continue
         content = line.rstrip("\r\n")
-        spans = _table_cell_spans(content)
+        spans = table_cell_spans(content)
         if len(spans) <= dep_i:
             continue
         start, end = spans[dep_i]

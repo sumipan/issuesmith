@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from issuesmith.contract import _split_table_row
-from issuesmith.gate_rules.milestone_subdesign_rules import _table_cell_spans
+from issuesmith.contract import _split_table_row, table_cell_spans
 
 _ROW_A = "| 1 | `` ` ```ghdag ` `` block | sumipan/ghdag | `a.py` | none |"
 _ROW_B = "| ``a`|b`` | c | `d` |"
@@ -33,6 +32,6 @@ def test_table_cell_spans_match_split_table_row() -> None:
     """Refs sumipan/nexus#6247: dependency cell rewrites use the same split as parse."""
     line = _ROW_A
     cells = _split_table_row(line)
-    spans = _table_cell_spans(line)
+    spans = table_cell_spans(line)
     assert len(spans) == 5
     assert [line[s:e].strip() for s, e in spans] == cells
