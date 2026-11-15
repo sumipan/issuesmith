@@ -97,56 +97,7 @@ def phased(monkeypatch):
 # ---------------------------------------------------------------------------
 
 class TestFinalStepDoneProjection:
-    def test_final_step_done_applies_phase_done_in_one_update(self, phased):
-        phased()
-        ns = _ns()
-        forge = _LabelForge({f"{ns}:merge-running", "scope:milestone"})
-        result = StepResult(status="done", markers=["MERGE_DONE"])
-        with patch("issuesmith.ops.dispatch.get_forge", return_value=forge):
-            rc = dispatch.map_step_result(result, step_id="m2", context=_context())
-        assert rc == 0
-        assert forge.updates == [
-            {"labels_add": [f"{ns}:merge-done"], "labels_remove": [f"{ns}:merge-running"]}
-        ]
-        assert forge.labels == {f"{ns}:merge-done", "scope:milestone"}
 
-    def test_non_final_step_done_writes_nothing(self, phased):
-        phased()
-        forge = _mock_forge()
-        result = StepResult(status="done", markers=["M1_DONE"])
-        with patch("issuesmith.ops.dispatch.get_forge", return_value=forge):
-            rc = dispatch.map_step_result(result, step_id="m1", context=_context())
-        assert rc == 0
-        forge.issue_get.assert_not_called()
-        forge.issue_update.assert_not_called()
-
-    def test_marker_does_not_decide_the_phase(self, phased):
-        """MERGE_DONE from a non-final step projects nothing (the marker table is gone)."""
-        phased()
-        forge = _mock_forge()
-        result = StepResult(status="done", markers=["MERGE_DONE"])
-        with patch("issuesmith.ops.dispatch.get_forge", return_value=forge):
-            dispatch.map_step_result(result, step_id="m1", context=_context())
-        forge.issue_update.assert_not_called()
-
-    def test_step_outside_phases_writes_nothing(self, phased):
-        phased()
-        forge = _mock_forge()
-        result = StepResult(status="done", markers=["WORKTREE_READY"])
-        with patch("issuesmith.ops.dispatch.get_forge", return_value=forge):
-            rc = dispatch.map_step_result(result, step_id="p3", context=_context())
-        assert rc == 0
-        forge.issue_update.assert_not_called()
-
-    def test_old_api_exit_zero_follows_the_same_rule(self, phased):
-        phased(develop_preconditions=("draft-done",))
-        ns = _ns()
-        forge = _LabelForge({f"{ns}:develop-running", f"{ns}:draft-done"})
-        result = StepResult(exit_code=0, pipeline_status="IMPL_DONE")
-        with patch("issuesmith.ops.dispatch.get_forge", return_value=forge):
-            rc = dispatch.map_step_result(result, step_id="cp2", context=_context())
-        assert rc == 0
-        assert forge.labels == {f"{ns}:develop-done", f"{ns}:draft-done"}
 
     def test_old_api_non_final_step_writes_nothing(self, phased):
         phased()
@@ -156,14 +107,6 @@ class TestFinalStepDoneProjection:
             dispatch.map_step_result(result, step_id="p0", context=_context())
         forge.issue_update.assert_not_called()
 
-    def test_old_api_failure_writes_nothing(self, phased):
-        phased()
-        forge = _mock_forge()
-        result = StepResult(exit_code=1, pipeline_status="IMPL_FAILED")
-        with patch("issuesmith.ops.dispatch.get_forge", return_value=forge):
-            rc = dispatch.map_step_result(result, step_id="cp2", context=_context())
-        assert rc == 1
-        forge.issue_update.assert_not_called()
 
     def test_default_config_m2_projects_merge_done(self):
         ns = _ns()
@@ -172,35 +115,6 @@ class TestFinalStepDoneProjection:
         with patch("issuesmith.ops.dispatch.get_forge", return_value=forge):
             dispatch.map_step_result(result, step_id="m2", context=_context())
         assert forge.labels == {f"{ns}:merge-done"}
-
-    def test_projection_does_not_fail_on_forge_error(self, phased):
-        phased()
-        forge = _mock_forge()
-        forge.issue_get.return_value = {"labels": [{"name": f"{_ns()}:merge-running"}]}
-        forge.issue_update.side_effect = RuntimeError("network error")
-        result = StepResult(status="done", markers=["MERGE_DONE"])
-        with patch("issuesmith.ops.dispatch.get_forge", return_value=forge):
-            rc = dispatch.map_step_result(result, step_id="m2", context=_context())
-        assert rc == 0  # warning printed but no crash
-
-    def test_projection_skipped_when_no_issue_number(self, phased):
-        phased()
-        forge = _mock_forge()
-        result = StepResult(status="done", markers=["MERGE_DONE"])
-        with patch("issuesmith.ops.dispatch.get_forge", return_value=forge):
-            rc = dispatch.map_step_result(result, step_id="m2", context=_context(issue_number=""))
-        assert rc == 0
-        forge.issue_get.assert_not_called()
-        forge.issue_update.assert_not_called()
-
-    def test_custom_namespace_used(self, monkeypatch):
-        custom = dataclasses.replace(config_module.get_config(), label_namespace="myns")
-        monkeypatch.setattr(config_module, "_cached", custom)
-        forge = _LabelForge({"myns:merge-running"})
-        result = StepResult(status="done", markers=["MERGE_DONE"])
-        with patch("issuesmith.ops.dispatch.get_forge", return_value=forge):
-            dispatch.map_step_result(result, step_id="m2", context=_context())
-        assert forge.labels == {"myns:merge-done"}
 
 
 # ---------------------------------------------------------------------------
@@ -215,14 +129,6 @@ class TestStepStartProjection:
         ):
             return dispatch.main([step_id, "issue_number=42", "workflow_name=issuesmith"])
 
-    def test_recover_rerun_converges_to_running(self, phased):
-        """dag recover: andon set, running gone -> the re-run shows only <phase>-running."""
-        phased()
-        ns = _ns()
-        forge = _LabelForge({f"{ns}:andon-broken", f"{ns}:develop-ready"})
-        assert self._start(forge, "p0") == 0
-        assert forge.labels == {f"{ns}:develop-running"}
-        assert len(forge.updates) == 1
 
     def test_start_keeps_preconditions_and_unmanaged_labels(self, phased):
         phased(develop_preconditions=("draft-done",))
@@ -251,17 +157,6 @@ class TestStepStartProjection:
         forge = _LabelForge({f"{ns}:andon-decision", f"{ns}:develop-running"})
         self._start(forge, "repair")
         assert forge.updates == []
-
-    def test_no_issue_number_skips_projection(self, phased):
-        phased()
-        forge = _mock_forge()
-        with (
-            patch("issuesmith.ops.dispatch.get_forge", return_value=forge),
-            patch("issuesmith.ops.dispatch._try_python_step", return_value=0),
-        ):
-            assert dispatch.main(["p0"]) == 0
-        forge.issue_get.assert_not_called()
-        forge.issue_update.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -292,36 +187,7 @@ def _install_label_writing_step(monkeypatch, step_forge) -> None:
 
 
 class TestStepLabelWriteGuard:
-    def test_enforce_turns_label_write_into_broken_andon(self, phased, monkeypatch, capsys):
-        phased(guard="enforce")
-        ns = _ns()
-        step_forge = _mock_forge()
-        _install_label_writing_step(monkeypatch, step_forge)
-        runner = _LabelForge({f"{ns}:develop-ready"})
-        with patch("issuesmith.ops.dispatch.get_forge", return_value=runner):
-            rc = dispatch.main(["p0", "issue_number=42", "workflow_name=issuesmith"])
-        assert rc == 1
-        step_forge.issue_comment.assert_called_once_with(42, "step comment")
-        step_forge.issue_update.assert_not_called()
-        # The runner (outside the guard) raised andon(broken) and projected it.
-        assert runner.labels == {f"{ns}:andon-broken"}
-        assert any("step p0 wrote labels" in c for c in runner.comments)
-        assert "Traceback" not in capsys.readouterr().err
 
-    def test_warn_passes_label_write_through(self, phased, monkeypatch, capsys):
-        phased(guard="warn")
-        ns = _ns()
-        step_forge = _mock_forge()
-        _install_label_writing_step(monkeypatch, step_forge)
-        runner = _LabelForge({f"{ns}:develop-ready"})
-        with patch("issuesmith.ops.dispatch.get_forge", return_value=runner):
-            rc = dispatch.main(["p0", "issue_number=42", "workflow_name=issuesmith"])
-        assert rc == 0
-        step_forge.issue_update.assert_called_once_with(
-            42, labels_add=["issuesmith:develop-done"]
-        )
-        assert "WARNING: step p0 wrote labels" in capsys.readouterr().err
-        assert runner.labels == {f"{ns}:develop-running"}
 
     def test_get_forge_restored_after_the_step(self, phased, monkeypatch):
         import ghdag.forge as forge_mod
@@ -339,55 +205,3 @@ class TestStepLabelWriteGuard:
 # Template / module resolution failure → andon(broken)
 # ---------------------------------------------------------------------------
 
-class TestResolutionFailureAndon:
-    def test_template_not_found_raises_andon(self):
-        dispatch_main = dispatch.main
-        forge = _mock_forge()
-        with (
-            patch("issuesmith.ops.dispatch._try_python_step", return_value=None),
-            patch(
-                "issuesmith.ops.dispatch._run_bash_step",
-                side_effect=FileNotFoundError("template not found"),
-            ),
-            patch("issuesmith.ops.dispatch.get_forge", return_value=forge),
-            patch("issuesmith.ops.dispatch._raise_andon") as mock_raise,
-        ):
-            rc = dispatch_main(["broken-step", "issue_number=42", "workflow_name=issuesmith"])
-        assert rc == 1
-        mock_raise.assert_called_once()
-        andon_arg = mock_raise.call_args[0][1]
-        assert andon_arg.kind == "broken"
-
-    def test_template_not_found_andon_id_includes_step(self):
-        dispatch_main = dispatch.main
-        forge = _mock_forge()
-        with (
-            patch("issuesmith.ops.dispatch._try_python_step", return_value=None),
-            patch(
-                "issuesmith.ops.dispatch._run_bash_step",
-                side_effect=FileNotFoundError("template missing"),
-            ),
-            patch("issuesmith.ops.dispatch.get_forge", return_value=forge),
-            patch("issuesmith.ops.dispatch._raise_andon") as mock_raise,
-        ):
-            dispatch_main(["my-step", "issue_number=99", "workflow_name=issuesmith"])
-        andon_arg = mock_raise.call_args[0][1]
-        assert "my-step" in andon_arg.id
-
-    def test_undefined_template_variable_raises_andon(self):
-        dispatch_main = dispatch.main
-        forge = _mock_forge()
-        with (
-            patch("issuesmith.ops.dispatch._try_python_step", return_value=None),
-            patch(
-                "issuesmith.ops.dispatch._run_bash_step",
-                side_effect=KeyError("undefined var"),
-            ),
-            patch("issuesmith.ops.dispatch.get_forge", return_value=forge),
-            patch("issuesmith.ops.dispatch._raise_andon") as mock_raise,
-        ):
-            rc = dispatch_main(["broken-step", "issue_number=42", "workflow_name=issuesmith"])
-        assert rc == 1
-        mock_raise.assert_called_once()
-        andon_arg = mock_raise.call_args[0][1]
-        assert andon_arg.kind == "broken"

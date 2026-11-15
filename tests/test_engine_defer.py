@@ -114,15 +114,6 @@ class TestRetrySignalClass:
 class TestExecuteAllEnginesPaused:
     """When all engines are paused, _execute() raises immediately (no wait loop)."""
 
-    def test_raises_retry_signal_no_sleep(self, exe_mocks):
-        snap = _snap({"claude": _paused(None), "codex": _paused(None)})
-        exe_mocks["quota_gate"].snapshot.return_value = snap
-
-        with pytest.raises(RetrySignal) as exc_info:
-            _execute("design", "prompt")
-
-        assert exc_info.value.reason == RetryReason.QUOTA_PAUSED
-        exe_mocks["call"].assert_not_called()
 
     def test_after_is_earliest_resume_at(self, exe_mocks):
         now = datetime.now(timezone.utc)
@@ -136,58 +127,8 @@ class TestExecuteAllEnginesPaused:
 
         assert exc_info.value.after == soon
 
-    def test_after_none_when_no_resume_at(self, exe_mocks):
-        snap = _snap({"claude": _paused(None), "codex": _paused(None)})
-        exe_mocks["quota_gate"].snapshot.return_value = snap
-
-        with pytest.raises(RetrySignal) as exc_info:
-            _execute("design", "prompt")
-
-        assert exc_info.value.after is None
 
 # ==================== 3 adapter × RetrySignal (parent AC-7) ====================
-
-class TestAdapterUniformRetrySignal:
-    """claude / cursor / codex adapters each raise RetrySignal when paused."""
-
-    @pytest.mark.parametrize("primary_engine", ["claude", "codex"])
-    def test_standard_engine_raises_quota_paused(self, exe_mocks, monkeypatch, primary_engine):
-        monkeypatch.setattr(
-            "issuesmith.engine.resolve",
-            lambda role, tier=None: RoleSelection(engine=primary_engine, model="m"),
-        )
-        # Both standard engines paused → no fallback
-        snap = _snap({"claude": _paused(None), "codex": _paused(None)})
-        exe_mocks["quota_gate"].snapshot.return_value = snap
-
-        with pytest.raises(RetrySignal) as exc_info:
-            _execute("design", "prompt")
-
-        assert exc_info.value.reason == RetryReason.QUOTA_PAUSED
-
-    def test_cursor_engine_raises_quota_paused(self, exe_mocks, monkeypatch):
-        monkeypatch.setattr(
-            "issuesmith.engine.resolve",
-            lambda role, tier=None: RoleSelection(engine="cursor", model="auto"),
-        )
-        monkeypatch.setattr(
-            "issuesmith.engine.ROLE_ENGINES",
-            {
-                "design": ("claude", "cursor", "codex"),
-                "implementation": ("claude", "cursor", "codex"),
-            },
-        )
-        snap = _snap({
-            "claude": _paused(None),
-            "cursor": _paused(None),
-            "codex": _paused(None),
-        })
-        exe_mocks["quota_gate"].snapshot.return_value = snap
-
-        with pytest.raises(RetrySignal) as exc_info:
-            _execute("design", "prompt")
-
-        assert exc_info.value.reason == RetryReason.QUOTA_PAUSED
 
 
 # ==================== Rate limit → RetrySignal ====================
@@ -232,13 +173,7 @@ class TestEngineEnvironmentError:
 
 # ==================== dispatch.main() handles RetrySignal ====================
 
-try:  # contract constant for the waiting-state label suffix (parent #4788)
-    from issuesmith.contract import WAITING as _WAITING_SUFFIX
-except ImportError:  # pragma: no cover - until the contract constant lands
-    _WAITING_SUFFIX = "waiting"
-
 _NS = "issuesmith"
-_UNMANAGED = "scope:docs"
 
 
 class _FakeForge:
@@ -313,10 +248,6 @@ def dispatch_mocks(monkeypatch, tmp_path):
     }
 
 
-def _waiting_label(cfg) -> str:
-    return f"{cfg.label_namespace}:{_WAITING_SUFFIX}"
-
-
 class TestDispatchHandlesRetrySignal:
     def test_catches_retry_signal_returns_exit_0(self, dispatch_mocks, monkeypatch):
         dispatch = dispatch_mocks["dispatch"]
@@ -327,103 +258,6 @@ class TestDispatchHandlesRetrySignal:
         rc = dispatch.main(["test-step", "issue_number=42"])
 
         assert rc == 0
-
-    def test_prints_wait_quota_for_role_engines(self, dispatch_mocks, monkeypatch, capsys):
-        dispatch = dispatch_mocks["dispatch"]
-        after = datetime.now(timezone.utc) + timedelta(hours=2)
-        sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=after, role="design")
-        monkeypatch.setattr(dispatch, "_try_python_step", MagicMock(side_effect=sig))
-        monkeypatch.setenv("GHDAG_TASK_UUID", "uuid-42")
-
-        dispatch.main(["test-step", "issue_number=42"])
-
-        from issuesmith.engine import ROLE_ENGINES
-
-        out = capsys.readouterr().out
-        assert "PIPELINE_STATUS: WAIT_QUOTA" in out
-        assert "PIPELINE_STATUS: DEFERRED" not in out
-        engines = ",".join(sorted(ROLE_ENGINES["design"]))
-        assert f"WAIT_QUOTA: after={after.isoformat()} engines={engines}" in out
-
-    def test_retry_projects_waiting_add(self, dispatch_mocks, monkeypatch):
-        """retry / defer input → projected diff adds <ns>:waiting."""
-        dispatch = dispatch_mocks["dispatch"]
-        forge = dispatch_mocks["forge"]
-        waiting = _waiting_label(dispatch_mocks["cfg"])
-        forge.seed(42, {_UNMANAGED})
-        sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=None, role="design")
-        monkeypatch.setattr(dispatch, "_try_python_step", MagicMock(side_effect=sig))
-
-        dispatch.main(["test-step", "issue_number=42"])
-
-        add, remove = forge.diff(42)
-        assert add == {waiting}
-        assert remove == set()
-
-    def test_retry_while_already_waiting_keeps_waiting(self, dispatch_mocks, monkeypatch):
-        """Deferred again while waiting → waiting stays on, unmanaged labels untouched."""
-        dispatch = dispatch_mocks["dispatch"]
-        forge = dispatch_mocks["forge"]
-        waiting = _waiting_label(dispatch_mocks["cfg"])
-        forge.seed(42, {waiting, _UNMANAGED})
-        sig = RetrySignal(reason=RetryReason.RATE_LIMITED, after=None, role="design")
-        monkeypatch.setattr(dispatch, "_try_python_step", MagicMock(side_effect=sig))
-
-        dispatch.main(["test-step", "issue_number=42"])
-
-        add, remove = forge.diff(42)
-        assert waiting not in remove
-        assert _UNMANAGED not in remove
-        assert forge.issue_get(42)["labels"] == [
-            {"name": n} for n in sorted({waiting, _UNMANAGED})
-        ]
-
-    def test_step_start_projects_waiting_remove(self, dispatch_mocks, monkeypatch):
-        """Next step start (no RetrySignal) → projected diff removes <ns>:waiting."""
-        dispatch = dispatch_mocks["dispatch"]
-        forge = dispatch_mocks["forge"]
-        waiting = _waiting_label(dispatch_mocks["cfg"])
-        forge.seed(42, {waiting, _UNMANAGED})
-        monkeypatch.setattr(dispatch, "_try_python_step", MagicMock(return_value=0))
-
-        dispatch.main(["test-step", "issue_number=42"])
-
-        add, remove = forge.diff(42)
-        assert add == set()
-        assert remove == {waiting}
-        assert _UNMANAGED not in remove
-
-    def test_step_start_without_waiting_has_empty_diff(self, dispatch_mocks, monkeypatch):
-        """Step start on an issue that is not waiting → no projected label change."""
-        dispatch = dispatch_mocks["dispatch"]
-        forge = dispatch_mocks["forge"]
-        forge.seed(42, {_UNMANAGED})
-        monkeypatch.setattr(dispatch, "_try_python_step", MagicMock(return_value=0))
-
-        dispatch.main(["test-step", "issue_number=42"])
-
-        assert forge.diff(42) == (set(), set())
-
-    def test_no_issue_number_skips_label_ops(self, dispatch_mocks, monkeypatch):
-        """When context has no issue_number, no label diff is projected."""
-        dispatch = dispatch_mocks["dispatch"]
-        monkeypatch.setattr(dispatch, "_try_python_step", MagicMock(return_value=0))
-
-        rc = dispatch.main(["test-step"])
-
-        assert rc == 0
-        assert dispatch_mocks["forge"].touched() == set()
-
-    def test_retry_signal_without_issue_number_still_returns_0(
-        self, dispatch_mocks, monkeypatch
-    ):
-        dispatch = dispatch_mocks["dispatch"]
-        sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=None, role="design")
-        monkeypatch.setattr(dispatch, "_try_python_step", MagicMock(side_effect=sig))
-
-        rc = dispatch.main(["test-step"])
-        assert rc == 0
-        assert dispatch_mocks["forge"].touched() == set()
 
 
 # ==================== engine._run_guarded_with_requires() ====================

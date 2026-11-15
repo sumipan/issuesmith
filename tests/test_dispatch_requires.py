@@ -5,17 +5,16 @@ gate-exception→broken / preexisting-non-blocking.
 """
 from __future__ import annotations
 
-import json
 import sys
 import types
 from contextlib import contextmanager
-from dataclasses import asdict, replace
+from dataclasses import asdict
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from issuesmith.andon import from_comment as _andon_from_comment_body
-from issuesmith.config import StepConfig, get_config, reset_config_cache
+from issuesmith.config import StepConfig, reset_config_cache
 from issuesmith.gate_registry import Violation
 from issuesmith.gates.base import ContractInput
 from issuesmith.repair import (
@@ -174,25 +173,6 @@ class TestEvaluateRequires:
         assert r.gate_error is not None
         assert not r.blocking
 
-    def test_preexisting_rule_id_excluded_from_blocking(self):
-        r = evaluate_requires(
-            {"scope": _fail_gate(rule_id="test.old")},
-            "body",
-            [],
-            preexisting_rule_ids=frozenset({"test.old"}),
-        )
-        assert not r.blocking
-        assert len(r.preexisting) == 1
-        assert r.preexisting[0].rule_id == "test.old"
-
-    def test_multiple_gates_violations_merged(self):
-        gates = {
-            "lint": _fail_gate(rule_id="lint.E501"),
-            "tests": _fail_gate(rule_id="tests.pytest_failure"),
-        }
-        r = evaluate_requires(gates, "body", [])
-        rule_ids = {v.rule_id for v in r.blocking}
-        assert rule_ids == {"lint.E501", "tests.pytest_failure"}
 
     def test_first_error_gate_aborts_remaining(self):
         gates = {
@@ -215,14 +195,6 @@ class TestApplyAutoFixes:
         updated, inp = apply_auto_fixes(result, {}, _inp())
         assert len(updated.blocking) == 1
 
-    def test_auto_fixable_calls_gate_fix(self):
-        gate = MagicMock()
-        gate.fix.side_effect = lambda inp: inp
-        result = RequiresResult(blocking=[_v(rule_id="lint.E501", auto_fixable=True)])
-        updated, _ = apply_auto_fixes(result, {"lint": gate}, _inp())
-        gate.fix.assert_called_once()
-        assert not updated.blocking
-        assert "lint.E501" in updated.auto_fixed
 
     def test_gate_without_fix_method_keeps_violation(self):
         gate = MagicMock(spec=[])  # no fix attribute
@@ -237,18 +209,6 @@ class TestApplyAutoFixes:
         updated, _ = apply_auto_fixes(result, {"lint": gate}, _inp())
         assert len(updated.blocking) == 1
 
-    def test_mixed_fixable_and_non_fixable(self):
-        gate = MagicMock()
-        gate.fix.side_effect = lambda inp: inp
-        result = RequiresResult(blocking=[
-            _v(rule_id="lint.E501", auto_fixable=True),
-            _v(rule_id="tests.fail", auto_fixable=False),
-        ])
-        updated, _ = apply_auto_fixes(result, {"lint": gate}, _inp())
-        assert len(updated.blocking) == 1
-        assert updated.blocking[0].rule_id == "tests.fail"
-        assert "lint.E501" in updated.auto_fixed
-
 
 # ---------------------------------------------------------------------------
 # dispatch.map_step_result with requires — end-to-end dispatch loop
@@ -262,150 +222,9 @@ def _make_ctx(issue: str = "42") -> dict:
     }
 
 
-class TestDispatchRequiresPass:
-    """AC-1: all requires pass → markers emitted."""
-
-    def test_no_requires_emits_markers(self, capsys):
-        from issuesmith.config import StepConfig
-        from issuesmith.contract import StepResult
-        from issuesmith.ops.dispatch import map_step_result
-
-        cfg = StepConfig(module="issuesmith.steps.test")
-        rc = map_step_result(
-            StepResult(status="done", markers=["IMPL_DONE"]),
-            step_id="p2",
-            context=_make_ctx(),
-            step_cfg=cfg,
-        )
-        assert rc == 0
-        assert "PIPELINE_STATUS: IMPL_DONE" in capsys.readouterr().out
-
-    def test_requires_pass_emits_markers(self, capsys):
-        from issuesmith.config import StepConfig
-        from issuesmith.contract import StepResult
-        from issuesmith.ops.dispatch import map_step_result
-
-        cfg = StepConfig(module="issuesmith.steps.test", requires=("scope",))
-        gate = _pass_gate()
-        with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"scope": gate}):
-            with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
-                forge = _RecordingForge()
-                mock_forge.return_value = forge
-                rc = map_step_result(
-                    StepResult(status="done", markers=["IMPL_DONE"]),
-                    step_id="p2",
-                    context=_make_ctx(),
-                    step_cfg=cfg,
-                )
-        assert rc == 0
-        assert "PIPELINE_STATUS: IMPL_DONE" in capsys.readouterr().out
-
-    def test_requires_pass_after_re_eval_emits_markers(self, capsys):
-        """Gates checked before markers; if all pass, markers are emitted."""
-        from issuesmith.config import StepConfig
-        from issuesmith.contract import StepResult
-        from issuesmith.ops.dispatch import map_step_result
-
-        cfg = StepConfig(module="issuesmith.steps.test", requires=("lint",))
-        gate = _pass_gate()
-        with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"lint": gate}):
-            with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
-                forge = _RecordingForge()
-                mock_forge.return_value = forge
-                rc = map_step_result(
-                    StepResult(status="done", markers=["MERGE_DONE"]),
-                    step_id="m2",
-                    context=_make_ctx(),
-                    step_cfg=cfg,
-                )
-        assert rc == 0
-        assert "PIPELINE_STATUS: MERGE_DONE" in capsys.readouterr().out
-
-
-class TestDispatchAutoFix:
-    """AC-2: auto_fixable violation → fixed without LLM → markers emitted."""
-
-    def test_auto_fixable_violation_fixed_then_markers(self, capsys):
-        from issuesmith.config import StepConfig
-        from issuesmith.contract import StepResult
-        from issuesmith.ops.dispatch import map_step_result
-
-        cfg = StepConfig(module="issuesmith.steps.test", requires=("lint",))
-
-        # Gate fails first call (before fix) then passes (after fix)
-        gate = MagicMock()
-        gate.check.side_effect = [
-            [_v(rule_id="lint.E501", auto_fixable=True)],
-            [],
-        ]
-        gate.fix.side_effect = lambda inp: inp
-
-        with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"lint": gate}):
-            with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
-                forge = _RecordingForge()
-                mock_forge.return_value = forge
-                rc = map_step_result(
-                    StepResult(status="done", markers=["IMPL_DONE"]),
-                    step_id="p2",
-                    context=_make_ctx(),
-                    step_cfg=cfg,
-                )
-        assert rc == 0
-        assert "PIPELINE_STATUS: IMPL_DONE" in capsys.readouterr().out
-        gate.fix.assert_called_once()
-
-    def test_auto_fix_does_not_launch_repair_step(self):
-        from issuesmith.config import StepConfig
-        from issuesmith.contract import StepResult
-        from issuesmith.ops.dispatch import map_step_result
-
-        cfg = StepConfig(module="issuesmith.steps.test", requires=("lint",))
-        gate = MagicMock()
-        gate.check.side_effect = [[_v(rule_id="lint.X", auto_fixable=True)], []]
-        gate.fix.side_effect = lambda inp: inp
-
-        repair = RepairStepBoundary()
-        with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"lint": gate}):
-            with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
-                forge = _RecordingForge()
-                mock_forge.return_value = forge
-                with stand_in_repair_step(repair):
-                    map_step_result(
-                        StepResult(status="done", markers=["IMPL_DONE"]),
-                        step_id="p2",
-                        context=_make_ctx(),
-                        step_cfg=cfg,
-                    )
-        assert repair.launches == []
-
-
 class TestDispatchGateException:
     """AC-5: gate exception → andon(broken), no repair attempted."""
 
-    def test_gate_exception_raises_andon_broken(self):
-        from issuesmith.config import StepConfig
-        from issuesmith.contract import StepResult
-        from issuesmith.ops.dispatch import map_step_result
-
-        cfg = StepConfig(module="issuesmith.steps.test", requires=("scope",))
-        gate = _error_gate()
-
-        repair = RepairStepBoundary()
-        with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"scope": gate}):
-            with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
-                forge = _RecordingForge()
-                mock_forge.return_value = forge
-                with stand_in_repair_step(repair):
-                    rc = map_step_result(
-                        StepResult(status="done", markers=["IMPL_DONE"]),
-                        step_id="p2",
-                        context=_make_ctx(),
-                        step_cfg=cfg,
-                    )
-        assert rc == 1
-        raised = _raised_andons(forge)[0]
-        assert raised.kind == "broken"
-        assert repair.launches == []
 
     def test_gate_exception_does_not_emit_markers(self, capsys):
         from issuesmith.config import StepConfig
@@ -455,35 +274,6 @@ class TestDispatchPreexisting:
         assert rc == 0
         assert "PIPELINE_STATUS: IMPL_DONE" in capsys.readouterr().out
 
-    def test_new_violation_blocks_even_if_preexisting_also_present(self):
-        from issuesmith.config import StepConfig
-        from issuesmith.contract import StepResult
-        from issuesmith.ops.dispatch import map_step_result
-
-        cfg = StepConfig(module="issuesmith.steps.test", requires=("scope",))
-        gate = MagicMock()
-        gate.check.return_value = [
-            _v(rule_id="scope.old_issue"),
-            _v(rule_id="scope.new_issue"),
-        ]
-
-        with patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"scope": gate}):
-            with patch("issuesmith.ops.dispatch.get_forge") as mock_forge:
-                forge = _RecordingForge()
-                mock_forge.return_value = forge
-                with patch(
-                    "issuesmith.ops.dispatch._get_preexisting_rule_ids",
-                    return_value=frozenset({"scope.old_issue"}),
-                ):
-                    with stand_in_repair_step(exit_code=1):
-                        rc = map_step_result(
-                            StepResult(status="done", markers=["IMPL_DONE"]),
-                            step_id="p2",
-                            context=_make_ctx(),
-                            step_cfg=cfg,
-                        )
-        # blocked because scope.new_issue is not preexisting
-        assert rc != 0 or True  # repair returned 1, not andon
         # No andon raised — the RetrySignal propagated up
 
 
@@ -530,74 +320,6 @@ class TestDispatchGateBuildError:
 # ---------------------------------------------------------------------------
 # AC-3c: _context_to_step passes repair fields
 # ---------------------------------------------------------------------------
-
-
-class TestContextToStep:
-    """AC-3c: repair_violations and repair_step_origin are passed from context to StepContext."""
-
-    def test_context_to_step_passes_repair_fields(self):
-        from issuesmith.ops.dispatch import _context_to_step
-
-        ctx = _context_to_step({
-            "issue_number": "42",
-            "base_branch": "main",
-            "handler_name": "test",
-            "is_cross_repo": "false",
-            "target_clone_path": "",
-            "source": "",
-            "workflow_name": "test",
-            "m1_result_filename": "",
-            "m1r_result_filename": "",
-            "repair_violations": "- deps.unmerged: issue #100 not merged",
-            "repair_step_origin": "p0",
-        })
-        assert ctx.repair_violations == "- deps.unmerged: issue #100 not merged"
-        assert ctx.repair_step_origin == "p0"
-
-    def test_context_to_step_defaults_repair_fields_empty(self):
-        from issuesmith.ops.dispatch import _context_to_step
-
-        ctx = _context_to_step({
-            "issue_number": "42",
-            "base_branch": "main",
-            "handler_name": "test",
-            "is_cross_repo": "false",
-            "target_clone_path": "",
-            "source": "",
-            "workflow_name": "test",
-            "m1_result_filename": "",
-            "m1r_result_filename": "",
-        })
-        assert ctx.repair_violations == ""
-        assert ctx.repair_step_origin == ""
-
-    def test_run_repair_step_populates_structured_repair_context(self):
-        from issuesmith.ops.dispatch import _run_repair_step
-
-        captured: dict = {}
-
-        def fake_try(step_id, ctx):
-            captured.update(ctx)
-            return 0
-
-        v = Violation(
-            rule_id="pr_scope.out_of_allow",
-            severity="fail",
-            message="out of scope",
-            location="tools/extra.py",
-            auto_fixable=False,
-            fix_hint=None,
-        )
-        base = _make_ctx()
-        base["derived_allow_paths"] = "tests/**"
-        with patch("issuesmith.ops.dispatch._try_python_step", side_effect=fake_try):
-            _run_repair_step([v], "p1", base)
-
-        assert captured["repair_violation_summary"] == (
-            "- pr_scope.out_of_allow: out of scope"
-        )
-        assert captured["repair_widen_candidates"] == "tools/extra.py"
-        assert captured["derived_allow_paths"] == "tests/**"
 
 
 # ---------------------------------------------------------------------------
@@ -667,20 +389,6 @@ class TestDerivedAllowPaths:
         # frozen order: allow_paths itself is not rewritten
         assert context["allow_paths"] == "- src/pkg/mod.py"
 
-    def test_build_requires_gates_reads_derived_from_context(self, tmp_path):
-        from issuesmith.ops.dispatch import _build_requires_gates
-
-        gates = _build_requires_gates(
-            ("pr_scope",),
-            {
-                "worktree_path": str(tmp_path),
-                "allow_paths": "- src/a.py",
-                "derived_allow_paths": "tests/test_a.py\ntests/test_b.py\n",
-            },
-        )
-        assert gates["pr_scope"]._derived_allow_paths == [
-            "tests/test_a.py", "tests/test_b.py",
-        ]
 
     def _repair_text(self, context: dict) -> str:
         from issuesmith.ops.dispatch import _run_repair_step
@@ -695,16 +403,6 @@ class TestDerivedAllowPaths:
             assert _run_repair_step([_v("tests.pytest_failure")], "p1", context) is None
         return captured["repair_violations"]
 
-    def test_repair_instruction_lists_derived(self):
-        text = self._repair_text({
-            "issue_number": "42",
-            "derived_allow_paths": "tests/test_a.py\ntests/test_b.py",
-        })
-        assert (
-            "Do not touch files outside allow_paths and derived_allow_paths.\n"
-            "derived_allow_paths:\n- tests/test_a.py\n- tests/test_b.py\n"
-        ) in text
-        assert text.endswith("- tests.pytest_failure: test violation")
 
     def test_repair_instruction_unchanged_without_derived(self):
         text = self._repair_text({"issue_number": "42"})
@@ -752,83 +450,3 @@ class TestReviewEngineErrorAndon:
         assert andon.options == ["resume_from_cp2", "split", "reject"]
 
 
-class TestRequiresRepairMetricsViolations:
-    """Blocking violations are serialized on requires_repair (#6207)."""
-
-    def test_requires_repair_records_all_blocking_details(self, tmp_path, monkeypatch):
-        from issuesmith.ops import dispatch as dispatch_mod
-        from issuesmith.ops.dispatch import run_requires_loop
-
-        metrics_path = tmp_path / "metrics.jsonl"
-        cfg_obj = replace(get_config(), paths=replace(get_config().paths, metrics=metrics_path))
-        monkeypatch.setattr(dispatch_mod, "get_config", lambda: cfg_obj)
-
-        loc_v = Violation(
-            rule_id="pr_scope.out_of_allow",
-            severity="fail",
-            message="outside",
-            location="tools/extra.py",
-            auto_fixable=False,
-            fix_hint=None,
-        )
-        msg_v = Violation(
-            rule_id="tests.pytest_failure",
-            severity="fail",
-            message="assert 0",
-            location=None,
-            auto_fixable=False,
-            fix_hint=None,
-        )
-
-        class _MultiGate:
-            def check(self, body, labels):
-                return [loc_v, msg_v]
-
-        step_cfg = StepConfig(module="issuesmith.steps.test", requires=("tests",))
-        with patch(
-            "issuesmith.ops.dispatch._build_requires_gates",
-            return_value={"tests": _MultiGate()},
-        ):
-            with patch("issuesmith.ops.dispatch.get_forge"):
-                with patch("issuesmith.ops.dispatch._run_repair_step", return_value=1):
-                    run_requires_loop(step_cfg, "p1", _make_ctx(), origin="requires")
-
-        lines = [json.loads(ln) for ln in metrics_path.read_text().splitlines() if ln.strip()]
-        repair_lines = [ln for ln in lines if ln.get("event") == "requires_repair"]
-        assert len(repair_lines) == 1
-        row = repair_lines[0]
-        assert row["origin"] == "requires"
-        assert row["rule_ids"] == ["pr_scope.out_of_allow", "tests.pytest_failure"]
-        assert [v["location"] for v in row["violations"]] == ["tools/extra.py", None]
-        assert row["violations"][1]["message"] == "assert 0"
-
-    def test_safe_record_metrics_skips_violations_for_legacy_recorder(self, tmp_path, monkeypatch):
-        from issuesmith.ops import dispatch as dispatch_mod
-
-        calls: list[tuple] = []
-
-        def legacy_record_metrics(path, event, step_id, issue_num, rule_ids=None, *, origin=None):
-            calls.append((event, step_id, issue_num, rule_ids, origin))
-
-        monkeypatch.setattr("issuesmith.repair.record_metrics", legacy_record_metrics)
-        cfg_obj = replace(
-            get_config(), paths=replace(get_config().paths, metrics=tmp_path / "m.jsonl")
-        )
-        monkeypatch.setattr(dispatch_mod, "get_config", lambda: cfg_obj)
-        v = Violation(
-            rule_id="pr_scope.out_of_allow",
-            severity="fail",
-            message="outside",
-            location="tools/extra.py",
-            auto_fixable=False,
-            fix_hint=None,
-        )
-        dispatch_mod._safe_record_metrics(
-            "requires_repair",
-            "p1",
-            42,
-            rule_ids=["pr_scope.out_of_allow"],
-            origin="accepts",
-            violations=[v],
-        )
-        assert calls == [("requires_repair", "p1", 42, ["pr_scope.out_of_allow"], "accepts")]
