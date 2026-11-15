@@ -123,3 +123,68 @@ def test_clean_file_no_violations(lint_worktree: Path) -> None:
     assert gate.check("", []) == []
     gate.fix(ContractInput(body=""))
     assert path.read_text(encoding="utf-8") == original
+
+
+@pytest.fixture()
+def lint_worktree_base_pkg_mod(tmp_path: Path) -> Path:
+    """Clone with ruff.toml and pkg/mod.py on origin/main holding one F401."""
+    if shutil.which("ruff") is None:
+        pytest.skip("ruff not found")
+
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _git(origin, "init", "-b", "main")
+    _git(origin, "config", "user.email", "test@test.com")
+    _git(origin, "config", "user.name", "Test")
+    (origin / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(origin, "add", "README.md")
+    _git(origin, "commit", "-m", "init")
+
+    base_mod = origin / "pkg"
+    base_mod.mkdir()
+    (base_mod / "mod.py").write_text("import json\n\ndef f() -> None:\n    pass\n", encoding="utf-8")
+    _git(origin, "add", "pkg/mod.py")
+    _git(origin, "commit", "-m", "add pkg/mod.py with unused json")
+
+    clone = tmp_path / "clone"
+    subprocess.run(
+        ["git", "clone", str(origin), str(clone)],
+        capture_output=True,
+        check=True,
+    )
+    _git(clone, "config", "user.email", "test@test.com")
+    _git(clone, "config", "user.name", "Test")
+    (clone / "ruff.toml").write_text(_RUFF_TOML, encoding="utf-8")
+    _git(clone, "add", "ruff.toml")
+    _git(clone, "commit", "-m", "add ruff.toml")
+    return clone
+
+
+def test_check_skips_violation_already_on_base_when_lines_shift(
+    lint_worktree_base_pkg_mod: Path,
+) -> None:
+    """Refs sumipan/nexus#6670 AC-1: base F401 is not re-reported when lines shift."""
+    path = lint_worktree_base_pkg_mod / "pkg/mod.py"
+    text = path.read_text(encoding="utf-8")
+    path.write_text("# header\n" + text, encoding="utf-8")
+    _git(lint_worktree_base_pkg_mod, "add", "pkg/mod.py")
+    _git(lint_worktree_base_pkg_mod, "commit", "-m", "prepend comment")
+    gate = _gate(lint_worktree_base_pkg_mod)
+    assert gate.check("", []) == []
+
+
+def test_check_reports_only_violation_added_on_branch(
+    lint_worktree_base_pkg_mod: Path,
+) -> None:
+    """Refs sumipan/nexus#6670 AC-2: only branch-new F401 is reported."""
+    path = lint_worktree_base_pkg_mod / "pkg/mod.py"
+    text = path.read_text(encoding="utf-8")
+    path.write_text("import os\n" + text, encoding="utf-8")
+    _git(lint_worktree_base_pkg_mod, "add", "pkg/mod.py")
+    _git(lint_worktree_base_pkg_mod, "commit", "-m", "add unused os")
+    gate = _gate(lint_worktree_base_pkg_mod)
+    violations = gate.check("", [])
+    f401 = [v for v in violations if v.rule_id == "lint.F401"]
+    assert len(f401) == 1
+    assert "os" in f401[0].message
+    assert "json" not in f401[0].message
