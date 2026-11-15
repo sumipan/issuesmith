@@ -23,38 +23,6 @@ paths_must_not_exist:
 ```
 """
 
-BODY_NEXUS_ONLY = """\
-## Acceptance Criteria
-
-- [x] done
-
-```yaml
-paths_must_exist:
-  - only_in_nexus.md
-```
-"""
-
-BODY_TARGET_ONLY = """\
-## Acceptance Criteria
-
-- [x] done
-
-```yaml
-paths_must_exist:
-  - only_in_target.py
-```
-"""
-
-BODY_MUST_NOT_EXIST = """\
-## Acceptance Criteria
-
-- [x] done
-
-```yaml
-paths_must_not_exist:
-  - lingering.txt
-```
-"""
 
 BODY_ONE_UNCHECKED = """\
 ## Acceptance Criteria
@@ -94,5 +62,3 @@ def test_synthesize_paths_must_not_exist_both_roots_must_be_clear(tmp_path):
         }
     )
     assert any("lingering.txt" in f for f in failures)
-
-

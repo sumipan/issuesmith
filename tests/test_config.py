@@ -14,27 +14,8 @@ from issuesmith.config import (
     reset_config_cache,
 )
 
-# Builtin defaults that must match pre-change module constants (relative paths / scalars).
-# repo is required (#3081). Package default for supported_repos is empty.
+# repo is required (#3081).
 _LEGACY_REPO = "sumipan/nexus"
-_LEGACY_TIMEZONE = "Asia/Tokyo"
-_LEGACY_REL_PATHS = {
-    "queue": "jobs/issuesmith-queue.jsonl",
-    "queue_state": "logs/issuesmith-queue-state.json",
-    "queue_lock": "logs/issuesmith-queue.lock",
-    "triage_log": "jobs/issuesmith-triage.jsonl",
-    "seed": "configs/night-queue.yaml",
-    "night_state": "logs/night-queue-state.json",
-    "exec_jsonl": "jobs/exec.jsonl",
-    "done_dir": "jobs/done",
-    "quota_state": "jobs/quota-gate.json",
-    "metrics": "jobs/metrics.jsonl",
-    "worktrees_dir": ".claude/worktrees",
-    "external_dir": ".claude/external",
-    "workflow": "workflows/issuesmith.yml",
-    "template_dir": "workflows/issuesmith",
-    "engine_state": ".pipeline-state/issuesmith-engine.yml",
-}
 
 
 @pytest.fixture(autouse=True)

@@ -310,26 +310,6 @@ def test_note_empty_key_raises_value_error(local_client, tmp_path):
     assert len(local_client.get_issue_comments(a.issue)) == before
 
 
-# ---------------------------------------------------------------------------
-# Label changes go through project_issue (#4807)
-# ---------------------------------------------------------------------------
-
-def _spy_project_issue(monkeypatch, current: list[str]) -> list:
-    """Install ops/labels.project_issue as a spy; record (issue, labels before, state after)."""
-    import issuesmith.ops.labels as labels_mod
-    from issuesmith.config import get_config
-    from issuesmith.projection import state_from_labels
-
-    calls: list = []
-
-    def fake(client, issue_number, change):
-        calls.append((issue_number, change(state_from_labels(current, get_config()))))
-        return [], []
-
-    monkeypatch.setattr(labels_mod, "project_issue", fake, raising=False)
-    return calls
-
-
 def test_andon_label_kinds_come_from_contract():
     from issuesmith.andon import _andon_label_kinds
     from issuesmith.contract import ANDON_KINDS

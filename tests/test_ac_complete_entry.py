@@ -200,19 +200,6 @@ class TestCheckGateContract:
         assert result["contract_failures"] == []
 
 
-# ASCII fixture data.
-BODY_CROSS_REPO_CONTRACT = """\
-## Acceptance Criteria
-
-```yaml
-paths_must_exist:
-  - src/mltgnt/loops
-```
-
-- [x] AC1
-"""
-
-
 class TestCheckGateRepoRoot:
     """Cross-repo: paths_must_exist resolves via --repo-root / repo_root."""
 

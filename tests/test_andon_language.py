@@ -7,7 +7,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
-from issuesmith.andon import Andon, raise_andon
 from issuesmith.language import EN, LanguagePack
 
 _CUSTOM_MESSAGES = {
@@ -53,28 +52,6 @@ def make_client(tmp_path, monkeypatch):
     reset_config_cache()
 
 
-def _raise(client, tmp_path) -> Andon:
-    number = client.issue_create("andon target", "body")
-    a = Andon(
-        id=f"wf:{number}:cp2:0",
-        kind="decision",
-        issue=number,
-        step="cp2",
-        summary="Should we proceed?",
-        options=["resume", "reject"],
-        default="resume",
-    )
-    raise_andon(client, a, metrics_path=tmp_path / "metrics.jsonl")
-    return a
-
-
-def _answer_comment(client, issue: int) -> str:
-    bodies = [str(c.get("body") or "") for c in client.get_issue_comments(issue)]
-    replies = [b for b in bodies if b.startswith("<!-- andon-answer -->")]
-    assert len(replies) == 1
-    return replies[0]
-
-
 def _widen_failed_comment(issue_body: str) -> str:
     from issuesmith.andon import _handle_widen_action
 
@@ -103,9 +80,3 @@ def test_widen_failed_comment_uses_custom_pack(make_client):
     assert body.startswith("<!-- andon-widen-failed -->\n")
     assert "no metadata block; wanted ['src/new.py']" in body
     assert "Cannot widen" not in body
-
-
-def _labels(client, issue: int) -> set[str]:
-    return {lb["name"] for lb in client.issue_get(issue, fields=["labels"])["labels"]}
-
-
