@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import importlib
 import json
 import os
@@ -40,6 +41,54 @@ commands:
   andon list | show | answer | note | auto-answer
 """
 
+_ERROR_EXIT: dict[str, int] = {
+    "UNKNOWN_COMMAND": 2,
+    "UNKNOWN_ARGUMENT": 2,
+    "MISSING_ARGUMENT": 2,
+    "INVALID_VALUE": 2,
+    "NOT_FOUND": 1,
+    "CONFIG_ERROR": 1,
+    "FAILED": 1,
+}
+
+
+def _fail(code: str, message: str, hint: str | None = None) -> int:
+    print(f"error[{code}]: {message}", file=sys.stderr)
+    if hint:
+        print(f"hint: {hint}", file=sys.stderr)
+    return _ERROR_EXIT[code]
+
+
+class _Parser(argparse.ArgumentParser):
+    def __init__(self, *args: Any, command: str = "", **kwargs: Any) -> None:
+        if "prog" not in kwargs and command:
+            kwargs["prog"] = f"issuesmith {command}"
+        super().__init__(*args, **kwargs)
+
+    def error(self, message: str) -> None:  # noqa: ARG002 — argparse API
+        lower = message.lower()
+        if "unrecognized arguments" in lower or "unrecognized option" in lower:
+            code = "UNKNOWN_ARGUMENT"
+        elif "the following arguments are required" in lower or "required:" in lower:
+            code = "MISSING_ARGUMENT"
+        elif message.startswith("invalid choice:"):
+            code = "UNKNOWN_COMMAND"
+        elif "invalid int value" in lower or "invalid choice" in lower:
+            code = "INVALID_VALUE"
+        else:
+            code = "INVALID_VALUE"
+        rc = _fail(code, message, self.format_usage())
+        raise SystemExit(rc)
+
+
+def _parse_args(parser: _Parser, argv: list[str]) -> argparse.Namespace | int:
+    """Parse argv; on argparse failure return an exit code instead of raising."""
+    try:
+        return parser.parse_args(argv)
+    except SystemExit as exc:
+        code = exc.code
+        return 0 if code is None else int(code)
+
 
 def _run_context(argv: list[str]) -> int:
     sys.argv = ["issuesmith.context_hook", *argv]
@@ -50,26 +99,31 @@ def _run_context(argv: list[str]) -> int:
 
 
 def _run_gate_preflight(argv: list[str]) -> int:
-    import argparse
     from pathlib import Path
 
     import issuesmith.gate_rules  # noqa: F401 — populates GATE_REGISTRY
     from issuesmith.gate_registry import GATE_REGISTRY
 
-    parser = argparse.ArgumentParser(prog="issuesmith gate-preflight")
+    parser = _Parser(command="gate-preflight")
     parser.add_argument("--gate", required=True, help="Gate name (rule-class GATE_REGISTRY)")
     parser.add_argument("--body-file", required=True, help="Path to issue body text file")
     parser.add_argument("--labels-file", default=None, help="Path to newline-separated labels file")
-    args = parser.parse_args(argv)
+    parsed = _parse_args(parser, argv)
+    if isinstance(parsed, int):
+        return parsed
+    args = parsed
 
     if args.gate not in GATE_REGISTRY:
-        print(f"Error: gate '{args.gate}' is not registered", file=sys.stderr)
-        return 1
+        registered = ", ".join(sorted(GATE_REGISTRY))
+        return _fail(
+            "INVALID_VALUE",
+            f"gate {args.gate!r} is not registered",
+            f"registered gates: {registered}",
+        )
 
     body_path = Path(args.body_file)
     if not body_path.exists():
-        print(f"Error: body file '{args.body_file}' does not exist", file=sys.stderr)
-        return 1
+        return _fail("NOT_FOUND", f"body file {args.body_file!r} does not exist")
 
     body = body_path.read_text(encoding="utf-8")
 
@@ -150,12 +204,29 @@ def _cmd_queue(argv: list[str]) -> int:
     return int(queue_main(argv))
 
 
-def _cmd_deps(argv: list[str]) -> int:
-    sys.argv = ["issuesmith.dep_extractor", *argv]
-    from issuesmith.dep_extractor import main as deps_main
+def _deps_parser() -> _Parser:
+    parser = _Parser(command="deps")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    check = sub.add_parser("check")
+    check.add_argument("issue", type=int)
+    return parser
 
-    deps_main()
-    return 0
+
+def _cmd_deps(argv: list[str]) -> int:
+    parser = _deps_parser()
+    if not argv or argv[0] in {"-h", "--help"}:
+        parser.print_help()
+        return 0
+    parsed = _parse_args(parser, argv)
+    if isinstance(parsed, int):
+        return parsed
+    args = parsed
+    from issuesmith.dep_extractor import check_issue, check_result_to_dict
+
+    if args.cmd == "check":
+        print(json.dumps(check_result_to_dict(check_issue(args.issue))))
+        return 0
+    return _fail("UNKNOWN_COMMAND", f"unknown deps subcommand: {args.cmd}")
 
 
 def _cmd_tier(argv: list[str]) -> int:
@@ -226,6 +297,38 @@ _LABELS_USAGE = (
 )
 
 
+def _andon_parser() -> _Parser:
+    parser = _Parser(command="andon")
+    sub = parser.add_subparsers(dest="sub", required=True)
+    p_list = sub.add_parser("list")
+    p_list.add_argument("--all", action="store_true")
+    p_list.add_argument("--json", action="store_true")
+    p_show = sub.add_parser("show")
+    p_show.add_argument("andon_id")
+    p_answer = sub.add_parser("answer")
+    p_answer.add_argument("andon_id")
+    p_answer.add_argument("action")
+    p_answer.add_argument("--by", default="human", choices=["human", "agent"])
+    p_note = sub.add_parser("note")
+    p_note.add_argument("andon_id")
+    p_note.add_argument("--key", required=True)
+    p_note.add_argument("--value", required=True)
+    p_auto = sub.add_parser("auto-answer")
+    p_auto.add_argument("--apply", action="store_true")
+    p_auto.add_argument("--json", action="store_true")
+    return parser
+
+
+def _andon_sort_key(kind: str, step: str) -> int:
+    if kind == "decision":
+        return 0
+    if kind == "broken":
+        return 1
+    if kind == "blocked" and step != "observe":
+        return 2
+    return 3
+
+
 def _cmd_andon(argv: list[str]) -> int:
     from issuesmith.andon import (
         answer,
@@ -238,73 +341,57 @@ def _cmd_andon(argv: list[str]) -> int:
     )
 
     if not argv:
-        print(_ANDON_USAGE, end="", file=sys.stderr)
-        return 1
+        return _fail(
+            "MISSING_ARGUMENT",
+            "subcommand required",
+            "subcommands: list, show, answer, note, auto-answer",
+        )
+    parser = _andon_parser()
     if argv[0] in {"-h", "--help"}:
-        print(_ANDON_USAGE, end="")
+        parser.print_help()
         return 0
+    parsed = _parse_args(parser, argv)
+    if isinstance(parsed, int):
+        return parsed
+    args = parsed
+    from ghdag.forge import get_forge
 
-    sub, *rest = argv
+    client = get_forge()
 
-    if sub == "list":
-        show_all = "--all" in rest
-        as_json = "--json" in rest
-        from ghdag.forge import get_forge
-        client = get_forge()
-
-        def _sort_key(kind: str, step: str) -> int:
-            if kind == "decision":
-                return 0
-            if kind == "broken":
-                return 1
-            if kind == "blocked" and step != "observe":
-                return 2
-            return 3
-
-        if as_json:
+    if args.sub == "list":
+        if args.json:
             records = list_open_records(client)
-            if not show_all:
-                records = sorted(records, key=lambda r: _sort_key(r["kind"], r["step"]))
+            if not args.all:
+                records = sorted(
+                    records, key=lambda r: _andon_sort_key(r["kind"], r["step"])
+                )
             print(json.dumps(records, ensure_ascii=False))
             return 0
         andons = list_open(client)
-        if not show_all:
-            andons = sorted(andons, key=lambda a: _sort_key(a.kind, a.step))
+        if not args.all:
+            andons = sorted(andons, key=lambda a: _andon_sort_key(a.kind, a.step))
         if not andons:
             print("no open andons")
         for a in andons:
             print(f"{a.id}\t{a.kind}\tissue #{a.issue}\t{a.summary}")
         return 0
 
-    if sub == "show":
-        if not rest:
-            print("andon show: <andon-id> required", file=sys.stderr)
-            return 2
-        andon_id = rest[0]
-        from ghdag.forge import get_forge
-        client = get_forge()
+    if args.sub == "show":
         andons = list_open(client)
-        matched = [a for a in andons if a.id == andon_id]
+        matched = [a for a in andons if a.id == args.andon_id]
         if not matched:
-            print(f"andon not found: {andon_id}", file=sys.stderr)
-            return 1
-        a = matched[0]
-        print(to_comment(a))
+            return _fail("NOT_FOUND", f"andon not found: {args.andon_id}")
+        print(to_comment(matched[0]))
         return 0
 
-    if sub == "auto-answer":
-        apply = "--apply" in rest
-        as_json = "--json" in rest
-        from ghdag.forge import get_forge
-
+    if args.sub == "auto-answer":
         from issuesmith.config import get_config
 
-        client = get_forge()
         rules = get_config().andon.auto_answer
         answer_plan = plan_auto_answers(client, rules)
-        if apply:
+        if args.apply:
             apply_auto_answers(client, answer_plan)
-        if as_json:
+        if args.json:
             print(json.dumps(answer_plan.__dict__, ensure_ascii=False))
             return 0
         for entry in answer_plan.answers:
@@ -316,99 +403,75 @@ def _cmd_andon(argv: list[str]) -> int:
             print(f"escalation {entry.get('kind')} issue #{entry.get('issue', '-')}")
         return 0
 
-    if sub == "answer":
-        args = list(rest)
-        answered_by = "human"
-        i = 0
-        while i < len(args):
-            if args[i] == "--by":
-                if i + 1 >= len(args):
-                    print("andon answer: --by requires a value", file=sys.stderr)
-                    print(_ANDON_USAGE, end="", file=sys.stderr)
-                    return 2
-                answered_by = args[i + 1]
-                del args[i : i + 2]
-                continue
-            i += 1
-        if len(args) < 2:
-            print("andon answer: <andon-id> <action> required", file=sys.stderr)
-            return 2
-        andon_id, action = args[0], args[1]
-        from ghdag.forge import get_forge
-        client = get_forge()
+    if args.sub == "answer":
         try:
-            answer(client, andon_id, action, answered_by=answered_by)
+            answer(client, args.andon_id, args.action, answered_by=args.by)
         except ValueError as exc:
-            print(f"andon answer: {exc}", file=sys.stderr)
-            return 2
-        print(f"answered {andon_id} with: {action}")
+            return _fail("INVALID_VALUE", str(exc))
+        print(f"answered {args.andon_id} with: {args.action}")
         return 0
 
-    if sub == "note":
-        note_id: str | None = None
-        opts: dict[str, str] = {}
-        i = 0
-        while i < len(rest):
-            arg = rest[i]
-            if arg in {"--key", "--value"}:
-                if i + 1 >= len(rest):
-                    note_id = None
-                    opts.clear()
-                    break
-                opts[arg[2:]] = rest[i + 1]
-                i += 2
-                continue
-            if note_id is None:
-                note_id = arg
-            i += 1
-        if note_id is None or "key" not in opts or "value" not in opts:
-            print("andon note: <andon-id> --key <key> --value <value> required", file=sys.stderr)
-            print(_ANDON_USAGE, end="", file=sys.stderr)
-            return 2
-        from ghdag.forge import get_forge
-        client = get_forge()
+    if args.sub == "note":
         try:
-            note(client, note_id, opts["key"], opts["value"])
+            note(client, args.andon_id, args.key, args.value)
         except KeyError:
-            print(f"andon not found: {note_id}", file=sys.stderr)
-            return 1
+            return _fail("NOT_FOUND", f"andon not found: {args.andon_id}")
         except ValueError as exc:
-            print(f"andon note: {exc}", file=sys.stderr)
-            return 2
-        print(f"noted {note_id}: {opts['key']}={opts['value']}")
+            return _fail("INVALID_VALUE", str(exc))
+        print(f"noted {args.andon_id}: {args.key}={args.value}")
         return 0
 
-    print(f"andon: unknown subcommand: {sub}", file=sys.stderr)
-    print(_ANDON_USAGE, end="", file=sys.stderr)
-    return 2
+    return _fail("UNKNOWN_COMMAND", f"unknown andon subcommand: {args.sub}")
+
+
+def _labels_parser() -> _Parser:
+    parser = _Parser(command="labels")
+    sub = parser.add_subparsers(dest="sub", required=True)
+    p = sub.add_parser("reconcile")
+    p.add_argument("--fix", action="store_true")
+    p.add_argument("--json", action="store_true")
+    return parser
 
 
 def _cmd_labels(argv: list[str]) -> int:
     if not argv:
-        print(_LABELS_USAGE, end="", file=sys.stderr)
-        return 1
+        return _fail("MISSING_ARGUMENT", "subcommand required", "subcommands: reconcile")
+    parser = _labels_parser()
     if argv[0] in {"-h", "--help"}:
-        print(_LABELS_USAGE, end="")
+        parser.print_help()
         return 0
-    sub, *rest = argv
-    if sub == "reconcile":
-        fix = "--fix" in rest
-        as_json = "--json" in rest
+    parsed = _parse_args(parser, argv)
+    if isinstance(parsed, int):
+        return parsed
+    args = parsed
+    if args.sub == "reconcile":
         from ghdag.forge import get_forge
 
         from issuesmith.ops.labels import reconcile
 
-        client = get_forge()
-        reconcile(client, fix=fix, as_json=as_json)
+        reconcile(get_forge(), fix=args.fix, as_json=args.json)
         return 0
-    print(f"labels: unknown subcommand: {sub}", file=sys.stderr)
-    return 2
+    return _fail("UNKNOWN_COMMAND", f"unknown labels subcommand: {args.sub}")
 
 
-def _cmd_doctor(_argv: list[str]) -> int:
+def _doctor_parser() -> _Parser:
+    parser = _Parser(command="doctor")
+    parser.add_argument("--json", action="store_true")
+    return parser
+
+
+def _cmd_doctor(argv: list[str]) -> int:
     from issuesmith.ops.preflight import main as preflight_main
 
-    return int(preflight_main())
+    parser = _doctor_parser()
+    if argv and argv[0] in {"-h", "--help"}:
+        parser.print_help()
+        return 0
+    parsed = _parse_args(parser, argv)
+    if isinstance(parsed, int):
+        return parsed
+    args = parsed
+    return int(preflight_main(as_json=args.json))
 
 
 def _cmd_smoke(argv: list[str]) -> int:
@@ -430,9 +493,7 @@ def _cmd_version_bump(argv: list[str]) -> int:
 
 
 def _cmd_resume(argv: list[str]) -> int:
-    import argparse
-
-    parser = argparse.ArgumentParser(prog="issuesmith resume")
+    parser = _Parser(command="resume")
     parser.add_argument("issue", type=int)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--from", dest="from_step")
@@ -486,10 +547,53 @@ def _cmd_convert_to_milestone(argv: list[str]) -> int:
     return int(convert_main(argv))
 
 
-def _cmd_milestone(argv: list[str]) -> int:
-    from issuesmith.milestone import main as milestone_main
+def _milestone_parser() -> _Parser:
+    parser = _Parser(command="milestone")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    p_status = sub.add_parser("status")
+    p_status.add_argument("parent", type=int)
+    p_status.add_argument("--json", action="store_true")
+    p_resume = sub.add_parser("resume")
+    p_resume.add_argument("parent", type=int)
+    p_prune = sub.add_parser("prune")
+    p_prune.add_argument("--dry-run", action="store_true")
+    p_cons = sub.add_parser("consolidate")
+    p_cons.add_argument("child", type=int)
+    p_cons.add_argument("--into", type=int, required=True, dest="into_sibling")
+    return parser
 
-    return int(milestone_main(argv))
+
+def _cmd_milestone(argv: list[str]) -> int:
+    from issuesmith.milestone import (
+        milestone_consolidate,
+        milestone_prune,
+        milestone_resume,
+        milestone_status,
+    )
+
+    if not argv:
+        return _fail(
+            "MISSING_ARGUMENT",
+            "subcommand required",
+            "subcommands: status, resume, prune, consolidate",
+        )
+    parser = _milestone_parser()
+    if argv[0] in {"-h", "--help"}:
+        parser.print_help()
+        return 0
+    parsed = _parse_args(parser, argv)
+    if isinstance(parsed, int):
+        return parsed
+    args = parsed
+    if args.cmd == "status":
+        return milestone_status(args.parent, as_json=args.json)
+    if args.cmd == "resume":
+        return milestone_resume(args.parent)
+    if args.cmd == "prune":
+        return milestone_prune(dry_run=args.dry_run)
+    if args.cmd == "consolidate":
+        return milestone_consolidate(args.child, args.into_sibling)
+    return _fail("UNKNOWN_COMMAND", f"unknown milestone subcommand: {args.cmd}")
 
 
 def _json_default(o: object) -> object:
@@ -498,35 +602,48 @@ def _json_default(o: object) -> object:
     return str(o)
 
 
-def _cmd_config_show(_argv: list[str]) -> int:
+def _config_parser() -> _Parser:
+    parser = _Parser(command="config")
+    sub = parser.add_subparsers(dest="sub", required=True)
+    sub.add_parser("show")
+    return parser
+
+
+def _cmd_config(argv: list[str]) -> int:
     from issuesmith.config import ConfigError, get_config
     from issuesmith.gates import validate_step_requires
 
+    if not argv:
+        return _fail("MISSING_ARGUMENT", "subcommand required", "subcommands: show")
+    parser = _config_parser()
+    if argv[0] in {"-h", "--help"}:
+        parser.print_help()
+        return 0
+    parsed = _parse_args(parser, argv)
+    if isinstance(parsed, int):
+        return parsed
+    args = parsed
+    if args.sub != "show":
+        return _fail("UNKNOWN_COMMAND", f"unknown config subcommand: {args.sub}")
     cfg = get_config()
     print(json.dumps(asdict(cfg), default=_json_default, indent=2))
     try:
         validate_step_requires(cfg.steps)
     except ConfigError as exc:
-        print(f"config: invalid requires: {exc}", file=sys.stderr)
-        return 1
+        return _fail("CONFIG_ERROR", f"invalid requires: {exc}")
     return 0
 
 
-def _cmd_config(argv: list[str]) -> int:
-    if not argv or argv[0] != "show":
-        print("config: expected 'show'", file=sys.stderr)
-        return 2
-    return _cmd_config_show(argv[1:])
-
-
 def _cmd_observe(argv: list[str]) -> int:
-    import argparse
     import json as _json
 
-    parser = argparse.ArgumentParser(prog="issuesmith observe")
+    parser = _Parser(command="observe")
     parser.add_argument("--apply", action="store_true", help="Execute policy actions")
     parser.add_argument("--json", action="store_true", dest="as_json", help="JSON output")
-    args = parser.parse_args(argv)
+    parsed = _parse_args(parser, argv)
+    if isinstance(parsed, int):
+        return parsed
+    args = parsed
 
     from ghdag.forge import get_forge
 
@@ -609,8 +726,18 @@ def _lanes_role_engine_map(cfg: Any) -> dict[str, str]:
     return {ph.role: resolve_engine(ph.name) for ph in cfg.phases}
 
 
+def _lanes_parser() -> _Parser:
+    parser = _Parser(command="lanes")
+    sub = parser.add_subparsers(dest="sub", required=True)
+    p_check = sub.add_parser("check")
+    p_check.add_argument("--apply", action="store_true")
+    p_check.add_argument("--json", action="store_true")
+    p_report = sub.add_parser("report")
+    p_report.add_argument("--json", action="store_true")
+    return parser
+
+
 def _cmd_lanes(argv: list[str]) -> int:
-    import json
     import re
     from datetime import datetime
 
@@ -633,12 +760,20 @@ def _cmd_lanes(argv: list[str]) -> int:
     from issuesmith.queue_store import QueueStore
     from issuesmith.quota_gate import is_github_api_low, read_github_api_state
 
-    if not argv or argv[0] in {"-h", "--help"}:
-        print("usage: issuesmith lanes check [--apply] [--json]", file=sys.stderr)
-        print("       issuesmith lanes report [--json]", file=sys.stderr)
-        return 0 if argv and argv[0] in {"-h", "--help"} else 1
-
-    sub, *rest = argv
+    if not argv:
+        return _fail(
+            "MISSING_ARGUMENT",
+            "subcommand required",
+            "subcommands: check, report",
+        )
+    parser = _lanes_parser()
+    if argv[0] in {"-h", "--help"}:
+        parser.print_help()
+        return 0
+    parsed = _parse_args(parser, argv)
+    if isinstance(parsed, int):
+        return parsed
+    args = parsed
     cfg = get_config()
     if cfg.paths.lanes is None:
         print("lanes: paths.lanes is not configured", file=sys.stderr)
@@ -651,8 +786,8 @@ def _cmd_lanes(argv: list[str]) -> int:
         print(f"lanes: {exc}", file=sys.stderr)
         return 2
 
-    apply_enqueue = "--apply" in rest
-    as_json = "--json" in rest
+    apply_enqueue = getattr(args, "apply", False)
+    as_json = args.json
     now = datetime.now().astimezone()
     client = get_forge()
     snapshot = QueueStore().snapshot()
@@ -718,7 +853,7 @@ def _cmd_lanes(argv: list[str]) -> int:
         role_engine_map=_lanes_role_engine_map(cfg),
     )
 
-    if sub == "check":
+    if args.sub == "check":
         if apply_enqueue and not api_low:
             apply(lane_plan, QueueStore())
         if as_json:
@@ -740,7 +875,7 @@ def _cmd_lanes(argv: list[str]) -> int:
             print(f"escalation {entry['kind']}")
         return 0
 
-    if sub == "report":
+    if args.sub == "report":
         auto_plan = plan_auto_answers(client, cfg.andon.auto_answer)
         since = resolve_report_since(ledger.report_since, now, cfg.timezone)
         merged = count_merge_done_since(client, since, cfg) if since.strip() else None
@@ -758,8 +893,7 @@ def _cmd_lanes(argv: list[str]) -> int:
         print(summary)
         return 0
 
-    print(f"lanes: unknown subcommand: {sub}", file=sys.stderr)
-    return 2
+    return _fail("UNKNOWN_COMMAND", f"unknown lanes subcommand: {args.sub}")
 
 
 _HANDLERS = {
@@ -794,15 +928,19 @@ _HANDLERS = {
 
 def main(argv: Sequence[str] | None = None) -> None:
     args = list(sys.argv[1:] if argv is None else argv)
-    if not args or args[0] in {"-h", "--help"}:
+    if not args:
+        command_hint = ", ".join(sorted(_HANDLERS))
+        raise SystemExit(_fail("MISSING_ARGUMENT", "command required", f"commands: {command_hint}"))
+    if args[0] in {"-h", "--help"}:
         print(_USAGE, end="")
-        raise SystemExit(0 if args else 1)
+        raise SystemExit(0)
     cmd, *rest = args
     handler = _HANDLERS.get(cmd)
     if handler is None:
-        print(f"Unknown command: {cmd}", file=sys.stderr)
-        print(_USAGE, end="", file=sys.stderr)
-        raise SystemExit(1)
+        command_hint = ", ".join(sorted(_HANDLERS))
+        raise SystemExit(
+            _fail("UNKNOWN_COMMAND", f"unknown command: {cmd}", f"commands: {command_hint}")
+        )
     raise SystemExit(handler(rest))
 
 

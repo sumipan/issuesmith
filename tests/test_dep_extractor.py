@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from issuesmith.dep_extractor import (
@@ -336,6 +340,23 @@ def test_unparsed_refs_block_even_with_declared_deps():
     client.issue_get.assert_not_called()
 
 
+def test_deps_help_exits_0() -> None:
+    """refs #6779: deps --help exits 0 with usage on stdout."""
+    repo_root = Path(__file__).resolve().parents[1]
+    env = {**os.environ, "PYTHONPATH": str(repo_root / "src")}
+    proc = subprocess.run(
+        [sys.executable, "-m", "issuesmith", "deps", "--help"],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert proc.returncode == 0
+    assert proc.stdout.strip()
+    assert "check" in proc.stdout
+
+
 def test_cli_check_outputs_json(capsys):
     # ASCII fixture data.
     body = (
@@ -354,10 +375,13 @@ def test_cli_check_outputs_json(capsys):
                 "labels": [{"name": "issuesmith:merge-done"}],
             },
         ]
-        from issuesmith.dep_extractor import main
+        import pytest
 
-        with patch("sys.argv", ["dep_extractor", "check", "2060"]):
-            main()
+        from issuesmith import cli
+
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main(["deps", "check", "2060"])
+        assert exc_info.value.code == 0
 
     captured = capsys.readouterr()
     import json

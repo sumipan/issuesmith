@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fnmatch
 import functools
+import json
 import re
 import sys
 from dataclasses import dataclass, field
@@ -1002,7 +1003,35 @@ def _format_chain_waiting_line(
     return f"chain: {stage}"
 
 
-def milestone_status(parent: int, *, client: ForgePort | None = None, store: QueueStore | None = None) -> int:
+def _milestone_child_row(child: dict[str, Any], *, client: ForgePort) -> dict[str, Any]:
+    child_num = int(child.get("number") or 0)
+    labels = label_names(child)
+    phase = _child_phase_label(labels)
+    body = str(child.get("body") or "")
+    target_repo = _target_repo_from_body(body) or ""
+    deps = extract_dependencies(body)
+    if deps:
+        result = check_dependencies(deps, client=client)
+        deps_ok = result.decision == "PASS"
+    else:
+        deps_ok = True
+    return {
+        "number": child_num,
+        "title": str(child.get("title") or ""),
+        "target_repo": target_repo,
+        "phase": phase,
+        "deps_ok": deps_ok,
+        "pr": None,
+    }
+
+
+def milestone_status(
+    parent: int,
+    *,
+    as_json: bool = False,
+    client: ForgePort | None = None,
+    store: QueueStore | None = None,
+) -> int:
     client = client or get_forge()
     store = store or QueueStore()
     try:
@@ -1011,24 +1040,47 @@ def milestone_status(parent: int, *, client: ForgePort | None = None, store: Que
             fields=["state", "labels", "body", "milestone", "number", "title", "sub_issues_summary"],
         )
     except Exception as exc:
-        print(f"error: failed to fetch parent #{parent}: {exc}", file=sys.stderr)
+        print(f"error[FAILED]: failed to fetch parent #{parent}: {exc}", file=sys.stderr)
         return 1
 
     snap = store.snapshot()
     chain = store.get_milestone_chain(parent)
     parent_state = str(parent_issue.get("state") or "-")
-    print(f"milestone chain #{parent}: stage={chain.get('stage', '-')}")
-    print(
-        "  "
-        + _format_chain_waiting_line(
-            parent=parent,
-            parent_issue=parent_issue,
-            chain=chain,
-            store=store,
-            snap=snap,
-            client=client,
-        )
+    stage = str(chain.get("stage") or "-")
+    summary = _sub_issues_summary(client, parent, parent_issue)
+    waiting_line = _format_chain_waiting_line(
+        parent=parent,
+        parent_issue=parent_issue,
+        chain=chain,
+        store=store,
+        snap=snap,
+        client=client,
     )
+    children_raw = _list_chain_children(client, parent, parent_issue)
+    children = [
+        _milestone_child_row(child, client=client)
+        for child in sorted(children_raw, key=lambda item: int(item.get("number") or 0))
+    ]
+
+    if as_json:
+        payload = {
+            "parent": parent,
+            "state": parent_state,
+            "stage": stage,
+            "halted_reason": chain.get("halted_reason"),
+            "progress": {
+                "total": summary["total"],
+                "completed": summary["completed"],
+                "percent_completed": summary["percent_completed"],
+            },
+            "children": children,
+            "next": waiting_line,
+        }
+        print(json.dumps(payload, ensure_ascii=False))
+        return 0
+
+    print(f"milestone chain #{parent}: stage={stage}")
+    print(f"  {waiting_line}")
     print(f"  state: {parent_state}")
     if chain.get("halted_reason"):
         print(f"  halted_reason: {chain['halted_reason']}")
@@ -1037,7 +1089,6 @@ def milestone_status(parent: int, *, client: ForgePort | None = None, store: Que
     if chain.get("closed_parent"):
         print("  closed_parent: true")
 
-    summary = _sub_issues_summary(client, parent, parent_issue)
     print(
         "  sub_issues_summary: "
         f"total={summary['total']} "
@@ -1045,14 +1096,13 @@ def milestone_status(parent: int, *, client: ForgePort | None = None, store: Que
         f"percent_completed={summary['percent_completed']}"
     )
 
-    children = _list_chain_children(client, parent, parent_issue)
-    if not children and _milestone_number(parent_issue) is None:
+    if not children_raw and _milestone_number(parent_issue) is None:
         print("  children: (none; no sub-issues and no milestone object on parent)")
         return 0
 
     print(f"{'#':>6}  {'title':<40}  {'target_repo':<28}  {'phase':<12}  {'deps':<8}  pr")
     print("-" * 100)
-    for child in sorted(children, key=lambda item: int(item.get("number") or 0)):
+    for child in sorted(children_raw, key=lambda item: int(item.get("number") or 0)):
         child_num = int(child.get("number") or 0)
         title = str(child.get("title") or "")[:40]
         labels = label_names(child)
@@ -1065,9 +1115,8 @@ def milestone_status(parent: int, *, client: ForgePort | None = None, store: Que
             dep_state = "ok" if result.decision == "PASS" else "block"
         else:
             dep_state = "-"
-        pr = "-"
         print(
-            f"{child_num:>6}  {title:<40}  {target_repo:<28}  {phase:<12}  {dep_state:<8}  {pr}"
+            f"{child_num:>6}  {title:<40}  {target_repo:<28}  {phase:<12}  {dep_state:<8}  -"
         )
     return 0
 
@@ -1531,42 +1580,3 @@ def prevalidate_child_body(
 
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = list(sys.argv[1:] if argv is None else argv)
-    if not args or args[0] in {"-h", "--help"}:
-        print(
-            "usage: issuesmith milestone status <parent> | resume <parent>"
-            " | prune [--dry-run] | consolidate <child> --into <sibling>"
-        )
-        return 0 if args else 1
-    cmd, *rest = args
-    if cmd == "status":
-        if not rest:
-            print("error: parent issue number required", file=sys.stderr)
-            return 2
-        return milestone_status(int(rest[0]))
-    if cmd == "resume":
-        if not rest:
-            print("error: parent issue number required", file=sys.stderr)
-            return 2
-        return milestone_resume(int(rest[0]))
-    if cmd == "consolidate":
-        parsed = _parse_consolidate_args(rest)
-        if parsed is None:
-            print(
-                "error: usage: issuesmith milestone consolidate <child> --into <sibling>",
-                file=sys.stderr,
-            )
-            return 2
-        return milestone_consolidate(*parsed)
-    if cmd == "prune":
-        dry_run = False
-        for arg in rest:
-            if arg == "--dry-run":
-                dry_run = True
-            else:
-                print(f"Unknown prune option: {arg}", file=sys.stderr)
-                return 2
-        return milestone_prune(dry_run=dry_run)
-    print(f"Unknown milestone command: {cmd}", file=sys.stderr)
-    return 2
