@@ -168,3 +168,44 @@ def test_verbs_route_head_matches_resolve(monkeypatch):
     for tier in (None, "heavy", "light"):
         head = route("design", tier)[0]
         assert head == resolve("design", tier)
+
+
+def test_light_allowlist_fallback_uses_selected_model_for_selected_engine():
+    """Refs sumipan/nexus#6682 — selected engine falls back to the state (selected) model."""
+    result = build_route(
+        heavy=[("claude", "h-c"), ("codex", "h-x")],
+        light=[("claude", "l-c"), ("codex", "l-x")],
+        selected_engine="claude",
+        selected_model="state-heavy",
+        selected_light_model="bad-light",
+        tier="light",
+        model_allowed=lambda engine, model: model != "bad-light",
+    )
+    assert result == [("claude", "state-heavy"), ("codex", "l-x")]
+
+
+def test_state_light_model_not_applied_to_other_engine(monkeypatch):
+    """Refs sumipan/nexus#6682 — state light_model is only used for the state engine."""
+    monkeypatch.setattr(
+        "issuesmith.engine.load_state",
+        lambda: {
+            "design": {"engine": "claude", "model": "heavy-m", "light_model": "claude-only"},
+        },
+    )
+    monkeypatch.setattr(
+        "issuesmith.engine.HEAVY_ROUTES",
+        {"design": (("claude", "heavy-m"), ("codex", "hx"))},
+    )
+    monkeypatch.setattr(
+        "issuesmith.engine.LIGHT_ROUTES",
+        {"design": (("codex", "lx"),)},
+    )
+    monkeypatch.setattr("issuesmith.engine._light_model_allowed", lambda _e, _m: True)
+
+    head = resolve("design", "light")
+    assert (head.engine, head.model) == ("codex", "lx")
+    from issuesmith.engine import RoleSelection, _build_role_route
+
+    assert _build_role_route("design", RoleSelection("codex", "hx"), "light", ()) == [
+        ("codex", "lx")
+    ]

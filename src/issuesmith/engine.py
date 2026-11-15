@@ -397,7 +397,13 @@ def _build_role_route(
     paused: Collection[str],
 ) -> list[tuple[str, str]]:
     state = load_state()
-    from_state = state[role].get("light_model")
+    # state light_model belongs to the state engine; do not apply it to another engine
+    # (light-route head differing from the state engine, or an ``engine=`` override).
+    from_state = (
+        state[role].get("light_model")
+        if str(state[role].get("engine")) == selection.engine
+        else None
+    )
     selected_light = str(from_state).strip() if from_state else None
     return build_route(
         heavy=HEAVY_ROUTES[role],

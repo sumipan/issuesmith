@@ -47,7 +47,7 @@ def build_route(
             if engine == selected_engine and selected_light_model:
                 model = selected_light_model
             if not model_allowed(engine, model):
-                model = heavy_by_engine[engine]
+                model = selected_model if engine == selected_engine else heavy_by_engine[engine]
             route.append((engine, model))
         elif use_light and light is None:
             if engine == selected_engine:
