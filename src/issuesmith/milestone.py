@@ -1057,12 +1057,12 @@ def milestone_status(
         client=client,
     )
     children_raw = _list_chain_children(client, parent, parent_issue)
-    children = [
-        _milestone_child_row(child, client=client)
-        for child in sorted(children_raw, key=lambda item: int(item.get("number") or 0))
-    ]
 
     if as_json:
+        children = [
+            _milestone_child_row(child, client=client)
+            for child in sorted(children_raw, key=lambda item: int(item.get("number") or 0))
+        ]
         payload = {
             "parent": parent,
             "state": parent_state,
@@ -1152,25 +1152,6 @@ def milestone_consolidate(child: int, into: int, *, client: ForgePort | None = N
         client.issue_close(child)
     print(f"milestone consolidate: #{child} -> #{into}")
     return 0
-
-
-def _parse_consolidate_args(rest: list[str]) -> tuple[int, int] | None:
-    child: str | None = None
-    into: str | None = None
-    it = iter(rest)
-    for arg in it:
-        if arg == "--into":
-            into = next(it, None)
-        elif child is None:
-            child = arg
-        else:
-            return None
-    if child is None or into is None:
-        return None
-    try:
-        return int(child), int(into)
-    except ValueError:
-        return None
 
 
 def milestone_prune(*, dry_run: bool = False, store: QueueStore | None = None) -> int:
