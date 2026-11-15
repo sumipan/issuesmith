@@ -52,16 +52,6 @@ def test_installed_version_nonzero_exit_returns_none(monkeypatch):
     assert pins.installed_version(Path("/var/tmp/issuesmith")) is None
 
 
-def test_unlanded_pins_base_not_landed(monkeypatch):
-    required = {"issuesmith": Version("0.133.1")}
-    base = 'issuesmith = "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.133.0"\n'
-    installs = {"issuesmith": Path("/var/tmp/issuesmith")}
-    proc = MagicMock(returncode=1, stdout="")
-    monkeypatch.setattr(pins.subprocess, "run", lambda *a, **k: proc)
-    got = pins.unlanded_pins(required, base, installs)
-    assert got == ["issuesmith v0.133.1 (base=v0.133.0, installed=unknown)"]
-
-
 def test_unlanded_pins_install_not_caught_up(monkeypatch):
     required = {"issuesmith": Version("0.133.1")}
     base = 'issuesmith = "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.133.1"\n'

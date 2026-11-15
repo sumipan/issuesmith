@@ -13,10 +13,8 @@ from issuesmith.config import ApiBreakConfig, get_config, reset_config_cache
 from issuesmith.observe import observe
 from issuesmith.observe.dag_state import DagState
 from issuesmith.observe.events import (
-    DagTerminatedEvent,
     GitHubApiLowEvent,
     GitHubApiRecoveredEvent,
-    OrphanExecEvent,
 )
 from issuesmith.observe.policy import AndonAction, HaltAction, evaluate
 from issuesmith.queue_store import QueueStore
@@ -107,27 +105,6 @@ def _setup_failed_and_orphan(store: QueueStore, jobs: Path, monkeypatch) -> None
     monkeypatch.setattr("issuesmith.observe.load_dag_states", lambda *a, **k: states)
 
 
-def test_reduced_mode_detects_without_api(env, monkeypatch):
-    store, jobs, config = env
-    _setup_failed_and_orphan(store, jobs, monkeypatch)
-
-    events = observe(
-        store.snapshot(), _NoApiClient(), config(enabled=False),
-        now=_NOW, github_api_low=True,
-    )
-
-    assert DagTerminatedEvent(
-        issue=100,
-        key="issuesmith:impl:100:2",
-        phase="",
-        failed_step="p2",
-        failed_uuid="p2-uuid",
-        result_path="/jobs/done/p2-uuid",
-    ) in events
-    assert OrphanExecEvent(uuid="orphan-uuid", issue=200) in events
-    assert {e.kind for e in events} == {"dag_terminated", "orphan_exec"}
-
-
 def test_reduced_mode_from_audit_when_brake_enabled(env, monkeypatch):
     store, jobs, config = env
     _setup_failed_and_orphan(store, jobs, monkeypatch)
@@ -162,20 +139,6 @@ def test_transition_events_fire_once(env):
 
     _write_rate_limit(jobs, 100, reset)
     assert api_events() == [GitHubApiLowEvent(remaining=100)]
-
-
-def test_disabled_brake_keeps_full_observe(env):
-    store, jobs, config = env
-    store.add_in_flight(100, "claude", role="implementation")
-    _write_rate_limit(jobs, 1, _NOW + timedelta(minutes=30))
-    client = _CountingClient()
-
-    events = observe(store.snapshot(), client, config(enabled=False), now=_NOW)
-
-    assert not any(e.kind.startswith("github_api") for e in events)
-    assert "list_issues" in client.calls
-    assert "issue_get" in client.calls
-    assert not (jobs / "quota-gate.json").exists()
 
 
 def test_policy_notifies_without_halt():

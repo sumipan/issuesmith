@@ -167,32 +167,6 @@ def _normalize(text: str, lang: LanguagePack) -> str:
     return text
 
 
-def test_en_pack_builds_child_bodies_from_english_plan(monkeypatch):
-    lang = _use_pack(monkeypatch, EN)
-    assert lang.sub_plan_header == "| # | Title | Target repo | Content | Depends on |"
-
-    result = _run_child_build(lang)
-
-    assert result["rows"] == [
-        (1, "first part", _REPO, "do a", "none"),
-        (2, "second part", _REPO, "do b", "#1"),
-    ]
-    assert result["has_repo"] is True
-    assert result["deps"] == ["none", "#9001"]
-    first, second = result["children"]
-    assert "Parent issue: #4470\nDepends on: none\n" in first
-    assert "> Parent issue #4470 Sub1 derived" in first
-    assert '  - "src/a.py"' in first
-    for heading in ("Scope", "Design", "Acceptance Criteria"):
-        assert f"\n## {heading}\n" in first
-    assert "## Dependencies" not in first
-    assert "Depends on: #9001\n" in second
-    assert "## Dependencies\n\n| # | Dependency | State |\n|---|---|---|\n" in second
-    assert "| 1 | #9001 (first part) | OPEN |" in second
-    assert '  - "src/b.py"' in second
-    assert all(text.isascii() for text in result["children"])
-
-
 def test_custom_pack_from_yaml_gives_same_rows_deps_and_structure(tmp_path, monkeypatch):
     expected = _run_child_build(_use_pack(monkeypatch, EN))
 

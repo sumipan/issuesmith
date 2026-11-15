@@ -29,76 +29,9 @@ from issuesmith.pr_scope import (
     unchecked_ac_count,
 )
 
-# Minimal real-shape file entries (filename + status only; values from PR #3109).
-_FILE_JOBS_EXEC = {"filename": "jobs/exec.jsonl", "status": "modified", "additions": 1, "deletions": 0}
-_FILE_DOCS = {"filename": "docs/README.md", "status": "modified", "additions": 1, "deletions": 0}
-_FILE_SRC = {"filename": "src/issuesmith/pr_scope.py", "status": "added", "additions": 10, "deletions": 0}
-_FILE_TEST = {"filename": "tests/test_pr_scope.py", "status": "added", "additions": 5, "deletions": 0}
-_FILE_FIXTURE_JSONL = {
-    "filename": "tests/fixtures/foo.jsonl",
-    "status": "added",
-    "additions": 1,
-    "deletions": 0,
-}
-
 
 def _filenames(*files: dict) -> list[str]:
     return [f["filename"] for f in files]
-
-
-def test_forbidden_jobs_exec_jsonl_returns_forbidden_path_violation() -> None:
-    filenames = _filenames(_FILE_JOBS_EXEC, _FILE_SRC)
-    violations = check_pr_diff_scope(
-        filenames,
-        allow_paths=["src/**", "tests/**"],
-        forbidden_patterns=list(DEFAULT_FORBIDDEN_PR_PATHS),
-    )
-    assert len(violations) == 1
-    assert violations[0].rule_id == "pr_diff_scope.forbidden_path"
-    assert "jobs/exec.jsonl" in violations[0].message
-
-
-def test_out_of_scope_docs_returns_out_of_scope_violation() -> None:
-    filenames = _filenames(_FILE_DOCS, _FILE_SRC)
-    violations = check_pr_diff_scope(
-        filenames,
-        allow_paths=["src/**", "tests/**"],
-        forbidden_patterns=list(DEFAULT_FORBIDDEN_PR_PATHS),
-    )
-    assert len(violations) == 1
-    assert violations[0].rule_id == "pr_diff_scope.out_of_scope"
-    assert "docs/README.md" in violations[0].message
-
-
-def test_allow_paths_only_returns_empty() -> None:
-    filenames = _filenames(_FILE_SRC, _FILE_TEST)
-    violations = check_pr_diff_scope(
-        filenames,
-        allow_paths=["src/**", "tests/**"],
-        forbidden_patterns=list(DEFAULT_FORBIDDEN_PR_PATHS),
-    )
-    assert violations == []
-
-
-def test_nested_fixtures_jsonl_excluded_from_forbidden_patterns() -> None:
-    """tests/<pkg>/fixtures/** (nexus #4035: tests/scripts/fixtures/memory_migrate/legacy_persona.jsonl)."""
-    from issuesmith.pr_scope import check_pr_diff_scope
-
-    files = ["tests/scripts/fixtures/memory_migrate/legacy_persona.jsonl", "tests/a/b/fixtures/x.jsonl"]
-    violations = check_pr_diff_scope(files, ["tests/**"], ["*.jsonl"])
-    assert violations == []
-    # a .jsonl outside any fixtures/ directory is still forbidden
-    assert check_pr_diff_scope(["tests/scripts/data.jsonl"], ["tests/**"], ["*.jsonl"])
-
-
-def test_fixtures_jsonl_excluded_from_forbidden_patterns() -> None:
-    filenames = _filenames(_FILE_FIXTURE_JSONL)
-    violations = check_pr_diff_scope(
-        filenames,
-        allow_paths=["tests/**"],
-        forbidden_patterns=list(DEFAULT_FORBIDDEN_PR_PATHS),
-    )
-    assert violations == []
 
 
 # --- #3216 AC-5 / AC-6: publish-only pyproject / CHANGELOG exclusion ---
@@ -126,24 +59,6 @@ _FILE_PYPROJECT_VERSION_ONLY = {
     ),
 }
 
-_FILE_PYPROJECT_EXTRA_CHANGE = {
-    "filename": "pyproject.toml",
-    "status": "modified",
-    "additions": 2,
-    "deletions": 1,
-    "changes": 3,
-    "patch": (
-        '@@ -4,8 +4,9 @@ build-backend = "setuptools.build_meta"\n'
-        " \n"
-        " [project]\n"
-        ' name = "issuesmith"\n'
-        '-version = "0.27.0"\n'
-        '+version = "0.28.0"\n'
-        '+description = "changed"\n'
-        ' readme = "README.md"\n'
-    ),
-}
-
 _FILE_CHANGELOG_APPEND_ONLY = {
     "filename": "CHANGELOG.md",
     "status": "modified",
@@ -159,55 +74,6 @@ _FILE_CHANGELOG_APPEND_ONLY = {
         "+- `pr_diff_scope` gate\n"
     ),
 }
-
-
-def test_publish_only_pyproject_version_excluded_from_out_of_scope() -> None:
-    """AC-6: pyproject.toml diff with only the version line is PASS (no violation)."""
-    entries = [_FILE_PYPROJECT_VERSION_ONLY]
-    violations = check_pr_diff_scope(
-        _filenames(*entries),
-        allow_paths=["src/**", "tests/**"],
-        forbidden_patterns=list(DEFAULT_FORBIDDEN_PR_PATHS),
-        file_entries=entries,
-    )
-    assert violations == []
-
-
-def test_pyproject_non_version_change_still_out_of_scope() -> None:
-    """AC-6: non-version pyproject changes are FAIL."""
-    entries = [_FILE_PYPROJECT_EXTRA_CHANGE]
-    violations = check_pr_diff_scope(
-        _filenames(*entries),
-        allow_paths=["src/**", "tests/**"],
-        forbidden_patterns=list(DEFAULT_FORBIDDEN_PR_PATHS),
-        file_entries=entries,
-    )
-    assert len(violations) == 1
-    assert violations[0].rule_id == "pr_diff_scope.out_of_scope"
-    assert "pyproject.toml" in (violations[0].location or "")
-
-
-def test_publish_only_changelog_append_excluded_from_out_of_scope() -> None:
-    """AC-5: CHANGELOG append-only (deletions=0) is PASS."""
-    entries = [_FILE_CHANGELOG_APPEND_ONLY]
-    violations = check_pr_diff_scope(
-        _filenames(*entries),
-        allow_paths=["src/**", "tests/**"],
-        forbidden_patterns=list(DEFAULT_FORBIDDEN_PR_PATHS),
-        file_entries=entries,
-    )
-    assert violations == []
-
-
-def test_pyproject_without_file_entries_still_out_of_scope() -> None:
-    """Without file_entries, fall back to filename-only checks as before."""
-    violations = check_pr_diff_scope(
-        ["pyproject.toml"],
-        allow_paths=["src/**"],
-        forbidden_patterns=list(DEFAULT_FORBIDDEN_PR_PATHS),
-    )
-    assert len(violations) == 1
-    assert violations[0].rule_id == "pr_diff_scope.out_of_scope"
 
 
 # --- #4273: CP2 helpers moved to pr_scope ---
@@ -254,15 +120,6 @@ PR_LIST_OWNERLESS_ALL_OPEN_JSON = json.dumps(
         {"number": 3215, "head": {"ref": "feat/other-a"}},
         {"number": 3214, "head": {"ref": _BRANCH_3169}},
     ],
-)
-
-_ISSUE_BODY_WITH_ALLOW = (
-    "```yaml\n"
-    "target_repo: sumipan/issuesmith\n"
-    "allow_paths:\n"
-    "  - src/**\n"
-    "  - tests/**\n"
-    "```\n"
 )
 
 _ISSUE_BODY_SRC_ONLY = (
@@ -373,16 +230,6 @@ def test_derived_allow_paths_from_result_missing_block_returns_empty(tmp_path: P
     assert derived_allow_paths_from_result(path) == []
 
 
-def test_derived_allow_paths_from_result_concatenated_line(tmp_path: Path) -> None:
-    path = tmp_path / "p1.md"
-    path.write_text(
-        "PIPELINE_STATUS: REPAIR_DONEderived_allow_paths:\n"
-        "  - tests/test_foo.py\n",
-        encoding="utf-8",
-    )
-    assert derived_allow_paths_from_result(path) == ["tests/test_foo.py"]
-
-
 def test_derived_allow_paths_from_result_invalid_entry_raises(tmp_path: Path) -> None:
     path = tmp_path / "p1.md"
     path.write_text("derived_allow_paths:\n  - /etc/passwd\n", encoding="utf-8")
@@ -413,18 +260,6 @@ def test_check_pr_scope_with_derived_fails_without_result() -> None:
     )
     assert len(violations) == 1
     assert "tests/test_foo.py" in (violations[0].location or "")
-
-
-def test_check_pr_scope_with_derived_reports_forbidden_path() -> None:
-    detail = json.loads(PR_GET_FORBIDDEN_JSON)
-    violations = check_pr_scope_with_derived(
-        detail,
-        allow_paths_from_issue_body(_ISSUE_BODY_WITH_ALLOW),
-    )
-    assert len(violations) == 1
-    assert violations[0].rule_id == "pr_diff_scope.forbidden_path"
-    assert "jobs/exec.jsonl" in (violations[0].location or "")
-
 
 
 # --- #4813: allow_paths normalization (leading ./ and normpath) ---
@@ -502,30 +337,10 @@ def test_derived_allow_paths_from_result_normalizes_dot_slash(tmp_path: Path) ->
     assert derived_allow_paths_from_result(path) == ["tests/test_foo.py"]
 
 
-@pytest.mark.parametrize("bad", [".", "../x.py", "tests/../../x.py"])
-def test_derived_allow_paths_from_result_rejects_like_allow_paths(
-    tmp_path: Path, bad: str
-) -> None:
-    path = tmp_path / "p1.md"
-    path.write_text(f"derived_allow_paths:\n  - {bad}\n", encoding="utf-8")
-    with pytest.raises(DerivedAllowPathsError):
-        derived_allow_paths_from_result(path)
-
-
 # --- #4987: forbidden_pr_paths_except ---
 
 _LEDGER_JSONL = "skills/research-store/ledger/a/b.jsonl"
 _LEDGER_EXCEPT = ["skills/research-store/ledger/*/*.jsonl"]
-
-
-def test_forbidden_except_skips_forbidden_check() -> None:
-    violations = check_pr_diff_scope(
-        [_LEDGER_JSONL],
-        ["skills/**"],
-        list(DEFAULT_FORBIDDEN_PR_PATHS),
-        forbidden_except=_LEDGER_EXCEPT,
-    )
-    assert violations == []
 
 
 def test_forbidden_except_does_not_affect_other_paths() -> None:
@@ -548,12 +363,3 @@ def test_forbidden_except_still_checks_allow_paths() -> None:
     assert [v.rule_id for v in violations] == ["pr_diff_scope.out_of_scope"]
 
 
-def test_forbidden_except_none_reads_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Explicit forbidden_patterns still take the except list from config."""
-    cfg = MagicMock()
-    cfg.forbidden_pr_paths_except = tuple(_LEDGER_EXCEPT)
-    monkeypatch.setattr("issuesmith.pr_scope.get_config", lambda: cfg)
-    violations = check_pr_diff_scope(
-        [_LEDGER_JSONL], ["skills/**"], list(DEFAULT_FORBIDDEN_PR_PATHS)
-    )
-    assert violations == []

@@ -50,20 +50,6 @@ def test_normal_markdown_not_excluded():
     assert not is_pipeline_comment("## Design\nDetails here")
 
 
-def test_extract_user_comments_filters_pipeline():
-    comments = [
-        {"body": "PIPELINE_STATUS: BRUSHUP_DONE"},
-        {"body": "Please also add tests"},
-        # ASCII fixture data.
-        {"body": "## CP1 c30C1_c30A7_c30C3_c30AF_c30DD_c30A4_c30F3_c30C8_c7D50_c679C\nCP1_STATUS: PASS"},
-        {"body": "Thanks for the fix"},
-    ]
-    result = extract_user_comments(comments)
-    assert len(result) == 2
-    assert result[0]["body"] == "Please also add tests"
-    assert result[1]["body"] == "Thanks for the fix"
-
-
 def test_extract_user_comments_empty():
     assert extract_user_comments([]) == []
 

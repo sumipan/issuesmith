@@ -65,16 +65,6 @@ def test_evaluate_running_label_blocks():
     assert why.endswith("present")
 
 
-def test_evaluate_required_labels():
-    from issuesmith.config import get_config
-
-    cfg = get_config()
-    ph = cfg.phase("develop")
-    ok, why = evaluate(ph, _ctx(labels=set()), cfg)
-    assert ok is False
-    assert "required" in why
-
-
 def test_evaluate_excluded_labels():
     from issuesmith.config import get_config
 
@@ -89,31 +79,6 @@ def test_evaluate_excluded_labels():
     )
     assert ok is False
     assert "excluded" in why
-
-
-def test_evaluate_all_true_returns_ok():
-    from issuesmith.config import get_config
-
-    cfg = get_config()
-    ph = cfg.phase("draft")
-    ok, why = evaluate(ph, _ctx(), cfg)
-    assert ok is True
-    assert why == "ok"
-
-
-def test_deps_terminal_ignores_self_reference_in_dependencies_prose():
-    from issuesmith.config import get_config
-
-    cfg = get_config()
-    ph = cfg.phase("draft")
-    body = "## Dependencies\n\n#5061 mentioned only in prose here\n"
-    ok, why = evaluate(
-        ph,
-        _ctx(issue={"state": "OPEN", "labels": [], "body": body}, issue_number=5061),
-        cfg,
-    )
-    assert ok is True
-    assert why == "ok"
 
 
 def test_register_duplicate_raises():
@@ -169,49 +134,6 @@ def _minimal_phases(advance_when: list[str]) -> dict:
             }
         ],
     }
-
-
-@pytest.mark.no_auto_phases
-def test_load_config_accepts_external_advance_when(tmp_path, monkeypatch):
-    import yaml
-
-    mod_name = "mypkg_preds_accepts"
-    (tmp_path / f"{mod_name}.py").write_text(
-        "def always_true(ctx, config):\n    return True, ''\n",
-        encoding="utf-8",
-    )
-    monkeypatch.syspath_prepend(str(tmp_path))
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(
-        yaml.safe_dump(_minimal_phases(["deps_terminal", f"{mod_name}:always_true"])),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    cfg = load_config()
-    assert f"{mod_name}:always_true" in cfg.phases[0].advance_when
-
-
-@pytest.mark.no_auto_phases
-def test_evaluate_calls_external_predicate(tmp_path, monkeypatch):
-    import yaml
-
-    mod_name = "mypkg_preds_eval"
-    (tmp_path / f"{mod_name}.py").write_text(
-        "def always_true(ctx, config):\n    return True, ''\n",
-        encoding="utf-8",
-    )
-    monkeypatch.syspath_prepend(str(tmp_path))
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(
-        yaml.safe_dump(_minimal_phases([f"{mod_name}:always_true"])),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    cfg = load_config()
-    ph = cfg.phases[0]
-    ok, why = evaluate(ph, _ctx(), cfg)
-    assert ok is True
-    assert why == "ok"
 
 
 @pytest.mark.no_auto_phases

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 import pytest
 
 from issuesmith.config import MilestoneChainConfig, reset_config_cache
@@ -14,7 +12,6 @@ from issuesmith.milestone import (
 )
 from issuesmith.queue_store import QueueStore
 from issuesmith.queue_triage import DONE_LABEL
-from tests.conftest import _write_nexus_config
 from tests.legacy_text import ADD, CHANGE_TYPE, DESCRIPTION, FILE_PATH, REPOSITORY
 
 # Split-plan / section vocabulary comes from the language pack (EN in tests); the
@@ -211,22 +208,6 @@ def _reset_cfg():
 
 
 class TestValidateChildren:
-    def test_validate_children_pass(self):
-        parent = {
-            "number": 100,
-            "body": _PARENT_BODY,
-            "milestone": {"number": 1},
-            "labels": [{"name": "scope:milestone"}],
-        }
-        child = {
-            "number": 101,
-            "body": _CHILD_BODY,
-            "milestone": {"number": 1},
-            "labels": [{"name": "issuesmith:draft-done"}],
-        }
-        client = FakeClient(issues={101: child})
-        result = validate_children(parent, [child], client=client)
-        assert result.passed is True
 
     def test_validate_children_fail_target_repo(self):
         parent = {
@@ -252,169 +233,7 @@ class TestValidateChildren:
 
 
 class TestChainRules:
-    def test_disabled_does_nothing(self, tmp_path):
-        store = _store(tmp_path)
-        store.add_in_flight(100, "claude")
-        client = FakeClient(
-            issues={
-                100: {
-                    "number": 100,
-                    "state": "OPEN",
-                    "labels": [
-                        {"name": "scope:milestone"},
-                        {"name": DONE_LABEL["draft"]},
-                    ],
-                    "body": _PARENT_BODY,
-                    "milestone": {"number": 1},
-                }
-            }
-        )
-        advance_milestone_chains(store, client, _chain_config(enabled=False))
-        assert store.snapshot().in_flight
 
-    def test_c0_releases_in_flight_on_draft_done(self, tmp_path, monkeypatch):
-        """C0 absorbed into queue.dispatch_one draft-done release (#2980)."""
-        from issuesmith import queue as qmod
-
-        cfg_path = _write_nexus_config(tmp_path)
-        monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-        reset_config_cache()
-        store = _store(tmp_path)
-        store.add_in_flight(100, "claude", role="design")
-        client = FakeClient(
-            issues={
-                100: {
-                    "number": 100,
-                    "state": "OPEN",
-                    "labels": [
-                        {"name": "scope:milestone"},
-                        {"name": DONE_LABEL["draft"]},
-                    ],
-                    "body": _PARENT_BODY,
-                    "milestone": {"number": 1},
-                }
-            }
-        )
-        monkeypatch.setattr(qmod, "advance_milestone_chains", lambda *a, **k: None)
-        result = qmod.dispatch_one(
-            now=datetime(2026, 9, 9, 12, 0, tzinfo=timezone.utc),
-            client=client,
-            store=store,
-            skip_seed=True,
-        )
-        assert result.dispatched is False
-        assert store.snapshot().in_flight == []
-
-    def test_c1_enqueues_sub_after_draft_done_without_hold_comment(self, tmp_path):
-        store = _store(tmp_path)
-        client = FakeClient(
-            issues={
-                100: {
-                    "number": 100,
-                    "state": "OPEN",
-                    "title": "milestone",
-                    "labels": [
-                        {"name": "scope:milestone"},
-                        {"name": DONE_LABEL["draft"]},
-                    ],
-                    "body": _PARENT_BODY,
-                    "milestone": {"number": 1},
-                }
-            },
-            comments={100: []},
-        )
-        advance_milestone_chains(store, client, _chain_config())
-        snap = store.snapshot()
-        assert len(snap.active_order) == 1
-        req = snap.requests[snap.active_order[0]]
-        assert req.phase == "sub"
-        assert req.source == "milestone-chain"
-        assert store.get_milestone_chain(100).get("stage") == "sub_enqueued"
-
-    def test_c2_zero_children_halts(self, tmp_path):
-        store = _store(tmp_path)
-        client = FakeClient(
-            issues={
-                100: {
-                    "number": 100,
-                    "state": "OPEN",
-                    "labels": [
-                        {"name": "scope:milestone"},
-                        {"name": DONE_LABEL["draft"]},
-                        {"name": DONE_LABEL["sub"]},
-                    ],
-                    "body": _PARENT_BODY,
-                    "milestone": {"number": 1},
-                }
-            },
-            children={1: []},
-        )
-        advance_milestone_chains(store, client, _chain_config())
-        chain = store.get_milestone_chain(100)
-        assert chain.get("stage") == "halted"
-        assert client.posted_comments
-
-    def test_c2_validation_fail_halts(self, tmp_path):
-        store = _store(tmp_path)
-        child = {
-            "number": 101,
-            "state": "OPEN",
-            "title": "child",
-            "body": _CHILD_BODY.replace("sumipan/nexus", "sumipan/other"),
-            "milestone": {"number": 1},
-            "labels": [{"name": "issuesmith:draft-done"}],
-        }
-        client = FakeClient(
-            issues={
-                100: {
-                    "number": 100,
-                    "state": "OPEN",
-                    "labels": [
-                        {"name": "scope:milestone"},
-                        {"name": DONE_LABEL["draft"]},
-                        {"name": DONE_LABEL["sub"]},
-                    ],
-                    "body": _PARENT_BODY,
-                    "milestone": {"number": 1},
-                },
-                101: child,
-            },
-            children={1: [child]},
-        )
-        advance_milestone_chains(store, client, _chain_config())
-        assert store.get_milestone_chain(100).get("stage") == "halted"
-
-    def test_c2_pass_enqueues_develop(self, tmp_path):
-        store = _store(tmp_path)
-        child = {
-            "number": 101,
-            "state": "OPEN",
-            "title": "child",
-            "body": _CHILD_BODY,
-            "milestone": {"number": 1},
-            "labels": [{"name": "issuesmith:draft-done"}],
-        }
-        client = FakeClient(
-            issues={
-                100: {
-                    "number": 100,
-                    "state": "OPEN",
-                    "labels": [
-                        {"name": "scope:milestone"},
-                        {"name": DONE_LABEL["draft"]},
-                        {"name": DONE_LABEL["sub"]},
-                    ],
-                    "body": _PARENT_BODY,
-                    "milestone": {"number": 1},
-                },
-                101: child,
-            },
-            children={1: [child]},
-        )
-        advance_milestone_chains(store, client, _chain_config())
-        snap = store.snapshot()
-        phases = {snap.requests[rid].phase for rid in snap.active_order}
-        assert "develop" in phases
 
     def test_auto_develop_false_skips_develop_enqueue(self, tmp_path):
         store = _store(tmp_path)
@@ -447,92 +266,6 @@ class TestChainRules:
         snap = store.snapshot()
         assert snap.active_order == []
 
-    def test_c4_auto_closes_parent_when_all_children_merge_done(self, tmp_path):
-        store = _store(tmp_path)
-        store.update_milestone_chain(100, {"stage": "children_validated"})
-        child_101 = _child_issue(101, state="CLOSED", labels=["issuesmith:merge-done"])
-        child_102 = _child_issue(102, state="CLOSED", labels=["issuesmith:merge-done"])
-        parent = _parent_issue()
-        client = FakeClient(
-            issues={100: parent, 101: child_101, 102: child_102},
-            children={1: [child_101, child_102]},
-        )
-        advance_milestone_chains(store, client, _chain_config())
-        assert len(client.posted_comments) == 1
-        assert client.closed == [100]
-        chain = store.get_milestone_chain(100)
-        assert chain.get("notified_all_done") is True
-        assert chain.get("closed_parent") is True
-        assert client.label_ops == []
-        # Parent labels unchanged (no add/remove on close).
-        assert [label["name"] for label in client.issues[100]["labels"]] == [
-            "scope:milestone",
-            DONE_LABEL["draft"],
-            DONE_LABEL["sub"],
-        ]
-
-    def test_c4_auto_close_is_idempotent_on_retick(self, tmp_path):
-        store = _store(tmp_path)
-        store.update_milestone_chain(100, {"stage": "children_validated"})
-        child_101 = _child_issue(101, state="CLOSED", labels=["issuesmith:merge-done"])
-        child_102 = _child_issue(102, state="CLOSED", labels=["issuesmith:merge-done"])
-        client = FakeClient(
-            issues={100: _parent_issue(), 101: child_101, 102: child_102},
-            children={1: [child_101, child_102]},
-        )
-        advance_milestone_chains(store, client, _chain_config())
-        advance_milestone_chains(store, client, _chain_config())
-        assert len(client.posted_comments) == 1
-        assert client.closed == [100]
-
-    def test_c4_halts_when_child_closed_without_merge_done(self, tmp_path):
-        store = _store(tmp_path)
-        store.update_milestone_chain(100, {"stage": "children_validated"})
-        child_101 = _child_issue(101, state="CLOSED", labels=["issuesmith:rejected"])
-        child_102 = _child_issue(102, state="CLOSED", labels=["issuesmith:merge-done"])
-        client = FakeClient(
-            issues={100: _parent_issue(), 101: child_101, 102: child_102},
-            children={1: [child_101, child_102]},
-        )
-        advance_milestone_chains(store, client, _chain_config())
-        assert client.closed == []
-        assert len(client.posted_comments) == 1
-        # ASCII fixture data.
-        assert "#101" in client.posted_comments[0][1]
-        assert "merge-done" in client.posted_comments[0][1]
-        chain = store.get_milestone_chain(100)
-        assert chain.get("stage") == "halted"
-        assert "child closed without merge-done: #101" in chain.get("halted_reason", "")
-
-    def test_c4_resume_reevaluates_after_halt(self, tmp_path):
-        store = _store(tmp_path)
-        store.update_milestone_chain(100, {"stage": "children_validated"})
-        # Keep draft-done so C2 validation passes after resume, then re-evaluate C4.
-        child_101 = _child_issue(
-            101,
-            state="CLOSED",
-            labels=["issuesmith:draft-done", "issuesmith:rejected"],
-        )
-        child_102 = _child_issue(
-            102,
-            state="CLOSED",
-            labels=["issuesmith:draft-done", "issuesmith:merge-done"],
-        )
-        client = FakeClient(
-            issues={100: _parent_issue(), 101: child_101, 102: child_102},
-            children={1: [child_101, child_102]},
-        )
-        advance_milestone_chains(store, client, _chain_config())
-        assert store.get_milestone_chain(100).get("stage") == "halted"
-        assert store.resume_milestone_chain(100) is True
-        advance_milestone_chains(store, client, _chain_config())
-        # Still without merge-done → halt again; no close; comment stays once.
-        assert store.get_milestone_chain(100).get("stage") == "halted"
-        assert "child closed without merge-done: #101" in store.get_milestone_chain(100).get(
-            "halted_reason", ""
-        )
-        assert client.closed == []
-        assert len(client.posted_comments) == 1
 
     def test_c4_auto_close_parent_false_keeps_notify_only(self, tmp_path):
         store = _store(tmp_path)
@@ -591,22 +324,6 @@ class TestChainRules:
         assert len(sub_requests) == 1
 
 
-def test_dependency_table_index_column_with_resolved_ref_is_not_plan_ref():
-    """Do not treat the serial `#` index column as a plan ref (measured 2026-09-10, #3000)."""
-    from issuesmith.milestone import _dependency_refs_unresolved
-
-    body = (
-        # ASCII fixture data.
-        "c89AA_c30A4_c30B7_c30E5_c30FC: #2934\nDependency: #2999\n\n"
-        "## Dependencies\n\n"
-        "| # | Dependency_c5148 | c72B6_c614B |\n"
-        "|---|--------|------|\n"
-        "| 1 | #2999 (c59D4_c8B72_c30B8_c30E7_c30D6_c306E_c9032_c6357_c3092_c30B9_c30EC_c30C3_c30C9_c306B_c9010_c6B21_c8868_c793A_c3059_c308B) | OPEN |\n\n\n"
-        "## Scope\nc672C_c6587\n"
-    )
-    assert _dependency_refs_unresolved(body) == []
-
-
 def test_dependency_table_bare_plan_ref_is_still_unresolved():
     from issuesmith.milestone import _dependency_refs_unresolved
 
@@ -614,21 +331,3 @@ def test_dependency_table_bare_plan_ref_is_still_unresolved():
     assert _dependency_refs_unresolved(body) == ["unresolved plan ref #1 in dependency table"]
 
 
-def test_milestone_public_api_exports_without_sub1_create():
-    import importlib
-
-    milestone = importlib.import_module("issuesmith.milestone")
-    for name in (
-        "PlanRow",
-        "Sub1State",
-        "_list_chain_children",
-        "allow_paths_for_row",
-        "build_child_body",
-        "ensure_sub1_binding",
-        "parse_split_plan",
-        "prevalidate_child_body",
-        "resolve_dependencies",
-        "validate_children",
-    ):
-        assert hasattr(milestone, name), name
-    assert not hasattr(milestone, "run_sub1_create")

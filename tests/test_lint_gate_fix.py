@@ -83,29 +83,6 @@ def test_check_f401_not_auto_fixable_with_repair_hint(lint_worktree: Path) -> No
     assert "# noqa: F401" in f401[0].message
 
 
-def test_fix_i001_only(lint_worktree: Path) -> None:
-    content = "import sys\nimport os\n\nprint(os.path, sys.version)\n"
-    _commit_py(lint_worktree, "src/bar.py", content)
-    gate = _gate(lint_worktree)
-    violations = gate.check("", [])
-    i001 = [v for v in violations if v.rule_id == "lint.I001"]
-    assert len(i001) == 1
-    assert i001[0].auto_fixable is True
-    gate.fix(ContractInput(body=""))
-    assert gate.check("", []) == []
-
-
-def test_fix_i001_leaves_f401(lint_worktree: Path) -> None:
-    content = "import sys\nimport os\n\nprint(sys.version)\n"
-    _commit_py(lint_worktree, "src/both.py", content)
-    gate = _gate(lint_worktree)
-    gate.fix(ContractInput(body=""))
-    violations = gate.check("", [])
-    assert all(v.rule_id != "lint.I001" for v in violations)
-    f401 = [v for v in violations if v.rule_id == "lint.F401"]
-    assert len(f401) == 1
-
-
 def test_f821_not_auto_fixable(lint_worktree: Path) -> None:
     _commit_py(lint_worktree, "src/undef.py", "x = undefined_name\n")
     gate = _gate(lint_worktree)

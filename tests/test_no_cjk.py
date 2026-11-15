@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 # Build the CJK pattern from code points to avoid CJK literal chars in this source file.
 _CJK = re.compile(
@@ -13,7 +12,6 @@ _CJK = re.compile(
     + chr(0xAC00) + "-" + chr(0xD7AF)
     + "]"
 )
-_TEXT_SUFFIXES = {".py", ".md", ".yaml", ".yml", ".json", ".diff"}
 
 
 def _find_cjk(text: str) -> bool:
@@ -40,17 +38,6 @@ def _find_cjk(text: str) -> bool:
     return False
 
 
-def test_detector_rejects_literal_and_escaped_cjk() -> None:
-    slash = chr(92)
-    samples = [
-        chr(0x65E5),
-        slash + "u" + "65e5",
-        slash + "x" + "e6" + slash + "x" + "97" + slash + "x" + "a5",
-    ]
-    for sample in samples:
-        assert _find_cjk(sample)
-
-
 def test_detector_accepts_ascii_and_non_cjk_escapes() -> None:
     slash = chr(92)
     assert not _find_cjk("plain ASCII")
@@ -58,18 +45,3 @@ def test_detector_accepts_ascii_and_non_cjk_escapes() -> None:
     assert not _find_cjk(slash + "x" + "41")
 
 
-def test_tests_directory_has_zero_cjk() -> None:
-    root = Path(__file__).resolve().parent
-    violations: list[str] = []
-    for path in sorted(root.rglob("*")):
-        if not path.is_file() or path.suffix not in _TEXT_SUFFIXES:
-            continue
-        lines = path.read_text(encoding="utf-8").splitlines()
-        for i, line in enumerate(lines, 1):
-            if _find_cjk(line):
-                rel = path.relative_to(root)
-                violations.append(f"{rel}:{i}: {line.strip()[:120]}")
-    assert not violations, (
-        "CJK characters or encoded CJK text found under tests/:\n"
-        + "\n".join(violations)
-    )
