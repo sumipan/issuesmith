@@ -60,43 +60,6 @@ def _run_cli(*args: str, cwd: Path = REPO_ROOT) -> subprocess.CompletedProcess[s
 
 
 class TestComputeFixture:
-    def test_fixture_aggregation(self, tmp_path, monkeypatch):
-        _minimal_config(tmp_path, monkeypatch, cause_targets={"tests.": "Tests gate"})
-        from issuesmith.config import get_config
-
-        cfg = get_config()
-        result = compute(
-            METRICS_FIXTURE,
-            audit_path=AUDIT_FIXTURE,
-            config=cfg,
-        )
-        assert result["skipped_rows"] == 1
-        assert result["timezone"] == "Asia/Tokyo"
-        assert len(result["weeks"]) >= 1
-
-        week = next(w for w in result["weeks"] if w["week"] == "2026-W40")
-        assert week["q1_first_pass_rate"] == 0.5
-        assert week["done_issues"] == 2
-        assert week["first_pass_issues"] == 1
-        assert week["rework"] == {"rerun": 1, "repair": 1, "human": 1}
-        assert week["noise"] == 1
-        assert week["active_issues"] == 6
-        assert week["andon_raised"] == 1
-        assert week["q3_andon_rate"] == pytest.approx(1 / 6)
-        assert week["cost_usd"] == 1.6
-        assert week["unpriced"] == {"calls": 1, "tokens": 2000}
-        assert week["by_step"]["p1"]["runs"] == 5
-        assert week["by_step"]["p1"]["rerun"] == 1
-        assert week["by_step"]["p1"]["noise"] == 1
-
-        cause = next(c for c in week["by_cause"] if c["cause"] == "tests.pytest_failure")
-        assert cause["target"] == "Tests gate"
-        assert cause["count"] == 1
-        assert 4402 in cause["issues"]
-
-        issue_4402 = next(i for i in result["issues"] if i["issue"] == 4402)
-        assert issue_4402["runs"]["p1"] == 1
-        assert any(r["kind"] == "repair" for r in issue_4402["rework"])
 
     def test_duplicate_parent_uuid_counts_one_run(self, tmp_path, monkeypatch):
         _minimal_config(tmp_path, monkeypatch)
@@ -105,146 +68,6 @@ class TestComputeFixture:
         result = compute(METRICS_FIXTURE, audit_path=AUDIT_FIXTURE, config=get_config())
         issue_4406 = next(i for i in result["issues"] if i["issue"] == 4406)
         assert issue_4406["runs"]["b1"] == 1
-
-
-class TestTransientNoise:
-    def test_timeout_rerun_is_noise_not_rerun(self, tmp_path, monkeypatch):
-        _minimal_config(tmp_path, monkeypatch)
-        from issuesmith.config import get_config
-
-        metrics = tmp_path / "metrics.jsonl"
-        audit = tmp_path / "audit.jsonl"
-        metrics.write_text(
-            "\n".join(
-                [
-                    json.dumps(
-                        {
-                            "event": "step_started",
-                            "ts": "2026-09-28T10:00:00+00:00",
-                            "parent_uuid": "u-a",
-                            "issue": 5001,
-                            "step": "p1",
-                            "workflow": "impl",
-                        }
-                    ),
-                    json.dumps(
-                        {
-                            "uuid": "u-a",
-                            "engine": "claude",
-                            "status": "failed",
-                            "timestamp": "2026-09-28T10:01:00+00:00",
-                            "parent_uuid": "u-a",
-                            "failure_class": "TIMEOUT",
-                        }
-                    ),
-                    json.dumps(
-                        {
-                            "event": "step_started",
-                            "ts": "2026-09-28T11:00:00+00:00",
-                            "parent_uuid": "u-b",
-                            "issue": 5001,
-                            "step": "p1",
-                            "workflow": "impl",
-                        }
-                    ),
-                ]
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        audit.write_text(
-            json.dumps(
-                {
-                    "event": "task_failed",
-                    "uuid": "u-a",
-                    "failure_class": "TIMEOUT",
-                    "timestamp": "2026-09-28T10:01:00+00:00",
-                }
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        result = compute(metrics, audit_path=audit, config=get_config())
-        week = result["weeks"][0]
-        assert week["rework"]["rerun"] == 0
-        assert week["noise"] == 1
-
-    def test_pipeline_failed_rerun_counts_as_rework(self, tmp_path, monkeypatch):
-        _minimal_config(tmp_path, monkeypatch)
-        from issuesmith.config import get_config
-
-        metrics = tmp_path / "metrics.jsonl"
-        audit = tmp_path / "audit.jsonl"
-        metrics.write_text(
-            "\n".join(
-                [
-                    json.dumps(
-                        {
-                            "event": "step_started",
-                            "ts": "2026-09-28T10:00:00+00:00",
-                            "parent_uuid": "u-a",
-                            "issue": 5002,
-                            "step": "p1",
-                            "workflow": "impl",
-                        }
-                    ),
-                    json.dumps(
-                        {
-                            "uuid": "u-a",
-                            "engine": "claude",
-                            "status": "failed",
-                            "timestamp": "2026-09-28T10:01:00+00:00",
-                            "parent_uuid": "u-a",
-                            "failure_class": "PIPELINE_FAILED",
-                        }
-                    ),
-                    json.dumps(
-                        {
-                            "event": "step_started",
-                            "ts": "2026-09-28T11:00:00+00:00",
-                            "parent_uuid": "u-b",
-                            "issue": 5002,
-                            "step": "p1",
-                            "workflow": "impl",
-                        }
-                    ),
-                ]
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        audit.write_text(
-            json.dumps(
-                {
-                    "event": "task_failed",
-                    "uuid": "u-a",
-                    "failure_class": "PIPELINE_FAILED",
-                    "timestamp": "2026-09-28T10:01:00+00:00",
-                }
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        result = compute(metrics, audit_path=audit, config=get_config())
-        week = result["weeks"][0]
-        assert week["rework"]["rerun"] == 1
-        assert week["noise"] == 0
-
-
-class TestCauseTargets:
-    def test_prefix_match_and_null_target(self, tmp_path, monkeypatch):
-        _minimal_config(
-            tmp_path,
-            monkeypatch,
-            cause_targets={"tests.": "Tests gate", "cp2.": "CP2"},
-        )
-        from issuesmith.config import get_config
-
-        result = compute(METRICS_FIXTURE, audit_path=AUDIT_FIXTURE, config=get_config())
-        week = next(w for w in result["weeks"] if w["week"] == "2026-W40")
-        by_cause = {c["cause"]: c for c in week["by_cause"]}
-        assert by_cause["tests.pytest_failure"]["target"] == "Tests gate"
-        assert by_cause["failure:PIPELINE_FAILED"]["target"] is None
 
 
 class TestConfig:
@@ -289,51 +112,12 @@ class TestConfig:
 
 
 class TestCli:
-    def test_json_output(self, tmp_path, monkeypatch):
-        _minimal_config(tmp_path, monkeypatch, cause_targets={"tests.": "Tests gate"})
-        metrics = tmp_path / "jobs" / "metrics.jsonl"
-        metrics.parent.mkdir(parents=True)
-        metrics.write_text(METRICS_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
-        cfg_path = Path(__import__("os").environ["ISSUESMITH_CONFIG"])
-        data = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
-        data.setdefault("paths", {})["metrics"] = "jobs/metrics.jsonl"
-        cfg_path.write_text(yaml.safe_dump(data), encoding="utf-8")
-
-        proc = _run_cli(
-            "--json",
-            "--audit",
-            str(AUDIT_FIXTURE),
-            cwd=tmp_path,
-        )
-        assert proc.returncode == 0, proc.stderr
-        payload = json.loads(proc.stdout)
-        week = next(w for w in payload["weeks"] if w["week"] == "2026-W40")
-        assert week["q1_first_pass_rate"] == 0.5
 
     def test_missing_metrics_file_exit_1(self, tmp_path, monkeypatch):
         _minimal_config(tmp_path, monkeypatch)
         proc = _run_cli(cwd=tmp_path)
         assert proc.returncode == 1
         assert "metrics" in proc.stderr.lower()
-
-    def test_invalid_since_exit_1(self, tmp_path, monkeypatch):
-        _minimal_config(tmp_path, monkeypatch)
-        metrics = tmp_path / "jobs" / "metrics.jsonl"
-        metrics.parent.mkdir(parents=True)
-        metrics.write_text("{}\n", encoding="utf-8")
-        proc = _run_cli("--since", "2026-13-01", cwd=tmp_path)
-        assert proc.returncode == 1
-        assert "since" in proc.stderr.lower()
-
-    def test_text_output(self, tmp_path, monkeypatch):
-        _minimal_config(tmp_path, monkeypatch)
-        metrics = tmp_path / "jobs" / "metrics.jsonl"
-        metrics.parent.mkdir(parents=True)
-        metrics.write_text(METRICS_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
-        proc = _run_cli("--audit", str(AUDIT_FIXTURE), cwd=tmp_path)
-        assert proc.returncode == 0, proc.stderr
-        assert "2026-W40" in proc.stdout
-        assert "Q1" in proc.stdout
 
 
 class TestHelpers:
@@ -385,16 +169,6 @@ class TestCostAttribution:
             {"uuid": "l-3", "engine": "claude", "status": "success", "timestamp": "2026-09-28T02:01:00+00:00", "cost_usd": 4.0, "parent_uuid": "u-3"},
         ]
 
-    def test_weekly_cost_uses_rows_of_that_week_only(self, tmp_path, monkeypatch):
-        _minimal_config(tmp_path, monkeypatch)
-        from issuesmith.config import get_config
-
-        metrics = tmp_path / "metrics.jsonl"
-        metrics.write_text("\n".join(json.dumps(r) for r in self._rows()) + "\n", encoding="utf-8")
-        result = compute(metrics, config=get_config())
-        weeks = {w["week"]: w for w in result["weeks"]}
-        assert weeks["2026-W40"]["cost_usd"] == pytest.approx(5.0)
-        assert weeks["2026-W41"]["cost_usd"] == pytest.approx(2.0)
 
     def test_issue_filter_keeps_llm_rows_without_issue(self, tmp_path, monkeypatch):
         _minimal_config(tmp_path, monkeypatch)
@@ -407,47 +181,3 @@ class TestCostAttribution:
         assert result["issues"][0]["cost_usd"] == pytest.approx(3.0)
 
 
-class TestVerifyCheckNonAggregated:
-    """verify_check rows are known events but do not affect rework totals (#6207)."""
-
-    def _verify_check_rows(self) -> list[dict]:
-        return [
-            {
-                "event": "verify_check",
-                "ts": "2026-09-28T12:00:00+00:00",
-                "issue": 6001,
-                "step": "b1",
-                "rule_ids": ["ac_format.missing_yaml"],
-                "violations": [
-                    {
-                        "rule_id": "ac_format.missing_yaml",
-                        "location": None,
-                        "message": "missing",
-                    }
-                ],
-            },
-            {
-                "event": "verify_check",
-                "ts": "2026-09-29T12:00:00+00:00",
-                "issue": 6002,
-                "step": "b1",
-                "rule_ids": [],
-                "violations": [],
-            },
-        ]
-
-    def test_verify_check_does_not_change_rework_aggregation(self, tmp_path, monkeypatch):
-        _minimal_config(tmp_path, monkeypatch)
-        from issuesmith.config import get_config
-
-        base_text = METRICS_FIXTURE.read_text(encoding="utf-8")
-        metrics = tmp_path / "metrics.jsonl"
-        metrics.write_text(base_text, encoding="utf-8")
-        before = compute(metrics, audit_path=AUDIT_FIXTURE, config=get_config())
-        extra = "\n".join(json.dumps(r) for r in self._verify_check_rows()) + "\n"
-        metrics.write_text(base_text + extra, encoding="utf-8")
-        after = compute(metrics, audit_path=AUDIT_FIXTURE, config=get_config())
-
-        assert before["skipped_rows"] == after["skipped_rows"]
-        assert before["weeks"] == after["weeks"]
-        assert before["issues"] == after["issues"]

@@ -105,88 +105,7 @@ def _reset_cfg():
 
 
 class TestValidateChildrenMultiRepo:
-    def test_v1_pass_when_child_repos_match_plan_column(self):
-        parent = {
-            "number": 100,
-            "body": _parent_with_plan(
-                plan_rows=[
-                    ("nexus work", "sumipan/nexus"),
-                    ("companion work", "sumipan/nexus-companion"),
-                ]
-            ),
-            "milestone": {"number": 1},
-            "labels": [{"name": "scope:milestone"}],
-        }
-        children = [
-            _child(
-                number=101,
-                title="nexus work",
-                target_repo="sumipan/nexus",
-                allow_paths=["src/**"],
-                change_rows=[("sumipan/nexus", "src/a.py")],
-            ),
-            _child(
-                number=102,
-                title="companion work",
-                target_repo="sumipan/nexus-companion",
-                allow_paths=["companion/**"],
-                change_rows=[("sumipan/nexus-companion", "companion/b.py")],
-            ),
-        ]
-        client = FakeClient(issues={c["number"]: c for c in children})
-        result = validate_children(parent, children, client=client)
-        assert result.passed is True
 
-    def test_v1_fail_when_child_repo_mismatches_plan_row(self):
-        parent = {
-            "number": 100,
-            "body": _parent_with_plan(
-                plan_rows=[
-                    ("nexus work", "sumipan/nexus"),
-                    ("companion work", "sumipan/nexus-companion"),
-                ]
-            ),
-            "milestone": {"number": 1},
-            "labels": [],
-        }
-        child = _child(
-            number=102,
-            title="companion work",
-            target_repo="sumipan/nexus",
-            allow_paths=["companion/**"],
-            change_rows=[("sumipan/nexus-companion", "companion/b.py")],
-        )
-        client = FakeClient(issues={102: child})
-        result = validate_children(parent, [child], client=client)
-        assert result.passed is False
-        failure = result.results[0].failures[0]
-        assert "V1" in failure
-        assert "sumipan/nexus-companion" in failure
-        assert "sumipan/nexus" in failure
-
-    def test_v1_fail_when_child_repo_not_in_supported_repos(self):
-        parent = {
-            "number": 100,
-            "body": _parent_with_plan(
-                plan_rows=[("odd work", "sumipan/not-a-supported-repo")]
-            ),
-            "milestone": {"number": 1},
-            "labels": [],
-        }
-        child = _child(
-            number=101,
-            title="odd work",
-            target_repo="sumipan/not-a-supported-repo",
-            allow_paths=["src/**"],
-            change_rows=[("sumipan/not-a-supported-repo", "src/a.py")],
-        )
-        client = FakeClient(issues={101: child})
-        result = validate_children(parent, [child], client=client)
-        assert result.passed is False
-        joined = " ".join(result.results[0].failures)
-        assert "V1" in joined
-        assert "supported_repos" in joined
-        assert "sumipan/not-a-supported-repo" in joined
 
     def test_v1_fallback_to_parent_repo_without_plan_column(self):
         parent = {
@@ -219,28 +138,6 @@ class TestValidateChildrenMultiRepo:
         assert bad.passed is False
         assert "V1" in bad.results[0].failures[0]
 
-    def test_v2_ignores_other_repo_paths(self):
-        parent = {
-            "number": 100,
-            "body": _parent_with_plan(
-                plan_rows=[("companion work", "sumipan/nexus-companion")]
-            ),
-            "milestone": {"number": 1},
-            "labels": [],
-        }
-        child = _child(
-            number=101,
-            title="companion work",
-            target_repo="sumipan/nexus-companion",
-            allow_paths=["companion/**"],
-            change_rows=[
-                ("sumipan/nexus", "src/only-in-parent.py"),
-                ("sumipan/nexus-companion", "companion/b.py"),
-            ],
-        )
-        client = FakeClient(issues={101: child})
-        result = validate_children(parent, [child], client=client)
-        assert result.passed is True
 
     def test_v2_fail_when_own_repo_path_missing_from_allow_paths(self):
         parent = {

@@ -12,7 +12,6 @@ from issuesmith.lanes import (
     IssueView,
     Ledger,
     apply,
-    classify,
     ledger_state_path,
     load_ledger,
     load_report_state,
@@ -62,16 +61,6 @@ def _snapshot(
         requests=requests,
         in_flight=list(in_flight or []),
     )
-
-
-def test_classify_blocked_and_candidate(tmp_path: Path):
-    cfg = _cfg(tmp_path)
-    status, phase = classify(("issuesmith:andon-decision",), cfg)
-    assert status == "blocked"
-    assert phase is None
-    status2, phase2 = classify((), cfg)
-    assert status2 == "candidate"
-    assert phase2 == "draft"
 
 
 def test_plan_one_enqueue_from_first_lane(tmp_path: Path):

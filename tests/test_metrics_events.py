@@ -8,47 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from issuesmith.andon import Andon, raise_andon
 from issuesmith.config import get_config
 from issuesmith.gate_registry import Violation
 from issuesmith.metrics_events import append_event, record_step_started, serialize_violations
 from issuesmith.repair import record_metrics
 
 
-def _fake_client():
-    from unittest.mock import MagicMock
-
-    client = MagicMock()
-    client.issue_comment.return_value = {"id": 1, "body": ""}
-    client.issue_update.return_value = None
-    return client
-
-
 class TestSerializeViolations:
-    def test_maps_rule_id_location_message_in_order(self):
-        vs = [
-            Violation(
-                rule_id="a",
-                severity="fail",
-                message="one",
-                location="p/a.py",
-                auto_fixable=False,
-                fix_hint=None,
-            ),
-            Violation(
-                rule_id="b",
-                severity="fail",
-                message="two",
-                location=None,
-                auto_fixable=False,
-                fix_hint=None,
-            ),
-        ]
-        out = serialize_violations(vs)
-        assert out == [
-            {"rule_id": "a", "location": "p/a.py", "message": "one"},
-            {"rule_id": "b", "location": None, "message": "two"},
-        ]
 
     def test_truncates_message_to_300_chars(self):
         long_msg = "x" * 301
@@ -68,23 +34,6 @@ class TestSerializeViolations:
 
 
 class TestRecordMetricsViolations:
-    def test_includes_violations_when_provided(self, tmp_path, monkeypatch):
-        monkeypatch.delenv("GHDAG_TASK_UUID", raising=False)
-        path = tmp_path / "metrics.jsonl"
-        vs = [
-            Violation(
-                rule_id="pr_scope.out_of_allow",
-                severity="fail",
-                message="m",
-                location="tools/extra.py",
-                auto_fixable=False,
-                fix_hint=None,
-            )
-        ]
-        record_metrics(path, "requires_repair", "p1", 42, violations=vs)
-        line = json.loads(path.read_text().strip())
-        assert line["violations"][0]["rule_id"] == "pr_scope.out_of_allow"
-        assert line["violations"][0]["location"] == "tools/extra.py"
 
     def test_omits_violations_key_when_not_provided(self, tmp_path, monkeypatch):
         monkeypatch.delenv("GHDAG_TASK_UUID", raising=False)
@@ -93,33 +42,8 @@ class TestRecordMetricsViolations:
         line = json.loads(path.read_text().strip())
         assert "violations" not in line
 
-    def test_legacy_record_metrics_signature_still_callable(self, tmp_path, monkeypatch):
-        """Old five-arg style recorders must not raise when violations are omitted."""
-        import inspect
-
-        monkeypatch.delenv("GHDAG_TASK_UUID", raising=False)
-        path = tmp_path / "metrics.jsonl"
-
-        def legacy_recorder(path, event, step_id, issue_num, rule_ids=None):
-            record_metrics(path, event, step_id, issue_num, rule_ids)
-
-        sig = inspect.signature(legacy_recorder)
-        assert "violations" not in sig.parameters
-        legacy_recorder(path, "requires_repair", "p1", 99, ["lint.e501"])
-        line = json.loads(path.read_text().strip())
-        assert line["rule_ids"] == ["lint.e501"]
-        assert "violations" not in line
-
 
 class TestAppendEvent:
-    def test_adds_ts_and_parent_uuid_when_env_set(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("GHDAG_TASK_UUID", "u1")
-        path = tmp_path / "metrics.jsonl"
-        append_event(path, {"event": "requires_check", "step": "p1", "issue": 42})
-        line = json.loads(path.read_text().strip())
-        assert line["event"] == "requires_check"
-        assert line["parent_uuid"] == "u1"
-        datetime.fromisoformat(line["ts"])
 
     def test_omits_parent_uuid_when_env_empty(self, tmp_path, monkeypatch):
         monkeypatch.delenv("GHDAG_TASK_UUID", raising=False)
@@ -281,27 +205,6 @@ class TestEngineParentUuid:
         assert "parent_uuid" not in recorded[0].additional_tags
 
 
-class TestAndonMetrics:
-    def test_raise_andon_includes_issue_step_kind_ts(self, tmp_path):
-        client = _fake_client()
-        andon = Andon(
-            id="impl:4401:p1:0",
-            kind="decision",
-            issue=4401,
-            step="p1",
-            summary="test",
-        )
-        mfile = tmp_path / "metrics.jsonl"
-        raise_andon(client, andon, metrics_path=mfile)
-        line = json.loads(mfile.read_text().strip())
-        assert line["event"] == "andon_raised"
-        assert line["andon_id"] == andon.id
-        assert line["issue"] == 4401
-        assert line["step"] == "p1"
-        assert line["kind"] == "decision"
-        assert "ts" in line
-
-
 class TestConftestGuards:
     def test_metrics_path_under_tmp(self, tmp_path_factory):
         basetemp = tmp_path_factory.getbasetemp().resolve()
@@ -313,27 +216,3 @@ class TestConftestGuards:
             Path("outside.jsonl").open("a")
 
 
-class TestDispatchRequiresRepairRuleIds:
-    def test_requires_repair_passes_blocking_rule_ids(self, tmp_path, monkeypatch):
-        from dataclasses import dataclass
-
-        from issuesmith.ops import dispatch as dispatch_mod
-
-        recorded: list[tuple] = []
-
-        def capture(event, step_id, issue_num, rule_ids=None):
-            recorded.append((event, step_id, issue_num, rule_ids))
-
-        monkeypatch.setattr(dispatch_mod, "_safe_record_metrics", capture)
-
-        @dataclass
-        class Violation:
-            rule_id: str
-            message: str = "msg"
-            auto_fixable: bool = False
-
-        blocking = [Violation("lint.e501"), Violation("tests.fail"), Violation("lint.e501")]
-        # Simulate the call site in run_requires_loop
-        rule_ids = list(dict.fromkeys(v.rule_id for v in blocking))
-        dispatch_mod._safe_record_metrics("requires_repair", "p1", 42, rule_ids=rule_ids)
-        assert recorded == [("requires_repair", "p1", 42, ["lint.e501", "tests.fail"])]

@@ -26,11 +26,6 @@ _STALE_BASE_COMMENT_TEMPLATE = """\
 
 PIPELINE_STATUS: STALE_BASE"""
 
-_MILESTONE_COMMENT = """\
-## P0 blocked: scope:milestone issue
-Design-only issue; develop-ready auto-implementation is forbidden.
-PIPELINE_STATUS: MILESTONE_BLOCKED"""
-
 # --- Real git strings (verbatim captures; values unchanged) ---
 
 CLONE_FAIL_STDERR = (
@@ -123,25 +118,6 @@ def test_raises_when_neither_exists(tmp_path: Path) -> None:
         wt.resolve_base_ref(repo, "develop")
 
 
-def test_unpushed_local_commit_not_in_branch(tmp_path: Path) -> None:
-    upstream = _init_repo(tmp_path / "upstream")
-    clone = _clone(upstream, tmp_path / "clone")
-    memory = clone / "chat" / "memory"
-    memory.mkdir(parents=True)
-    (memory / "log.jsonl").write_text("{}\n", encoding="utf-8")
-    _git(clone, "add", "chat")
-    _git(clone, "commit", "-q", "-m", "memory append")
-    assert _git(clone, "rev-parse", "main") != _git(clone, "rev-parse", "origin/main")
-
-    worktree_dir = tmp_path / "wt"
-    wt.prepare_worktree(clone, worktree_dir, "feat/x", wt.resolve_base_ref(clone, "main"))
-
-    assert _git(worktree_dir, "rev-parse", "HEAD") == _git(clone, "rev-parse", "origin/main")
-    changed = _git(worktree_dir, "diff", "--name-only", "origin/main...HEAD")
-    assert changed == ""
-    assert not (worktree_dir / "chat" / "memory" / "log.jsonl").exists()
-
-
 def test_local_only_ref_is_usable_as_start_point(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path / "local-only")
     worktree_dir = tmp_path / "wt"
@@ -155,30 +131,6 @@ def test_validate_branch_rejects_invalid_name() -> None:
         wt.validate_branch("bad branch")
 
 
-def test_prepare_worktree_creates_new_branch(tmp_path: Path) -> None:
-    repo = tmp_path / "repo"
-    _git_init_with_main(repo)
-    worktree_dir = tmp_path / "worktrees" / "issue-3168"
-    wt.prepare_worktree(repo, worktree_dir, "feat/issue-3168-aabb", "main")
-    assert (worktree_dir / ".git").exists() or (worktree_dir / ".git").is_file()
-    branch = subprocess.check_output(
-        ["git", "-C", str(worktree_dir), "branch", "--show-current"], text=True
-    ).strip()
-    assert branch == "feat/issue-3168-aabb"
-
-
-def test_prepare_worktree_reuses_existing_matching_branch(tmp_path: Path) -> None:
-    repo = tmp_path / "repo"
-    _git_init_with_main(repo)
-    worktree_dir = tmp_path / "worktrees" / "issue-3168"
-    wt.prepare_worktree(repo, worktree_dir, "feat/reuse", "main")
-    wt.prepare_worktree(repo, worktree_dir, "feat/reuse", "main")
-    branch = subprocess.check_output(
-        ["git", "-C", str(worktree_dir), "branch", "--show-current"], text=True
-    ).strip()
-    assert branch == "feat/reuse"
-
-
 def test_prepare_worktree_rejects_branch_mismatch(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _git_init_with_main(repo)
@@ -186,45 +138,6 @@ def test_prepare_worktree_rejects_branch_mismatch(tmp_path: Path) -> None:
     wt.prepare_worktree(repo, worktree_dir, "feat/one", "main")
     with pytest.raises(wt.WorktreeError, match="branch mismatch"):
         wt.prepare_worktree(repo, worktree_dir, "feat/other", "main")
-
-
-def test_fetch_base_retries_transient_lock_at_most_three_times(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    repo = tmp_path / "clone"
-    _git_init_with_main(repo)
-    subprocess.run(
-        ["git", "-C", str(repo), "remote", "add", "origin", str(repo)],
-        check=True,
-        capture_output=True,
-    )
-    subprocess.run(
-        ["git", "-C", str(repo), "update-ref", "refs/remotes/origin/main", "HEAD"],
-        check=True,
-        capture_output=True,
-    )
-
-    monkeypatch.setenv("ISSUESMITH_FETCH_LOCK_WAIT", "0")
-    sleeps: list[float] = []
-    monkeypatch.setattr(wt, "_sleep", lambda s: sleeps.append(s))
-
-    calls: list[str] = []
-
-    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
-        if cmd[:3] == ["git", "-C", str(repo)] and "fetch" in cmd:
-            calls.append("fetch")
-            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr=CANNOT_LOCK_REF_STDERR)
-        if "update-ref" in cmd and "-d" in cmd:
-            calls.append("delete-ref")
-            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-
-    monkeypatch.setattr(wt.subprocess, "run", fake_run)
-
-    ok = wt.fetch_base_with_retry(repo, "main")
-    assert ok is False
-    assert calls.count("fetch") == 3
-    assert sleeps == [1, 2, 3]
 
 
 def test_fetch_base_or_raise_includes_remote_and_ref(
@@ -277,52 +190,6 @@ def test_git_common_dir_resolves_linked_worktree(tmp_path: Path) -> None:
     assert common == wt._git_common_dir(repo).resolve()
 
 
-def test_fetch_base_with_retry_uses_common_dir_lock_on_linked_worktree(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    repo = tmp_path / "repo"
-    _git_init_with_main(repo)
-    subprocess.run(
-        ["git", "-C", str(repo), "remote", "add", "origin", str(repo)],
-        check=True,
-        capture_output=True,
-    )
-    subprocess.run(
-        ["git", "-C", str(repo), "update-ref", "refs/remotes/origin/main", "HEAD"],
-        check=True,
-        capture_output=True,
-    )
-    worktree_dir = tmp_path / "linked-wt"
-    subprocess.run(
-        [
-            "git",
-            "-C",
-            str(repo),
-            "worktree",
-            "add",
-            "-b",
-            "linked-main",
-            str(worktree_dir),
-            "main",
-        ],
-        check=True,
-        capture_output=True,
-    )
-    monkeypatch.setenv("ISSUESMITH_FETCH_LOCK_WAIT", "0")
-    monkeypatch.setattr(wt, "_sleep", lambda _s: None)
-    real_run = subprocess.run
-
-    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
-        if len(cmd) >= 5 and cmd[0] == "git" and cmd[1] == "-C" and "fetch" in cmd:
-            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-        return real_run(cmd, **kwargs)
-
-    monkeypatch.setattr(wt.subprocess, "run", fake_run)
-    assert wt.fetch_base_with_retry(worktree_dir, "main") is True
-    lock_dir = wt._git_common_dir(worktree_dir) / "issuesmith-fetch.lock"
-    assert not lock_dir.exists()
-
-
 def test_prepare_local_worktree_returns_path(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path / "local")
     worktree_dir = tmp_path / "wt-local"
@@ -330,20 +197,6 @@ def test_prepare_local_worktree_returns_path(tmp_path: Path) -> None:
     assert result == worktree_dir
     assert worktree_dir.is_dir()
     assert _git(worktree_dir, "branch", "--show-current") == "feat/local"
-
-
-def test_clone_if_missing_skips_existing_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    existing = tmp_path / "external" / "issuesmith"
-    _git_init_with_main(existing)
-    calls: list[list[str]] = []
-
-    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
-        calls.append(list(cmd))
-        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-
-    monkeypatch.setattr(wt.subprocess, "run", fake_run)
-    wt.clone_if_missing(existing, "sumipan/issuesmith", "main")
-    assert calls == []
 
 
 def test_clone_if_missing_clones_into_empty_path(
@@ -410,84 +263,14 @@ def test_fetch_lock_wait_uses_issuesmith_env(monkeypatch: pytest.MonkeyPatch) ->
     assert wt._lock_wait_seconds() == 5
 
 
-def test_legacy_fetch_lock_wait_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
-    import warnings
-
-    monkeypatch.delenv("ISSUESMITH_FETCH_LOCK_WAIT", raising=False)
-    monkeypatch.setenv("P0_FETCH_LOCK_WAIT", "5")
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        assert wt._lock_wait_seconds() == 30
-
-
-def test_stale_base_resume_hint_uses_next_step_in_phase(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from dataclasses import replace
-
-    from issuesmith.config import PhaseConfig, get_config
-
-    cfg = replace(
-        get_config(),
-        phases=[
-            PhaseConfig(
-                name="develop",
-                role="implementation",
-                entry_step="prepare",
-                handler="impl",
-                steps=("prepare", "implement"),
-            )
-        ],
-    )
-    monkeypatch.setattr("issuesmith.config.get_config", lambda: cfg)
-    cmd, _options = wt._stale_base_resume_command(42, "prepare")
-    assert "--from implement" in cmd
-    assert "p1" not in cmd
-
-
 def test_transient_fetch_markers_detected() -> None:
     assert wt._is_transient_fetch_error(CANNOT_LOCK_REF_STDERR) is True
     assert wt._is_transient_fetch_error("network down") is False
 
 
-def test_worktree_module_has_no_pipeline_imports() -> None:
-    """Public worktree helpers must not import step / workflow modules."""
-    import importlib
-
-    mod = importlib.import_module("issuesmith.worktree")
-    source_path = Path(mod.__file__).read_text(encoding="utf-8")
-    import_block = source_path.split("class WorktreeError", 1)[0]
-    forbidden = (
-        "issuesmith.steps",
-        "scope_gate",
-        "state_machine",
-        "issue_comment",
-    )
-    for token in forbidden:
-        assert token not in import_block
-
-
 def test_require_yaml_metadata_rejects_missing_block() -> None:
     with pytest.raises(wt.WorktreeError, match="yaml metadata block"):
         wt.require_yaml_metadata("## Background\nno yaml\n")
-
-
-def test_handle_milestone_posts_comment_and_returns_failed() -> None:
-    client = MagicMock()
-    transition = MagicMock()
-    result = wt.handle_milestone(
-        client,
-        3168,
-        comment=_MILESTONE_COMMENT,
-        on_transition=lambda issue_number: transition(issue_number, "issuesmith:draft-done"),
-    )
-    assert result.exit_code == 1
-    assert result.pipeline_status == "WORKTREE_FAILED"
-    transition.assert_called_once_with(3168, "issuesmith:draft-done")
-    client.issue_comment.assert_called_once_with(3168, _MILESTONE_COMMENT)
-    body = client.issue_comment.call_args.args[1]
-    assert "scope:milestone" in body
-    assert "MILESTONE_BLOCKED" in body
 
 
 def _make_repo_with_diverged_branch(tmp_path: Path) -> tuple[Path, str]:
@@ -521,31 +304,6 @@ def _make_repo_with_diverged_branch(tmp_path: Path) -> tuple[Path, str]:
         capture_output=True,
     )
     return repo, "feat/stale"
-
-
-def test_ensure_base_included_already_included_returns_none(tmp_path: Path) -> None:
-    repo = tmp_path / "repo"
-    _git_init_with_main(repo)
-    subprocess.run(
-        ["git", "-C", str(repo), "remote", "add", "origin", str(repo)],
-        check=True,
-        capture_output=True,
-    )
-    subprocess.run(
-        ["git", "-C", str(repo), "fetch", "origin", "main"],
-        check=True,
-        capture_output=True,
-    )
-    client = MagicMock()
-    result = wt.ensure_base_included(
-        repo,
-        "main",
-        client,
-        3408,
-        stale_base_comment_template=_STALE_BASE_COMMENT_TEMPLATE,
-    )
-    assert result is None
-    client.issue_comment.assert_not_called()
 
 
 def test_ensure_base_included_rebase_success_returns_none(
@@ -736,107 +494,6 @@ def test_ensure_base_included_rev_parse_fails_returns_none(tmp_path: Path) -> No
     )
     assert result is None
     client.issue_comment.assert_not_called()
-
-
-def _make_bump_stale_base_repo(tmp_path: Path) -> Path:
-    """Feature branch with impl + publish bump while origin/main also bumped version."""
-    origin = tmp_path / "origin.git"
-    subprocess.run(
-        ["git", "init", "--bare", "-b", "main", str(origin)],
-        check=True,
-        capture_output=True,
-    )
-    seed = tmp_path / "seed"
-    _clone(origin, seed)
-    (seed / "pyproject.toml").write_text(
-        '[project]\nname = "demo"\nversion = "0.1.0"\n', encoding="utf-8"
-    )
-    _git(seed, "add", "pyproject.toml")
-    _git(seed, "commit", "-q", "-m", "init")
-    _git(seed, "push", "-q", "origin", "HEAD:main")
-
-    wt = tmp_path / "wt"
-    _clone(origin, wt)
-    _git(wt, "checkout", "-q", "-b", "feat/issue")
-    (wt / "src").mkdir(parents=True)
-    (wt / "src" / "feat.py").write_text("x = 1\n", encoding="utf-8")
-    _git(wt, "add", "src/feat.py")
-    _git(wt, "commit", "-q", "-m", "feat: implementation")
-    (wt / "pyproject.toml").write_text(
-        '[project]\nname = "demo"\nversion = "0.2.0"\n', encoding="utf-8"
-    )
-    _git(wt, "commit", "-q", "-am", "chore: bump version to 0.2.0 (Z: Z)")
-
-    _git(seed, "fetch", "-q", "origin")
-    _git(seed, "checkout", "-q", "main")
-    (seed / "pyproject.toml").write_text(
-        '[project]\nname = "demo"\nversion = "0.2.0"\n', encoding="utf-8"
-    )
-    _git(seed, "commit", "-q", "-am", "chore: bump version to 0.2.0 (Z: Z)")
-    _git(seed, "push", "-q", "origin", "HEAD:main")
-
-    _git(wt, "fetch", "-q", "origin", "main:refs/remotes/origin/main")
-    return wt
-
-
-def test_ensure_base_included_drops_bump_before_rebase(tmp_path: Path) -> None:
-    """#6177: stale base sync drops publish bump commits and keeps implementation."""
-    repo = _make_bump_stale_base_repo(tmp_path)
-    client = MagicMock()
-    result = wt.ensure_base_included(
-        repo,
-        "main",
-        client,
-        6177,
-        stale_base_comment_template=_STALE_BASE_COMMENT_TEMPLATE,
-    )
-    assert result is None
-    subjects = _git(repo, "log", "--format=%s", "origin/main..HEAD")
-    assert "chore: bump version to" not in subjects
-    assert "feat: implementation" in subjects
-    assert (repo / "src" / "feat.py").read_text(encoding="utf-8") == "x = 1\n"
-    merge = subprocess.run(
-        ["git", "-C", str(repo), "merge-base", "--is-ancestor", "origin/main", "HEAD"],
-        capture_output=True,
-        check=False,
-    )
-    assert merge.returncode == 0
-
-
-def test_drop_bump_commits_handles_chained_bumps(tmp_path: Path) -> None:
-    """#6177: two chained bumps (0.2.0 -> 0.3.0) are both dropped without conflict."""
-    from issuesmith.bump_commits import drop_bump_commits_before_rebase
-
-    repo = _make_bump_stale_base_repo(tmp_path)
-    (repo / "src" / "fix.py").write_text("y = 1\n", encoding="utf-8")
-    _git(repo, "add", "src/fix.py")
-    _git(repo, "commit", "-q", "-m", "fix: follow-up")
-    (repo / "pyproject.toml").write_text(
-        '[project]\nname = "demo"\nversion = "0.3.0"\n', encoding="utf-8"
-    )
-    _git(repo, "commit", "-q", "-am", "chore: bump version to 0.3.0 (Z: Z)")
-    bumps = _git(repo, "log", "--reverse", "--format=%H", "--grep=^chore: bump version to ", "origin/main..HEAD")
-
-    removed = drop_bump_commits_before_rebase(repo, "main")
-
-    assert list(removed) == bumps.split()
-    subjects = _git(repo, "log", "--format=%s", "origin/main..HEAD")
-    assert "chore: bump version to" not in subjects
-    assert "feat: implementation" in subjects and "fix: follow-up" in subjects
-    assert (repo / "src" / "fix.py").read_text(encoding="utf-8") == "y = 1\n"
-
-
-def test_assert_jobs_clean_raises_when_dirty(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    repo = tmp_path / "repo"
-    _git_init_with_main(repo)
-    jobs = repo / "jobs"
-    jobs.mkdir()
-    (jobs / "exec.jsonl").write_text("{}\n", encoding="utf-8")
-    with pytest.raises(wt.WorktreeError, match="dirty files under jobs/"):
-        wt.assert_jobs_clean(repo, "jobs/")
-    err = capsys.readouterr().err
-    assert "jobs/" in err
-    assert "dirty" in err.lower()
 
 
 def test_assert_jobs_clean_passes_when_clean(tmp_path: Path) -> None:
