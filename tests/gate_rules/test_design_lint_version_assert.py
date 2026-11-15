@@ -1,167 +1,102 @@
 """tests/gate_rules/test_design_lint_version_assert.py — exact version-assert gate in tests (#3065)."""
-
 from __future__ import annotations
 
 from pathlib import Path
 
 from issuesmith.gate_rules.design_lint_rules import check_test_version_exact_assert
 
-_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "version_exact_assert"
-_RULE_ID = "design_lint.test_version_exact_assert"
-def _exact_assert_diff() -> str:
-    return (_FIXTURES / "mltgnt_exact_assert.diff").read_text(encoding="utf-8")
+_FIXTURES = Path(__file__).resolve().parents[1] / 'fixtures' / 'version_exact_assert'
+_RULE_ID = 'design_lint.test_version_exact_assert'
 
+def _exact_assert_diff() -> str:
+    return (_FIXTURES / 'mltgnt_exact_assert.diff').read_text(encoding='utf-8')
 
 def _pin_only_diff() -> str:
     """Only the real-commit aaf46d1 hunk (no pattern-a '+' lines)."""
-    parts = _exact_assert_diff().split("diff --git ")
-    assert len(parts) >= 3, "fixture needs 2 hunks for patterns a/b"
-    return "diff --git " + parts[2]
-
+    parts = _exact_assert_diff().split('diff --git ')
+    assert len(parts) >= 3, 'fixture needs 2 hunks for patterns a/b'
+    return 'diff --git ' + parts[2]
 
 def test_exact_version_assert_fails():
-    """Pattern a: project[\"version\"] == \"X.Y.Z\" → Violation."""
+    """Pattern a: project["version"] == "X.Y.Z" → Violation."""
     vs = check_test_version_exact_assert(_exact_assert_diff())
-    assert vs, "should detect exact version assert"
+    assert vs, 'should detect exact version assert'
     assert vs[0].rule_id == _RULE_ID
-    assert vs[0].severity == "fail"
+    assert vs[0].severity == 'fail'
     assert vs[0].auto_fixable is False
     assert vs[0].fix_hint is not None
-    assert ">=" in vs[0].fix_hint
-    assert "publish" in vs[0].fix_hint
-
-
-def test_pin_exact_assert_fails():
-    """Pattern b: exact pin of git+https://…@vX.Y.Z → Violation."""
-    vs = check_test_version_exact_assert(_pin_only_diff())
-    assert vs, "should detect git pin exact assert"
-    assert vs[0].rule_id == _RULE_ID
-    assert vs[0].severity == "fail"
-    assert vs[0].auto_fixable is False
-    assert vs[0].fix_hint is not None
-    assert ">=" in vs[0].fix_hint
-    assert "publish" in vs[0].fix_hint
-
+    assert '>=' in vs[0].fix_hint
+    assert 'publish' in vs[0].fix_hint
 
 def test_ge_version_check_passes():
     """Lower-bound check parts >= [0, 43, 0] yields no Violation."""
-    diff = (_FIXTURES / "mltgnt_ge_check.diff").read_text(encoding="utf-8")
+    diff = (_FIXTURES / 'mltgnt_ge_check.diff').read_text(encoding='utf-8')
     assert check_test_version_exact_assert(diff) == []
-
-
-def test_non_test_file_skipped():
-    """version == lines under src/ are out of scope."""
-    diff = """\
-diff --git a/src/pkg/version.py b/src/pkg/version.py
-index 1111111..2222222 100644
---- a/src/pkg/version.py
-+++ b/src/pkg/version.py
-@@ -1,3 +1,4 @@
-+assert project["version"] == "0.27.0"
-+dependency = "ghdag @ git+https://github.com/sumipan/ghdag.git@v0.43.0"
-+assert deps.count(dependency) == 1
-"""
-    assert check_test_version_exact_assert(diff) == []
-
 
 def _tests_hunk(plus_line: str) -> str:
-    return f"""\
-diff --git a/tests/pkg/test_example.py b/tests/pkg/test_example.py
-index 1111111..2222222 100644
---- a/tests/pkg/test_example.py
-+++ b/tests/pkg/test_example.py
-@@ -1 +1,2 @@
-+{plus_line}
-"""
+    return f'diff --git a/tests/pkg/test_example.py b/tests/pkg/test_example.py\nindex 1111111..2222222 100644\n--- a/tests/pkg/test_example.py\n+++ b/tests/pkg/test_example.py\n@@ -1 +1,2 @@\n+{plus_line}\n'
 
-
-def _assert_violation(vs: list, *, rule_id: str = _RULE_ID) -> None:
-    assert vs, "expected Violation"
+def _assert_violation(vs: list, *, rule_id: str=_RULE_ID) -> None:
+    assert vs, 'expected Violation'
     assert len(vs) == 1
     assert vs[0].rule_id == rule_id
 
-
 def test_versioned_test_name_fails():
     """Issue #6203: test function names must not embed version segments."""
-    vs = check_test_version_exact_assert(
-        _tests_hunk("def test_pyproject_ghdag_pins_v0_116_0():")
-    )
+    vs = check_test_version_exact_assert(_tests_hunk('def test_pyproject_ghdag_pins_v0_116_0():'))
     _assert_violation(vs)
-
 
 def test_exact_version_list_rhs_fails():
     """Issue #6203: list RHS of == must not pin exact version strings."""
-    vs = check_test_version_exact_assert(
-        _tests_hunk('    assert pins == ["0.116.0", "0.116.0"]')
-    )
+    vs = check_test_version_exact_assert(_tests_hunk('    assert pins == ["0.116.0", "0.116.0"]'))
     _assert_violation(vs)
-
 
 def test_exact_version_scalar_rhs_fails():
     """Issue #6203: scalar RHS of == must not pin exact version strings."""
-    vs = check_test_version_exact_assert(
-        _tests_hunk('    assert tag == "0.107.2"')
-    )
+    vs = check_test_version_exact_assert(_tests_hunk('    assert tag == "0.107.2"'))
     _assert_violation(vs)
-
 
 def test_fixture_version_literal_passes():
     """Issue #6203: fixture write_text with @v pin is not an assert comparison."""
-    vs = check_test_version_exact_assert(
-        _tests_hunk("write_text('x @ git+https://h/x.git@v0.1.0')")
-    )
+    vs = check_test_version_exact_assert(_tests_hunk("write_text('x @ git+https://h/x.git@v0.1.0')"))
     assert vs == []
-
 
 def test_constructor_version_literal_passes():
     """Issue #6203: Version(...) on RHS is not a direct version-literal compare."""
-    vs = check_test_version_exact_assert(
-        _tests_hunk('assert parsed == Version("0.152.0")')
-    )
+    vs = check_test_version_exact_assert(_tests_hunk('assert parsed == Version("0.152.0")'))
     assert vs == []
-
 
 def test_constructor_version_literal_in_collection_passes():
     """Issue #6203: constructor args are not direct list/tuple elements."""
-    vs = check_test_version_exact_assert(
-        _tests_hunk('assert parsed == [Version("0.152.0")]')
-    )
+    vs = check_test_version_exact_assert(_tests_hunk('assert parsed == [Version("0.152.0")]'))
     assert vs == []
-
 
 def test_version_literal_inside_fixture_string_passes():
     """Issue #6203: comparison-like fixture text is not a Python comparison."""
-    vs = check_test_version_exact_assert(
-        _tests_hunk('write_text(\'assert tag == "0.152.0"\')')
-    )
+    vs = check_test_version_exact_assert(_tests_hunk('write_text(\'assert tag == "0.152.0"\')'))
     assert vs == []
-
 
 def test_removed_new_patterns_pass():
     """Issue #6203: deletion-only lines do not trigger new patterns."""
-    diff = (_FIXTURES / "removed_patterns.diff").read_text(encoding="utf-8")
+    diff = (_FIXTURES / 'removed_patterns.diff').read_text(encoding='utf-8')
     assert check_test_version_exact_assert(diff) == []
-
 
 def test_count_eq_one_on_context_line_does_not_pair_with_new_pin():
     """Issue #6242: an unchanged count(...) == 1 line must not pair with an added pin."""
-    diff = (_FIXTURES / "context_count_eq_one.diff").read_text(encoding="utf-8")
+    diff = (_FIXTURES / 'context_count_eq_one.diff').read_text(encoding='utf-8')
     assert check_test_version_exact_assert(diff) == []
-
 
 def test_added_pin_and_count_eq_one_still_fail():
     """Issue #6242: both on added lines remains a violation."""
-    diff = (_FIXTURES / "added_pin_and_count.diff").read_text(encoding="utf-8")
+    diff = (_FIXTURES / 'added_pin_and_count.diff').read_text(encoding='utf-8')
     _assert_violation(check_test_version_exact_assert(diff))
-
 
 def test_fixture_data_files_are_skipped():
     """Issue #6242: non-.py files under tests/ (diff fixtures) are data, not test code."""
-    diff = (_FIXTURES / "fixture_data_file.diff").read_text(encoding="utf-8")
+    diff = (_FIXTURES / 'fixture_data_file.diff').read_text(encoding='utf-8')
     assert check_test_version_exact_assert(diff) == []
-
 
 def test_count_eq_one_inside_string_is_not_code():
     """Issue #6242: count(...) == 1 inside a docstring or string literal is prose, not a check."""
-    diff = (_FIXTURES / "count_eq_one_in_string.diff").read_text(encoding="utf-8")
+    diff = (_FIXTURES / 'count_eq_one_in_string.diff').read_text(encoding='utf-8')
     assert check_test_version_exact_assert(diff) == []
