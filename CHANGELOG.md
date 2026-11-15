@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.188.1 - 2026-11-15
+
 ### Removed
 
 - **BREAKING:** `engines.<role>.allowed`, `default_model`, and `light_model`. Configure ordered `[engine, model]` routes under `heavy` and optional `light` instead. Example migration:
