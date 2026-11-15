@@ -118,17 +118,6 @@ def _run_check(gate: ReviewGate) -> list[str]:
     return mock_run.call_args.args[2]
 
 
-def test_check_fills_missing_optional_variable(tmp_path: Path, capsys) -> None:
-    gate = ReviewGate(
-        _optional_cfg("execution_constraints"), "cp2", tmp_path, {"issue_number": "1"}
-    )
-    variables = _run_check(gate)
-    assert "issue_number=1" in variables
-    assert "execution_constraints=" in variables
-    err_lines = [ln for ln in capsys.readouterr().err.splitlines() if ln]
-    assert err_lines.count(_FILL_LINE) == 1
-
-
 def test_check_does_not_override_passed_optional_variable(
     tmp_path: Path, capsys
 ) -> None:

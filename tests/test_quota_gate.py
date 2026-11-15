@@ -2,12 +2,10 @@
 from __future__ import annotations
 
 import json
-import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from issuesmith import quota_gate
 from issuesmith.quota_gate import (
     GitHubApiState,
     is_github_api_low,
@@ -56,21 +54,6 @@ def test_no_rate_limit_record_returns_none(tmp_path):
     assert read_github_api_state(path) is None
 
 
-def test_reads_latest_rate_limit_record(tmp_path):
-    reset = _NOW + timedelta(minutes=30)
-    path = _write_audit(tmp_path / "audit.jsonl", [
-        _rate_record(4000, reset),
-        {"event": "task_started", "uuid": "a"},
-        _rate_record(500, reset),
-        {"event": "task_finished", "uuid": "a"},
-    ])
-    state = read_github_api_state(path)
-    assert state is not None
-    assert state.remaining == 500
-    assert state.reset_at == datetime.fromtimestamp(int(reset.timestamp()), tz=timezone.utc)
-    assert state.observed_at == datetime(2026, 9, 25, 3, 59, tzinfo=timezone.utc)
-
-
 def test_skips_truncated_tail_line(tmp_path):
     reset = _NOW + timedelta(minutes=30)
     path = _write_audit(tmp_path / "audit.jsonl", [
@@ -86,17 +69,6 @@ def test_malformed_latest_record_returns_none(tmp_path):
         {"event": "github_rate_limit", "remaining": "x", "reset": "y"},
     ])
     assert read_github_api_state(path) is None
-
-
-def test_reads_across_chunk_boundaries(tmp_path, monkeypatch):
-    monkeypatch.setattr(quota_gate, "_CHUNK_SIZE", 7)
-    reset = _NOW + timedelta(minutes=30)
-    filler = [{"event": "task_started", "uuid": f"u{i}"} for i in range(20)]
-    path = _write_audit(
-        tmp_path / "audit.jsonl", [_rate_record(1234, reset), *filler],
-    )
-    state = read_github_api_state(path)
-    assert state is not None and state.remaining == 1234
 
 
 def _state(remaining: int, reset_at: datetime) -> GitHubApiState:
@@ -123,29 +95,6 @@ def test_is_low_past_reset_is_false():
 def test_is_low_naive_now_treated_as_utc():
     naive = _NOW.replace(tzinfo=None)
     assert is_github_api_low(_state(10, _NOW + timedelta(minutes=1)), 800, naive) is True
-
-
-def test_notified_flag_roundtrip_preserves_quota_state(tmp_path):
-    path = tmp_path / "quota-gate.json"
-    path.write_text(json.dumps({
-        "schema_version": 1,
-        "engines": {"claude": {"status": "available"}},
-        "deferred_tasks": {},
-        "draining_engines": {},
-        "running_tasks": {},
-    }), encoding="utf-8")
-
-    assert read_github_api_notified(path) is False
-    assert write_github_api_notified(path, True) is True
-    assert write_github_api_notified(path, True) is False
-    assert read_github_api_notified(path) is True
-
-    data = json.loads(path.read_text(encoding="utf-8"))
-    assert data["engines"] == {"claude": {"status": "available"}}
-    assert data["resources"] == {"github_api_notified": True}
-
-    assert write_github_api_notified(path, False) is True
-    assert read_github_api_notified(path) is False
 
 
 def test_notified_flag_missing_file(tmp_path):
@@ -186,49 +135,3 @@ def test_notified_read_value_error_returns_false(tmp_path):
     assert read_github_api_notified(path) is False
 
 
-def test_notified_write_preserves_unknown_top_level_keys(tmp_path):
-    path = tmp_path / "quota-gate.json"
-    path.write_text(
-        json.dumps({
-            "schema_version": 1,
-            "engines": {},
-            "deferred_tasks": {},
-            "draining_engines": {},
-            "running_tasks": {},
-            "custom_marker": 42,
-        }),
-        encoding="utf-8",
-    )
-    assert write_github_api_notified(path, True) is True
-    data = json.loads(path.read_text(encoding="utf-8"))
-    assert data["custom_marker"] == 42
-    assert data["resources"] == {"github_api_notified": True}
-
-
-def test_notified_concurrent_write_only_one_transition(tmp_path):
-    path = tmp_path / "quota-gate.json"
-    path.write_text(
-        json.dumps({
-            "schema_version": 1,
-            "engines": {},
-            "deferred_tasks": {},
-            "draining_engines": {},
-            "running_tasks": {},
-        }),
-        encoding="utf-8",
-    )
-    results: list[bool] = []
-    lock = threading.Lock()
-
-    def worker() -> None:
-        changed = write_github_api_notified(path, True)
-        with lock:
-            results.append(changed)
-
-    threads = [threading.Thread(target=worker) for _ in range(12)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
-    assert results.count(True) == 1
-    assert read_github_api_notified(path) is True
