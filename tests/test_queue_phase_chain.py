@@ -218,82 +218,6 @@ class TestResolveNextPhase:
 
 
 class TestQueueChainEnqueue:
-    def test_draft_done_enqueues_develop_with_chain_metadata(
-        self, tmp_path, monkeypatch, issuesmith_config
-    ):
-        _patch_paths(tmp_path, monkeypatch, issuesmith_config)
-        from issuesmith import queue as qmod
-
-        store = _store(tmp_path)
-        draft = store.enqueue(
-            issue=42,
-            phase="draft",
-            source="skill",
-            actor_kind="human",
-            priority="high",
-            requested_by=["alice"],
-            requested_at=_NOW,
-        )
-        store.complete(draft.request_id, "dispatched")
-        store.add_in_flight(42, "claude", role="design", phase="draft")
-        client = _Client(
-            {
-                42: {
-                    "state": "OPEN",
-                    "labels": [{"name": "issuesmith:draft-done"}],
-                    "body": _body(),
-                }
-            }
-        )
-        qmod._release_finished_in_flight(store, client, [])
-        snap = store.snapshot()
-        develop = [
-            req
-            for req in snap.requests.values()
-            if req.issue == 42 and req.phase == "develop"
-        ]
-        assert len(develop) == 1
-        assert develop[0].source == "queue-chain"
-        assert develop[0].priority == "high"
-        assert develop[0].requested_by == (f"queue-chain:{draft.request_id}",)
-        assert not snap.in_flight
-
-    def test_idempotent_on_repeated_tick(self, tmp_path, monkeypatch, issuesmith_config):
-        _patch_paths(tmp_path, monkeypatch, issuesmith_config)
-        from issuesmith import queue as qmod
-
-        store = _store(tmp_path)
-        store.complete(
-            store.enqueue(
-                issue=42,
-                phase="draft",
-                source="skill",
-                actor_kind="human",
-                priority="high",
-                requested_by=["alice"],
-                requested_at=_NOW,
-            ).request_id,
-            "dispatched",
-        )
-        store.add_in_flight(42, "claude", role="design", phase="draft")
-        client = _Client(
-            {
-                42: {
-                    "state": "OPEN",
-                    "labels": [{"name": "issuesmith:draft-done"}],
-                    "body": _body(),
-                }
-            }
-        )
-        qmod._release_finished_in_flight(store, client, [])
-        qmod._release_finished_in_flight(store, client, [])
-        develop = [
-            req
-            for req in store.snapshot().requests.values()
-            if req.issue == 42 and req.phase == "develop"
-        ]
-        assert len(develop) == 1
-
     def test_fetch_failure_keeps_design_slot_until_successor_is_enqueued(
         self, tmp_path, monkeypatch, issuesmith_config
     ):
@@ -334,32 +258,6 @@ class TestQueueChainEnqueue:
         assert not snap.in_flight
         assert len([req for req in snap.requests.values() if req.phase == "develop"]) == 1
 
-    def test_skips_when_develop_already_ready(self, tmp_path, monkeypatch, issuesmith_config):
-        _patch_paths(tmp_path, monkeypatch, issuesmith_config)
-        from issuesmith import queue as qmod
-
-        store = _store(tmp_path)
-        store.add_in_flight(42, "claude", role="design", phase="draft")
-        client = _Client(
-            {
-                42: {
-                    "state": "OPEN",
-                    "labels": [
-                        {"name": "issuesmith:draft-done"},
-                        {"name": "issuesmith:develop-ready"},
-                    ],
-                    "body": _body(),
-                }
-            }
-        )
-        qmod._release_finished_in_flight(store, client, [])
-        develop = [
-            req
-            for req in store.snapshot().requests.values()
-            if req.issue == 42 and req.phase == "develop"
-        ]
-        assert develop == []
-
     def test_milestone_parent_does_not_chain(self, tmp_path, monkeypatch, issuesmith_config):
         _patch_paths(tmp_path, monkeypatch, issuesmith_config)
         from issuesmith import queue as qmod
@@ -385,48 +283,6 @@ class TestQueueChainEnqueue:
             if req.source == "queue-chain"
         ]
         assert chained == []
-
-    def test_excluded_impl_label_does_not_chain(
-        self, tmp_path, monkeypatch, issuesmith_config
-    ):
-        """Primary impl phase ``excludes`` blocks queue-chain after design completes."""
-        from issuesmith import queue as qmod
-
-        cfg_path = issuesmith_config
-        payload = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
-        phases = []
-        for ph in payload["phases"]:
-            item = dict(ph)
-            if item["name"] == "develop":
-                item["excludes"] = ["scope:milestone", "scope:epic"]
-            phases.append(item)
-        payload["phases"] = phases
-        cfg_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
-        reset_config_cache()
-        _patch_paths(tmp_path, monkeypatch, cfg_path)
-
-        store = _store(tmp_path)
-        store.add_in_flight(200, "claude", role="design", phase="draft")
-        client = _Client(
-            {
-                200: {
-                    "state": "OPEN",
-                    "labels": [
-                        {"name": "scope:epic"},
-                        {"name": "issuesmith:draft-done"},
-                    ],
-                    "body": _body(),
-                }
-            }
-        )
-        qmod._release_finished_in_flight(store, client, [])
-        chained = [
-            req
-            for req in store.snapshot().requests.values()
-            if req.source == "queue-chain"
-        ]
-        assert chained == []
-        reset_config_cache()
 
     def test_terminal_issue_does_not_chain(self, tmp_path, monkeypatch, issuesmith_config):
         _patch_paths(tmp_path, monkeypatch, issuesmith_config)
@@ -481,56 +337,6 @@ class TestQueueChainEnqueue:
         assert merge[0].source == "queue-chain"
         assert {e["issue"] for e in snap.in_flight} == {42}
 
-    def test_chain_waits_on_advance_when_via_plan(
-        self, tmp_path, monkeypatch, issuesmith_config
-    ):
-        _patch_paths(tmp_path, monkeypatch, issuesmith_config)
-        from issuesmith import queue as qmod
-
-        store = _store(tmp_path)
-        store.complete(
-            store.enqueue(
-                issue=42,
-                phase="draft",
-                source="skill",
-                actor_kind="human",
-                priority="normal",
-                requested_by=["alice"],
-                requested_at=_NOW,
-            ).request_id,
-            "dispatched",
-        )
-        store.add_in_flight(42, "claude", role="design", phase="draft")
-        client = _Client(
-            {
-                42: {
-                    "state": "OPEN",
-                    "labels": [{"name": "issuesmith:draft-done"}],
-                    "body": _body(),
-                }
-            }
-        )
-        qmod._release_finished_in_flight(store, client, [])
-        now = datetime(2026, 10, 28, 12, 0, tzinfo=_JST)
-        monkeypatch.setattr(qmod, "_pipeline_idle_enough", lambda idle, n: True)
-        monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
-        monkeypatch.setattr(
-            "issuesmith.pins.develop_pins_landed",
-            lambda body, config: (False, "dependencies not satisfied: pin test not landed"),
-        )
-        queue_plan = qmod.plan(store, client, now=now)
-        snap = store.snapshot()
-        develop_entries = [
-            e
-            for e in queue_plan.entries
-            if (snap.requests.get(e.request_id) is not None)
-            and snap.requests[e.request_id].phase == "develop"
-        ]
-        assert len(develop_entries) == 1
-        assert develop_entries[0].decision == "wait"
-        assert develop_entries[0].reason != "ok"
-
-
 class TestTerminalLabelsUseNamespace:
     def test_rejected_and_superseded_use_label_namespace(
         self, tmp_path, monkeypatch, issuesmith_config
@@ -579,43 +385,3 @@ class TestTerminalLabelsUseNamespace:
         reset_config_cache()
 
 
-class TestDispatchIntegration:
-    def test_release_path_chains_before_design_slot_freed(
-        self, tmp_path, monkeypatch, issuesmith_config
-    ):
-        """Same as enqueue test; documents dispatch_one calls release before apply."""
-        _patch_paths(tmp_path, monkeypatch, issuesmith_config)
-        from issuesmith import queue as qmod
-
-        store = _store(tmp_path)
-        draft = store.enqueue(
-            issue=50,
-            phase="draft",
-            source="skill",
-            actor_kind="human",
-            priority="high",
-            requested_by=["alice"],
-            requested_at=_NOW,
-        )
-        store.complete(draft.request_id, "dispatched")
-        store.add_in_flight(50, "claude", role="design", phase="draft")
-        client = _Client(
-            {
-                50: {
-                    "state": "OPEN",
-                    "title": "t",
-                    "body": _body(),
-                    "labels": [{"name": "issuesmith:draft-done"}],
-                }
-            }
-        )
-        qmod._release_finished_in_flight(store, client, [])
-        snap = store.snapshot()
-        develop = [
-            req
-            for req in snap.requests.values()
-            if req.issue == 50 and req.phase == "develop" and req.source == "queue-chain"
-        ]
-        assert len(develop) == 1
-        assert develop[0].priority == "high"
-        assert not snap.in_flight

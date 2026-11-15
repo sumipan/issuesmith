@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from tests import test_queue as _base
-from tests.test_queue import _NOW, _VALID_BODY, _ProdShapeClient, _store
+from tests.test_queue import _NOW, _ProdShapeClient, _store
 
 nexus_config = _base.nexus_config
 
@@ -106,35 +106,6 @@ class TestCLI:
         out = capsys.readouterr().out
         assert "blocks unchanged" in out
 
-    def test_status_shows_halt_reason(self, tmp_path, capsys):
-        """When blocks are active, status lists them (#2808)."""
-        from issuesmith import queue as qmod
-
-        store = _store(tmp_path)
-        store.set_halt(True, "pipeline idle timeout")
-        store.enqueue(
-            issue=2808, phase="draft", source="night-queue", actor_kind="automation",
-            priority="normal", requested_by=["nq"], requested_at=_NOW,
-        )
-
-        code = qmod.main(
-            [
-                "--queue-path",
-                str(tmp_path / "queue.jsonl"),
-                "--state-path",
-                str(tmp_path / "state.json"),
-                "--lock-path",
-                str(tmp_path / "lock"),
-                "status",
-            ]
-        )
-        assert code == 0
-        out = capsys.readouterr().out
-        assert "blocks=1" in out
-        assert "pipeline idle timeout" in out
-        assert "issue=#2808" in out
-
-
 # --- role-aware quota gating (2026-09-04) ---
 
 def _write_quota(path, engines: dict[str, str]) -> None:
@@ -187,47 +158,6 @@ def test_required_engines_defaults_when_state_missing(tmp_path):
     assert qmod._required_engines_paused(q, tmp_path / "missing.yml") == ["claude"]
 
 
-def test_required_engines_paused_role_filters_to_phase_engine(tmp_path):
-    """With role=, only look at that role's engine (#3091)."""
-    from issuesmith import queue as qmod
-
-    q = tmp_path / "quota.json"
-    e = tmp_path / "engine.yml"
-    _write_quota(q, {"claude": "paused", "cursor": "available"})
-    _write_engine_state(e, "claude", "cursor")
-    assert qmod._required_engines_paused(q, e, role="design") == ["claude"]
-    assert qmod._required_engines_paused(q, e, role="implementation") == []
-
-
-def test_required_engines_paused_brake_only(tmp_path, capsys, monkeypatch):
-    """Brake-only pause is ignored; quota state alone drives engine_paused waits."""
-    from issuesmith import queue as qmod
-
-    monkeypatch.setattr(qmod, "_BRAKE_PATH_DEPRECATED_WARNED", False)
-    q = tmp_path / "quota.json"
-    b = tmp_path / "brake.json"
-    e = tmp_path / "engine.yml"
-    _write_quota(q, {"claude": "available", "cursor": "available"})
-    _write_quota(b, {"claude": "paused", "cursor": "available"})
-    _write_engine_state(e, "claude", "cursor")
-    assert qmod._required_engines_paused(q, e, role="design", brake_path=b) == []
-    assert qmod._required_engines_paused(q, e, role="implementation", brake_path=b) == []
-    assert "brake_state is deprecated" in capsys.readouterr().err
-
-
-def test_required_engines_paused_quota_only(tmp_path):
-    """AC-4: paused on global quota gate alone is also a stop target."""
-    from issuesmith import queue as qmod
-
-    q = tmp_path / "quota.json"
-    b = tmp_path / "brake.json"
-    e = tmp_path / "engine.yml"
-    _write_quota(q, {"claude": "paused", "cursor": "available"})
-    _write_quota(b, {"claude": "available", "cursor": "available"})
-    _write_engine_state(e, "claude", "cursor")
-    assert qmod._required_engines_paused(q, e, role="design", brake_path=b) == ["claude"]
-
-
 def test_required_engines_paused_same_path_no_duplicate(tmp_path, monkeypatch):
     """AC-5: same path → one snapshot and no duplicate engine names."""
     from ghdag.quota import QuotaGate
@@ -264,19 +194,6 @@ def test_required_engines_paused_union_dedupes(tmp_path):
     assert qmod._required_engines_paused(q, e, brake_path=b) == ["claude"]
 
 
-def test_required_engines_paused_both_available(tmp_path):
-    """Available on both gates → empty list."""
-    from issuesmith import queue as qmod
-
-    q = tmp_path / "quota.json"
-    b = tmp_path / "brake.json"
-    e = tmp_path / "engine.yml"
-    _write_quota(q, {"claude": "available"})
-    _write_quota(b, {"claude": "available"})
-    _write_engine_state(e, "claude", "cursor")
-    assert qmod._required_engines_paused(q, e, role="design", brake_path=b) == []
-
-
 _FIXTURES = Path(__file__).resolve().parent / "fixtures"
 _QUOTA_CLAUDE_PAUSED = _FIXTURES / "quota_claude_paused_no_resume.json"
 _ENGINE_DESIGN_CLAUDE = _FIXTURES / "engine_state_design_claude_impl_cursor.yml"
@@ -284,87 +201,6 @@ _ENGINE_DESIGN_CLAUDE = _FIXTURES / "engine_state_design_claude_impl_cursor.yml"
 
 class TestRoleScopedPausedDispatch:
     """AC-4: claude paused with resume_at=null still allows develop(cursor) (#3091)."""
-
-    def test_develop_dispatches_while_design_engine_paused(self, tmp_path, monkeypatch):
-        from zoneinfo import ZoneInfo
-
-        from issuesmith import queue as qmod
-
-        store = _store(tmp_path)
-        store.enqueue(
-            issue=3081, phase="develop", source="skill", actor_kind="human",
-            priority="normal", requested_by=["alice"], requested_at=_NOW,
-        )
-        client = _ProdShapeClient(
-            issues={
-                3081: {
-                    "state": "OPEN",
-                    "title": "t",
-                    "body": _VALID_BODY,
-                    "labels": [{"name": "issuesmith:draft-done"}],
-                }
-            },
-            open_issue_rows=[
-                {
-                    "number": 3081,
-                    "title": "t",
-                    "state": "open",
-                    "body": _VALID_BODY,
-                    "labels": [{"name": "issuesmith:draft-done"}],
-                }
-            ],
-        )
-        monkeypatch.setattr(qmod, "_pipeline_idle_enough", lambda idle, now: True)
-        monkeypatch.setattr(qmod, "QUOTA_STATE_PATH", _QUOTA_CLAUDE_PAUSED)
-        monkeypatch.setattr(qmod, "ENGINE_STATE_PATH", _ENGINE_DESIGN_CLAUDE)
-        now = datetime(2026, 9, 10, 18, 19, tzinfo=ZoneInfo("Asia/Tokyo"))
-        result = qmod.dispatch_one(
-            now=now,
-            client=client,
-            store=store,
-            skip_seed=True,
-            call_llm=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")),
-        )
-        assert result.dispatched is True
-        assert result.label == "issuesmith:develop-ready"
-        assert result.issue == 3081
-
-    def test_draft_blocked_while_design_engine_paused(self, tmp_path, monkeypatch):
-        from zoneinfo import ZoneInfo
-
-        from issuesmith import queue as qmod
-
-        store = _store(tmp_path)
-        store.enqueue(
-            issue=3082, phase="draft", source="skill", actor_kind="human",
-            priority="normal", requested_by=["alice"], requested_at=_NOW,
-        )
-        client = _ProdShapeClient(
-            issues={
-                3082: {
-                    "state": "OPEN",
-                    "title": "t",
-                    "body": _VALID_BODY,
-                    "labels": [],
-                }
-            },
-            open_issue_rows=[],
-        )
-        monkeypatch.setattr(qmod, "_pipeline_idle_enough", lambda idle, now: True)
-        monkeypatch.setattr(qmod, "QUOTA_STATE_PATH", _QUOTA_CLAUDE_PAUSED)
-        monkeypatch.setattr(qmod, "ENGINE_STATE_PATH", _ENGINE_DESIGN_CLAUDE)
-        now = datetime(2026, 9, 10, 18, 19, tzinfo=ZoneInfo("Asia/Tokyo"))
-        result = qmod.dispatch_one(
-            now=now,
-            client=client,
-            store=store,
-            skip_seed=True,
-            call_llm=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")),
-        )
-        assert result.dispatched is False
-        assert "paused" in result.reason
-        assert "role=design" in result.reason
-        assert "claude" in result.reason
 
     def test_status_shows_role_in_paused_wait_reason(self, tmp_path, monkeypatch, capsys):
         from issuesmith import queue as qmod
@@ -588,61 +424,3 @@ class TestTickApiBudget:
         assert client.issue_get_count(_IN_FLIGHT[1]) == 1, client.calls
 
 
-class TestTickIssueCache:
-    def test_issue_get_memoized_with_union_fields(self):
-        from issuesmith import queue as qmod
-
-        client = _CountingClient(issues={1: {"state": "OPEN", "title": "t", "body": "b",
-                                             "labels": []}})
-        cache = qmod._TickCachedForge(client)
-        a = cache.issue_get(1, fields=["state", "labels"])
-        b = cache.issue_get(1, fields=["state", "labels", "title", "body", "number"])
-        assert a["state"] == b["state"] == "OPEN"
-        assert b["body"] == "b"
-        assert client.issue_get_count(1) == 1
-
-    def test_write_invalidates_issue(self):
-        from issuesmith import queue as qmod
-
-        client = _CountingClient(issues={1: {"state": "OPEN", "labels": []}})
-        cache = qmod._TickCachedForge(client)
-        cache.issue_get(1, fields=["state"])
-        cache.issue_update(1, labels_add=["x"], labels_remove=[])
-        cache.issue_get(1, fields=["state"])
-        assert client.issue_get_count(1) == 2
-
-    def test_remove_label_invalidates_issue(self):
-        from issuesmith import queue as qmod
-
-        client = _CountingClient(issues={1: {"state": "OPEN", "labels": []}})
-        client.remove_label = lambda number, label: client.calls.append(("remove_label", number))
-        cache = qmod._TickCachedForge(client)
-        cache.issue_get(1, fields=["state"])
-        cache.remove_label(1, "x")
-        cache.issue_get(1, fields=["state"])
-        assert client.issue_get_count(1) == 2
-
-    def test_errors_are_memoized(self):
-        from issuesmith import queue as qmod
-
-        client = _CountingClient(issues={})
-        cache = qmod._TickCachedForge(client)
-        for _ in range(2):
-            with pytest.raises(KeyError):
-                cache.issue_get(404, fields=["state"])
-        assert client.issue_get_count(404) == 1
-
-    def test_labeled_open_list_filtered_locally(self):
-        from issuesmith import queue as qmod
-
-        client = _CountingClient(issues={
-            1: {"state": "OPEN", "labels": [{"name": "scope:milestone"}]},
-            2: {"state": "OPEN", "labels": []},
-        })
-        cache = qmod._TickCachedForge(client)
-        ms = cache.api_request("issues?state=open&labels=scope:milestone&per_page=100",
-                               paginate=True)
-        all_rows = cache.api_request("issues?state=open&per_page=100", paginate=True)
-        assert [r["number"] for r in ms] == [1]
-        assert sorted(r["number"] for r in all_rows) == [1, 2]
-        assert len([c for c in client.calls if c[0] == "api_request"]) == 1

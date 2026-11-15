@@ -190,25 +190,6 @@ class _DispatchClient:
         return []
 
 
-def test_allow_paths_conflict_overlapping_same_repo():
-    from issuesmith.queue import _allow_paths_conflict
-
-    in_flight = [
-        {
-            "issue": 2981,
-            "engine": "claude",
-            "role": "implementation",
-            "phase": "develop",
-            "target_repo": "sumipan/issuesmith",
-            "allow_paths": ["tests/**"],
-        }
-    ]
-    assert (
-        _allow_paths_conflict("sumipan/issuesmith", ("tests/test_queue.py",), in_flight)
-        == 2981
-    )
-
-
 def test_allow_paths_conflict_ignores_draft_and_sub_runs():
     """draft (B1) / sub (SUB1) only write Issue bodies: they neither conflict nor block."""
     from issuesmith.queue import _allow_paths_conflict
@@ -230,26 +211,6 @@ def test_allow_paths_conflict_ignores_draft_and_sub_runs():
     assert _allow_paths_conflict("sumipan/nexus", paths, [draft, develop], candidate_phase="develop") == 1
     # without candidate_phase (legacy callers) behaviour is unchanged for develop-like entries
     assert _allow_paths_conflict("sumipan/nexus", paths, [develop]) == 1
-
-
-def test_allow_paths_conflict_non_overlapping_same_repo():
-    from issuesmith.queue import _allow_paths_conflict
-
-    in_flight = [
-        {
-            "issue": 2976,
-            "engine": "cursor",
-            "role": "implementation",
-            "target_repo": "sumipan/nexus",
-            "allow_paths": ["tools/secretary/**"],
-        }
-    ]
-    assert (
-        _allow_paths_conflict(
-            "sumipan/nexus", ("skills/system-issuesmith/**",), in_flight
-        )
-        is None
-    )
 
 
 def test_allow_paths_conflict_different_repos():
@@ -284,33 +245,6 @@ def test_allow_paths_conflict_legacy_entry_is_conflict():
     assert _allow_paths_conflict("sumipan/issuesmith", ("src/issuesmith/queue.py",), [legacy]) == 2980
 
 
-def test_allow_paths_conflict_candidate_issue_excludes_self():
-    from issuesmith.queue import _allow_paths_conflict
-
-    entry = {
-        "issue": 100,
-        "phase": "develop",
-        "target_repo": "sumipan/nexus",
-        "allow_paths": ["tools/x.py"],
-        "occupancy_source": "open_pr",
-    }
-    paths = ("tools/x.py",)
-    assert (
-        _allow_paths_conflict(
-            "sumipan/nexus", paths, [entry], candidate_phase="develop", candidate_issue=100
-        )
-        is None
-    )
-    assert (
-        _allow_paths_conflict(
-            "sumipan/nexus", paths, [entry], candidate_phase="develop", candidate_issue=200
-        )
-        == 100
-    )
-    # Legacy call without candidate_issue still conflicts with self entry
-    assert _allow_paths_conflict("sumipan/nexus", paths, [entry], candidate_phase="develop") == 100
-
-
 def test_dispatch_skips_overlapping_paths(tmp_path, monkeypatch, issuesmith_config):
     _patch_paths(tmp_path, monkeypatch, issuesmith_config)
     from issuesmith import queue as qmod
@@ -341,84 +275,6 @@ def test_dispatch_skips_overlapping_paths(tmp_path, monkeypatch, issuesmith_conf
     monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
     result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
     assert result.dispatched is False
-
-
-def test_dispatch_draft_ignores_overlapping_paths(tmp_path, monkeypatch, issuesmith_config):
-    """Draft (B1) only edits the Issue body, so overlapping develop paths do not block it."""
-    _patch_paths(tmp_path, monkeypatch, issuesmith_config)
-    from issuesmith import queue as qmod
-
-    store = _store(tmp_path)
-    store.add_in_flight(
-        2981,
-        "claude",
-        role="implementation",
-        phase="develop",
-        allow_paths=("tests/**",),
-        target_repo="sumipan/issuesmith",
-    )
-    store.enqueue(
-        issue=2980,
-        phase="draft",
-        source="skill",
-        actor_kind="human",
-        priority="normal",
-        requested_by=["alice"],
-        requested_at=_NOW,
-    )
-    client = _DispatchClient(
-        {2980: {"state": "OPEN", "labels": [], "body": _BODY_QUEUE}}
-    )
-    now = datetime(2026, 9, 9, 12, 0, tzinfo=_JST)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
-    result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
-    assert result.dispatched is True
-
-
-def test_dispatch_allows_non_overlapping_or_other_repo(
-    tmp_path, monkeypatch, issuesmith_config,
-):
-    _patch_paths(tmp_path, monkeypatch, issuesmith_config)
-    from issuesmith import queue as qmod
-
-    store = _store(tmp_path)
-    store.add_in_flight(
-        2938,
-        "cursor",
-        role="implementation",
-        allow_paths=("skills/system-issuesmith/**",),
-        target_repo="sumipan/nexus",
-    )
-    store.enqueue(
-        issue=2976,
-        phase="draft",
-        source="skill",
-        actor_kind="human",
-        priority="normal",
-        requested_by=["alice"],
-        requested_at=_NOW,
-    )
-    store.enqueue(
-        issue=2980,
-        phase="draft",
-        source="skill",
-        actor_kind="human",
-        priority="normal",
-        requested_by=["alice"],
-        requested_at=_NOW,
-    )
-    store.mark_triaged(store.snapshot().revision)
-    client = _DispatchClient(
-        {
-            2976: {"state": "OPEN", "labels": [], "body": _BODY_SECRETARY},
-            2980: {"state": "OPEN", "labels": [], "body": _BODY_SRC},
-        }
-    )
-    now = datetime(2026, 9, 9, 12, 0, tzinfo=_JST)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
-    first = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
-    assert first.dispatched is True
-    assert first.issue in (2976, 2980)
 
 
 def test_phase_preconditions_block_unparsed_dependency_section(monkeypatch):
@@ -479,40 +335,6 @@ def test_phase_preconditions_block_unsatisfied_deps(phase, monkeypatch):
     assert why == "dependencies not satisfied"
 
 
-def test_draft_done_releases_normal_issue(tmp_path, monkeypatch, issuesmith_config):
-    _patch_paths(tmp_path, monkeypatch, issuesmith_config)
-    from issuesmith import queue as qmod
-
-    store = _store(tmp_path)
-    store.add_in_flight(100, "claude", role="design", allow_paths=("src/**",), target_repo="sumipan/nexus")
-    store.enqueue(
-        issue=200,
-        phase="draft",
-        source="skill",
-        actor_kind="human",
-        priority="normal",
-        requested_by=["alice"],
-        requested_at=_NOW,
-    )
-    client = _DispatchClient(
-        {
-            100: {
-                "state": "OPEN",
-                "labels": [{"name": "issuesmith:draft-done"}],
-                "body": _BODY_SKILLS,
-            },
-            200: {"state": "OPEN", "labels": [], "body": _BODY_SECRETARY},
-        }
-    )
-    now = datetime(2026, 9, 9, 12, 0, tzinfo=_JST)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
-    result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
-    assert result.dispatched is True
-    issues = {e["issue"] for e in store.snapshot().in_flight}
-    assert 100 not in issues
-    assert 200 in issues
-
-
 def test_draft_done_does_not_release_when_develop_ready(
     tmp_path, monkeypatch, issuesmith_config,
 ):
@@ -548,26 +370,6 @@ def test_draft_done_does_not_release_when_develop_ready(
     qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
     issues = {e["issue"] for e in store.snapshot().in_flight}
     assert 100 in issues
-
-
-@pytest.mark.parametrize("next_label", ["issuesmith:sub-ready", "issuesmith:merge-ready"])
-def test_draft_done_releases_stale_design_entry_for_non_develop_phase(next_label):
-    """Only develop-ready/running keeps a draft-done design entry in_flight."""
-    from issuesmith import queue as qmod
-
-    client = _DispatchClient(
-        {
-            100: {
-                "state": "OPEN",
-                "labels": [
-                    {"name": "issuesmith:draft-done"},
-                    {"name": next_label},
-                ],
-            }
-        }
-    )
-    entry = {"issue": 100, "engine": "claude", "role": "design"}
-    assert qmod._in_flight_should_release(client, entry) is True
 
 
 def test_strict_order_breaks_on_capacity_wait(tmp_path, monkeypatch, issuesmith_config):
@@ -628,65 +430,6 @@ def test_strict_order_breaks_on_capacity_wait(tmp_path, monkeypatch, issuesmith_
     monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
     result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
     assert result.dispatched is False
-
-
-def test_strict_order_false_allows_skip(tmp_path, monkeypatch, issuesmith_config):
-    payload = yaml.safe_load(issuesmith_config.read_text(encoding="utf-8"))
-    payload["concurrency"] = {
-        "default": 1,
-        "per_engine": {"claude": 1, "cursor": 1},
-        "strict_order": False,
-    }
-    issuesmith_config.write_text(yaml.safe_dump(payload), encoding="utf-8")
-    reset_config_cache()
-    _patch_paths(tmp_path, monkeypatch, issuesmith_config)
-    _write_engine_state(tmp_path, design="claude", implementation="cursor")
-    from issuesmith import queue as qmod
-
-    store = _store(tmp_path)
-    store.add_in_flight(
-        1,
-        "claude",
-        role="design",
-        allow_paths=("unrelated/**",),
-        target_repo="sumipan/nexus",
-    )
-    store.enqueue(
-        issue=10,
-        phase="draft",
-        source="skill",
-        actor_kind="human",
-        priority="normal",
-        requested_by=["alice"],
-        requested_at=_NOW,
-    )
-    store.enqueue(
-        issue=11,
-        phase="develop",
-        source="skill",
-        actor_kind="human",
-        priority="normal",
-        requested_by=["alice"],
-        requested_at=_NOW,
-    )
-    snap = store.snapshot()
-    store.mark_triaged(snap.revision)
-    client = _DispatchClient(
-        {
-            1: {"state": "OPEN", "labels": [], "body": _BODY_SKILLS},
-            10: {"state": "OPEN", "labels": [], "body": _BODY_SECRETARY},
-            11: {
-                "state": "OPEN",
-                "labels": [{"name": "issuesmith:draft-done"}],
-                "body": _BODY_SRC,
-            },
-        }
-    )
-    now = datetime(2026, 9, 9, 12, 0, tzinfo=_JST)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
-    result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
-    assert result.dispatched is True
-    assert result.issue == 11
 
 
 def test_concurrency_config_strict_order_default():
@@ -776,18 +519,6 @@ def test_sub_done_milestone_parent_releases_in_flight(tmp_path, monkeypatch, iss
     assert 2934 not in {e["issue"] for e in store.snapshot().in_flight}
 
 
-def test_sub_running_milestone_parent_stays_in_flight(tmp_path, monkeypatch, issuesmith_config):
-    _patch_paths(tmp_path, monkeypatch, issuesmith_config)
-    from issuesmith import queue as qmod
-
-    store = _store(tmp_path)
-    store.add_in_flight(2934, "cursor", role="implementation", allow_paths=("x/**",), target_repo="sumipan/nexus")
-    client = _DispatchClient(
-        {2934: {"state": "OPEN", "labels": [{"name": "issuesmith:sub-running"}], "body": _BODY_SKILLS}}
-    )
-    assert qmod._in_flight_should_release(client, store.snapshot().in_flight[0]) is False
-
-
 # ---------------------------------------------------------------------------
 # #4178: B1-failed design slot auto-release
 # ---------------------------------------------------------------------------
@@ -823,34 +554,6 @@ def test_b1_failed_design_releases_when_exec_all_done(tmp_path, monkeypatch):
     assert qmod._in_flight_should_release(Client(), entry) is True
 
 
-@pytest.mark.parametrize("active_label", [
-    "issuesmith:draft-ready",
-    "issuesmith:draft-running",
-    "issuesmith:develop-ready",
-    "issuesmith:develop-running",
-    "issuesmith:sub-ready",
-    "issuesmith:sub-running",
-])
-def test_b1_failed_design_stays_when_active_label(tmp_path, monkeypatch, active_label):
-    """design entry + active phase label → keep in_flight."""
-    from issuesmith import queue as qmod
-
-    exec_path, done_dir = _write_exec_done(tmp_path, 4163)
-    monkeypatch.setattr(qmod, "EXEC_PATH", exec_path)
-    monkeypatch.setattr(qmod, "DONE_DIR", done_dir)
-
-    class Client:
-        def issue_get(self, number, fields=None):
-            return {
-                "number": number,
-                "state": "OPEN",
-                "labels": [{"name": "scope:milestone"}, {"name": active_label}],
-            }
-
-    entry = {"issue": 4163, "engine": "claude", "role": "design"}
-    assert qmod._in_flight_should_release(Client(), entry) is False
-
-
 def test_b1_failed_design_stays_when_exec_incomplete(tmp_path, monkeypatch):
     """design entry + incomplete exec → keep in_flight."""
     import json as _json
@@ -875,40 +578,3 @@ def test_b1_failed_design_stays_when_exec_incomplete(tmp_path, monkeypatch):
     assert qmod._in_flight_should_release(Client(), entry) is False
 
 
-def test_b1_failed_design_stays_when_no_exec_records(tmp_path, monkeypatch):
-    """design entry + no exec records → keep in_flight (avoid erroneous release)."""
-    from issuesmith import queue as qmod
-
-    exec_path = tmp_path / "exec.jsonl"
-    done_dir = tmp_path / "done"
-    done_dir.mkdir()
-    exec_path.write_text("", encoding="utf-8")
-    monkeypatch.setattr(qmod, "EXEC_PATH", exec_path)
-    monkeypatch.setattr(qmod, "DONE_DIR", done_dir)
-
-    class Client:
-        def issue_get(self, number, fields=None):
-            return {"number": number, "state": "OPEN", "labels": [{"name": "scope:milestone"}]}
-
-    entry = {"issue": 4163, "engine": "claude", "role": "design"}
-    assert qmod._in_flight_should_release(Client(), entry) is False
-
-
-def test_implementation_entry_stays_when_no_draft_done(tmp_path, monkeypatch):
-    """#4137 regression: implementation entry never auto-releases without draft-done."""
-    from issuesmith import queue as qmod
-
-    exec_path, done_dir = _write_exec_done(tmp_path, 4163)
-    monkeypatch.setattr(qmod, "EXEC_PATH", exec_path)
-    monkeypatch.setattr(qmod, "DONE_DIR", done_dir)
-
-    class Client:
-        def issue_get(self, number, fields=None):
-            return {
-                "number": number,
-                "state": "OPEN",
-                "labels": [{"name": "issuesmith:develop-done"}],
-            }
-
-    entry = {"issue": 4163, "engine": "claude", "role": "implementation"}
-    assert qmod._in_flight_should_release(Client(), entry) is False

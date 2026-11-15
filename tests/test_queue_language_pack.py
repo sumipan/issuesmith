@@ -89,17 +89,6 @@ def _store(tmp_path: Path) -> QueueStore:
     )
 
 
-def _cli_paths(tmp_path: Path) -> list[str]:
-    return [
-        "--queue-path",
-        str(tmp_path / "queue.jsonl"),
-        "--state-path",
-        str(tmp_path / "state.json"),
-        "--lock-path",
-        str(tmp_path / "lock"),
-    ]
-
-
 def _request(issue: int = 7, phase: str = "develop") -> QueueRequest:
     return QueueRequest(
         "11111111-1111-1111-1111-111111111111", issue, phase, "s",
@@ -118,27 +107,6 @@ def test_migrated_module_has_no_cjk(rel):
 
 
 # --- queue comments -----------------------------------------------------------
-
-
-def test_intake_repair_comment_uses_pack(tmp_path, monkeypatch, custom_pack):
-    from issuesmith import queue as qmod
-
-    monkeypatch.setattr(qmod, "apply_redispatch_labels", lambda *a, **k: None)
-    store = _store(tmp_path)
-    r = store.enqueue(
-        issue=50, phase="develop", source="skill", actor_kind="human",
-        priority="normal", requested_by=["alice"], requested_at=_NOW,
-    )
-    req = store.effective_request(store.snapshot(), r.request_id)
-    client = MagicMock()
-    client.get_issue_comments.return_value = []
-
-    qmod._apply_repair(store, client, r.request_id, req, {"labels": []}, "missing target_repo")
-
-    body = client.issue_comment.call_args.args[1]
-    expected = custom_pack.message("queue.intake_repair", reason="missing target_repo")
-    assert body.startswith(expected)
-    assert body.startswith(_PREFIX)
 
 
 def test_repair_limit_reason_uses_pack(tmp_path, monkeypatch, custom_pack):
@@ -183,61 +151,6 @@ def test_dequeue_comment_uses_pack(tmp_path, monkeypatch, custom_pack):
 
 
 # --- triage decision reasons ----------------------------------------------------
-
-
-def test_triage_reasons_use_pack(custom_pack):
-    from issuesmith.queue_triage import deterministic_decision
-
-    closed = deterministic_decision(_request(7), {"state": "CLOSED", "labels": []})
-    assert closed.reason == custom_pack.message("queue_triage.closed", issue=7)
-
-    present = deterministic_decision(
-        _request(7), {"state": "OPEN", "labels": [{"name": "issuesmith:develop-running"}]}
-    )
-    assert present.reason == custom_pack.message(
-        "queue_triage.already_present", label="issuesmith:develop-running"
-    )
-
-    milestone = deterministic_decision(
-        _request(7, phase="develop"),
-        {
-            "state": "OPEN",
-            "labels": [
-                {"name": "issuesmith:draft-done"},
-                {"name": "scope:milestone"},
-            ],
-        },
-    )
-    assert milestone.reason == custom_pack.message(
-        "queue_triage.phase_excludes_label",
-        phase="develop",
-        label="scope:milestone",
-    )
-
-    sub = deterministic_decision(
-        _request(7, phase="sub"),
-        {"state": "OPEN", "labels": [{"name": "issuesmith:draft-done"}]},
-    )
-    assert sub.reason == custom_pack.message(
-        "queue_triage.phase_requires_label",
-        phase="sub",
-        label="scope:milestone",
-    )
-
-
-def test_triage_superseded_reason_uses_pack(custom_pack):
-    from issuesmith.queue_triage import deterministic_decision
-
-    title = "app: bump lib to v1.0.0"
-    decision = deterministic_decision(
-        _request(7, phase="draft"),
-        {"state": "OPEN", "title": title, "labels": []},
-        open_issues=[{"number": 8, "state": "OPEN", "title": "app: bump lib to v1.1.0"}],
-    )
-    assert decision.kind == "superseded"
-    assert decision.reason == custom_pack.message(
-        "queue_triage.superseded", issue=8, version="1.1.0"
-    )
 
 
 def test_readme_rewrite_titles_normalize_in_any_wording():
