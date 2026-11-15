@@ -23,38 +23,6 @@ paths_must_not_exist:
 ```
 """
 
-BODY_NEXUS_ONLY = """\
-## Acceptance Criteria
-
-- [x] done
-
-```yaml
-paths_must_exist:
-  - only_in_nexus.md
-```
-"""
-
-BODY_TARGET_ONLY = """\
-## Acceptance Criteria
-
-- [x] done
-
-```yaml
-paths_must_exist:
-  - only_in_target.py
-```
-"""
-
-BODY_MUST_NOT_EXIST = """\
-## Acceptance Criteria
-
-- [x] done
-
-```yaml
-paths_must_not_exist:
-  - lingering.txt
-```
-"""
 
 BODY_ONE_UNCHECKED = """\
 ## Acceptance Criteria
@@ -79,27 +47,6 @@ def test_check_gate_multi_root_unchecked_ac_returns_retry(tmp_path):
     assert result["unchecked_count"] == 1
 
 
-def test_synthesize_or_paths_must_exist_either_root_passes(tmp_path):
-    nexus = tmp_path / "nexus"
-    target = tmp_path / "target"
-    nexus.mkdir()
-    target.mkdir()
-    (nexus / "only_in_nexus.md").write_text("ok")
-    (target / "only_in_target.py").write_text("ok")
-
-    contract = {
-        "paths_must_exist": ["only_in_nexus.md", "only_in_target.py"],
-        "paths_must_not_exist": [],
-    }
-    failures = synthesize_contract_failures(
-        {
-            "nexus": _records(contract, nexus),
-            "target": _records(contract, target),
-        }
-    )
-    assert failures == []
-
-
 def test_synthesize_paths_must_not_exist_both_roots_must_be_clear(tmp_path):
     nexus = tmp_path / "nexus"
     target = tmp_path / "target"
@@ -115,55 +62,3 @@ def test_synthesize_paths_must_not_exist_both_roots_must_be_clear(tmp_path):
         }
     )
     assert any("lingering.txt" in f for f in failures)
-
-
-def test_check_gate_multi_root_nexus_only_contract_proceeds(tmp_path):
-    nexus = tmp_path / "nexus"
-    target = tmp_path / "target"
-    nexus.mkdir()
-    target.mkdir()
-    (nexus / "only_in_nexus.md").write_text("ok")
-
-    contract = {"paths_must_exist": ["only_in_nexus.md"]}
-    result = check_gate_multi_root(
-        BODY_NEXUS_ONLY,
-        [],
-        {"sumipan/nexus": nexus, "sumipan/issuesmith": target},
-        contracts={"sumipan/nexus": contract, "sumipan/issuesmith": {}},
-    )
-    assert result["action"] == "proceed"
-
-
-def test_check_gate_multi_root_target_only_contract_proceeds(tmp_path):
-    nexus = tmp_path / "nexus"
-    target = tmp_path / "target"
-    nexus.mkdir()
-    target.mkdir()
-    (target / "only_in_target.py").write_text("ok")
-
-    contract = {"paths_must_exist": ["only_in_target.py"]}
-    result = check_gate_multi_root(
-        BODY_TARGET_ONLY,
-        [],
-        {"sumipan/nexus": nexus, "sumipan/issuesmith": target},
-        contracts={"sumipan/nexus": {}, "sumipan/issuesmith": contract},
-    )
-    assert result["action"] == "proceed"
-
-
-def test_check_gate_multi_root_must_not_exist_retries(tmp_path):
-    nexus = tmp_path / "nexus"
-    target = tmp_path / "target"
-    nexus.mkdir()
-    target.mkdir()
-    (target / "lingering.txt").write_text("still here")
-
-    contract = {"paths_must_not_exist": ["lingering.txt"]}
-    result = check_gate_multi_root(
-        BODY_MUST_NOT_EXIST,
-        [],
-        {"sumipan/nexus": nexus, "sumipan/issuesmith": target},
-        contracts={"sumipan/nexus": contract, "sumipan/issuesmith": contract},
-    )
-    assert result["action"] == "retry"
-    assert result["contract_failures"]

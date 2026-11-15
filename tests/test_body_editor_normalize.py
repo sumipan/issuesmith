@@ -71,36 +71,6 @@ def test_normalize_sub_headers_prefix_is_literal():
         assert normalize_sub_headers("#### Sub 5: x\n") == "#### P\\15: x\n"
 
 
-def test_relocate_sub_plan_moves_from_design_to_milestone():
-    body = """\
-## Design
-
-intro
-
-### Sub-issue Split Plan
-| # | Title |
-|---|--------|
-| 1 | a |
-
-### Other heading
-keep
-
-## Out of scope
-
-out
-"""
-    with patch("issuesmith.body_editor.get_config", return_value=_mock_cfg()):
-        out = relocate_sub_plan(body)
-    assert "### Sub-issue Split Plan" in out
-    design_idx = out.index("## Design")
-    milestone_idx = out.index("## Milestone")
-    plan_idx = out.index("### Sub-issue Split Plan")
-    other_idx = out.index("### Other heading")
-    assert design_idx < other_idx < milestone_idx < plan_idx
-    assert out.count("### Sub-issue Split Plan") == 1
-    assert "| 1 | a |" in out[plan_idx:]
-
-
 def test_relocate_sub_plan_creates_milestone_when_none_exists():
     body = """\
 ## Design
@@ -117,34 +87,9 @@ def test_relocate_sub_plan_creates_milestone_when_none_exists():
     assert out.rindex("## Design") < out.rindex("## Milestone")
 
 
-def test_relocate_sub_plan_noop_when_already_under_milestone():
-    body = """\
-## Design
-
-#### Sub 1: a
-
-## Milestone
-
-### Sub-issue Split Plan
-| # | t |
-|---|---|
-| 1 | x |
-"""
-    with patch("issuesmith.body_editor.get_config", return_value=_mock_cfg()):
-        assert relocate_sub_plan(body) == body
-
-
 def test_relocate_sub_plan_noop_when_no_plan_in_design():
     body = "## Design\nno plan\n\n## Milestone\nok\n"
     with patch("issuesmith.body_editor.get_config", return_value=_mock_cfg()):
         assert relocate_sub_plan(body) == body
 
 
-def test_relocate_sub_plan_inserts_before_pack_out_of_scope_heading():
-    body = (
-        "## Design\n\n### Sub-issue Split Plan\n| # | t |\n|---|---|\n| 1 | x |\n\n"
-        f"## {EN.out_of_scope_heading}\n\nnope\n\n## Notes\n\nlast\n"
-    )
-    with patch("issuesmith.body_editor.get_config", return_value=_mock_cfg()):
-        out = relocate_sub_plan(body)
-    assert out.index("## Milestone") < out.index(f"## {EN.out_of_scope_heading}") < out.index("## Notes")

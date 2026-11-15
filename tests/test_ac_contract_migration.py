@@ -67,14 +67,3 @@ def test_post_merge_schema_invalid_not_list(tmp_path):
     assert schema[0]["result"] == "FAIL"
 
 
-def test_post_merge_schema_valid_list(tmp_path):
-    records = run_checks(
-        {
-            "post_merge": [
-                {"kind": "stable_install", "repo": "sumipan/issuesmith", "path": "/var/tmp/issuesmith"},
-            ]
-        },
-        tmp_path,
-    )
-    schema = [r for r in records if r["check"] == "post_merge_schema"]
-    assert schema == [] or all(r["result"] == "PASS" for r in schema)

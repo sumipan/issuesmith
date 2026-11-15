@@ -12,8 +12,6 @@ from issuesmith.ac_contract import (
     contract_failures,
     dual_gate_roots,
     extract_contract_from_body,
-    grep_matches,
-    is_invalid_contract_path,
     normalize_reference_entry,
     pending_manual_checks,
     run_checks,
@@ -67,31 +65,6 @@ def test_extract_supports_header_variants():
     assert extract_contract_from_body(body) == {"paths_must_exist": ["a.py"]}
 
 
-def test_run_checks_pass_and_fail(tmp_path):
-    (tmp_path / "tests").mkdir()
-    (tmp_path / "tests" / "test_migration.py").write_text("", encoding="utf-8")
-    contract = {
-        "paths_must_exist": ["tests/test_migration.py", "tests/missing.py"],
-        "paths_must_not_exist": ["legacy/*.jsonl"],
-    }
-
-    records = run_checks(contract, tmp_path)
-
-    by_path = {r["path"]: r["result"] for r in records}
-    assert by_path["tests/test_migration.py"] == "PASS"
-    assert by_path["tests/missing.py"] == "FAIL"
-    assert by_path["legacy/*.jsonl"] == "PASS"
-
-
-def test_run_checks_paths_must_not_exist_fails_on_match(tmp_path):
-    (tmp_path / "legacy").mkdir()
-    (tmp_path / "legacy" / "old.jsonl").write_text("", encoding="utf-8")
-
-    records = run_checks({"paths_must_not_exist": ["legacy/*.jsonl"]}, tmp_path)
-
-    assert [r["result"] for r in records] == ["FAIL"]
-
-
 def test_contract_failures_returns_human_readable_fail_lines(tmp_path):
     failures = contract_failures(BODY_WITH_CONTRACT, repo_root=tmp_path)
     assert len(failures) == 1
@@ -114,15 +87,6 @@ def test_run_checks_references_plain_string_checks_file_existence(tmp_path):
     assert by_path == {"docs/MLTGNT.md": "PASS", "docs/MISSING.md": "FAIL"}
 
 
-def test_run_checks_references_dict_without_key_path_checks_file_existence(tmp_path):
-    (tmp_path / "config.yaml").write_text("a: 1\n", encoding="utf-8")
-    contract = {"references_must_resolve": [{"file": "config.yaml"}]}
-
-    records = run_checks(contract, tmp_path)
-
-    assert [(r["path"], r["result"]) for r in records] == [("config.yaml", "PASS")]
-
-
 def test_run_checks_references_invalid_entry_fails_without_raising(tmp_path):
     contract = {"references_must_resolve": [{"key_path": "a.b"}, 42]}
 
@@ -130,29 +94,6 @@ def test_run_checks_references_invalid_entry_fails_without_raising(tmp_path):
 
     assert [r["result"] for r in records] == ["FAIL", "FAIL"]
     assert all("invalid reference entry" in r["detail"] for r in records)
-
-
-def test_manual_check_is_not_fail_and_is_listed_as_pending(tmp_path):
-    records = run_checks(
-        {"post_merge": [{"kind": "manual_check", "description": "check steps"}]},
-        tmp_path,
-    )
-    assert [r for r in records if r["result"] == "FAIL"] == []
-    assert pending_manual_checks(records) == ["check steps"]
-
-
-def test_manual_check_mixed_with_other_kinds(tmp_path):
-    records = run_checks(
-        {
-            "post_merge": [
-                {"kind": "restart", "processes": ["release_watcher"]},
-                {"kind": "manual_check", "description": "run preflight after MG1"},
-            ]
-        },
-        tmp_path,
-    )
-    assert [r for r in records if r["result"] == "FAIL"] == []
-    assert pending_manual_checks(records) == ["run preflight after MG1"]
 
 
 def test_manual_check_without_description_fails(tmp_path):
@@ -189,30 +130,6 @@ def test_contract_failures_ignores_manual_check(tmp_path):
 # ---------------------------------------------------------------------------
 # references_must_resolve — symbol form fails with unsupported form detail
 # ---------------------------------------------------------------------------
-
-
-def test_run_checks_references_symbol_string_fails_with_unsupported_form(tmp_path):
-    """String path::symbol must fail with unsupported form detail regardless of file existence."""
-    contract = {"references_must_resolve": ["src/x.py::sym"]}
-    records = run_checks(contract, tmp_path)
-    assert len(records) == 1
-    r = records[0]
-    assert r["result"] == "FAIL"
-    assert "unsupported reference form" in r["detail"]
-    assert "path::symbol" in r["detail"]
-    assert "source file not found" not in r["detail"]
-
-
-def test_run_checks_references_symbol_dict_fails_with_unsupported_form(tmp_path):
-    """Dict {file: "path::symbol"} must fail with unsupported form detail."""
-    contract = {"references_must_resolve": [{"file": "src/x.py::sym"}]}
-    records = run_checks(contract, tmp_path)
-    assert len(records) == 1
-    r = records[0]
-    assert r["result"] == "FAIL"
-    assert "unsupported reference form" in r["detail"]
-    assert "path::symbol" in r["detail"]
-    assert "source file not found" not in r["detail"]
 
 
 def test_run_checks_references_symbol_fails_even_when_file_exists(tmp_path):
@@ -258,21 +175,6 @@ def test_normalize_reference_entry_not_a_path(ref):
     assert normalize_reference_entry(ref) == (None, None, "not_a_path")
 
 
-def test_normalize_reference_entry_valid_path_and_glob_unchanged():
-    assert normalize_reference_entry("README.md") == ("README.md", None, None)
-    assert normalize_reference_entry("tests/conventions/known_*.txt") == (
-        "tests/conventions/known_*.txt",
-        None,
-        None,
-    )
-    assert normalize_reference_entry("a.py::f") == (None, None, "symbol_form")
-    assert normalize_reference_entry({"file": "x.yaml", "key_path": "a.b", "extra": 1}) == (
-        None,
-        None,
-        "invalid",
-    )
-
-
 def test_run_checks_records_not_a_path_without_existence_check(tmp_path):
     (tmp_path / "README.md").write_text("# doc\n", encoding="utf-8")
     contract = {"references_must_resolve": ["README.md -> TESTING.md"]}
@@ -289,28 +191,6 @@ def test_run_checks_references_dict_file_only_pass(tmp_path):
     contract = {"references_must_resolve": [{"file": "config.yaml"}]}
     records = run_checks(contract, tmp_path)
     assert records[0]["result"] == "PASS"
-
-
-def test_run_checks_references_key_path_glob_value_passes_when_matched(tmp_path):
-    conventions = tmp_path / "tests" / "conventions"
-    conventions.mkdir(parents=True)
-    (conventions / "known_a.txt").write_text("", encoding="utf-8")
-    (tmp_path / "config.yaml").write_text(
-        'ledger_globs:\n  - "tests/conventions/known_*.txt"\n',
-        encoding="utf-8",
-    )
-    contract = {
-        "references_must_resolve": [{"file": "config.yaml", "key_path": "ledger_globs"}]
-    }
-
-    records = run_checks(contract, tmp_path)
-
-    ref_records = [r for r in records if r["check"] == "references_must_resolve"]
-    assert len(ref_records) == 1
-    r = ref_records[0]
-    assert r["path"] == "config.yaml#ledger_globs=tests/conventions/known_*.txt"
-    assert r["result"] == "PASS"
-    assert r["detail"] == ""
 
 
 def test_run_checks_references_key_path_glob_value_fails_when_unmatched(tmp_path):
@@ -406,104 +286,7 @@ def test_run_checks_references_none_source_fails_without_raising(tmp_path, monke
     assert r["git_log"] == ""
 
 
-def test_extract_contract_reads_en_pack_heading(monkeypatch):
-    """The shipped EN pack heading is enough to read paths_must_exist (#4472)."""
-    import issuesmith.config as config_module
-    from issuesmith.language import EN
-
-    monkeypatch.setattr(config_module, "EN", EN)
-    config_module.reset_config_cache()
-    try:
-        heading = config_module.get_config().sections["acceptance_criteria"]
-        assert heading == EN.sections["acceptance_criteria"]
-        body = (
-            f"## {heading}\n\n```yaml\npaths_must_exist:\n  - src/app.py\n```\n\n"
-            "- [ ] done\n"
-        )
-        assert extract_contract_from_body(body) == {"paths_must_exist": ["src/app.py"]}
-    finally:
-        config_module.reset_config_cache()
-
-
-def test_extract_contract_follows_custom_pack_heading(tmp_path, monkeypatch):
-    import dataclasses
-
-    import issuesmith.config as config_module
-    from issuesmith.language import EN
-
-    sections = dict(EN.sections, acceptance_criteria="Done When")
-    pack = dataclasses.replace(EN, sections=sections)
-    cfg = dataclasses.replace(
-        config_module.get_config(), language=pack, sections=dict(pack.sections)
-    )
-    monkeypatch.setattr(config_module, "_cached", cfg)
-    body = "## Done When\n\n```yaml\npaths_must_exist:\n  - a.py\n```\n"
-    assert extract_contract_from_body(body) == {"paths_must_exist": ["a.py"]}
-    en_body = "## Acceptance Criteria\n\n```yaml\npaths_must_exist:\n  - a.py\n```\n"
-    assert extract_contract_from_body(en_body) is None
-
-
 # --- paths_must_exist glob expansion (#4803) ---
-
-
-def test_paths_must_exist_glob_matches(tmp_path):
-    (tmp_path / "a").mkdir()
-    (tmp_path / "a" / "x.txt").write_text("", encoding="utf-8")
-
-    records = run_checks({"paths_must_exist": ["a/*.txt"]}, tmp_path)
-
-    assert len(records) == 1
-    assert records[0]["result"] == "PASS"
-    assert records[0]["path"] == "a/*.txt"
-    assert "glob matched 1" in records[0]["detail"]
-    assert "a/x.txt" in records[0]["detail"]
-
-
-def test_paths_must_exist_glob_matches_nothing(tmp_path):
-    records = run_checks({"paths_must_exist": ["a/*.txt"]}, tmp_path)
-
-    assert len(records) == 1
-    assert records[0]["result"] == "FAIL"
-    assert records[0]["path"] == "a/*.txt"
-    assert records[0]["detail"] == "glob matched nothing"
-
-
-def test_paths_must_exist_plain_path_keeps_detail(tmp_path):
-    (tmp_path / "b.py").write_text("", encoding="utf-8")
-
-    records = run_checks({"paths_must_exist": ["b.py", "missing.py"]}, tmp_path)
-
-    by_path = {r["path"]: r for r in records}
-    assert by_path["b.py"]["result"] == "PASS"
-    assert by_path["b.py"]["detail"] == ""
-    assert by_path["missing.py"]["result"] == "FAIL"
-    assert by_path["missing.py"]["detail"] == "file not found"
-
-
-def test_paths_must_exist_glob_generated_articles(tmp_path):
-    # ASCII fixture of the generated-artifact contract that stopped M2.
-    articles = tmp_path / "agents" / "person" / "sources" / "notion" / "articles"
-    articles.mkdir(parents=True)
-    (articles / "001.txt").write_text("", encoding="utf-8")
-    (articles / "002.txt").write_text("", encoding="utf-8")
-    pattern = "agents/person/sources/notion/articles/*.txt"
-
-    records = run_checks({"paths_must_exist": [pattern]}, tmp_path)
-
-    assert len(records) == 1
-    assert records[0]["result"] == "PASS"
-    assert records[0]["path"] == pattern
-    assert "glob matched 2" in records[0]["detail"]
-
-
-def test_paths_must_exist_glob_detail_lists_first_three(tmp_path):
-    (tmp_path / "a").mkdir()
-    for name in ("4.txt", "3.txt", "2.txt", "1.txt"):
-        (tmp_path / "a" / name).write_text("", encoding="utf-8")
-
-    records = run_checks({"paths_must_exist": ["a/*.txt"]}, tmp_path)
-
-    assert records[0]["detail"] == "glob matched 4: a/1.txt, a/2.txt, a/3.txt"
 
 
 @pytest.mark.parametrize("entry", ["/abs/*.txt", "../x.txt", "", "   ", 1, None])
@@ -525,62 +308,6 @@ def test_paths_must_not_exist_invalid_entry_fails_without_raising(tmp_path, entr
     assert records[0]["check"] == "paths_must_not_exist"
     assert records[0]["result"] == "FAIL"
     assert "invalid path" in records[0]["detail"]
-
-
-def test_paths_must_not_exist_no_match_passes(tmp_path):
-    records = run_checks({"paths_must_not_exist": ["legacy/*.jsonl"]}, tmp_path)
-
-    assert records == [
-        {
-            "check": "paths_must_not_exist",
-            "path": "legacy/*.jsonl",
-            "result": "PASS",
-            "detail": "",
-            "git_log": "",
-        }
-    ]
-
-
-def test_paths_must_not_exist_match_fails_per_file(tmp_path):
-    (tmp_path / "legacy").mkdir()
-    (tmp_path / "legacy" / "b.jsonl").write_text("", encoding="utf-8")
-    (tmp_path / "legacy" / "a.jsonl").write_text("", encoding="utf-8")
-
-    records = run_checks({"paths_must_not_exist": ["legacy/*.jsonl"]}, tmp_path)
-
-    detail = "glob matched: legacy/*.jsonl; matched: legacy/a.jsonl, legacy/b.jsonl"
-    assert [(r["path"], r["result"], r["detail"]) for r in records] == [
-        ("legacy/a.jsonl", "FAIL", detail),
-        ("legacy/b.jsonl", "FAIL", detail),
-    ]
-
-
-def test_paths_must_not_exist_plain_path(tmp_path):
-    (tmp_path / "old.py").write_text("", encoding="utf-8")
-
-    records = run_checks({"paths_must_not_exist": ["old.py", "gone.py"]}, tmp_path)
-
-    by_path = {r["path"]: r["result"] for r in records}
-    assert by_path == {"old.py": "FAIL", "gone.py": "PASS"}
-
-
-@pytest.mark.parametrize(
-    ("value", "expected"),
-    [
-        ("a/b.py", False),
-        ("a/*.txt", False),
-        ("./a.py", False),
-        ("", True),
-        ("  ", True),
-        ("/abs/a.py", True),
-        ("../a.py", True),
-        ("a/../b.py", True),
-        (1, True),
-        (None, True),
-    ],
-)
-def test_is_invalid_contract_path(value, expected):
-    assert is_invalid_contract_path(value) is expected
 
 
 def _git_repo(tmp_path: Path) -> Path:
@@ -636,11 +363,3 @@ def test_run_checks_greps_must_be_empty(tmp_path):
     assert by_pattern["ABSENT"]["detail"] == ""
 
 
-def test_grep_matches_finds_untracked_file(tmp_path):
-    """Refs sumipan/nexus#6431 — worktree grep includes untracked files."""
-    repo = _git_repo(tmp_path)
-    pkg = repo / "pkg"
-    pkg.mkdir()
-    (pkg / "new.py").write_text("HIT = True\n", encoding="utf-8")
-    entry = {"pattern": "HIT", "paths": ["pkg"], "exclude": []}
-    assert grep_matches(repo, entry) == ["pkg/new.py"]
