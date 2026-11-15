@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import json
 import os
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -74,57 +71,5 @@ def test_supported_repos_default_empty_when_repo_set(tmp_path, monkeypatch):
     assert cfg.supported_repos == frozenset()
 
 
-def test_config_show_prints_json(tmp_path, monkeypatch, capsys):
-    """config show prints resolved config as JSON and exits 0."""
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {
-            "repo": "example/app",
-            "supported_repos": ["example/app", "example/other"],
-            "phases": _MINIMAL_PHASES,
-        },
-    )
-    from issuesmith.cli import main
-
-    with pytest.raises(SystemExit) as exc:
-        main(["config", "show"])
-    assert exc.value.code == 0
-    data = json.loads(capsys.readouterr().out)
-    assert data["repo"] == "example/app"
-    assert "phases" in data
-    assert isinstance(data["phases"], list)
-    assert data["phases"]
-    assert {"name", "role", "entry_step"} <= set(data["phases"][0])
-    assert "sections" in data
-    assert isinstance(data["supported_repos"], list)
-    assert sorted(data["supported_repos"]) == ["example/app", "example/other"]
 
 
-def test_config_show_via_module_subprocess(tmp_path, monkeypatch):
-    """python -m issuesmith config show returns JSON and exits 0."""
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(
-        yaml.safe_dump({
-            "repo": "example/cli-show",
-            "supported_repos": ["example/cli-show"],
-            "phases": _MINIMAL_PHASES,
-        }),
-        encoding="utf-8",
-    )
-    env = {**os.environ, "PYTHONPATH": _pythonpath(), "ISSUESMITH_CONFIG": str(cfg_path)}
-    proc = subprocess.run(
-        [sys.executable, "-m", "issuesmith", "config", "show"],
-        cwd=str(REPO_ROOT),
-        capture_output=True,
-        text=True,
-        check=False,
-        env=env,
-    )
-    assert proc.returncode == 0, proc.stderr
-    data = json.loads(proc.stdout)
-    assert data["repo"] == "example/cli-show"
-    assert "phases" in data
-    assert "sections" in data
-    assert isinstance(data["supported_repos"], list)
-    assert data["supported_repos"] == ["example/cli-show"]

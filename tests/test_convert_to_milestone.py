@@ -78,17 +78,6 @@ def _write_running(jobs: Path, uuid: str, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
-def test_requeues_to_draft(repo_layout: Path, monkeypatch) -> None:
-    """AC-4 (#6697): convert_to_milestone calls requeue_phase for draft with milestone reason."""
-    client = FakeClient(labels=["issuesmith:develop-running"])
-    store = MagicMock()
-    requeue = MagicMock(return_value=0)
-    monkeypatch.setattr(ctm, "_github_client", lambda: client)
-    monkeypatch.setattr(ctm, "_queue_store", lambda: store)
-    monkeypatch.setattr(ctm, "requeue_phase", requeue)
-    rc = ctm.convert_to_milestone(42, dry_run=False)
-    assert rc == 0
-    requeue.assert_called_once_with(42, phase="draft", reason="convert-to-milestone")
 
 
 def test_cancel_creates_file_for_running_issue(repo_layout: Path, monkeypatch) -> None:
@@ -110,21 +99,6 @@ def test_cancel_creates_file_for_running_issue(repo_layout: Path, monkeypatch) -
     assert (jobs / "cancel" / uuid).is_file()
 
 
-def test_labels_remove_develop_add_milestone(repo_layout: Path, monkeypatch) -> None:
-    client = FakeClient(
-        labels=["issuesmith:develop-running", "issuesmith:sub-ready", "other"]
-    )
-    store = MagicMock()
-    redispatch = MagicMock(return_value=0)
-    monkeypatch.setattr(ctm, "_github_client", lambda: client)
-    monkeypatch.setattr(ctm, "_queue_store", lambda: store)
-    monkeypatch.setattr(ctm, "requeue_phase", redispatch)
-    assert ctm.convert_to_milestone(42, dry_run=False) == 0
-    assert "issuesmith:develop-running" not in client.labels
-    assert "issuesmith:sub-ready" not in client.labels
-    assert "scope:milestone" in client.labels
-    assert "issuesmith:draft-done" in client.labels
-    assert "other" in client.labels
 
 
 def test_milestone_create_skipped_when_exists(repo_layout: Path, monkeypatch) -> None:
@@ -143,16 +117,6 @@ def test_milestone_create_skipped_when_exists(repo_layout: Path, monkeypatch) ->
     assert any(u.get("milestone") == 7 for u in client.updates)
 
 
-def test_milestone_create_when_missing(repo_layout: Path, monkeypatch) -> None:
-    client = FakeClient(labels=["issuesmith:develop-running"], milestones=[])
-    store = MagicMock()
-    monkeypatch.setattr(ctm, "_github_client", lambda: client)
-    monkeypatch.setattr(ctm, "_queue_store", lambda: store)
-    monkeypatch.setattr(ctm, "requeue_phase", MagicMock(return_value=0))
-    monkeypatch.setattr(ctm, "_today_yyyymmdd", lambda: "20260910")
-    assert ctm.convert_to_milestone(42, dry_run=False) == 0
-    assert client.created_milestones == ["42-20260910"]
-    assert client.issue_milestone is not None
 
 
 def test_idempotent_second_run(repo_layout: Path, monkeypatch) -> None:

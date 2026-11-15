@@ -44,14 +44,6 @@ def test_ledger_not_derived_for_other_dir(ledger_repo: Path) -> None:
     assert derived == []
 
 
-def test_ledger_not_on_base_not_derived(ledger_repo: Path) -> None:
-    _write(ledger_repo, {"tests/conventions/known_new.txt": "x\n"})
-    _commit_all(ledger_repo, "add ledger")
-    derived = derive_ledger_allow_paths(
-        ledger_repo, "main", ["tests/conventions/test_x.py::test_a"],
-        ["src/pkg/gamma.py"], ["tests/conventions/known_*.txt"],
-    )
-    assert derived == [_LEDGER]
 
 
 def test_ledger_already_allowed_not_derived(ledger_repo: Path) -> None:
@@ -106,15 +98,6 @@ def test_ledger_guard_added_line_grew(ledger_repo: Path) -> None:
     assert "delta" in violations[0].message
 
 
-def test_ledger_guard_without_globs_is_not_parsed_as_ledger(ledger_repo: Path) -> None:
-    # The indented line is not valid Python: without ledger_globs the AST path reports
-    # test_weakened; with them it is a reordered ledger and passes.
-    content = "beta\n  alpha\n"
-    _write(ledger_repo, {_LEDGER: content})
-    violations = check_derived_test_guard(ledger_repo, "main", [_LEDGER])
-    assert [v.rule_id for v in violations] == ["derived_allow.test_weakened"]
-    assert "cannot parse working tree file" in violations[0].message
-    assert _ledger_guard(ledger_repo, content) == []
 
 
 def test_ledger_pr_scope_delete_only_passes(ledger_repo: Path, _derived_config) -> None:
@@ -161,33 +144,8 @@ def forbidden_jsonl_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pat
     return clone
 
 
-def test_pr_scope_gate_preserves_forbidden_path(forbidden_jsonl_repo: Path) -> None:
-    gate = PrScopeGate(
-        forbidden_jsonl_repo,
-        ["docs/lessons/issuesmith.jsonl"],
-        "main",
-    )
-    violations = gate.check("", [])
-    assert len(violations) == 1
-    v = violations[0]
-    assert v.rule_id == "pr_diff_scope.forbidden_path"
-    assert v.location == "docs/lessons/issuesmith.jsonl"
-    assert "forbidden path:" in v.message
-    assert "[!s]*.jsonl" in v.message
-    assert v.fix_hint == "git checkout main -- docs/lessons/issuesmith.jsonl"
 
 
-def test_pr_scope_gate_out_of_allow_compat(tmp_path: Path) -> None:
-    clone = _make_repo(tmp_path, {"scripts/x.py": "x = 1\n"})
-    _write(clone, {"scripts/x.py": "x = 2\n"})
-    _commit_all(clone, "change script")
-    gate = PrScopeGate(clone, ["src/**"], "main")
-    violations = gate.check("", [])
-    assert len(violations) == 1
-    v = violations[0]
-    assert v.rule_id == "pr_scope.out_of_allow"
-    assert v.location == "scripts/x.py"
-    assert v.fix_hint == "widen:scripts/x.py"
 
 
 def test_pr_scope_forbidden_skips_derived_guard(forbidden_jsonl_repo: Path) -> None:

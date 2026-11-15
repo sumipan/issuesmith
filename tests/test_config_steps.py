@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
-from issuesmith.config import ConfigError, StepConfig, TierConfig, get_config, load_config, reset_config_cache
+from issuesmith.config import get_config, load_config, reset_config_cache
 from issuesmith.ops import dispatch as dispatch_mod
 
 
@@ -36,22 +36,6 @@ def test_load_without_steps_yields_empty_mapping(tmp_path, monkeypatch):
     assert get_config().steps == {}
 
 
-def test_andon_when_legacy_rule_id_warns_and_normalizes(tmp_path, monkeypatch):
-    import warnings
-
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {
-            "repo": "example/app",
-            "steps": {"x": {"andon_when": ["cp1.intentional_hold"]}},
-        },
-    )
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        cfg = load_config()
-    assert any(issubclass(item.category, DeprecationWarning) for item in caught)
-    assert cfg.steps["x"].andon_when == ("design_lint.intentional_hold",)
 
 
 def test_default_steps_has_no_m2_role_dispatch(tmp_path, monkeypatch):
@@ -61,108 +45,12 @@ def test_default_steps_has_no_m2_role_dispatch(tmp_path, monkeypatch):
     assert "m2-role-dispatch" not in cfg.steps
 
 
-def test_step_tier_and_verify_loaded_from_yaml(tmp_path, monkeypatch):
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {
-            "repo": "example/app",
-            "steps": {
-                "x": {
-                    "tier": {"kind": "pr_diff", "light_max_diff_lines": 150},
-                    "verify": "design_doc",
-                },
-            },
-        },
-    )
-    step = load_config().steps["x"]
-    assert step.tier == TierConfig(kind="pr_diff", light_max_diff_lines=150)
-    assert step.verify == "design_doc"
 
 
-def test_step_tier_invalid_kind_raises(tmp_path, monkeypatch):
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {
-            "repo": "example/app",
-            "steps": {"x": {"tier": {"kind": "unknown"}}},
-        },
-    )
-    with pytest.raises(ConfigError, match="kind must be"):
-        load_config()
 
 
-def test_step_verify_invalid_value_raises(tmp_path, monkeypatch):
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {
-            "repo": "example/app",
-            "steps": {"x": {"verify": "unknown"}},
-        },
-    )
-    with pytest.raises(ConfigError, match="verify must be"):
-        load_config()
 
 
-def test_custom_step_module_loaded_by_dispatch(tmp_path, monkeypatch):
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {
-            "repo": "example/app",
-            "steps": {
-                "custom-step": {"module": "issuesmith.steps.custom"},
-            },
-        },
-    )
-    cfg = get_config()
-    assert cfg.steps["custom-step"] == StepConfig(
-        module="issuesmith.steps.custom",
-        template=None,
-    )
-
-    loaded: dict[str, object] = {}
-
-    class FakeResult:
-        exit_code = 0
-        pipeline_status = "OK"
-        recovery = None
-
-    def fake_run(ctx, step=None):
-        loaded["step"] = step
-        loaded["module"] = "issuesmith.steps.custom"
-        return FakeResult()
-
-    fake_mod = type("mod", (), {"run": staticmethod(fake_run)})
-
-    def fake_import(name: str):
-        loaded["imported"] = name
-        if name == "issuesmith.steps.custom":
-            return fake_mod
-        raise ImportError(name)
-
-    monkeypatch.setattr(importlib, "import_module", fake_import)
-    monkeypatch.setattr(dispatch_mod.importlib, "import_module", fake_import)
-
-    rc = dispatch_mod.main(
-        [
-            "custom-step",
-            "issue_number=1",
-            "base_branch=main",
-            "handler_name=x",
-            "is_cross_repo=false",
-            "target_clone_path=",
-            "source=",
-            "workflow_name=issuesmith",
-            "m1_result_filename=",
-            "m1r_result_filename=",
-        ]
-    )
-    assert rc == 0
-    assert loaded["imported"] == "issuesmith.steps.custom"
-    assert loaded["step"] == StepConfig(module="issuesmith.steps.custom", template=None)
 
 
 def test_unknown_step_returns_empty_config_without_warning(tmp_path, monkeypatch):

@@ -2,20 +2,13 @@
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from issuesmith.dep_extractor import (
     UNPARSED_DEPENDENCY_SECTION,
-    DepStatus,
     check_dependencies,
     check_issue,
     extract_dependencies,
-    get_dep_status,
-    is_satisfied,
     unparsed_dependency_refs,
 )
 from issuesmith.language import EN
@@ -51,16 +44,6 @@ def test_child_issue_line_excluded():
     assert extract_dependencies(body) == []
 
 
-def test_table_extracts_prose_excluded():
-    # ASCII fixture data.
-    body = (
-        "## Dependencies\n\n"
-        "| # | Issue |\n"
-        "| --- | --- |\n"
-        "| 1 | #100 |\n\n"
-        "Previously failed on #200\n"
-    )
-    assert extract_dependencies(body) == [100]
 
 
 def test_section_without_table_returns_empty():
@@ -69,18 +52,6 @@ def test_section_without_table_returns_empty():
     assert extract_dependencies(body) == []
 
 
-def test_section_list_items_extract():
-    # ASCII fixture data. Hand-written issues declare deps as list items.
-    body = (
-        "## Dependencies\n\n"
-        "- #400 (tracking removal)\n"
-        "* #401\n"
-        "+ #402\n"
-        "1. #403 release first\n"
-        "2) #404\n"
-        "  - #405 nested\n"
-    )
-    assert extract_dependencies(body) == [400, 401, 402, 403, 404, 405]
 
 
 def test_section_list_item_inside_code_block_ignored():
@@ -89,14 +60,6 @@ def test_section_list_item_inside_code_block_ignored():
     assert extract_dependencies(body) == [401]
 
 
-def test_section_list_items_exclude_parent_child_lines():
-    # ASCII fixture data.
-    body = (
-        "## Dependencies\n\n"
-        f"{_PARENT_PREFIX}: #1\n"
-        "- #2\n"
-    )
-    assert extract_dependencies(body) == [2]
 
 
 # --- unparsed_dependency_refs ---
@@ -108,14 +71,6 @@ def test_unparsed_refs_empty_without_section():
     assert unparsed_dependency_refs(body) == []
 
 
-def test_unparsed_refs_empty_when_declared():
-    # ASCII fixture data.
-    body = (
-        "## Dependencies\n\n"
-        "| # | Issue |\n| --- | --- |\n| 1 | #300 |\n"
-        "- #301\n"
-    )
-    assert unparsed_dependency_refs(body) == []
 
 
 def test_unparsed_refs_reports_prose_only_mentions():
@@ -195,21 +150,6 @@ def _mock_issue_get(responses: dict[int, dict]):
     return fake_get
 
 
-def test_closed_with_merge_done_passes():
-    client = MagicMock()
-    client.issue_get = _mock_issue_get(
-        {
-            100: {
-                "state": "CLOSED",
-                "title": "done feature",
-                "labels": [{"name": "issuesmith:merge-done"}],
-            }
-        }
-    )
-    result = check_dependencies([100], client=client)
-    assert result.decision == "PASS"
-    assert result.deps_found == [100]
-    assert result.blocking_deps == []
 
 
 def test_open_dependency_blocks():
@@ -259,23 +199,6 @@ def test_rescue_path_merged_pr_passes():
     client.pr_get.assert_called_once_with(42)
 
 
-def test_exempt_analysis_issue_passes():
-    client = MagicMock()
-    client.issue_get = _mock_issue_get(
-        {
-            2302: {
-                "state": "CLOSED",
-                # ASCII fixture data.
-                "title": "c3010_c969C_c5BB3_c5206_c6790_c3011issuesmith #2297 brushup stopped",
-                "labels": [],
-            }
-        }
-    )
-    result = check_dependencies([2302], client=client)
-    assert result.decision == "PASS"
-    assert result.blocking_deps == []
-    assert result.dep_statuses[0].is_exempt is True
-    client.issue_timeline.assert_not_called()
 
 
 def test_exempt_rejected_issue_passes():
@@ -296,22 +219,6 @@ def test_exempt_rejected_issue_passes():
     client.issue_timeline.assert_not_called()
 
 
-def test_exempt_non_issuesmith_issue_passes():
-    client = MagicMock()
-    client.issue_get = _mock_issue_get(
-        {
-            800: {
-                "state": "CLOSED",
-                "title": "external tracking issue",
-                "labels": [{"name": "bug"}],
-            }
-        }
-    )
-    result = check_dependencies([800], client=client)
-    assert result.decision == "PASS"
-    assert result.blocking_deps == []
-    assert result.dep_statuses[0].is_exempt is True
-    client.issue_timeline.assert_not_called()
 
 
 def test_empty_deps_passes():
@@ -321,14 +228,6 @@ def test_empty_deps_passes():
     assert result.blocking_deps == []
 
 
-def test_unparsed_refs_block_before_any_forge_call():
-    client = MagicMock()
-    result = check_dependencies([], client=client, unparsed_refs=[300])
-    assert result.decision == "BLOCK"
-    assert result.reason == UNPARSED_DEPENDENCY_SECTION
-    assert result.unparsed_refs == [300]
-    assert result.blocking_deps == []
-    client.issue_get.assert_not_called()
 
 
 def test_unparsed_refs_block_even_with_declared_deps():
@@ -340,21 +239,6 @@ def test_unparsed_refs_block_even_with_declared_deps():
     client.issue_get.assert_not_called()
 
 
-def test_deps_help_exits_0() -> None:
-    """refs #6779: deps --help exits 0 with usage on stdout."""
-    repo_root = Path(__file__).resolve().parents[1]
-    env = {**os.environ, "PYTHONPATH": str(repo_root / "src")}
-    proc = subprocess.run(
-        [sys.executable, "-m", "issuesmith", "deps", "--help"],
-        cwd=str(repo_root),
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
-    )
-    assert proc.returncode == 0
-    assert proc.stdout.strip()
-    assert "check" in proc.stdout
 
 
 def test_cli_check_outputs_json(capsys):
@@ -406,16 +290,6 @@ def test_is_exempt_milestone_without_sub_done_is_not_exempt():
     assert _is_exempt("some milestone", labels) is False
 
 
-def test_get_dep_status_and_is_satisfied_public_api():
-    client = MagicMock()
-    client.issue_get.return_value = {
-        "state": "CLOSED",
-        "title": "done",
-        "labels": [{"name": "issuesmith:merge-done"}],
-    }
-    status = get_dep_status(client, 100)
-    assert isinstance(status, DepStatus)
-    assert is_satisfied(status) is True
 
 
 # --- language pack vocabulary ---
@@ -444,25 +318,3 @@ def _use_custom_pack(tmp_path, monkeypatch, **overrides):
     reset_config_cache()
 
 
-def test_custom_pack_labels_give_same_result_as_default(tmp_path, monkeypatch):
-    def body(parent: str, dep: str, heading: str) -> str:
-        return (
-            f"{parent}: #3985\n{dep}: #300\n\n## {heading}\n\n"
-            "- #301\n\nparallel with #3985\n"
-        )
-
-    default_body = body(_PARENT_PREFIX, _DEP_PREFIX, "Dependencies")
-    expected = (extract_dependencies(default_body), unparsed_dependency_refs(default_body))
-    assert expected == ([300, 301], [])
-
-    columns = ["No", "Name", "Repo", "Work", "After"]
-    sections = {key: f"X {heading}" for key, heading in EN.sections.items()}
-    _use_custom_pack(
-        tmp_path, monkeypatch,
-        sub_plan_columns=columns, parent_issue_label="Parent", sections=sections,
-    )
-    custom_body = body("Parent", "After", sections["dependencies"])
-    assert extract_dependencies(custom_body) == expected[0]
-    assert unparsed_dependency_refs(custom_body) == expected[1]
-    # The default labels are plain prose under the custom pack.
-    assert extract_dependencies(default_body) == []

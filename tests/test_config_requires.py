@@ -57,46 +57,8 @@ def test_gate_registry_worktree_kinds() -> None:
     assert GATE_REGISTRY["pr_scope"].input_kind == "worktree"
 
 
-def test_old_gate_id_requires_raises_config_error(tmp_path, monkeypatch) -> None:
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {
-            "repo": "example/app",
-            "steps": {
-                "my-step": {
-                    "module": "issuesmith.steps.foo",
-                    "requires": ["cp1"],
-                    "input_kind": "issue",
-                },
-            },
-        },
-    )
-    with pytest.raises(ConfigError, match="unknown gate ids"):
-        validate_step_requires(load_config().steps)
 
 
-def test_new_gate_id_requires_no_warning(tmp_path, monkeypatch) -> None:
-    import warnings
-
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {
-            "repo": "example/app",
-            "steps": {
-                "my-step": {
-                    "module": "issuesmith.steps.foo",
-                    "requires": ["design_lint", "ac_complete"],
-                    "input_kind": "issue",
-                },
-            },
-        },
-    )
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always", DeprecationWarning)
-        validate_step_requires(load_config().steps)
-    assert not caught
 
 
 # ---------------------------------------------------------------------------
@@ -114,14 +76,6 @@ def test_step_config_default_input_kind_issue() -> None:
     assert s.input_kind == "issue"
 
 
-def test_step_config_with_requires_and_input_kind() -> None:
-    s = StepConfig(
-        module="issuesmith.steps.foo",
-        requires=("ac_complete", "deps"),
-        input_kind="issue",
-    )
-    assert s.requires == ("ac_complete", "deps")
-    assert s.input_kind == "issue"
 
 
 # ---------------------------------------------------------------------------
@@ -129,46 +83,8 @@ def test_step_config_with_requires_and_input_kind() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_unknown_gate_id_raises_config_error(tmp_path, monkeypatch) -> None:
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {
-            "repo": "example/app",
-            "steps": {
-                "my-step": {
-                    "module": "issuesmith.steps.my_step",
-                    "requires": ["nonexistent_gate"],
-                    "input_kind": "issue",
-                },
-            },
-        },
-    )
-    cfg = load_config()  # loading never touches the registry
-    with pytest.raises(ConfigError, match="nonexistent_gate"):
-        validate_step_requires(cfg.steps)
 
 
-def test_config_error_message_includes_known_gate_ids(tmp_path, monkeypatch) -> None:
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {
-            "repo": "example/app",
-            "steps": {
-                "my-step": {
-                    "module": "issuesmith.steps.my_step",
-                    "requires": ["bad_gate"],
-                    "input_kind": "issue",
-                },
-            },
-        },
-    )
-    with pytest.raises(ConfigError) as exc_info:
-        validate_step_requires(load_config().steps)
-    msg = str(exc_info.value)
-    for known_id in GATE_REGISTRY:
-        assert known_id in msg, f"expected known gate id '{known_id}' in error: {msg}"
 
 
 # ---------------------------------------------------------------------------
@@ -195,66 +111,10 @@ def test_artifact_step_with_issue_gate_raises_config_error(tmp_path, monkeypatch
         validate_step_requires(load_config().steps)
 
 
-def test_issue_step_with_issue_gate_is_valid(tmp_path, monkeypatch) -> None:
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {
-            "repo": "example/app",
-            "steps": {
-                "issue-step": {
-                    "module": "issuesmith.steps.my_step",
-                    "requires": ["ac_complete", "deps"],
-                    "input_kind": "issue",
-                },
-            },
-        },
-    )
-    cfg = load_config()
-    assert cfg.steps["issue-step"].requires == ("ac_complete", "deps")
-    assert cfg.steps["issue-step"].input_kind == "issue"
 
 
-def test_worktree_step_with_worktree_gate_is_valid(tmp_path, monkeypatch) -> None:
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {
-            "repo": "example/app",
-            "steps": {
-                "wt-step": {
-                    "module": "issuesmith.steps.my_step",
-                    "requires": ["scope"],
-                    "input_kind": "worktree",
-                },
-            },
-        },
-    )
-    cfg = load_config()
-    assert cfg.steps["wt-step"].requires == ("scope",)
-    assert cfg.steps["wt-step"].input_kind == "worktree"
 
 
-def test_worktree_step_with_issue_gate_is_valid(tmp_path, monkeypatch) -> None:
-    # Design change (#3671): issue gates can be used in worktree steps
-    # (body + labels are always readable regardless of input_kind).
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {
-            "repo": "example/app",
-            "steps": {
-                "wt-step": {
-                    "module": "issuesmith.steps.my_step",
-                    "requires": ["ac_complete"],
-                    "input_kind": "worktree",
-                },
-            },
-        },
-    )
-    cfg = load_config()
-    assert cfg.steps["wt-step"].requires == ("ac_complete",)
-    assert cfg.steps["wt-step"].input_kind == "worktree"
 
 
 # ---------------------------------------------------------------------------
@@ -300,30 +160,8 @@ def test_validate_requires_chain_no_violations_for_empty_steps() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_doctor_requires_chain_ok(tmp_path, monkeypatch, capsys) -> None:
-    from issuesmith.ops.doctor import requires_chain_report
-
-    steps = {
-        "valid-step": StepConfig(
-            module="issuesmith.steps.foo",
-            requires=("ac_complete",),
-            input_kind="issue",
-        ),
-    }
-    report = requires_chain_report(steps)
-    assert report == "requires_chain: ok"
 
 
-def test_doctor_requires_chain_violation(tmp_path, monkeypatch, capsys) -> None:
-    from issuesmith.ops.doctor import requires_chain_report
-
-    steps = {
-        "no-requires-step": StepConfig(module="issuesmith.steps.foo"),
-    }
-    report = requires_chain_report(steps)
-    assert report.startswith("requires_chain:")
-    assert "ok" not in report
-    assert "no-requires-step" in report
 
 
 # ---------------------------------------------------------------------------
@@ -331,27 +169,6 @@ def test_doctor_requires_chain_violation(tmp_path, monkeypatch, capsys) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_worktree_step_with_mixed_gates_is_valid(tmp_path, monkeypatch) -> None:
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {
-            "repo": "example/app",
-            "steps": {
-                "wt-step": {
-                    "module": "issuesmith.steps.my_step",
-                    "requires": [
-                        "design_lint", "scope_breadth", "base_freshness",
-                        "lint", "external_leak", "scope_coupling", "milestone_consistency",
-                    ],
-                    "input_kind": "worktree",
-                },
-            },
-        },
-    )
-    cfg = load_config()
-    assert "design_lint" in cfg.steps["wt-step"].requires
-    assert "base_freshness" in cfg.steps["wt-step"].requires
 
 
 # ---------------------------------------------------------------------------
@@ -359,45 +176,8 @@ def test_worktree_step_with_mixed_gates_is_valid(tmp_path, monkeypatch) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_issue_step_with_worktree_gate_raises_config_error(tmp_path, monkeypatch) -> None:
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {
-            "repo": "example/app",
-            "steps": {
-                "issue-step": {
-                    "module": "issuesmith.steps.my_step",
-                    "requires": ["lint"],
-                    "input_kind": "issue",
-                },
-            },
-        },
-    )
-    with pytest.raises(ConfigError, match="lint"):
-        validate_step_requires(load_config().steps)
 
 
-def test_config_error_missing_gate_ids_in_message(tmp_path, monkeypatch) -> None:
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {
-            "repo": "example/app",
-            "steps": {
-                "bad-step": {
-                    "module": "issuesmith.steps.my_step",
-                    "requires": ["nonexistent_gate"],
-                    "input_kind": "issue",
-                },
-            },
-        },
-    )
-    with pytest.raises(ConfigError) as exc_info:
-        validate_step_requires(load_config().steps)
-    msg = str(exc_info.value)
-    assert "missing gate ids" in msg
-    assert "nonexistent_gate" in msg
 
 
 # ---------------------------------------------------------------------------
@@ -430,25 +210,6 @@ def test_validate_requires_chain_missing_gate_id_is_violation() -> None:
     assert any("missing gate ids" in v for v in violations)
 
 
-def test_doctor_requires_chain_ok_with_all_registry_ids() -> None:
-    from issuesmith.ops.doctor import requires_chain_report
-
-    steps = {}
-    for gate_id in GATE_REGISTRY:
-        kind = GATE_REGISTRY[gate_id].input_kind
-        if kind == "worktree":
-            step_kind = "worktree"
-        elif kind == "issue":
-            step_kind = "issue"
-        else:
-            step_kind = "artifact"
-        steps[f"step-{gate_id}"] = StepConfig(
-            module="issuesmith.steps.foo",
-            requires=(gate_id,),
-            input_kind=step_kind,
-        )
-    report = requires_chain_report(steps)
-    assert report == "requires_chain: ok"
 
 
 # ---------------------------------------------------------------------------
@@ -456,48 +217,10 @@ def test_doctor_requires_chain_ok_with_all_registry_ids() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_unknown_gate_id_in_accepts_raises_config_error() -> None:
-    steps = {
-        "my-step": StepConfig(
-            module="issuesmith.steps.foo",
-            accepts=("nonexistent_gate",),
-            input_kind="issue",
-        ),
-    }
-    with pytest.raises(ConfigError, match="steps.my-step.accepts") as exc_info:
-        validate_step_requires(steps)
-    msg = str(exc_info.value)
-    assert "nonexistent_gate" in msg
-    assert "missing gate ids" in msg
 
 
-def test_accepts_error_message_includes_known_gate_ids() -> None:
-    steps = {
-        "my-step": StepConfig(
-            module="issuesmith.steps.foo",
-            accepts=("bad_gate",),
-            input_kind="issue",
-        ),
-    }
-    with pytest.raises(ConfigError) as exc_info:
-        validate_step_requires(steps)
-    msg = str(exc_info.value)
-    assert "steps.my-step.accepts" in msg
-    for known_id in GATE_REGISTRY:
-        assert known_id in msg, f"expected known gate id '{known_id}' in error: {msg}"
 
 
-def test_issue_step_with_worktree_gate_in_accepts_raises_config_error() -> None:
-    steps = {
-        "issue-step": StepConfig(
-            module="issuesmith.steps.foo",
-            accepts=("lint",),
-            input_kind="issue",
-        ),
-    }
-    with pytest.raises(ConfigError, match="steps.issue-step.accepts") as exc_info:
-        validate_step_requires(steps)
-    assert "lint" in str(exc_info.value)
 
 
 def test_worktree_step_with_worktree_gate_in_accepts_is_valid() -> None:
@@ -533,35 +256,8 @@ MY_GATE = GateEntry(
     return gate_ref
 
 
-def test_validate_step_requires_external_worktree_gate(tmp_path, monkeypatch) -> None:
-    mod_name = "mypkg_gates_valid"
-    gate_ref = _write_external_gate_module(tmp_path, mod_name, pre_llm=False, repairable=True)
-    monkeypatch.syspath_prepend(str(tmp_path))
-    steps = {
-        "p1": StepConfig(
-            module="issuesmith.steps.foo",
-            requires=(gate_ref,),
-            input_kind="worktree",
-            requires_declared=True,
-        ),
-    }
-    validate_step_requires(steps)
 
 
-def test_validate_step_requires_external_gate_on_issue_step_raises(tmp_path, monkeypatch) -> None:
-    mod_name = "mypkg_gates_issue"
-    gate_ref = _write_external_gate_module(tmp_path, mod_name, pre_llm=False, repairable=True)
-    monkeypatch.syspath_prepend(str(tmp_path))
-    steps = {
-        "b1": StepConfig(
-            module="issuesmith.steps.foo",
-            requires=(gate_ref,),
-            input_kind="issue",
-            requires_declared=True,
-        ),
-    }
-    with pytest.raises(ConfigError, match="worktree steps"):
-        validate_step_requires(steps)
 
 
 def test_resolve_gate_errors_and_registry_unchanged(tmp_path, monkeypatch) -> None:

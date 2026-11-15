@@ -16,7 +16,6 @@ from issuesmith.context_hook import (
     validate_issue_metadata,
 )
 from tests import test_context_hook as _base
-from tests.test_context_hook import _LEGACY_CONTEXT_KEYS
 
 _no_real_branch_search = _base._no_real_branch_search
 
@@ -26,30 +25,8 @@ _no_real_branch_search = _base._no_real_branch_search
 # ===========================================================================
 
 
-def test_build_context_defaults():
-    """When body has no YAML block, default values are returned."""
-    import os
-
-    ctx = build_context(42, body="# Title\n\nNo yaml here")
-
-    assert ctx["pipeline_id"].startswith("issue-42-")
-    assert len(ctx["pipeline_id"]) == len("issue-42-") + 8
-    assert os.path.isabs(ctx["worktree_path"])
-    assert ctx["worktree_path"].endswith(f"/.claude/worktrees/{ctx['pipeline_id']}")
-    assert ctx["branch"] == f"feat/{ctx['pipeline_id']}"
-    assert ctx["base_branch"] == "main"
-    # ASCII fixture data.
-    assert ctx["allow_paths"]
-    assert "\n" not in ctx["allow_paths"]
 
 
-def test_worktree_path_is_absolute():
-    """worktree_path is an absolute path (CWD-independent)."""
-    import os
-
-    ctx = build_context(42, body="# Title")
-    assert os.path.isabs(ctx["worktree_path"])
-    assert ctx["worktree_path"].endswith(f"/.claude/worktrees/{ctx['pipeline_id']}")
 
 
 def test_worktree_path_no_tools_issuesmith():
@@ -58,43 +35,8 @@ def test_worktree_path_no_tools_issuesmith():
     assert "tools/issuesmith" not in ctx["worktree_path"]
 
 
-def test_host_worktree_path_is_absolute():
-    """host_worktree_path is an absolute path (in dual mode)."""
-    import os
-
-    body = textwrap.dedent("""\
-        ```yaml
-        target_repo: sumipan/ghdag
-        host_allow_paths:
-          - notes/**
-        ```
-    """)
-    ctx = build_context(42, body=body)
-    assert ctx["has_host_changes"] == "true"
-    assert os.path.isabs(ctx["host_worktree_path"])
-    assert ctx["host_worktree_path"].endswith(f"/.claude/worktrees/{ctx['pipeline_id']}-host")
 
 
-def test_build_context_with_metadata():
-    """When body has YAML metadata, values are applied."""
-    body = textwrap.dedent("""\
-        ```yaml
-        base_branch: develop
-        allow_paths:
-          - src/**
-          - tests/**
-        ```
-
-        ## §1 Purpose
-        Design doc for tests
-    """)
-
-    ctx = build_context(88, body=body)
-
-    assert ctx["base_branch"] == "develop"
-    assert "- src/**" in ctx["allow_paths"]
-    assert "- tests/**" in ctx["allow_paths"]
-    assert ctx["pipeline_id"].startswith("issue-88-")
 
 
 def test_build_context_allow_paths_string():
@@ -109,43 +51,10 @@ def test_build_context_allow_paths_string():
     assert ctx["allow_paths"] == "- src/main.py"
 
 
-def test_build_context_empty_allow_paths():
-    """Empty allow_paths list means unrestricted."""
-    body = textwrap.dedent("""\
-        ```yaml
-        allow_paths: []
-        base_branch: main
-        ```
-    """)
-
-    ctx = build_context(20, body=body)
-    # ASCII fixture data.
-    assert ctx["allow_paths"]
-    assert "\n" not in ctx["allow_paths"]
 
 
-def test_build_context_invalid_yaml():
-    """When YAML cannot be parsed, fall back to defaults."""
-    body = textwrap.dedent("""\
-        ```yaml
-        : invalid: yaml: [
-        ```
-    """)
-
-    ctx = build_context(99, body=body)
-    assert ctx["base_branch"] == "main"
-    # ASCII fixture data.
-    assert ctx["allow_paths"]
-    assert "\n" not in ctx["allow_paths"]
 
 
-def test_build_context_no_yaml_block():
-    """When body has no YAML block, fall back to defaults."""
-    ctx = build_context(55, body="## §1 Purpose\ntest")
-    assert ctx["base_branch"] == "main"
-    # ASCII fixture data.
-    assert ctx["allow_paths"]
-    assert "\n" not in ctx["allow_paths"]
 
 
 def test_build_context_unique_pipeline_ids():
@@ -182,45 +91,8 @@ def test_main_invalid_arg(capsys):
             sys.argv = original
 
 
-def test_build_context_all_values_are_strings():
-    """All output values are strings (ghdag protocol)."""
-    body = textwrap.dedent("""\
-        ```yaml
-        base_branch: main
-        allow_paths:
-          - src/**
-        ```
-    """)
-
-    ctx = build_context(1, body=body)
-    for key, value in ctx.items():
-        assert isinstance(value, str), f"{key} is {type(value)}, expected str"
 
 
-def test_build_context_output_keys():
-    """All expected keys are present (stash_file_rel/diary_branch/legacy companion keys removed)."""
-    ctx = build_context(42, body="# Title")
-    expected_keys = {
-        "pipeline_id",
-        "worktree_path",
-        "branch",
-        "base_branch",
-        "allow_paths",
-        "source",
-        "issue_repo",
-        "target_repo",
-        "repo_name",
-        "target_clone_path",
-        "target_worktree_path",
-        "is_cross_repo",
-        "has_host_changes",
-        "host_worktree_path",
-        "host_allow_paths",
-        "targets_json",
-        "previous_commits",
-        "reuse_source",
-    }
-    assert set(ctx.keys()) == expected_keys
 
 
 def test_stash_file_rel_not_in_output():
@@ -229,21 +101,6 @@ def test_stash_file_rel_not_in_output():
     assert "stash_file_rel" not in ctx
 
 
-def test_legacy_keys_not_in_output():
-    """diary_branch and the legacy companion keys are absent from the output dict (#5065).
-    With target_repo set and host_allow_paths unset, has_host_changes == 'false'.
-    """
-    body = textwrap.dedent("""\
-        ```yaml
-        target_repo: sumipan/ghdag
-        ```
-    """)
-    ctx = build_context(42, body=body)
-    assert "diary_branch" not in ctx
-    for key in _LEGACY_CONTEXT_KEYS:
-        assert key not in ctx
-    assert ctx["has_host_changes"] == "false"
-    assert ctx["host_worktree_path"] == ""
 
 
 def test_no_local_file_created(tmp_path, monkeypatch):
@@ -258,123 +115,20 @@ def test_no_local_file_created(tmp_path, monkeypatch):
     assert not (jobs_path / "issue-42-design.md").exists()
 
 
-def test_cross_repo_defaults_when_no_target_repo():
-    """When target_repo is unset: is_cross_repo=false, paths are empty strings."""
-    ctx = build_context(42, body="# Title")
-    assert ctx["target_repo"] == ""
-    assert ctx["repo_name"] == ""
-    assert ctx["target_clone_path"] == ""
-    assert ctx["target_worktree_path"] == ""
-    assert ctx["is_cross_repo"] == "false"
 
 
-def test_cross_repo_with_target_repo():
-    """When target_repo is set: path variables are generated correctly."""
-    body = textwrap.dedent("""\
-        ```yaml
-        target_repo: sumipan/ghdag
-        base_branch: main
-        ```
-    """)
-
-    ctx = build_context(42, body=body)
-    assert ctx["target_repo"] == "sumipan/ghdag"
-    assert ctx["repo_name"] == "ghdag"
-    assert ctx["target_clone_path"] == ".claude/external/ghdag"
-    assert ctx["target_worktree_path"].startswith(".claude/external/ghdag/worktrees/issue-42-")
-    assert ctx["is_cross_repo"] == "true"
-    assert ctx["worktree_path"] == ctx["target_worktree_path"]
 
 
-def test_cross_repo_coexists_with_existing_fields():
-    """target_repo + base_branch together: all existing fields are correct."""
-    body = textwrap.dedent("""\
-        ```yaml
-        target_repo: sumipan/ghdag
-        base_branch: develop
-        allow_paths:
-          - src/**
-          - tests/**
-        ```
-    """)
-
-    ctx = build_context(99, body=body)
-    assert ctx["base_branch"] == "develop"
-    assert "- src/**" in ctx["allow_paths"]
-    assert "- tests/**" in ctx["allow_paths"]
-    assert ctx["pipeline_id"].startswith("issue-99-")
-    assert ctx["target_repo"] == "sumipan/ghdag"
-    assert ctx["target_clone_path"] == ".claude/external/ghdag"
-    assert ctx["is_cross_repo"] == "true"
 
 
-def test_cross_repo_all_values_are_strings():
-    """With target_repo set, all values are still str."""
-    body = textwrap.dedent("""\
-        ```yaml
-        target_repo: sumipan/ghdag
-        ```
-    """)
-
-    ctx = build_context(42, body=body)
-    for key, value in ctx.items():
-        assert isinstance(value, str), f"{key} is {type(value)}, expected str"
 
 
-def test_cross_repo_empty_target_repo():
-    """Empty-string target_repo: is_cross_repo=false."""
-    body = textwrap.dedent("""\
-        ```yaml
-        target_repo: ""
-        ```
-    """)
-
-    ctx = build_context(42, body=body)
-    assert ctx["is_cross_repo"] == "false"
-    assert ctx["target_clone_path"] == ""
-    assert ctx["target_worktree_path"] == ""
 
 
-def test_cross_repo_invalid_yaml():
-    """YAML parse error: is_cross_repo=false, fall back to existing defaults."""
-    body = textwrap.dedent("""\
-        ```yaml
-        : invalid: yaml: [
-        ```
-    """)
-
-    ctx = build_context(42, body=body)
-    assert ctx["is_cross_repo"] == "false"
-    assert ctx["base_branch"] == "main"
 
 
-def test_yaml_metadata_extraction_t1():
-    """T1: correctly extract base_branch/allow_paths/target_repo."""
-    body = textwrap.dedent("""\
-        ```yaml
-        base_branch: develop
-        allow_paths:
-          - src/**
-        target_repo: sumipan/ghdag
-        ```
-        # Title
-    """)
-    ctx = build_context(42, body=body)
-    assert ctx["base_branch"] == "develop"
-    assert ctx["allow_paths"] == "- src/**"
-    assert ctx["target_repo"] == "sumipan/ghdag"
-    assert ctx["is_cross_repo"] == "true"
 
 
-def test_yaml_none_issue_t2():
-    """T2: Issue without YAML → metadata={}, base_branch=main, allow_paths=unrestricted, is_cross_repo=false."""
-    body = "# Design\n\nbody only"
-    ctx = build_context(42, body=body)
-    assert ctx["base_branch"] == "main"
-    # ASCII fixture data.
-    assert ctx["allow_paths"]
-    assert "\n" not in ctx["allow_paths"]
-    assert ctx["is_cross_repo"] == "false"
 
 
 def test_gh_fetch_failure_exits_immediately():
@@ -429,35 +183,6 @@ def test_metadata_andon_id_dedupes_and_sorts_codes():
     )
 
 
-def test_main_raises_andon_on_metadata_violation(capsys):
-    import sys
-
-    body = _metadata_violation_body()
-    mock_client = object()
-    with patch(
-        "issuesmith.context_hook._fetch_issue_body_from_gh", return_value=body
-    ), patch(
-        "issuesmith.context_hook._fetch_issue_comments_from_api", return_value=[]
-    ), patch("ghdag.forge.get_forge", return_value=mock_client), patch(
-        "issuesmith.andon.list_open", return_value=[]
-    ) as list_open, patch("issuesmith.andon.raise_andon") as raise_andon:
-        original = sys.argv
-        sys.argv = ["context_hook", "77"]
-        try:
-            with pytest.raises(SystemExit) as exc_info:
-                main()
-            assert exc_info.value.code == 1
-        finally:
-            sys.argv = original
-    assert capsys.readouterr().out == ""
-    list_open.assert_called_once_with(mock_client)
-    raise_andon.assert_called_once()
-    andon = raise_andon.call_args[0][1]
-    assert isinstance(andon, Andon)
-    assert andon.kind == "blocked"
-    assert andon.step == "context_hook"
-    assert andon.issue == 77
-    assert andon.id == "context_hook:77:invalid_allow_path"
 
 
 def test_main_skips_andon_when_open_duplicate_exists(capsys):

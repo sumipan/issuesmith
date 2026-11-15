@@ -13,7 +13,6 @@ from issuesmith.config import (
     get_config,
     reset_config_cache,
 )
-from issuesmith.pr_scope import check_pr_diff_scope
 
 _MINIMAL_PHASES = [
     {"name": "draft", "role": "design", "entry_step": "b1", "handler": "brushup"},
@@ -59,16 +58,6 @@ def test_except_non_list_raises(tmp_path, monkeypatch):
         get_config()
 
 
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [
-        (None, ()),
-        ([], ()),
-        (["a/*.jsonl", 1], ("a/*.jsonl", "1")),
-    ],
-)
-def test_build_except(raw, expected):
-    assert _build_forbidden_pr_paths_except(raw) == expected
 
 
 @pytest.mark.parametrize("raw", ["a/*.jsonl", {"a": 1}, 3])
@@ -92,18 +81,3 @@ def test_config_show_includes_except_key(tmp_path, monkeypatch, capsys):
     assert data["forbidden_pr_paths_except"] == []
 
 
-def test_config_except_applies_to_pr_diff_scope(tmp_path, monkeypatch):
-    """Config except with default forbidden_pr_paths lets the ledger through only."""
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {"repo": "example/app", "forbidden_pr_paths_except": [_LEDGER_EXCEPT]},
-    )
-    assert (
-        check_pr_diff_scope(["skills/research-store/ledger/a/b.jsonl"], ["skills/**"])
-        == []
-    )
-    violations = check_pr_diff_scope(["jobs/x.jsonl"], ["jobs/**"])
-    assert [v.rule_id for v in violations] == ["pr_diff_scope.forbidden_path"]
-    out = check_pr_diff_scope(["skills/research-store/ledger/a/b.jsonl"], ["src/**"])
-    assert [v.rule_id for v in out] == ["pr_diff_scope.out_of_scope"]

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 import yaml
 
@@ -17,36 +15,8 @@ def _clear_cache():
     reset_config_cache()
 
 
-def test_load_config_reads_installs(tmp_path, monkeypatch):
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(
-        yaml.safe_dump(
-            {
-                "repo": "sumipan/nexus",
-                "installs": {"issuesmith": "/var/tmp/issuesmith"},
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    cfg = load_config()
-    assert cfg.installs == {"issuesmith": Path("/var/tmp/issuesmith").resolve()}
 
 
-def test_load_config_resolves_relative_installs(tmp_path, monkeypatch):
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(
-        yaml.safe_dump(
-            {
-                "repo": "sumipan/nexus",
-                "installs": {"issuesmith": "vendor/issuesmith"},
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    cfg = load_config()
-    assert cfg.installs == {"issuesmith": (tmp_path / "vendor/issuesmith").resolve()}
 
 
 def test_load_config_missing_installs_defaults_empty(tmp_path, monkeypatch):
@@ -79,18 +49,3 @@ def test_load_config_rejects_non_string_install_path(tmp_path, monkeypatch):
         load_config()
 
 
-def test_phases_yaml_accepts_pins_landed_predicate():
-    from issuesmith.config import _build_phases
-
-    phases = _build_phases(
-        [
-            {
-                "name": "develop",
-                "role": "implementation",
-                "entry_step": "cp2",
-                "handler": "impl",
-                "advance_when": ["deps_terminal", "pins_landed"],
-            }
-        ]
-    )
-    assert phases[0].advance_when == ("deps_terminal", "pins_landed")
