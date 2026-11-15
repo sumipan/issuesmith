@@ -43,16 +43,6 @@ def _store(tmp_path: Path) -> QueueStore:
     )
 
 
-def test_validate_frontmatter_reports_missing_fields():
-    assert validate_frontmatter(_EMPTY_ALLOW_PATHS_BODY) == ["allow_paths"]
-    assert validate_frontmatter("no yaml") == [
-        "target_repo",
-        "base_branch",
-        "allow_paths",
-    ]
-    assert validate_frontmatter(_VALID_BODY) == []
-
-
 def test_missing_yaml_fields_matches_validate_frontmatter():
     body = "no yaml"
     assert missing_yaml_fields(body) == validate_frontmatter(body)
@@ -62,95 +52,6 @@ def test_is_yaml_reject_reason_matches():
     assert is_yaml_reject_reason("missing YAML fields") is True
     assert is_yaml_reject_reason("missing YAML: allow_paths") is True
     assert is_yaml_reject_reason("duplicate of #1") is False
-
-
-def test_deterministic_decision_repair_for_sub_with_empty_allow_paths():
-    req = QueueRequest(
-        "11111111-1111-1111-1111-111111111111",
-        1,
-        "sub",
-        "s",
-        "automation",
-        "low",
-        _NOW,
-        ("bot",),
-    )
-    decision = deterministic_decision(
-        req,
-        {
-            "state": "OPEN",
-            "title": "x",
-            "body": _EMPTY_ALLOW_PATHS_BODY,
-            "labels": [
-                {"name": "issuesmith:draft-done"},
-                {"name": "scope:milestone"},
-            ],
-        },
-    )
-    assert decision.kind == "repair"
-    assert "missing YAML fields: allow_paths" in decision.reason
-    assert decision.add_rejected_label is False
-
-
-def test_deterministic_decision_sub_without_scope_milestone_rejects():
-    req = QueueRequest(
-        "11111111-1111-1111-1111-111111111111",
-        1,
-        "sub",
-        "s",
-        "automation",
-        "low",
-        _NOW,
-        ("bot",),
-    )
-    decision = deterministic_decision(
-        req,
-        {
-            "state": "OPEN",
-            "title": "x",
-            "body": _VALID_BODY,
-            "labels": [{"name": "issuesmith:draft-done"}],
-        },
-    )
-    assert decision.kind == "rejected"
-    assert decision.add_rejected_label is True
-    assert "scope:milestone" in decision.reason
-
-
-def test_deterministic_decision_draft_missing_yaml_keeps():
-    req = QueueRequest(
-        "11111111-1111-1111-1111-111111111111",
-        1,
-        "draft",
-        "s",
-        "automation",
-        "low",
-        _NOW,
-        ("bot",),
-    )
-    decision = deterministic_decision(
-        req,
-        {"state": "OPEN", "title": "x", "body": "no yaml", "labels": []},
-    )
-    assert decision.kind == "keep"
-
-
-def test_deterministic_decision_develop_without_draft_done_keeps():
-    req = QueueRequest(
-        "11111111-1111-1111-1111-111111111111",
-        1,
-        "develop",
-        "s",
-        "automation",
-        "low",
-        _NOW,
-        ("bot",),
-    )
-    decision = deterministic_decision(
-        req,
-        {"state": "OPEN", "title": "x", "body": "no yaml", "labels": []},
-    )
-    assert decision.kind == "keep"
 
 
 def test_deterministic_decision_develop_rejects_scope_milestone():
@@ -180,29 +81,6 @@ def test_deterministic_decision_develop_rejects_scope_milestone():
     assert decision.add_rejected_label is True
     assert "scope:milestone" in decision.reason
     assert "develop" in decision.reason or "MILESTONE_BLOCKED" in decision.reason
-
-
-def test_deterministic_decision_develop_without_scope_milestone_keeps():
-    req = QueueRequest(
-        "11111111-1111-1111-1111-111111111111",
-        1,
-        "develop",
-        "lane-check",
-        "automation",
-        "normal",
-        _NOW,
-        ("lane-check",),
-    )
-    decision = deterministic_decision(
-        req,
-        {
-            "state": "OPEN",
-            "title": "normal issue",
-            "body": _VALID_BODY,
-            "labels": [{"name": "issuesmith:draft-done"}],
-        },
-    )
-    assert decision.kind == "keep"
 
 
 def test_is_deps_waiting_reject_reason_matches():

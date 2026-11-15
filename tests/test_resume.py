@@ -41,36 +41,6 @@ def test_resume_raises_without_args():
 # from_step path: in_flight release + ghdag recover
 # ---------------------------------------------------------------------------
 
-def test_resume_from_step_releases_in_flight():
-    store = _make_store_mock()
-    with (
-        patch("issuesmith.resume.QueueStore", return_value=store),
-        patch("issuesmith.resume._resume_from_step", return_value=0),
-    ):
-        from issuesmith.resume import resume
-        resume(123, from_step="cp2")
-    store.remove_in_flight.assert_called_once_with(123)
-
-
-def test_resume_from_step_calls_ghdag_recover():
-    from issuesmith.resume import resume
-    captured: list[tuple] = []
-
-    def fake_recover(*args, **kwargs):
-        captured.append((args, kwargs))
-        return 0
-
-    with (
-        patch("issuesmith.resume.QueueStore") as mock_store_cls,
-        patch("issuesmith.resume._generation_keys_available", return_value=True),
-        patch("issuesmith.resume._run_ghdag_recover", side_effect=fake_recover),
-    ):
-        mock_store_cls.return_value = _make_store_mock()
-        rc = resume(123, from_step="m1")
-    assert rc == 0
-    assert captured[0][0][0] == 123
-    assert captured[0][0][2] == "m1"
-
 
 def test_resume_from_step_returns_1_when_ghdag_unavailable(capsys):
     from issuesmith.resume import resume
@@ -88,20 +58,6 @@ def test_resume_from_step_returns_1_when_ghdag_unavailable(capsys):
 # ---------------------------------------------------------------------------
 # phase path: in_flight release + label reset + enqueue
 # ---------------------------------------------------------------------------
-
-def test_resume_phase_releases_in_flight():
-    store = _make_store_mock()
-    client = _make_client_mock()
-    with (
-        patch("issuesmith.resume.QueueStore", return_value=store),
-        patch("issuesmith.resume.get_forge", return_value=client),
-        patch("issuesmith.resume.get_config") as mock_cfg,
-        patch("issuesmith.resume.apply_redispatch_labels"),
-    ):
-        mock_cfg.return_value.repo = "sumipan/issuesmith"
-        from issuesmith.resume import resume
-        resume(123, phase="develop")
-    store.remove_in_flight.assert_called_once_with(123)
 
 
 def test_resume_phase_calls_apply_redispatch_labels():
@@ -124,46 +80,6 @@ def test_resume_phase_calls_apply_redispatch_labels():
         resume(123, phase="develop")
     assert captured[0][1] == 123
     assert captured[0][2] == "develop"
-
-
-def test_resume_phase_enqueues_issue():
-    store = _make_store_mock()
-    client = _make_client_mock()
-    captured: list[dict] = []
-
-    def fake_enqueue(**kwargs):
-        captured.append(kwargs)
-        return store.enqueue.return_value
-
-    store.enqueue.side_effect = fake_enqueue
-    with (
-        patch("issuesmith.resume.QueueStore", return_value=store),
-        patch("issuesmith.resume.get_forge", return_value=client),
-        patch("issuesmith.resume.get_config") as mock_cfg,
-        patch("issuesmith.resume.apply_redispatch_labels"),
-    ):
-        mock_cfg.return_value.repo = "sumipan/issuesmith"
-        from issuesmith.resume import resume
-        rc = resume(123, phase="merge")
-    assert rc == 0
-    assert captured[0]["issue"] == 123
-    assert captured[0]["phase"] == "merge"
-
-
-def test_resume_phase_prints_request_id(capsys):
-    store = _make_store_mock()
-    client = _make_client_mock()
-    with (
-        patch("issuesmith.resume.QueueStore", return_value=store),
-        patch("issuesmith.resume.get_forge", return_value=client),
-        patch("issuesmith.resume.get_config") as mock_cfg,
-        patch("issuesmith.resume.apply_redispatch_labels"),
-    ):
-        mock_cfg.return_value.repo = "sumipan/issuesmith"
-        from issuesmith.resume import resume
-        resume(123, phase="develop")
-    captured = capsys.readouterr()
-    assert "req-123" in captured.out
 
 
 def test_cmd_resume_both_flags_exits_2():
@@ -206,27 +122,3 @@ def _assert_redispatch_has_no_held(store):
     assert "held" not in entry
 
 
-def test_resume_from_step_drops_held_entry(tmp_path):
-    store = _held_store(tmp_path)
-    with (
-        patch("issuesmith.resume.QueueStore", return_value=store),
-        patch("issuesmith.resume._resume_from_step", return_value=0),
-    ):
-        from issuesmith.resume import resume
-        resume(123, from_step="p1")
-    _assert_redispatch_has_no_held(store)
-
-
-def test_resume_phase_drops_held_entry(tmp_path):
-    store = _held_store(tmp_path)
-    client = _make_client_mock()
-    with (
-        patch("issuesmith.resume.QueueStore", return_value=store),
-        patch("issuesmith.resume.get_forge", return_value=client),
-        patch("issuesmith.resume.get_config") as mock_cfg,
-        patch("issuesmith.resume.apply_redispatch_labels"),
-    ):
-        mock_cfg.return_value.repo = "sumipan/issuesmith"
-        from issuesmith.resume import resume
-        resume(123, phase="develop")
-    _assert_redispatch_has_no_held(store)

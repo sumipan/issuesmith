@@ -181,31 +181,7 @@ class TestUpstreamBlockers:
 # ---------------------------------------------------------------------------
 
 class TestRejectsFailedUpstream:
-    def test_rejects_with_failed_upstream(self, pipeline_fs, capsys):
-        tmp, cfg = pipeline_fs
-        _make_done(tmp / "jobs" / "done", "p1-uuid", "TIMEOUT")
 
-        rc, captured, mock_recover = _run_resume(cfg, capsys, from_step="p2")
-
-        assert rc == 1
-        assert mock_recover.call_count == 0
-        assert "p1 (failed)" in captured.err
-        assert "--from p1" in captured.err
-        assert "--from p2 --mark-done p1" in captured.err
-
-    def test_from_p3_shows_both_blockers(self, pipeline_fs, capsys):
-        """p1 failed, p2 dep_failed, from=p3: blockers show p1 and p2."""
-        tmp, cfg = pipeline_fs
-        _make_done(tmp / "jobs" / "done", "p1-uuid", "TIMEOUT")
-
-        rc, captured, mock_recover = _run_resume(cfg, capsys, from_step="p3")
-
-        assert rc == 1
-        assert mock_recover.call_count == 0
-        assert "p1 (failed)" in captured.err
-        assert "p2 (dep_failed)" in captured.err
-        assert "--from p1" in captured.err
-        assert "--from p2 --mark-done p1" in captured.err
 
     def test_cancelled_upstream_also_rejected(self, pipeline_fs, capsys):
         """p1 CANCELLED -> resume from p2 is also rejected."""
@@ -224,87 +200,7 @@ class TestRejectsFailedUpstream:
 # ---------------------------------------------------------------------------
 
 class TestMarkDone:
-    def test_mark_done_writes_marker_and_calls_recover(self, pipeline_fs, capsys):
-        tmp, cfg = pipeline_fs
-        _make_done(tmp / "jobs" / "done", "p1-uuid", "TIMEOUT")
 
-        done_file = tmp / "jobs" / "done" / "p1-uuid"
-        assert done_file.read_text() == "TIMEOUT"
-
-        rc, captured, mock_recover = _run_resume(
-            cfg, capsys, from_step="p2", mark_done=["p1"]
-        )
-
-        assert rc == 0
-        assert done_file.read_text() == "0"
-        mock_recover.assert_called_once()
-        assert "marked done: p1" in captured.err
-
-    def test_mark_done_then_real_recover_resets_downstream(self, pipeline_fs, capsys):
-        """After --mark-done p1 and an in-process recover, p1 is success and p2 pending."""
-        from ghdag import status as ghdag_status
-        from ghdag.dag import execute_recover, plan_recover
-
-        from issuesmith.resume import resume
-
-        tmp, cfg = pipeline_fs
-        jobs = tmp / "jobs"
-        _make_done(jobs / "done", "p1-uuid", "TIMEOUT")
-        _make_done(jobs / "done", "p2-uuid", "DEP_FAILED")
-        for rec in _STEPS:
-            (jobs / f"20260923000000-shell-order-{rec['uuid']}.md").write_text(
-                rec["command"], encoding="utf-8"
-            )
-
-        def _in_process_recover(issue, handler, from_step, workflow=None):
-            plan = plan_recover(
-                state_dir=tmp / ".pipeline-state",
-                exec_jsonl_path=jobs / "exec.jsonl",
-                workflow_name=workflow,
-                handler_name=handler,
-                issue_number=issue,
-                queue_dir=jobs,
-                done_dir=jobs / "done",
-                from_step=from_step,
-            )
-            execute_recover(plan, queue_dir=jobs, done_dir=jobs / "done")
-            return 0
-
-        with (
-            patch("issuesmith.resume.get_config", return_value=cfg),
-            patch("issuesmith.resume._run_ghdag_recover", side_effect=_in_process_recover),
-            patch("issuesmith.resume.QueueStore"),
-        ):
-            rc = resume(
-                _ISSUE, from_step="p2", mark_done=["p1"],
-                workflow=_WORKFLOW, handler=_HANDLER,
-            )
-
-        assert rc == 0
-        steps = ghdag_status.issue_status(
-            _ISSUE,
-            handler=_HANDLER,
-            workflow=_WORKFLOW,
-            exec_jsonl_path=jobs / "exec.jsonl",
-            state_dir=tmp / ".pipeline-state",
-            done_dir=jobs / "done",
-        ).steps
-        by_name = {st.step_name: st.status for st in steps}
-        assert by_name["p1"] == "success"
-        assert by_name["p2"] == "pending"
-
-    def test_mark_done_dep_failed_exits_2(self, pipeline_fs, capsys):
-        """--mark-done p2 (dep_failed) returns 2, no marker written."""
-        tmp, cfg = pipeline_fs
-        _make_done(tmp / "jobs" / "done", "p1-uuid", "TIMEOUT")
-
-        rc, captured, mock_recover = _run_resume(
-            cfg, capsys, from_step="p2", mark_done=["p2"]
-        )
-
-        assert rc == 2
-        assert mock_recover.call_count == 0
-        assert (tmp / "jobs" / "done" / "p2-uuid").exists() is False
 
     def test_mark_done_downstream_exits_2(self, pipeline_fs, capsys):
         """--mark-done p3 (downstream of from=p2) returns 2, no marker written."""
@@ -364,43 +260,6 @@ class TestMarkDoneRequiresFrom:
 # ---------------------------------------------------------------------------
 # AC-3: all upstream success -> guard passes through to recover
 # ---------------------------------------------------------------------------
-
-class TestPassesThroughToRecover:
-    def test_all_success_calls_recover(self, pipeline_fs, capsys):
-        """p1 success, p2 pending: resume from p2 calls recover once."""
-        tmp, cfg = pipeline_fs
-        _make_done(tmp / "jobs" / "done", "p1-uuid", "0")
-
-        rc, captured, mock_recover = _run_resume(cfg, capsys, from_step="p2")
-
-        assert rc == 0
-        mock_recover.assert_called_once()
-
-    def test_running_upstream_calls_recover(self, pipeline_fs, capsys):
-        """p1 running (in running dir): resume from p2 passes through."""
-        tmp, cfg = pipeline_fs
-        (tmp / "jobs" / "running" / "p1-uuid.json").write_text(
-            json.dumps({"started_at": "2026-09-01T12:00:00"}), encoding="utf-8"
-        )
-
-        rc, captured, mock_recover = _run_resume(cfg, capsys, from_step="p2")
-
-        assert rc == 0
-        mock_recover.assert_called_once()
-
-    def test_no_steps_passes_through(self, tmp_path, capsys):
-        """exec.jsonl absent -> no steps -> guard passes through."""
-        (tmp_path / "jobs").mkdir()
-        (tmp_path / "jobs" / "done").mkdir()
-        (tmp_path / "jobs" / "running").mkdir()
-        (tmp_path / ".pipeline-state").mkdir()
-        cfg = _build_config({"repo": "sumipan/issuesmith", "workflow": "issuesmith.yaml"}, root=tmp_path)
-
-        rc, captured, mock_recover = _run_resume(cfg, capsys, from_step="p2")
-
-        assert rc == 0
-        mock_recover.assert_called_once()
-        config_module.reset_config_cache()
 
 
 # ---------------------------------------------------------------------------

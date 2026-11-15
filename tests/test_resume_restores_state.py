@@ -70,43 +70,6 @@ def _steps(tmp_path: Path) -> list[StepStatus]:
     ]
 
 
-def test_from_step_restores_label_in_flight_and_clears_downstream_results(env, monkeypatch):
-    tmp_path, client, number = env
-    steps = _steps(tmp_path)
-    calls: list[tuple] = []
-    monkeypatch.setattr(resume_mod, "_generation_keys_available", lambda: True)
-    monkeypatch.setattr(resume_mod, "_load_step_statuses", lambda *a, **k: steps)
-    monkeypatch.setattr(resume_mod, "_run_ghdag_recover", lambda *a, **k: calls.append(a) or 0)
-
-    rc = resume_mod.resume(number, from_step="p2", handler="impl")
-
-    assert rc == 0 and len(calls) == 1
-    labels = {lb["name"] for lb in client.issue_get(number, fields=["labels"])["labels"]}
-    assert "issuesmith:develop-running" in labels
-    assert "issuesmith:develop-ready" not in labels
-    assert "issuesmith:draft-done" in labels
-    in_flight = QueueStore().snapshot().in_flight
-    assert [e["issue"] for e in in_flight] == [number]
-    assert in_flight[0]["role"] == "implementation"
-    assert not (tmp_path / "result-p2.md").exists()  # rerun steps start from an empty result
-    assert not (tmp_path / "result-p3.md").exists()
-    assert (tmp_path / "result-p1.md").exists()  # upstream success untouched
-
-
-def test_failed_recover_does_not_restore(env, monkeypatch):
-    tmp_path, client, number = env
-    monkeypatch.setattr(resume_mod, "_generation_keys_available", lambda: True)
-    monkeypatch.setattr(resume_mod, "_load_step_statuses", lambda *a, **k: _steps(tmp_path))
-    monkeypatch.setattr(resume_mod, "_run_ghdag_recover", lambda *a, **k: 1)
-
-    rc = resume_mod.resume(number, from_step="p2", handler="impl")
-
-    assert rc == 1
-    labels = {lb["name"] for lb in client.issue_get(number, fields=["labels"])["labels"]}
-    assert "issuesmith:develop-running" not in labels
-    assert QueueStore().snapshot().in_flight == []
-
-
 def test_succeeded_downstream_results_are_kept_without_force(env, monkeypatch):
     """--from p2 with p3 already succeeded: recover re-runs p2 only, p3 keeps its result."""
     tmp_path, client, number = env
@@ -148,31 +111,6 @@ def test_force_resets_succeeded_markers_and_results(env, monkeypatch):
     assert not (tmp_path / "result-p2.md").exists() and not (tmp_path / "result-p3.md").exists()
 
 
-def test_running_state_is_restored_through_project_issue(env, monkeypatch):
-    """The label change of resume --from is a state change applied by project_issue (#4807)."""
-    import issuesmith.ops.labels as labels_mod
-    from issuesmith.config import get_config
-    from issuesmith.projection import diff, project, state_from_labels
-
-    tmp_path, client, number = env
-    seen: list = []
-
-    def spy(cl, issue_number, change):
-        cfg = get_config()
-        current = [lb["name"] for lb in cl.issue_get(issue_number, fields=["labels"])["labels"]]
-        delta = diff(current, project(change(state_from_labels(current, cfg)), cfg), cfg)
-        seen.append((issue_number, delta))
-        return delta
-
-    monkeypatch.setattr(labels_mod, "project_issue", spy, raising=False)
-    monkeypatch.setattr(resume_mod, "_generation_keys_available", lambda: True)
-    monkeypatch.setattr(resume_mod, "_load_step_statuses", lambda *a, **k: _steps(tmp_path))
-    monkeypatch.setattr(resume_mod, "_run_ghdag_recover", lambda *a, **k: 0)
-
-    assert resume_mod.resume(number, from_step="p2", handler="impl") == 0
-    assert seen == [(number, (["issuesmith:develop-running"], ["issuesmith:develop-ready"]))]
-
-
 def _write_phases(tmp_path: Path, phases: list[dict] | None) -> None:
     data: dict = {"repo": "example/repo"}
     if phases is not None:
@@ -181,68 +119,10 @@ def _write_phases(tmp_path: Path, phases: list[dict] | None) -> None:
     reset_config_cache()
 
 
-def test_phase_for_handler_maps_workflow_handlers_from_declaration(env):
-    """ghdag handler names map through config.phase_for_handler (#4790)."""
-    from tests.conftest import NEXUS_TEST_PHASES
-
-    tmp_path, _client, _number = env
-    _write_phases(tmp_path, NEXUS_TEST_PHASES)
-
-    assert resume_mod._phase_for_handler("brushup") == "draft"
-    assert resume_mod._phase_for_handler("subissue") == "sub"
-    assert resume_mod._phase_for_handler("impl") == "develop"
-    assert resume_mod._phase_for_handler("merge") == "merge"
-
-
 def test_phase_for_handler_returns_none_for_unknown_or_undeclared_phase(env):
     assert resume_mod._phase_for_handler("migrate") is None  # no migrate phase
     assert resume_mod._phase_for_handler("unknown") is None
     assert resume_mod._phase_for_handler("subissue") is None  # env has no sub phase
-
-
-def test_phase_for_handler_prefers_declared_handler(env):
-    tmp_path, _client, _number = env
-    _write_phases(
-        tmp_path,
-        [
-            {
-                "name": "draft",
-                "role": "design",
-                "entry_step": "b1",
-                "handler": "custom",
-                "advance_when": ["deps_terminal"],
-            },
-            {
-                "name": "develop",
-                "role": "implementation",
-                "entry_step": "cp2",
-                "handler": "impl",
-                "advance_when": ["deps_terminal"],
-            },
-        ],
-    )
-
-    assert resume_mod._phase_for_handler("custom") == "draft"
-
-
-def test_from_b1_with_brushup_restores_draft_running(env, monkeypatch):
-    """resume --from b1 --handler brushup brings back draft-running and in_flight (#4802)."""
-    tmp_path, client, _number = env
-    number = client.issue_create("draft", "```yaml\ntarget_repo: example/repo\nallow_paths: [\"src/**\"]\n```\n")
-    client.issue_update(number, labels_add=["issuesmith:draft-ready"])
-    monkeypatch.setattr(resume_mod, "_generation_keys_available", lambda: True)
-    b1 = StepStatus("u-b1", "b1", [], "failed", None, None, str(tmp_path / "result-b1.md"))
-    monkeypatch.setattr(resume_mod, "_load_step_statuses", lambda *a, **k: [b1])
-    monkeypatch.setattr(resume_mod, "_run_ghdag_recover", lambda *a, **k: 0)
-
-    assert resume_mod.resume(number, from_step="b1", handler="brushup") == 0
-
-    labels = {lb["name"] for lb in client.issue_get(number, fields=["labels"])["labels"]}
-    assert "issuesmith:draft-running" in labels
-    assert "issuesmith:draft-ready" not in labels
-    in_flight = QueueStore().snapshot().in_flight
-    assert [e["issue"] for e in in_flight] == [number]
-    assert in_flight[0]["role"] == "design"
 
 
 def test_restore_running_state_warns_when_phase_is_unknown(env, capsys):

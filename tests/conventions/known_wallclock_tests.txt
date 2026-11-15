@@ -25,6 +25,4 @@ tests/test_queue_race.py
 tests/test_queue_sub_phase.py
 tests/test_queue_triage.py
 tests/test_queue_triage_cas.py
-tests/test_queue_triage_dispatch.py
-tests/test_scope_gate_root.py
 tests/test_triage_circuit.py

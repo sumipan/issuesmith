@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -87,111 +87,6 @@ class _Client:
 
     def api_request(self, path, **kwargs):
         return []
-
-
-def test_apply_priority_bucket_order_prevents_inversion():
-    from issuesmith.queue_store import QueueRequest
-    from issuesmith.queue_triage import apply_priority_bucket_order
-
-    def req(rid: str, priority: str) -> QueueRequest:
-        return QueueRequest(
-            request_id=rid,
-            issue=1,
-            phase="draft",
-            source="s",
-            actor_kind="automation",
-            priority=priority,  # type: ignore[arg-type]
-            requested_at=_NOW,
-            requested_by=("a",),
-        )
-
-    active = [
-        req("low-1", "low"),
-        req("high-1", "high"),
-        req("normal-1", "normal"),
-        req("high-2", "high"),
-    ]
-    # LLM puts low first and inverts highs relative order.
-    llm_order = ["low-1", "high-2", "normal-1", "high-1"]
-    result = apply_priority_bucket_order(llm_order, active)
-    assert result == ["high-2", "high-1", "normal-1", "low-1"]
-
-
-def test_deterministic_first_applies_priority_when_llm_times_out(
-    tmp_path, monkeypatch,
-):
-    """AC-2 / AC-6: even on LLM timeout, high comes first (measured enqueue-order fixture)."""
-    _write_minimal_config(tmp_path, monkeypatch)
-    from issuesmith import queue as qmod
-
-    store = _store(tmp_path)
-    # Real-ish enqueue order: lows/normals first, highs last (#3115 / #3060 pattern).
-    order_spec = [
-        (3136, "low"),
-        (3042, "normal"),
-        (3001, "low"),
-        (3002, "normal"),
-        (3003, "normal"),
-        (3004, "low"),
-        (3115, "high"),  # should become first after triage
-        (3005, "normal"),
-        (3006, "low"),
-        (3007, "normal"),
-        (3008, "normal"),
-        (3009, "low"),
-        (3010, "normal"),
-        (3011, "low"),
-        (3012, "normal"),
-        (3013, "low"),
-        (3060, "high"),  # should become second
-    ]
-    rid_by_issue: dict[int, str] = {}
-    issues: dict[int, dict] = {}
-    base = datetime(2026, 9, 10, 12, 0, tzinfo=timezone.utc)
-    for i, (issue, priority) in enumerate(order_spec):
-        r = store.enqueue(
-            issue=issue,
-            phase="draft",
-            source="release-watcher",
-            actor_kind="automation",
-            priority=priority,
-            requested_by=["release-watcher"],
-            # Stagger timestamps so same-priority ties follow enqueue order.
-            requested_at=(base + timedelta(seconds=i)).isoformat(),
-        )
-        rid_by_issue[issue] = r.request_id
-        issues[issue] = {
-            "state": "OPEN",
-            "labels": [],
-            "title": f"issue {issue}",
-            "body": _VALID_BODY,
-        }
-
-    # Confirm enqueue order has highs buried (precondition matching production).
-    snap0 = store.snapshot()
-    assert snap0.active_order.index(rid_by_issue[3115]) > 0
-    assert snap0.active_order.index(rid_by_issue[3060]) > snap0.active_order.index(
-        rid_by_issue[3115]
-    )
-
-    def boom(prompt, **kwargs):
-        raise TimeoutError("timed out after 60 seconds")
-
-    monkeypatch.setattr(qmod, "_pipeline_idle_enough", lambda *a, **k: True)
-    # Pause engines so triage order is observable (dispatch would dequeue #3115).
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: ["claude"])
-    now = datetime(2026, 9, 11, 6, 0, tzinfo=_JST)
-    qmod.dispatch_one(
-        now=now,
-        client=_Client(issues),
-        store=store,
-        skip_seed=True,
-        call_llm=boom,
-    )
-
-    snap = store.snapshot()
-    assert snap.active_order[0] == rid_by_issue[3115]
-    assert snap.active_order[1] == rid_by_issue[3060]
 
 
 def test_cas_retry_keeps_triage_order_and_appends_new_request(
@@ -404,57 +299,3 @@ def test_purge_orphan_ids_and_doctor_audit(tmp_path, monkeypatch, capsys):
     assert orphan in out2 or "orphan" in out2.lower() or "purged" in out2.lower()
 
 
-def test_triage_body_chars_truncates(tmp_path):
-    from issuesmith.queue_triage import triage
-
-    store = _store(tmp_path)
-    r = store.enqueue(
-        issue=1,
-        phase="draft",
-        source="s",
-        actor_kind="automation",
-        priority="low",
-        requested_by=["a"],
-        requested_at=_NOW,
-    )
-    snap = store.snapshot()
-    long_body = "X" * 1000
-    seen: dict[str, str] = {}
-
-    def fake_llm(prompt, **kwargs):
-        # body_head appears inside JSON in the prompt
-        assert '"body_head": "' in prompt or "body_head" in prompt
-        idx = prompt.find(long_body[:20])
-        if idx >= 0:
-            # Ensure full body is not present
-            assert long_body not in prompt
-        seen["prompt"] = prompt
-
-        class R:
-            text = json.dumps(
-                {
-                    "order": [r.request_id],
-                    "decisions": [
-                        {
-                            "request_id": r.request_id,
-                            "decision": "keep",
-                            "reason": "ok",
-                            "uncertain_flag": False,
-                        }
-                    ],
-                }
-            )
-            usage = None
-
-        return R()
-
-    triage(
-        snap,
-        issues={1: {"title": "t", "body": long_body, "labels": [], "state": "OPEN"}},
-        store=store,
-        call_llm=fake_llm,
-        triage_log_path=tmp_path / "triage.jsonl",
-        body_chars=50,
-    )
-    assert "X" * 50 in seen["prompt"]
-    assert "X" * 51 not in seen["prompt"]

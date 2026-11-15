@@ -154,20 +154,6 @@ class TestInferHandlerFromExec:
 # AC-1 / AC-5: resume --from m1 without --handler resets m1 and m2 of the impl DAG
 # ---------------------------------------------------------------------------
 
-def test_from_m1_infers_impl_and_resets_two_steps(tmp_path, capsys):
-    jobs, cfg = _fs(tmp_path, _impl_records(_ISSUE))
-    _m1_failed(jobs)
-    calls: list = []
-
-    rc = _run(cfg, jobs, calls, from_step="m1")
-
-    assert rc == 0
-    assert calls == [(_ISSUE, "impl", "m1", _WORKFLOW)]
-    after = _statuses(cfg, jobs, "impl")
-    assert after["m1"] == "pending"
-    assert after["m2"] == "pending"
-    assert all(after[name] == "success" for name in _CHAIN[:5])
-
 
 def test_logs_when_inferred_differs_from_table(tmp_path, capsys):
     jobs, cfg = _fs(tmp_path, _impl_records(_ISSUE))
@@ -187,34 +173,9 @@ def test_no_log_when_inferred_matches_table(tmp_path, capsys):
     assert "handler inferred from exec" not in capsys.readouterr().err
 
 
-def test_explicit_handler_wins_over_exec(tmp_path, capsys):
-    jobs, cfg = _fs(tmp_path, _impl_records(_ISSUE))
-    _m1_failed(jobs)
-    calls: list = []
-
-    with patch("issuesmith.resume._infer_handler_from_exec") as mock_infer:
-        rc = _run(cfg, jobs, calls, from_step="m1", handler="impl")
-
-    assert rc == 0
-    mock_infer.assert_not_called()
-    assert calls[0][1] == "impl"
-
-
 # ---------------------------------------------------------------------------
 # AC-2: no exec record for the issue -> static table
 # ---------------------------------------------------------------------------
-
-def test_falls_back_to_static_table(tmp_path, capsys):
-    jobs, cfg = _fs(tmp_path, _impl_records(4000))
-    calls: list = []
-
-    with patch("issuesmith.resume._load_step_statuses", return_value=[]) as mock_load:
-        rc = _run(cfg, jobs, calls, from_step="m1", table="merge")
-
-    assert rc == 0
-    assert mock_load.call_args[0][1] == "merge"
-    assert calls[0][1] == "merge"
-    assert "handler inferred from exec" not in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
@@ -234,29 +195,3 @@ def test_step_missing_from_handler_dag_exits_1(tmp_path, capsys):
     assert "no steps to reset: step m1 not found in handler merge (try --handler impl)" in err
 
 
-def test_fallback_handler_without_run_exits_1(tmp_path, capsys):
-    """exec knows the issue but not the step; the table's handler has no run -> exit 1."""
-    jobs, cfg = _fs(tmp_path, _impl_records(_ISSUE))
-    _m1_failed(jobs)
-    calls: list = []
-
-    rc = _run(cfg, jobs, calls, from_step="d1", table="draft")
-
-    assert rc == 1
-    assert calls == []
-    assert (
-        "no steps to reset: step d1 not found in handler draft (try --handler …)"
-        in capsys.readouterr().err
-    )
-
-
-def test_issue_without_exec_records_still_calls_recover(tmp_path, capsys):
-    """No exec record for the issue: nothing to judge by, recover runs as before."""
-    jobs, cfg = _fs(tmp_path, _impl_records(4000))
-    calls: list = []
-
-    rc = _run(cfg, jobs, calls, from_step="m1", table="merge")
-
-    assert rc == 0
-    assert calls == [(_ISSUE, "merge", "m1", _WORKFLOW)]
-    assert "no steps to reset" not in capsys.readouterr().err

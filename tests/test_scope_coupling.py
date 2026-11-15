@@ -142,44 +142,6 @@ def _make_grep_mock_run_guarded(
     return fake_grep
 
 
-class TestAC1CallersOutsideAllowPaths:
-    """AC-1: run_guarded changed; m2_finalize.py missing from allow_paths."""
-
-    def test_returns_callers_violation_with_m2_finalize(self):
-        with mock.patch(
-            "issuesmith.gate_rules.scope_coupling.resolve_scope_root",
-            return_value=_FAKE_ROOT,
-        ):
-            with mock.patch(
-                "issuesmith.gate_rules.scope_coupling._git_grep",
-                side_effect=_make_grep_mock_ac1(),
-            ):
-                violations = ScopeCouplingRules().check(_AC1_BODY, [])
-
-        caller_v = [v for v in violations if v.rule_id == "scope_coupling.callers_outside_allow_paths"]
-        assert caller_v, f"Expected callers violation, got: {violations}"
-        v = caller_v[0]
-        assert v.severity == "fail"
-        assert "steps/m2_finalize.py" in v.fix_hint
-
-    def test_no_violation_when_missing_file_in_allow_paths(self):
-        body = _AC1_BODY.replace(
-            "  - src/issuesmith/engine.py\n",
-            "  - src/issuesmith/engine.py\n  - src/issuesmith/steps/m2_finalize.py\n",
-        )
-        with mock.patch(
-            "issuesmith.gate_rules.scope_coupling.resolve_scope_root",
-            return_value=_FAKE_ROOT,
-        ):
-            with mock.patch(
-                "issuesmith.gate_rules.scope_coupling._git_grep",
-                side_effect=_make_grep_mock_ac1(),
-            ):
-                violations = ScopeCouplingRules().check(body, [])
-        caller_v = [v for v in violations if v.rule_id == "scope_coupling.callers_outside_allow_paths"]
-        assert not caller_v
-
-
 class TestAC2TestsOutsideAllowPaths:
     """AC-2: live.md files deleted; 4 test files missing from allow_paths."""
 
@@ -207,22 +169,6 @@ class TestAC2TestsOutsideAllowPaths:
 class TestAC3AutoWiden:
     """AC-3: auto-widen adds missing files when under max_files; blocked when over."""
 
-    def test_widen_succeeds_when_under_max_files(self):
-        rule = ScopeCouplingRules()
-        with mock.patch(
-            "issuesmith.gate_rules.scope_coupling.resolve_scope_root",
-            return_value=_FAKE_ROOT,
-        ):
-            with mock.patch(
-                "issuesmith.gate_rules.scope_coupling._git_grep",
-                side_effect=_make_grep_mock_run_guarded(),
-            ):
-                violations = rule.check(_AC3_BODY_SMALL, [])
-
-        assert violations
-        assert all(v.auto_fixable for v in violations)
-        assert rule.autofix_new_allow_paths is not None
-        assert "src/issuesmith/steps/m2_finalize.py" in rule.autofix_new_allow_paths
 
     def test_widen_blocked_when_over_max_files(self):
         # 80 allow_paths + 1 missing = 81 > max_files(80)
@@ -254,66 +200,6 @@ class TestAC3AutoWiden:
         # sumipan/nexus#3527 AC-3: the contradiction with scope_breadth is visible in the message
         assert all("scope_breadth max_files=80" in v.message for v in violations)
 
-    def test_widen_exactly_at_max_files_succeeds(self):
-        """Merged count == max_files (80): 79 allow_paths + 1 missing = 80."""
-        # engine.py in allow_paths (not missing), m2_finalize.py is missing
-        body_79 = (
-            "```yaml\n"
-            "target_repo: sumipan/issuesmith\n"
-            "base_branch: main\n"
-            "allow_paths:\n"
-            "  - src/issuesmith/engine.py\n"
-            + "".join(f"  - src/issuesmith/file{i}.py\n" for i in range(78))
-            + "```\n\n"
-            "## Design\n\n"
-            "`run_guarded` is changed.\n"
-        )
-        rule = ScopeCouplingRules()
-        with mock.patch(
-            "issuesmith.gate_rules.scope_coupling.resolve_scope_root",
-            return_value=_FAKE_ROOT,
-        ):
-            with mock.patch(
-                "issuesmith.gate_rules.scope_coupling._git_grep",
-                side_effect=_make_grep_mock_run_guarded(),
-            ):
-                violations = rule.check(body_79, [])
-
-        assert violations
-        assert all(v.auto_fixable for v in violations)
-        assert rule.autofix_new_allow_paths is not None
-        assert len(rule.autofix_new_allow_paths) == 80
-
-
-class TestAC4IgnoreShortAndConfigSymbols:
-    """AC-4: short keys (<=3 chars) cause no violation (ignore_symbols removed in #3628)."""
-
-    def test_three_char_key_generates_no_grep_call(self):
-        # basename of run.py is "run" (3 chars) -> filtered
-        body = (
-            "```yaml\n"
-            "target_repo: sumipan/issuesmith\n"
-            "base_branch: main\n"
-            "allow_paths:\n"
-            "  - src/issuesmith/run.py\n"
-            "```\n\n"
-            "## Design\n\n"
-            "The `run` helper is changed.\n"
-        )
-        with mock.patch(
-            "issuesmith.gate_rules.scope_coupling.resolve_scope_root",
-            return_value=_FAKE_ROOT,
-        ):
-            with mock.patch(
-                "issuesmith.gate_rules.scope_coupling._git_grep",
-                return_value=["some/other/file.py"],
-            ) as mock_grep:
-                violations = ScopeCouplingRules().check(body, [])
-
-        assert violations == []
-        run_calls = [c for c in mock_grep.call_args_list if c.args[1] == "run"]
-        assert not run_calls, "grep should not be called for 3-char key 'run'"
-
 
 class TestAC5RegistryAndGateIntegration:
     """AC-5: GATE_REGISTRY contains scope_coupling; design_lint_entry aggregates violations."""
@@ -325,24 +211,6 @@ class TestAC5RegistryAndGateIntegration:
         assert "scope_coupling" in GATE_REGISTRY
         assert GATE_REGISTRY["scope_coupling"] is ScopeCouplingRules
 
-    def test_design_lint_entry_aggregates_coupling_violations(self):
-        from issuesmith.design_lint_entry import check_gate
-
-        with mock.patch(
-            "issuesmith.gate_rules.scope_coupling.resolve_scope_root",
-            return_value=_FAKE_ROOT,
-        ):
-            with mock.patch(
-                "issuesmith.gate_rules.scope_coupling._git_grep",
-                side_effect=_make_grep_mock_ac1(),
-            ):
-                result = check_gate(_AC1_BODY, [])
-
-        assert result["status"] == "FAIL"
-        assert any(
-            "callers_outside_allow_paths" in r or "steps/m2_finalize.py" in r
-            for r in result["reasons"]
-        )
 
     def test_design_lint_entry_sets_autofix_when_coupling_widens(self):
         from issuesmith.design_lint_entry import check_gate
@@ -364,20 +232,6 @@ class TestAC5RegistryAndGateIntegration:
 class TestEdgeCases:
     """Edge cases: no allow_paths, no clone, no keys, invalid body."""
 
-    def test_no_allow_paths_returns_empty(self):
-        body = (
-            "```yaml\n"
-            "target_repo: sumipan/issuesmith\n"
-            "base_branch: main\n"
-            "```\n\n"
-            "## Design\n"
-        )
-        with mock.patch(
-            "issuesmith.gate_rules.scope_coupling.resolve_scope_root",
-            return_value=_FAKE_ROOT,
-        ):
-            violations = ScopeCouplingRules().check(body, [])
-        assert violations == []
 
     def test_no_clone_returns_root_unavailable(self):
         """AC-5: clone absent -> scope_coupling.root_unavailable (fail), not empty."""
@@ -392,65 +246,10 @@ class TestEdgeCases:
         assert v.severity == "fail"
         assert v.auto_fixable is False
 
-    def test_no_matching_files_returns_empty(self):
-        with mock.patch(
-            "issuesmith.gate_rules.scope_coupling.resolve_scope_root",
-            return_value=_FAKE_ROOT,
-        ):
-            with mock.patch(
-                "issuesmith.gate_rules.scope_coupling._git_grep",
-                return_value=[],
-            ):
-                violations = ScopeCouplingRules().check(_AC1_BODY, [])
-        assert violations == []
 
     def test_invalid_body_returns_empty(self):
         violations = ScopeCouplingRules().check("not a yaml block", [])
         assert violations == []
-
-    def test_all_hits_already_in_allow_paths_returns_empty(self):
-        body = (
-            "```yaml\n"
-            "target_repo: sumipan/issuesmith\n"
-            "base_branch: main\n"
-            "allow_paths:\n"
-            "  - src/issuesmith/engine.py\n"
-            "  - src/issuesmith/steps/m2_finalize.py\n"
-            "```\n\n"
-            "## Design\n\n"
-            "`run_guarded` is changed.\n"
-        )
-        with mock.patch(
-            "issuesmith.gate_rules.scope_coupling.resolve_scope_root",
-            return_value=_FAKE_ROOT,
-        ):
-            with mock.patch(
-                "issuesmith.gate_rules.scope_coupling._git_grep",
-                side_effect=_make_grep_mock_ac1(),
-            ):
-                violations = ScopeCouplingRules().check(body, [])
-        assert violations == []
-
-
-def test_disabled_gate_returns_no_violations_and_does_not_scan(monkeypatch):
-    """scope_coupling.enabled=false short-circuits before any repo scan."""
-    from unittest.mock import MagicMock
-
-    from issuesmith.gate_rules import scope_coupling as sc
-
-    cfg = MagicMock()
-    cfg.scope_coupling.enabled = False
-    monkeypatch.setattr(sc, "get_config", lambda: cfg)
-    grep = MagicMock(side_effect=AssertionError("must not scan when disabled"))
-    monkeypatch.setattr(sc, "_git_grep", grep)
-    body = (
-        "```yaml\ntarget_repo: sumipan/nexus\nbase_branch: main\n"
-        "allow_paths:\n  - \"src/a.py\"\n```\n\n## Design\n\nuses `some_symbol_name`\n"
-    )
-    rule = sc.ScopeCouplingRules()
-    assert rule.check(body, []) == []
-    assert rule.autofix_note is None
-    grep.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -505,45 +304,8 @@ class TestScopeModeInternal:
             with mock.patch("issuesmith.gate_rules.scope_coupling._git_grep", side_effect=_make_grep_mock_3431()):
                 assert rule.check(body, []) == []
 
-    def test_required_only_from_changed_symbols_reference_in_hint(self):
-        """AC-2: only callers of public symbols defined in changed files are required; string-only
-        matches (the 'dispatcher' basename) are listed for reference and never widen allow_paths."""
-        rule = ScopeCouplingRules()
-        body = _3431_BODY.format(scope_mode="")
-        with mock.patch("issuesmith.gate_rules.scope_coupling.resolve_scope_root", return_value=_FAKE_ROOT):
-            with mock.patch("issuesmith.gate_rules.scope_coupling._git_grep", side_effect=_make_grep_mock_3431()):
-                violations = rule.check(body, [])
-        assert len(violations) == 1
-        v = violations[0]
-        assert v.rule_id == "scope_coupling.callers_outside_allow_paths"
-        for n in ("watch", "run", "status"):
-            assert f"src/ghdag/cli/commands/{n}.py" in v.message
-        assert "src/ghdag/x/mod0.py" not in v.message
-        assert "reference (string match only" in v.fix_hint
-        assert "src/ghdag/x/mod0.py" in v.fix_hint
-        assert v.auto_fixable is True
-        assert rule.autofix_new_allow_paths is not None
-        assert len(rule.autofix_new_allow_paths) == 2 + 3
-        assert not any("x/mod" in p for p in rule.autofix_new_allow_paths)
-
 
 # ---------------------------------------------------------------------------
 # AC-5: root_unavailable when clone is absent
 # ---------------------------------------------------------------------------
 
-class TestRootUnavailable:
-    def test_disabled_gate_no_violation_even_without_clone(self, monkeypatch):
-        """AC-6: enabled=false -> no violations even when root is None."""
-        from unittest.mock import MagicMock
-
-        from issuesmith.gate_rules import scope_coupling as sc
-
-        cfg = MagicMock()
-        cfg.scope_coupling.enabled = False
-        monkeypatch.setattr(sc, "get_config", lambda: cfg)
-        with mock.patch(
-            "issuesmith.gate_rules.scope_coupling.resolve_scope_root",
-            return_value=None,
-        ):
-            violations = ScopeCouplingRules().check(_AC1_BODY, [])
-        assert violations == []

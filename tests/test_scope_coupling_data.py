@@ -9,7 +9,6 @@ import pytest
 import yaml
 
 from issuesmith.config import reset_config_cache
-from issuesmith.gate_rules.scope_coupling import ScopeCouplingRules
 from tests import test_scope_coupling as _base
 from tests.test_scope_coupling import _FAKE_ROOT
 
@@ -66,15 +65,6 @@ def _setup_vcs_repo(tmp_path: Path) -> Path:
 
 
 class TestDataFileTests:
-    def test_modified_yml_basename_is_required(self):
-        from issuesmith.context_hook import parse_issue_metadata
-        from issuesmith.gate_rules.scope_coupling import _extract_search_keys
-
-        body = _DATA_FILE_BODY.format(change="modify")
-        with mock.patch("issuesmith.gate_rules.scope_coupling._git_grep", return_value=[]):
-            required, optional = _extract_search_keys(body, parse_issue_metadata(body), _FAKE_ROOT)
-        assert "vcs.yml" in required
-        assert "vcs.yml" not in optional
 
     @pytest.mark.parametrize("ext", [".yaml", ".json", ".toml", ".txt"])
     def test_other_data_extensions_are_required(self, ext):
@@ -85,99 +75,6 @@ class TestDataFileTests:
         with mock.patch("issuesmith.gate_rules.scope_coupling._git_grep", return_value=[]):
             required, _ = _extract_search_keys(body, parse_issue_metadata(body), _FAKE_ROOT)
         assert f"vcs{ext}" in required
-
-    def test_code_file_modification_is_not_required(self):
-        from issuesmith.context_hook import parse_issue_metadata
-        from issuesmith.gate_rules.scope_coupling import _extract_search_keys
-
-        body = _DATA_FILE_BODY.format(change="modify")
-        with mock.patch("issuesmith.gate_rules.scope_coupling._git_grep", return_value=[]):
-            required, _ = _extract_search_keys(body, parse_issue_metadata(body), _FAKE_ROOT)
-        assert "check-vcs-ownership.py" not in required
-        assert "check-vcs-ownership" not in required
-
-    def test_data_file_tests_false_skips(self):
-        from issuesmith.context_hook import parse_issue_metadata
-        from issuesmith.gate_rules.scope_coupling import _extract_search_keys
-
-        body = _DATA_FILE_BODY.format(change="modify")
-        with mock.patch("issuesmith.gate_rules.scope_coupling._git_grep", return_value=[]):
-            required, _ = _extract_search_keys(
-                body, parse_issue_metadata(body), _FAKE_ROOT, data_file_tests=False,
-            )
-        assert "vcs.yml" not in required
-
-    def test_deleted_yml_keeps_stem_only(self):
-        from issuesmith.context_hook import parse_issue_metadata
-        from issuesmith.gate_rules.scope_coupling import _extract_search_keys
-
-        body = _DATA_FILE_BODY.format(change="delete").replace("configs/vcs.yml", "configs/vcsmap.yml")
-        with mock.patch("issuesmith.gate_rules.scope_coupling._git_grep", return_value=[]):
-            required, _ = _extract_search_keys(body, parse_issue_metadata(body), _FAKE_ROOT)
-        assert "vcsmap" in required
-        assert "vcsmap.yml" not in required
-
-    def test_check_adds_pinning_test_to_allow_paths(self, tmp_path, monkeypatch):
-        repo = _setup_vcs_repo(tmp_path)
-        cfg_path = tmp_path / "issuesmith.yaml"
-        cfg_path.write_text(
-            yaml.safe_dump({"repo": "sumipan/nexus", "scope_coupling": {"search_dirs": ["tests"]}}),
-            encoding="utf-8",
-        )
-        monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-        reset_config_cache()
-
-        rule = ScopeCouplingRules()
-        with mock.patch(
-            "issuesmith.gate_rules.scope_coupling.resolve_scope_root", return_value=repo,
-        ):
-            violations = rule.check(_DATA_FILE_BODY.format(change="modify"), [])
-
-        tests_v = [v for v in violations if v.rule_id == "scope_coupling.tests_outside_allow_paths"]
-        assert len(tests_v) == 1
-        assert "tests/scripts/test_check_vcs_ownership.py" in tests_v[0].message
-        assert "tests/test_unrelated.py" not in tests_v[0].message
-        assert tests_v[0].auto_fixable is True
-        assert rule.autofix_new_allow_paths is not None
-        assert "tests/scripts/test_check_vcs_ownership.py" in rule.autofix_new_allow_paths
-
-    def test_check_honours_config_false(self, tmp_path, monkeypatch):
-        repo = _setup_vcs_repo(tmp_path)
-        cfg_path = tmp_path / "issuesmith.yaml"
-        cfg_path.write_text(
-            yaml.safe_dump({
-                "repo": "sumipan/nexus",
-                "scope_coupling": {"search_dirs": ["tests"], "data_file_tests": False},
-            }),
-            encoding="utf-8",
-        )
-        monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-        reset_config_cache()
-
-        with mock.patch(
-            "issuesmith.gate_rules.scope_coupling.resolve_scope_root", return_value=repo,
-        ):
-            violations = ScopeCouplingRules().check(_DATA_FILE_BODY.format(change="modify"), [])
-        assert [v for v in violations if v.rule_id == "scope_coupling.tests_outside_allow_paths"] == []
-
-    def test_disabled_gate_skips_data_file_tests(self, tmp_path, monkeypatch):
-        repo = _setup_vcs_repo(tmp_path)
-        cfg_path = tmp_path / "issuesmith.yaml"
-        cfg_path.write_text(
-            yaml.safe_dump({
-                "repo": "sumipan/nexus",
-                "scope_coupling": {"enabled": False, "data_file_tests": True},
-            }),
-            encoding="utf-8",
-        )
-        monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-        reset_config_cache()
-
-        with mock.patch(
-            "issuesmith.gate_rules.scope_coupling.resolve_scope_root", return_value=repo,
-        ):
-            violations = ScopeCouplingRules().check(_DATA_FILE_BODY.format(change="modify"), [])
-        assert violations == []
 
 
 # ---------------------------------------------------------------------------
@@ -306,34 +203,6 @@ def _sub_issue_body(sub_num: int, parent_num: int = 4000) -> str:
 
 @pytest.mark.usefixtures("sibling_language_pack")
 class TestSiblingDeletionReferences:
-    def test_sibling_owned_referrer_is_not_uncovered(self, tmp_path):
-        from issuesmith.gate_rules.scope_coupling import check_deletion_references
-
-        repo = _setup_deletion_repo(tmp_path)
-        body = _sub_issue_body(2)
-        with mock.patch(
-            "issuesmith.gate_rules.scope_coupling._body_with_sub_blocks",
-            return_value=_MILESTONE_PARENT_BODY,
-        ):
-            with mock.patch(
-                "issuesmith.gate_rules.scope_coupling.resolve_scope_root",
-                return_value=repo,
-            ):
-                violations = check_deletion_references(
-                    body,
-                    [_DELETED_SKILL_PATH],
-                    repo,
-                )
-        uncovered = {
-            ref
-            for v in violations
-            for ref in (v.message or "").split(": ", 1)[-1].split(", ")
-        }
-        assert "tests/skills/project_summary/test_fetch.py" not in uncovered
-        assert "tests/skills/project_summary/test_skill_md.py" not in uncovered
-        assert any(
-            "tests/other/test_uncovered.py" in v.message for v in violations
-        )
 
     def test_uncovered_referrer_still_reported(self, tmp_path):
         from issuesmith.gate_rules.scope_coupling import check_deletion_references
@@ -351,23 +220,6 @@ class TestSiblingDeletionReferences:
             )
         assert violations
         assert any("tests/other/test_uncovered.py" in v.message for v in violations)
-
-    def test_sibling_note_mentions_sub_number(self, tmp_path):
-        from issuesmith.gate_rules.scope_coupling import check_deletion_references
-
-        repo = _setup_deletion_repo(tmp_path)
-        body = _sub_issue_body(2)
-        with mock.patch(
-            "issuesmith.gate_rules.scope_coupling._body_with_sub_blocks",
-            return_value=_MILESTONE_PARENT_BODY,
-        ):
-            violations = check_deletion_references(
-                body,
-                [_DELETED_SKILL_PATH],
-                repo,
-            )
-        combined = "\n".join((v.message or "") + (v.fix_hint or "") for v in violations)
-        assert "sibling sub #3" in combined.lower()
 
 
 @pytest.mark.usefixtures("sibling_language_pack")

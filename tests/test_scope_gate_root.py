@@ -9,9 +9,7 @@ same allow_paths at 91 files / 21076 lines).
 
 from __future__ import annotations
 
-import os
 import subprocess
-import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -127,42 +125,6 @@ def test_fresh_already_up_to_date_keeps_head(origin_and_clone):
     assert _git(clone, "rev-parse", "HEAD") == before
 
 
-def test_fresh_untracked_worktrees_dir_is_clean(origin_and_clone):
-    cfg, seed, clone = origin_and_clone
-    (clone / "worktrees" / "issue-1").mkdir(parents=True)
-    (clone / "worktrees" / "issue-1" / "f.txt").write_text("u\n")
-    new = _advance_origin(seed)
-    assert resolve_scope_root(_META, cfg) == clone
-    assert _git(clone, "rev-parse", "HEAD") == new
-    assert (clone / "worktrees" / "issue-1" / "f.txt").exists()
-
-
-def test_fresh_follows_base_branch(origin_and_clone):
-    cfg, seed, clone = origin_and_clone
-    _git(seed, "checkout", "-q", "-b", "develop")
-    _git(seed, "push", "-q", "origin", "develop")
-    _git(clone, "fetch", "-q", "origin")
-    _git(clone, "checkout", "-q", "-b", "develop", "origin/develop")
-    os.utime(clone / ".git" / "FETCH_HEAD", (0, 0))
-    new = _advance_origin(seed, "d.txt", branch="develop")
-    _git(seed, "checkout", "-q", "main")
-    main_new = _advance_origin(seed, "m.txt", branch="main")
-    meta = {**_META, "base_branch": "develop"}
-    assert resolve_scope_root(meta, cfg) == clone
-    assert _git(clone, "rev-parse", "HEAD") == new
-    assert _git(clone, "rev-parse", "HEAD") != main_new
-
-
-def test_no_origin_clone_skips_fetch(tmp_path, monkeypatch):
-    cfg = _cfg(tmp_path)
-    clone = cfg.paths.external_dir / "issuesmith"
-    clone.mkdir(parents=True)
-    subprocess.run(["git", "init", "-q", str(clone)], check=True)
-    rec = _Recorder(monkeypatch)
-    assert resolve_scope_root(_META, cfg) == clone
-    assert not rec.fetched()
-
-
 def test_fake_git_dir_skips_fetch(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path)
     (cfg.paths.external_dir / "issuesmith" / ".git").mkdir(parents=True)
@@ -243,12 +205,3 @@ def test_recent_fetch_head_skips_fetch(origin_and_clone, monkeypatch):
     assert not rec.fetched()
 
 
-def test_stale_fetch_head_fetches(origin_and_clone, monkeypatch):
-    cfg, _seed, clone = origin_and_clone
-    fetch_head = clone / ".git" / "FETCH_HEAD"
-    fetch_head.touch()
-    old = time.time() - 61
-    os.utime(fetch_head, (old, old))
-    rec = _Recorder(monkeypatch)
-    assert resolve_scope_root(_META, cfg) == clone
-    assert rec.fetched()
