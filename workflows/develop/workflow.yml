@@ -1,0 +1,48 @@
+name: issuesmith
+template_dir: templates
+polling_interval: 60
+label_namespace: issuesmith
+reset_label: "issuesmith:reset"
+
+triggers:
+  - label: "issuesmith:develop-ready"
+    handler: develop
+  - label: "issuesmith:reset"
+    handler: reset
+
+handlers:
+  develop:
+    context_hook: "python3 -m issuesmith context"
+    steps:
+      - id: prepare
+        template: prepare
+        engine: shell
+        model: bash
+        env_passthrough: [PATH, ISSUESMITH_CONFIG, PYTHONPATH, GHDAG_FORGE, GHDAG_FORGE_ROOT, ISSUESMITH_QUEUE_DIR]
+      - id: implement
+        template: implement
+        engine: shell
+        model: bash
+        depends: [prepare]
+        env_passthrough: [PATH, ISSUESMITH_CONFIG, PYTHONPATH, GHDAG_FORGE, GHDAG_FORGE_ROOT, ISSUESMITH_QUEUE_DIR]
+      - id: verify
+        template: verify
+        engine: shell
+        model: bash
+        depends: [implement]
+        env_passthrough: [PATH, ISSUESMITH_CONFIG, PYTHONPATH, GHDAG_FORGE, GHDAG_FORGE_ROOT, ISSUESMITH_QUEUE_DIR]
+      - id: review
+        template: review
+        engine: shell
+        model: bash
+        depends: [verify]
+        env_passthrough: [PATH, ISSUESMITH_CONFIG, PYTHONPATH, GHDAG_FORGE, GHDAG_FORGE_ROOT, ISSUESMITH_QUEUE_DIR]
+      - id: merge
+        template: merge
+        engine: shell
+        model: bash
+        depends: [review]
+        env_passthrough: [PATH, ISSUESMITH_CONFIG, PYTHONPATH, GHDAG_FORGE, GHDAG_FORGE_ROOT, ISSUESMITH_QUEUE_DIR]
+
+  reset:
+    type: reset
