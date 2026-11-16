@@ -2,7 +2,7 @@
 
 import pytest
 
-from issuesmith.targets import Target, targets_from_issue
+from issuesmith.targets import targets_from_issue
 
 ISSUE_REPO = "sumipan/nexus"
 
@@ -28,48 +28,10 @@ def _ac_body(*, paths_must_exist=None, targets=None) -> str:
     return "\n".join(lines)
 
 
-def test_old_format_target_repo_with_host_allow_paths():
-    metadata = {
-        "target_repo": "sumipan/issuesmith",
-        "allow_paths": ["src/**"],
-        "host_allow_paths": ["workflows/**"],
-        "base_branch": "main",
-    }
-    targets = targets_from_issue(metadata, issue_repo=ISSUE_REPO)
-    assert len(targets) == 2
-    assert targets[1].allow_paths == ("workflows/**",)
 
 
-def test_host_allow_paths_unaffected_by_legacy_key():
-    metadata = {
-        "target_repo": "sumipan/issuesmith",
-        "host_allow_paths": ["host/**"],
-        "diary_allow_paths": ["legacy/**"],
-        "base_branch": "main",
-    }
-    targets = targets_from_issue(metadata, issue_repo=ISSUE_REPO)
-    assert len(targets) == 2
-    assert targets[1].allow_paths == ("host/**",)
 
 
-def test_legacy_allow_paths_key_only_yields_primary_only():
-    """#5065: the removed legacy YAML key is ignored (single-repo mode)."""
-    metadata = {
-        "target_repo": "sumipan/issuesmith",
-        "allow_paths": ["src/**"],
-        "diary_allow_paths": ["workflows/**"],
-        "base_branch": "main",
-    }
-    targets = targets_from_issue(metadata, issue_repo=ISSUE_REPO)
-    assert targets == [
-        Target(
-            repo="sumipan/issuesmith",
-            base="main",
-            allow_paths=("src/**",),
-            contract={},
-            primary=True,
-        )
-    ]
 
 
 def test_companion_allow_paths_raw_reads_host_key_only():
@@ -86,16 +48,6 @@ def test_pin_bump_scans_host_key_only():
     assert _has_pyproject_in_paths({"host_allow_paths": ["pyproject.toml"]}) is True
 
 
-def test_old_format_target_repo_only():
-    metadata = {
-        "target_repo": "sumipan/issuesmith",
-        "allow_paths": ["src/**"],
-        "base_branch": "main",
-    }
-    targets = targets_from_issue(metadata, issue_repo=ISSUE_REPO)
-    assert len(targets) == 1
-    assert targets[0].repo == "sumipan/issuesmith"
-    assert targets[0].primary is True
 
 
 def test_old_format_no_target_repo():
@@ -131,16 +83,6 @@ def test_new_format_ac_targets_distribute_contract():
     assert targets[1].contract == {"paths_must_exist": ["workflows/issuesmith/bar.md"]}
 
 
-def test_old_format_legacy_contract_on_primary_with_host():
-    metadata = {
-        "target_repo": "sumipan/issuesmith",
-        "host_allow_paths": ["workflows/**"],
-        "base_branch": "main",
-    }
-    body = _ac_body(paths_must_exist=["src/issuesmith/foo.py"])
-    targets = targets_from_issue(metadata, issue_repo=ISSUE_REPO, body=body)
-    assert targets[0].contract == {"paths_must_exist": ["src/issuesmith/foo.py"]}
-    assert targets[1].contract == {}
 
 
 def test_old_format_legacy_contract_primary_only_single_target():

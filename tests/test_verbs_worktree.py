@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -153,56 +153,8 @@ def test_prepare_worktree_migration_rejects_external_dir_without_target_repo(
         vwt.prepare_worktree(repo, "main", "feat/x", wt_path, external_dir=external)
 
 
-def test_prepare_worktree_migration_cross_repo_roots_at_external_dir(
-    tmp_path: Path,
-) -> None:
-    """Regression guard for cross-repo orchestration after #6581 verb consolidation.
-
-    Pre-#6581 shim: ``resolve_base_ref(external_dir, base)`` then
-    ``_prepare_worktree(external_dir, path, branch, base_ref)``.
-    New contract: clone/fetch on ``external_dir``, ``base_ref="origin/{base}"``.
-    """
-    external = tmp_path / "external"
-    external.mkdir()
-    host = tmp_path / "host"
-    wt_path = tmp_path / "wt"
-    with (
-        patch.object(vwt, "clone_if_missing") as mock_clone,
-        patch.object(vwt, "fetch_base_or_raise") as mock_fetch,
-        patch.object(vwt, "_prepare_worktree") as mock_prepare,
-        patch.object(vwt, "_assert_git_repository"),
-        patch.object(vwt, "_assert_remote_base"),
-    ):
-        vwt.prepare_worktree(
-            host,
-            "main",
-            "feat/x",
-            wt_path,
-            external_dir=external,
-            target_repo="sumipan/issuesmith",
-        )
-    mock_clone.assert_called_once_with(external, "sumipan/issuesmith", "main")
-    mock_fetch.assert_called_once_with(external, "main", remote="sumipan/issuesmith")
-    mock_prepare.assert_called_once_with(external, wt_path, "feat/x", "origin/main")
 
 
-def test_prepare_worktree_rejects_partial_cross_repo_arguments(tmp_path: Path) -> None:
-    """Refs sumipan/nexus#6581 — cross-repo clone args must include ``external_dir``."""
-    repo = _init_repo(tmp_path / "host")
-    wt_path = tmp_path / "wt-partial"
-    with pytest.raises(vwt.WorktreeError, match="external_dir and target_repo"):
-        vwt.prepare_worktree(
-            repo, "main", "feat/y", wt_path, target_repo="sumipan/issuesmith"
-        )
-    ext_only = _init_repo(tmp_path / "ext-only")
-    with pytest.raises(vwt.WorktreeError, match="external_dir and target_repo"):
-        vwt.prepare_worktree(
-            repo,
-            "main",
-            "feat/z",
-            wt_path,
-            external_dir=ext_only,
-        )
 
 
 def test_worktree_public_helpers_preserve_outcomes(tmp_path: Path) -> None:

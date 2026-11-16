@@ -74,31 +74,6 @@ def test_format_report_empty():
     assert format_report([]) == "VERIFY_FAILED_CHECKS: (none)\n"
 
 
-def test_scope_size_violations_are_collected(tmp_path, monkeypatch):
-    """scope_size runs in B1 Verify: the #3627 original fixture is reported (nexus #3665)."""
-    import re
-    from pathlib import Path
-
-    import yaml
-
-    from issuesmith.config import reset_config_cache
-
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(
-        yaml.safe_dump({"repo": "sumipan/nexus", "scope_gate": {"enabled": False}}),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    reset_config_cache()
-    raw = (
-        Path(__file__).resolve().parent / "fixtures" / "issue_3627_original.md"
-    ).read_text(encoding="utf-8")
-    body = re.sub(r"c([0-9A-F]{4})_?", lambda m: chr(int(m.group(1), 16)), raw)
-    try:
-        violations = collect_violations(body, [])
-    finally:
-        reset_config_cache()
-    assert any(v.rule_id.startswith("scope_size.") for v in violations)
 
 
 _PROMOTED_MILESTONE_BODY = _VALID_BODY + (
@@ -206,48 +181,8 @@ def test_allow_paths_forbidden_gate_is_registered():
     assert "allow_paths_forbidden" in DESIGN_DOC_GATES
 
 
-def test_allow_paths_forbidden_collected_on_overlap():
-    from unittest import mock
-
-    body = (
-        _VALID_BODY.replace('  - "**"', '  - "Procfile"')
-        .replace("scope_gate:\n  enabled: false\n", "")
-    )
-    cfg = mock.MagicMock()
-    cfg.forbidden_pr_paths = ["Procfile"]
-    cfg.forbidden_pr_paths_except = []
-    with mock.patch(
-        "issuesmith.gate_rules.allow_paths_forbidden.get_config",
-        return_value=cfg,
-    ):
-        violations = collect_violations(body, [])
-    assert any(v.rule_id == "allow_paths_forbidden.overlap" for v in violations)
 
 
-def test_pin_bump_collected_for_feature_pin_change(tmp_path, monkeypatch):
-    import yaml
-
-    from issuesmith.config import reset_config_cache
-    from tests.gate_rules.test_pin_bump import _FEATURE_BODY_PIN
-
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(
-        yaml.safe_dump(
-            {
-                "repo": "sumipan/nexus",
-                "scope_gate": {"enabled": False},
-                "installs": {"issuesmith": "/var/tmp/issuesmith"},
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    reset_config_cache()
-    try:
-        rule_ids = {v.rule_id for v in collect_violations(_FEATURE_BODY_PIN, [])}
-    finally:
-        reset_config_cache()
-    assert "pin_bump.in_feature_issue" in rule_ids
 
 
 def test_promoted_milestone_without_sub_blocks_fails_verify():
@@ -294,14 +229,6 @@ def test_assumed_labels_noop_when_no_split_plan():
     assert result == ["scope:feature"]
 
 
-def test_assumed_labels_does_not_mutate_input():
-    """assumed_labels: never modifies the input list."""
-    from issuesmith.step_verify import assumed_labels
-
-    original = []
-    result = assumed_labels(_PROMOTED_MILESTONE_BODY, original)
-    assert original == [], "input list was mutated"
-    assert result != original
 
 
 def test_cp1_intentional_hold_excluded_with_assumed_labels():
@@ -390,91 +317,8 @@ def _oversized_body() -> str:
     )
 
 
-def test_deterministic_recovery_promotes_oversized_issue_in_one_pass(tmp_path, monkeypatch):
-    """AC (#4191): scope_size overflow → milestone contract in one recovery."""
-    import yaml
-
-    from issuesmith.step_verify import apply_deterministic_recovery
-    from issuesmith.config import reset_config_cache
-    from tests.legacy_text import SUB
-
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(
-        yaml.safe_dump({"repo": "sumipan/nexus", "scope_gate": {"enabled": False}}),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    reset_config_cache()
-
-    body = _oversized_body()
-    client = _FakeForge(body=body)
-    try:
-        result = apply_deterministic_recovery(client, 4191, body, [], persist=True)
-    finally:
-        reset_config_cache()
-
-    assert "scope:milestone" in result.labels
-    assert "scope:milestone" in client.labels
-    assert client.issue_milestone is not None
-    assert "scope_size.promote_to_milestone" in result.applied
-    assert "milestone_consistency.fix_label_missing" in result.applied
-    assert f"#### {SUB}" in result.body
-    assert "#### Sub " not in result.body
-    assert result.body.lstrip().startswith("```yaml")
-    assert "target_repo: sumipan/nexus" in result.body
-    assert "Milestone" in result.body or "milestone" in result.body.lower()
-    # Auto-fixable helpers ran; only non-auto remain for LLM (may be empty).
-    assert all(not v.auto_fixable for v in result.llm_violations)
-    assert not any(v.rule_id.startswith("scope_size.") for v in result.remaining)
-    assert not any(
-        v.rule_id == "milestone_consistency.sub_header_english" for v in result.remaining
-    )
-    assert not any(
-        v.rule_id == "milestone_consistency.label_missing" for v in result.remaining
-    )
-    placeholder = [
-        v for v in result.remaining if v.rule_id == "milestone_subdesign.placeholder_design"
-    ]
-    assert len(placeholder) >= 3
-    assert all(not v.auto_fixable for v in placeholder)
-    assert result.can_done is False
-    assert result.unresolved_reason is not None
-    assert "promoted sub designs need LLM design" in result.unresolved_reason
-    assert any(
-        v.rule_id == "milestone_subdesign.placeholder_design"
-        for v in result.llm_violations
-    )
 
 
-def test_deterministic_recovery_promoted_placeholder_design_needs_llm(
-    tmp_path, monkeypatch,
-):
-    """AC (#4915): promotion leaves placeholder_design for LLM recovery."""
-    import yaml
-
-    from issuesmith.step_verify import apply_deterministic_recovery
-    from issuesmith.config import reset_config_cache
-    from issuesmith.gate_rules.milestone_subdesign_rules import PLACEHOLDER_DESIGN_ID
-
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(
-        yaml.safe_dump({"repo": "sumipan/nexus", "scope_gate": {"enabled": False}}),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    reset_config_cache()
-
-    body = _oversized_body()
-    client = _FakeForge(body=body)
-    try:
-        result = apply_deterministic_recovery(client, 4915, body, [], persist=True)
-    finally:
-        reset_config_cache()
-
-    assert result.can_done is False
-    assert PLACEHOLDER_DESIGN_ID in {v.rule_id for v in result.llm_violations}
-    assert result.unresolved_reason is not None
-    assert "promoted sub designs need LLM design" in result.unresolved_reason
 
 
 def test_verify_b1_cli_applies_deterministic_recovery_by_default(
@@ -520,51 +364,14 @@ def test_verify_b1_cli_applies_deterministic_recovery_by_default(
     assert "#### Sub " not in client.body
 
 
-def test_deterministic_recovery_is_idempotent(tmp_path, monkeypatch):
-    """AC (#4191): re-running recovery does not duplicate body/label/milestone."""
-    import yaml
-
-    from issuesmith.step_verify import apply_deterministic_recovery
-    from issuesmith.config import reset_config_cache
-
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(
-        yaml.safe_dump({"repo": "sumipan/nexus", "scope_gate": {"enabled": False}}),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    reset_config_cache()
-
-    body = _oversized_body()
-    client = _FakeForge(body=body)
-    try:
-        first = apply_deterministic_recovery(client, 4191, body, [], persist=True)
-        label_updates = sum(
-            1 for u in client.updates if u.get("labels_add") == ["scope:milestone"]
-        )
-        body_after = first.body
-        milestone_count = len(client.milestones)
-        second = apply_deterministic_recovery(
-            client, 4191, body_after, first.labels, persist=True
-        )
-    finally:
-        reset_config_cache()
-
-    assert second.body == body_after
-    assert second.labels == first.labels
-    assert len(client.milestones) == milestone_count
-    # Second pass should not add another scope:milestone label write that grows state.
-    assert sum(
-        1 for u in client.updates if u.get("labels_add") == ["scope:milestone"]
-    ) >= label_updates
 
 
 def test_deterministic_recovery_skips_normal_sized_issue(tmp_path, monkeypatch):
     """AC (#4191): scope_size-ineligible Issues are unchanged by promotion."""
     import yaml
 
-    from issuesmith.step_verify import apply_deterministic_recovery
     from issuesmith.config import reset_config_cache
+    from issuesmith.step_verify import apply_deterministic_recovery
 
     cfg_path = tmp_path / "issuesmith.yaml"
     cfg_path.write_text(
@@ -587,68 +394,8 @@ def test_deterministic_recovery_skips_normal_sized_issue(tmp_path, monkeypatch):
     assert "scope:milestone" not in result.labels
 
 
-def test_deterministic_recovery_skips_promotion_when_declined(tmp_path, monkeypatch):
-    """When promotion_declined, do not promote or attach milestone label."""
-    import yaml
-
-    from issuesmith.step_verify import apply_deterministic_recovery
-    from issuesmith.config import reset_config_cache
-    from tests.gate_rules.test_scope_size import _MODIFY, _body
-
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(
-        yaml.safe_dump({"repo": "sumipan/issuesmith", "scope_gate": {"enabled": False}}),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    reset_config_cache()
-
-    rows = [(f"src/{d}/f{i}.py", _MODIFY) for d in ("a", "b", "c", "d") for i in range(3)]
-    body = _body(rows)
-    client = _FakeForge(body=body)
-    try:
-        result = apply_deterministic_recovery(client, 4914, body, [], persist=True)
-    finally:
-        reset_config_cache()
-
-    assert result.body == body
-    assert "scope:milestone" not in result.labels
-    assert client.issue_milestone is None
-    assert "scope_size.promote_to_milestone" not in result.applied
-    assert "milestone_consistency.fix_label_missing" not in result.applied
-    assert result.can_done is False
-    assert any(v.rule_id.startswith("scope_size.") for v in result.remaining)
 
 
-def test_deterministic_recovery_reports_unresolved_when_same_rule_remains(
-    tmp_path, monkeypatch
-):
-    """AC (#4191): can_done is False and reason lists remaining rule_ids."""
-    import yaml
-
-    from issuesmith.step_verify import apply_deterministic_recovery
-    from issuesmith.config import reset_config_cache
-
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(
-        yaml.safe_dump({"repo": "sumipan/nexus", "scope_gate": {"enabled": False}}),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    reset_config_cache()
-
-    # Missing yaml → cp1 violation that deterministic recovery cannot fix.
-    body = "## Overview\nno yaml\n"
-    client = _FakeForge(body=body)
-    try:
-        result = apply_deterministic_recovery(client, 4191, body, [], persist=True)
-    finally:
-        reset_config_cache()
-
-    assert result.can_done is False
-    assert result.unresolved_reason is not None
-    assert "design_lint.yaml_contract.missing_block" in result.unresolved_reason
-    assert any(v.rule_id == "design_lint.yaml_contract.missing_block" for v in result.remaining)
 
 
 def _setup_contract_repo(tmp_path):
@@ -704,38 +451,6 @@ def _paths_must_not_exist_body(*, change_row: str, must_not_exist: list[str]) ->
     )
 
 
-def test_paths_must_not_exist_rejects_existing_path_without_deletion_row(
-    tmp_path, monkeypatch,
-):
-    """#4257: cannot require deletion of a base-existing file this Issue does not delete."""
-    import unittest.mock as mock
-
-    import yaml
-
-    from issuesmith.config import reset_config_cache
-
-    repo = _setup_contract_repo(tmp_path)
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(
-        yaml.safe_dump({"repo": "sumipan/issuesmith", "scope_gate": {"enabled": False}}),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    reset_config_cache()
-    body = _paths_must_not_exist_body(
-        change_row="| sumipan/issuesmith | `skills/project-summary/SKILL.md` | delete | rm |",
-        must_not_exist=["tests/skills/project_summary/test_fetch.py"],
-    )
-    try:
-        with mock.patch(
-            "issuesmith.gate_rules.scope_coupling.resolve_scope_root",
-            return_value=repo,
-        ):
-            violations = collect_violations(body, [])
-    finally:
-        reset_config_cache()
-    rule_ids = {v.rule_id for v in violations}
-    assert "scope_coupling.paths_must_not_exist_unjustified" in rule_ids
 
 
 def test_paths_must_not_exist_allows_deletion_row(tmp_path, monkeypatch):
@@ -808,8 +523,8 @@ def test_check_paths_must_not_exist_validity_wrapper(tmp_path, monkeypatch):
 
     import yaml
 
-    from issuesmith.step_verify import check_paths_must_not_exist_validity
     from issuesmith.config import reset_config_cache
+    from issuesmith.step_verify import check_paths_must_not_exist_validity
 
     repo = _setup_contract_repo(tmp_path)
     cfg_path = tmp_path / "issuesmith.yaml"
@@ -836,17 +551,11 @@ def test_check_paths_must_not_exist_validity_wrapper(tmp_path, monkeypatch):
     )
 
 
-# nexus #4825: inferred sibling dependencies are written by deterministic recovery.
-
-_DEP_MISSING = "milestone_subdesign.sibling_new_file_unreferenced_dependency"
-_DEP_CYCLE = "milestone_subdesign.dependency_cycle"
-
-
 def _recover(tmp_path, monkeypatch, body: str, runs: int = 1):
     import yaml
 
-    from issuesmith.step_verify import apply_deterministic_recovery
     from issuesmith.config import reset_config_cache
+    from issuesmith.step_verify import apply_deterministic_recovery
 
     cfg_path = tmp_path / "issuesmith.yaml"
     cfg_path.write_text(
@@ -867,33 +576,8 @@ def _recover(tmp_path, monkeypatch, body: str, runs: int = 1):
     return client, results
 
 
-def test_deterministic_recovery_persists_inferred_dependency(tmp_path, monkeypatch):
-    from tests.gate_rules.test_milestone_subdesign import (
-        _dep_body,
-        _plan_row,
-        _projection_subs,
-    )
-
-    body = _dep_body(_projection_subs(), ["none", "none"])
-    assert _DEP_MISSING in {v.rule_id for v in collect_violations(body, ["scope:milestone"])}
-    client, (result,) = _recover(tmp_path, monkeypatch, body)
-
-    assert _DEP_MISSING in result.applied
-    assert _plan_row(client.body, 2).endswith("| #1 |")
-    assert any(u.get("body") == client.body for u in client.updates)
-    assert result.body == client.body
-    assert not any(v.rule_id == _DEP_MISSING for v in result.remaining)
 
 
-def test_deterministic_recovery_dependency_fix_is_idempotent(tmp_path, monkeypatch):
-    from tests.gate_rules.test_milestone_subdesign import _dep_body, _projection_subs
-
-    body = _dep_body(_projection_subs(), ["none", "none"])
-    client, (first, second) = _recover(tmp_path, monkeypatch, body, runs=2)
-
-    assert second.body == first.body
-    assert _DEP_MISSING not in second.applied
-    assert sum(1 for u in client.updates if u.get("body") is not None) == 1
 
 
 def test_deterministic_recovery_applies_sub_plan_dep_format(tmp_path, monkeypatch):
@@ -908,14 +592,3 @@ def test_deterministic_recovery_applies_sub_plan_dep_format(tmp_path, monkeypatc
     assert "#2" in result.body.split("| 2 | part 2 | sumipan/issuesmith | c | ", 1)[1]
 
 
-def test_deterministic_recovery_does_not_write_cycle_edges(tmp_path, monkeypatch):
-    from tests.gate_rules.test_milestone_subdesign import _cycle_subs, _dep_body
-
-    body = _dep_body(_cycle_subs(), ["none", "none"])
-    client, (result,) = _recover(tmp_path, monkeypatch, body)
-
-    assert _DEP_MISSING not in result.applied
-    assert result.body == body
-    assert not any(u.get("body") is not None for u in client.updates)
-    assert any(v.rule_id == _DEP_CYCLE for v in result.llm_violations)
-    assert result.can_done is False

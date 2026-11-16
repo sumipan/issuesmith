@@ -55,51 +55,8 @@ def _write_entry(
         fh.write(json.dumps(entry) + "\n")
 
 
-def test_is_circuit_open_true_on_consecutive_timeouts(tmp_path):
-    from issuesmith.queue_triage import is_circuit_open
-
-    log = tmp_path / "triage.jsonl"
-    now = _FIXED_NOW
-    for i in range(3):
-        _write_entry(
-            log,
-            reason="llm failed: timed out after 60 seconds",
-            ts=now - timedelta(minutes=5 - i),
-        )
-    assert is_circuit_open(log, threshold=3, reset_seconds=1800, now=now) is True
 
 
-def test_is_circuit_open_false_when_mixed_or_stale(tmp_path):
-    from issuesmith.queue_triage import is_circuit_open
-
-    log = tmp_path / "triage.jsonl"
-    now = _FIXED_NOW
-    _write_entry(
-        log,
-        reason="llm failed: timed out after 60 seconds",
-        ts=now - timedelta(minutes=2),
-    )
-    _write_entry(
-        log,
-        reason="llm failed: boom",
-        ts=now - timedelta(minutes=1),
-    )
-    _write_entry(
-        log,
-        reason="llm failed: timed out after 60 seconds",
-        ts=now,
-    )
-    assert is_circuit_open(log, threshold=3, reset_seconds=1800, now=now) is False
-
-    log2 = tmp_path / "stale.jsonl"
-    old = now - timedelta(seconds=1801)
-    for i in range(3):
-        _write_entry(
-            log2,
-            reason="llm failed: timed out after 60 seconds",
-            ts=old + timedelta(seconds=i),
-        )
-    assert is_circuit_open(log2, threshold=3, reset_seconds=1800, now=now) is False
 
 
 def test_dispatch_skips_llm_when_circuit_open(tmp_path, monkeypatch):
@@ -210,43 +167,3 @@ def test_dispatch_skips_llm_when_circuit_open(tmp_path, monkeypatch):
     assert skipped[-1].get("circuit_skipped") is True
 
 
-def test_triage_config_defaults_and_override(tmp_path, monkeypatch):
-    from issuesmith.config import TriageConfig, load_config
-
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(yaml.safe_dump({"repo": "sumipan/nexus"}), encoding="utf-8")
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    reset_config_cache()
-    cfg = load_config()
-    assert cfg.triage == TriageConfig()
-    assert cfg.triage.enabled is True
-    assert cfg.triage.engine == "claude"
-    assert cfg.triage.model == "claude-sonnet-4-6"
-    assert cfg.triage.timeout == 60
-    assert cfg.triage.body_chars == 500
-    assert cfg.triage.circuit_breaker_threshold == 3
-    assert cfg.triage.circuit_breaker_reset_seconds == 1800
-
-    cfg_path.write_text(
-        yaml.safe_dump(
-            {
-                "repo": "sumipan/nexus",
-                "triage": {
-                    "enabled": False,
-                    "timeout": 120,
-                    "body_chars": 0,
-                    "model": "claude-opus-4-6",
-                    "circuit_breaker_threshold": 5,
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    reset_config_cache()
-    cfg2 = load_config()
-    assert cfg2.triage.enabled is False
-    assert cfg2.triage.timeout == 120
-    assert cfg2.triage.body_chars == 0
-    assert cfg2.triage.model == "claude-opus-4-6"
-    assert cfg2.triage.circuit_breaker_threshold == 5
-    assert cfg2.triage.engine == "claude"

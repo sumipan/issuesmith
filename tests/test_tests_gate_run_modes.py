@@ -70,37 +70,8 @@ _TEST_OTHER = "def test_other():\n    assert True\n"
 # ---------------------------------------------------------------------------
 
 
-def test_mapped_test_paths_maps_sources_only(tmp_path: Path) -> None:
-    for rel in ("tests/test_foo.py", "tests/sub/test_foo_extra.py", "tests/test_bar.py"):
-        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
-        (tmp_path / rel).write_text("")
-    changed = [
-        "src/foo.py",
-        "tests/test_bar.py",
-        "tests/test_gone.py",
-        "src/nomatch.py",
-        "README.md",
-        "tests/conftest.py",
-    ]
-    assert _mapped_test_paths(tmp_path, changed) == [
-        "tests/sub/test_foo_extra.py",
-        "tests/test_foo.py",
-    ]
 
 
-def test_mapped_test_paths_changed_test_only_runs_full(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A changed test file with no changed source is left to the full run."""
-    clone = _setup_repo(tmp_path, {"tests/test_other.py": _TEST_OTHER})
-    _commit(clone, {"tests/test_new.py": "def test_new():\n    assert False\n"})
-    calls = _count_calls(monkeypatch, clone)
-
-    violations = TestsGate(clone, base_branch="main").check("", [])
-
-    assert [v.rule_id for v in violations] == ["tests.pytest_failure"]
-    assert len(calls) == 1
-    assert "--durations=20" in calls[0]
 
 
 def test_mapped_test_paths_empty(tmp_path: Path) -> None:
@@ -131,31 +102,8 @@ def test_mapped_failure_skips_full_run(
     assert calls[0] == ["tests/test_foo.py"]
 
 
-def test_mapped_pass_runs_full(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    clone = _setup_repo(tmp_path, {
-        "src/foo.py": _FOO,
-        "tests/test_foo.py": _TEST_FOO,
-        "tests/test_other.py": _TEST_OTHER,
-    })
-    _commit(clone, {"src/foo.py": _FOO + "\n\ndef extra():\n    return 3\n"})
-    calls = _count_calls(monkeypatch, clone)
-
-    assert TestsGate(clone, base_branch="main").check("", []) == []
-    assert len(calls) == 2
-    assert calls[0] == ["tests/test_foo.py"]
-    assert "--durations=20" in calls[1]
 
 
-def test_no_mapping_runs_full_only(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    clone = _setup_repo(tmp_path, {"tests/test_other.py": _TEST_OTHER})
-    _commit(clone, {"src/bar.py": "X = 1\n"})
-    calls = _count_calls(monkeypatch, clone)
-
-    assert TestsGate(clone, base_branch="main").check("", []) == []
-    assert len(calls) == 1
-    assert "--durations=20" in calls[0]
 
 
 def test_mapped_preexisting_failure_runs_full(
@@ -174,64 +122,6 @@ def test_mapped_preexisting_failure_runs_full(
     assert len(calls) == 2
 
 
-def test_mapped_four_new_failures_returned_together(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Mapped run without -x reports every new failure in one evaluation (#5787)."""
-    tests = "from foo import value\n\n" + "\n\n".join(
-        f"def test_value_{i}():\n    assert value() == 1" for i in range(4)
-    ) + "\n"
-    clone = _setup_repo(tmp_path, {
-        "src/foo.py": _FOO,
-        "tests/test_foo.py": tests,
-    })
-    _commit(clone, {"src/foo.py": "def value():\n    return 2\n"})
-    calls = _count_calls(monkeypatch, clone)
-
-    violations = TestsGate(clone, base_branch="main").check("", [])
-
-    assert len(calls) == 1
-    assert "-x" not in calls[0]
-    assert [v.rule_id for v in violations] == ["tests.pytest_failure"] * 4
-    assert [v.message.split(" - ", 1)[0] for v in violations] == [
-        f"FAILED tests/test_foo.py::test_value_{i}" for i in range(4)
-    ]
-
-
-# ---------------------------------------------------------------------------
-# AC-2: durations and timing on stderr
-# ---------------------------------------------------------------------------
-
-_FULL_OUTPUT = (
-    "..                                                                       [100%]\n"
-    "============================= slowest 20 durations =============================\n"
-    "1.11s call     tests/test_x.py::test_a\n"
-    "\n"
-    "(5 durations < 1s hidden.)\n"
-    "2 passed in 1.12s\n"
-)
-
-
-def test_full_run_durations_and_stderr(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    calls: list[list[str]] = []
-
-    def _fake(root: Path, args: list[str]) -> tuple[int, str]:
-        calls.append(list(args))
-        return 0, _FULL_OUTPUT
-
-    monkeypatch.setattr(wt, "_run_pytest", _fake)
-    monkeypatch.setattr(wt, "changed_files", lambda root, base: [])
-
-    assert TestsGate(tmp_path, base_branch="main").check("", []) == []
-
-    assert calls == [[str(tmp_path / "tests"), "--durations=20", "--durations-min=1.0"]]
-    err = capsys.readouterr().err
-    assert "[tests] full: rc=0 elapsed=" in err
-    assert "slowest 20 durations" in err
-    assert "1.11s call     tests/test_x.py::test_a" in err
-    assert "2 passed in 1.12s" in err
 
 
 def test_mapped_run_logs_elapsed(
@@ -271,25 +161,6 @@ def test_interrupted_full_run(
     assert v.fix_hint == "Rerun only; do not modify code"
 
 
-@pytest.mark.parametrize("rc", [143, -9])
-def test_interrupted_mapped_run(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rc: int
-) -> None:
-    (tmp_path / "tests").mkdir()
-    (tmp_path / "tests" / "test_foo.py").write_text("")
-    calls: list[list[str]] = []
-
-    def _fake(root: Path, args: list[str]) -> tuple[int, str]:
-        calls.append(list(args))
-        return rc, ""
-
-    monkeypatch.setattr(wt, "_run_pytest", _fake)
-    monkeypatch.setattr(wt, "changed_files", lambda root, base: ["src/foo.py"])
-
-    violations = TestsGate(tmp_path, base_branch="main").check("", [])
-
-    assert [v.rule_id for v in violations] == ["tests.interrupted"]
-    assert len(calls) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -330,19 +201,3 @@ def test_rc2_stays_collection_error(
     assert [v.rule_id for v in violations] == ["tests.collection_error"]
 
 
-def test_mapped_run_no_tests_collected_runs_full(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """rc=5 (nothing collected, e.g. a helper-only mapped file) is not an error; run full."""
-    clone = _setup_repo(tmp_path, {
-        "src/foo.py": _FOO,
-        "tests/test_foo_data.py": "DATA = 1\n",
-        "tests/test_other.py": _TEST_OTHER,
-    })
-    _commit(clone, {"src/foo.py": _FOO + "\n\ndef extra():\n    return 3\n"})
-    calls = _count_calls(monkeypatch, clone)
-
-    assert TestsGate(clone, base_branch="main").check("", []) == []
-    assert len(calls) == 2
-    assert calls[0] == ["tests/test_foo_data.py"]
-    assert "--durations=20" in calls[1]

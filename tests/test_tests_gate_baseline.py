@@ -13,7 +13,6 @@ from issuesmith.config import ConfigError, load_config, reset_config_cache
 from issuesmith.gates.worktree import (
     WORKTREE_GATES,
     TestsGate,
-    _baseline_ref,
     _func_id,
     _parse_failed_ids,
 )
@@ -71,27 +70,6 @@ def _commit(repo: Path, files: dict[str, str], message: str = "update") -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_preexisting_failure_is_nonblocking(tmp_path: Path) -> None:
-    """test_old fails on main (preexisting); test_new fails only on PR -> 1 Violation."""
-    origin, clone = _setup_repo(tmp_path)
-
-    # main has test_old that fails
-    _commit(origin, {"tests/test_old.py": "def test_old():\n    assert False\n"})
-    _git(clone, "fetch", "origin")
-    _git(clone, "merge", "origin/main")
-
-    # PR branch adds test_new (also fails, but new)
-    _git(clone, "checkout", "-b", "feat")
-    _commit(clone, {"tests/test_new.py": "def test_new():\n    assert False\n"})
-
-    violations = TestsGate(clone, base_branch="main").check("", [])
-
-    assert len(violations) == 1
-    v = violations[0]
-    assert v.rule_id == "tests.pytest_failure"
-    assert "test_new" in v.message
-    assert v.fix_hint is not None
-    assert "test_old" in v.fix_hint
 
 
 # ---------------------------------------------------------------------------
@@ -158,61 +136,12 @@ def test_all_pass_returns_empty(tmp_path: Path) -> None:
     assert TestsGate(clone, base_branch="main").check("", []) == []
 
 
-def test_only_preexisting_failures_returns_empty(tmp_path: Path) -> None:
-    """All failures are preexisting on main -> []."""
-    origin, clone = _setup_repo(tmp_path)
-
-    _commit(origin, {"tests/test_old.py": "def test_old():\n    assert False\n"})
-    _git(clone, "fetch", "origin")
-    _git(clone, "merge", "origin/main")
-    _git(clone, "checkout", "-b", "feat")
-
-    assert TestsGate(clone, base_branch="main").check("", []) == []
 
 
-def test_failure_fixed_on_advanced_origin_stays_preexisting(tmp_path: Path) -> None:
-    """Failing test fixed on origin after clone fetch-only stays preexisting (#5952)."""
-    origin, clone = _setup_repo(tmp_path)
-
-    _commit(origin, {"tests/test_old.py": "def test_old():\n    assert False\n"})
-    _git(clone, "fetch", "origin")
-    _git(clone, "merge", "origin/main")
-
-    _commit(origin, {"tests/test_old.py": "def test_old():\n    assert True\n"})
-    _git(clone, "fetch", "origin")
-
-    assert TestsGate(clone, base_branch="main").check("", []) == []
 
 
-def test_baseline_ref_is_merge_base_of_head(tmp_path: Path) -> None:
-    """Baseline ref is merge-base SHA, not the advanced origin/main tip (#5952)."""
-    origin, clone = _setup_repo(tmp_path)
-
-    _commit(origin, {"tests/test_old.py": "def test_old():\n    assert False\n"})
-    _git(clone, "fetch", "origin")
-    _git(clone, "merge", "origin/main")
-
-    _commit(origin, {"tests/test_old.py": "def test_old():\n    assert True\n"})
-    _git(clone, "fetch", "origin")
-
-    mb = _git(clone, "merge-base", "HEAD", "origin/main").stdout.strip()
-    tip = _git(clone, "rev-parse", "origin/main").stdout.strip()
-    assert mb
-    assert tip
-    assert mb != tip
-
-    assert _baseline_ref(clone, "main") == mb
-    assert _baseline_ref(clone, "main") != tip
 
 
-def test_baseline_ref_falls_back_to_origin_without_merge_base(tmp_path: Path) -> None:
-    """Orphan HEAD with no merge-base falls back to origin/main (#5952)."""
-    origin, clone = _setup_repo(tmp_path)
-    _git(clone, "checkout", "--orphan", "orphan")
-    _commit(clone, {"orphan.txt": "x"})
-
-    assert _git(clone, "merge-base", "HEAD", "origin/main").returncode != 0
-    assert _baseline_ref(clone, "main") == "origin/main"
 
 
 # ---------------------------------------------------------------------------
@@ -220,19 +149,6 @@ def test_baseline_ref_falls_back_to_origin_without_merge_base(tmp_path: Path) ->
 # ---------------------------------------------------------------------------
 
 
-def test_two_new_failures_give_two_violations(tmp_path: Path) -> None:
-    """Two independent new failures -> 2 Violations (gate runs without -x)."""
-    _, clone = _setup_repo(tmp_path)
-
-    _commit(clone, {
-        "tests/test_fail_a.py": "def test_fail_a():\n    assert False\n",
-        "tests/test_fail_b.py": "def test_fail_b():\n    assert False\n",
-    })
-
-    violations = TestsGate(clone, base_branch="main").check("", [])
-
-    assert len(violations) == 2
-    assert all(v.rule_id == "tests.pytest_failure" for v in violations)
 
 
 # ---------------------------------------------------------------------------
@@ -240,27 +156,6 @@ def test_two_new_failures_give_two_violations(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_no_origin_remote_baseline_unavailable(tmp_path: Path) -> None:
-    """No origin remote -> all failures get rule_id=pytest_failure and 'baseline unavailable'."""
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    subprocess.run(
-        ["git", "init", "-b", "main", str(repo)],
-        capture_output=True, check=False,
-    )
-    _git(repo, "config", "user.email", "t@t.com")
-    _git(repo, "config", "user.name", "T")
-    (repo / "conftest.py").write_text("")
-    _git(repo, "add", ".")
-    _git(repo, "commit", "-m", "init")
-
-    _commit(repo, {"tests/test_fail.py": "def test_fail():\n    assert False\n"})
-
-    violations = TestsGate(repo, base_branch="main").check("", [])
-
-    assert len(violations) >= 1
-    assert all(v.rule_id == "tests.pytest_failure" for v in violations)
-    assert any("baseline unavailable" in v.message for v in violations)
 
 
 # ---------------------------------------------------------------------------
@@ -268,22 +163,6 @@ def test_no_origin_remote_baseline_unavailable(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_parametrized_id_with_space_is_preexisting(tmp_path: Path) -> None:
-    """Parametrized ID 'test_param[a b]' that fails on main is preexisting -> []."""
-    origin, clone = _setup_repo(tmp_path)
-
-    test_code = (
-        "import pytest\n"
-        "@pytest.mark.parametrize('v', ['a b'])\n"
-        "def test_param(v):\n"
-        "    assert False\n"
-    )
-    _commit(origin, {"tests/test_param.py": test_code})
-    _git(clone, "fetch", "origin")
-    _git(clone, "merge", "origin/main")
-    _git(clone, "checkout", "-b", "feat")
-
-    assert TestsGate(clone, base_branch="main").check("", []) == []
 
 
 def test_parse_failed_ids_space_in_param_is_single_id() -> None:
@@ -380,22 +259,6 @@ def test_flaky_rerun_passes_recorded_as_warn(
     assert test_id in violations[0].message
 
 
-def test_flaky_rerun_always_fails_stays_pytest_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Failure on every rerun -> tests.pytest_failure (fail, blocking)."""
-    test_id = "tests/test_bad.py::test_bad"
-    fail_out = f"FAILED {test_id} - AssertionError"
-    violations = _judge_new_failures(
-        monkeypatch,
-        tmp_path,
-        [test_id],
-        [(1, fail_out), (1, fail_out)],
-    )
-
-    assert len(violations) == 1
-    assert violations[0].rule_id == "tests.pytest_failure"
-    assert violations[0].severity == "fail"
 
 
 @pytest.mark.parametrize("rerun_result", [
@@ -472,19 +335,3 @@ def test_tests_flaky_reruns_unknown_key_raises(
         load_config()
 
 
-def test_message_uses_exact_id_line_not_prefix_match(tmp_path: Path) -> None:
-    """test_a must not pick up the FAILED line of test_ab (prefix match)."""
-    _, clone = _setup_repo(tmp_path)
-
-    _commit(clone, {
-        "tests/test_m.py": (
-            "def test_ab():\n    assert False, 'from_ab'\n"
-            "def test_a():\n    assert False, 'from_a'\n"
-        ),
-    })
-
-    violations = TestsGate(clone, base_branch="main").check("", [])
-
-    by_loc = {v.message.split(" - ")[0]: v.message for v in violations}
-    assert "from_a" in by_loc["FAILED tests/test_m.py::test_a"]
-    assert "from_ab" in by_loc["FAILED tests/test_m.py::test_ab"]

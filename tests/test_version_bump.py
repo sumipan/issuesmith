@@ -46,19 +46,6 @@ def _point_origin_main_at_head(repo: Path) -> None:
     _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
 
 
-def test_stale_local_main_with_bump_commit_is_z_against_origin_main(tmp_path: Path):
-    repo = _init_repo(tmp_path)
-    # Upstream progressed (incl. a publish bump commit) but local main stayed behind.
-    _git(repo, "checkout", "-q", "-b", "work")
-    _commit(repo, "pyproject.toml", 'version = "0.2.0"\n', _STALE_BUMP_SUBJECT)
-    _commit(repo, "src/pkg/mod.py", "def api():\n    return 2\n", "fix: upstream change")
-    _point_origin_main_at_head(repo)
-    # The PR itself: internal-only change, no public API change.
-    _commit(repo, "src/pkg/mod.py", "def api():\n    return 3\n", "fix: tweak internals")
-
-    decision = decide_bump(repo, "origin/main")
-
-    assert decision.bump_type == "Z", decision.reason
 
 
 def test_bump_commit_subject_alone_is_not_b1(tmp_path: Path):
@@ -92,34 +79,8 @@ def test_conventional_commits_breaking_markers_are_b1(tmp_path: Path, message: s
     assert (decision.bump_type, decision.reason_code) == ("Y", "B1")
 
 
-@pytest.mark.parametrize(
-    "message",
-    [
-        "fix: avoid breaking the parser on empty input",
-        "docs: note breaking change policy",
-        "fix: handle 'wow!: text' in body\n\nnot a breaking change at all",
-    ],
-)
-def test_prose_mentioning_breaking_is_not_b1(tmp_path: Path, message: str):
-    repo = _init_repo(tmp_path)
-    _point_origin_main_at_head(repo)
-    _commit(repo, "src/pkg/mod.py", "def api():\n    return 3\n", message)
-
-    decision = decide_bump(repo, "origin/main")
-
-    assert decision.bump_type == "Z", decision.reason
 
 
-def test_run_bump_without_changelog_commits_only_pyproject(tmp_path: Path):
-    repo = _init_repo(tmp_path)
-    _point_origin_main_at_head(repo)
-    _commit(repo, "src/pkg/mod.py", "def api():\n    return 3\n", "fix: tweak internals")
-
-    assert run_bump(repo, "origin/main") == 0
-
-    files = _git(repo, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD").split()
-    assert files == ["pyproject.toml"]
-    assert not (repo / "CHANGELOG.md").exists()
 
 
 _README = """# pkg

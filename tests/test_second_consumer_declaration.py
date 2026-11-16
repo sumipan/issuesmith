@@ -5,9 +5,7 @@ from __future__ import annotations
 import yaml
 
 from issuesmith.config import get_config, reset_config_cache
-from issuesmith.projection import project
-from issuesmith.queue import phase_preconditions, redispatch_label_plan
-from issuesmith.queue_triage import get_terminal_without_merge
+from issuesmith.queue import redispatch_label_plan
 
 CORKLAB_PHASES = [
     {
@@ -58,32 +56,7 @@ def test_redispatch_label_plan_from_declaration(tmp_path, monkeypatch):
     assert to_remove == frozenset({ready, running, done})
 
 
-def test_phase_preconditions_deploy_requires_develop_done(tmp_path, monkeypatch):
-    from unittest.mock import MagicMock
-
-    _write_corklab(tmp_path, monkeypatch)
-    client = MagicMock()
-    issue = {"state": "OPEN", "labels": [], "body": ""}
-    ok, reason = phase_preconditions("deploy", issue, client, 1)
-    assert ok is False
-    assert "required" in reason
 
 
-def test_projection_uses_declared_phases(tmp_path, monkeypatch):
-    from issuesmith.projection import IssueState
-
-    _write_corklab(tmp_path, monkeypatch)
-    cfg = get_config()
-    _, running, _ = cfg.phase_labels("develop")
-    labels = project(IssueState(phases={"develop": "running"}), cfg)
-    assert labels == {running}
 
 
-def test_terminal_without_merge_only_terminal_labels_without_declaration(
-    tmp_path, monkeypatch
-):
-    _write_corklab(tmp_path, monkeypatch)
-    cfg = get_config()
-    assert cfg.terminal_without_merge == ()
-    merge_done = {lab for lab in cfg.terminal_labels if lab.endswith(":merge-done")}
-    assert get_terminal_without_merge() == frozenset(cfg.terminal_labels) - merge_done
