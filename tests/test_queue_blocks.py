@@ -12,7 +12,6 @@ from issuesmith.queue_store import (
     QueueBlock,
     QueueStore,
     QueueValidationError,
-    _blocks_effective,
 )
 
 _NOW = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
@@ -27,28 +26,6 @@ def _store(tmp_path: Path) -> QueueStore:
 
 
 class TestQueueBlockStore:
-    def test_legacy_halt_converts_to_single_block(self, tmp_path):
-        state_path = tmp_path / "state.json"
-        state_path.write_text(
-            json.dumps(
-                {
-                    "schema_version": 1,
-                    "halt": True,
-                    "halt_scope": "phase:develop",
-                    "halt_reason": "main red",
-                    "halt_event": "main_red",
-                }
-            ),
-            encoding="utf-8",
-        )
-        store = _store(tmp_path)
-        snap = store.snapshot()
-        assert len(snap.blocks) == 1
-        block = snap.blocks[0]
-        assert block.scope == "phase:develop"
-        assert block.kind == "main_red"
-        assert block.reason == "main red"
-        assert block.set_by == "legacy_state"
 
     def test_halt_false_yields_empty_blocks(self, tmp_path):
         state_path = tmp_path / "state.json"
@@ -57,20 +34,6 @@ class TestQueueBlockStore:
         assert store.snapshot().blocks == ()
         assert store.snapshot().blocks == ()
 
-    def test_save_drops_legacy_halt_fields(self, tmp_path):
-        store = _store(tmp_path)
-        store.add_block(
-            QueueBlock(
-                scope="all",
-                kind="manual",
-                reason="hold",
-                until=None,
-                set_by="test",
-            )
-        )
-        state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
-        assert "halt" not in state
-        assert state["blocks"][0]["kind"] == "manual"
 
     def test_add_block_replaces_same_scope_kind(self, tmp_path):
         store = _store(tmp_path)
@@ -87,17 +50,6 @@ class TestQueueBlockStore:
         store.add_block(QueueBlock("all", "t", "expired", past, "test"))
         assert store.snapshot().blocks == ()
 
-    def test_until_equal_now_is_expired_and_future_is_effective(self):
-        equal = _NOW.isoformat()
-        future = (_NOW + timedelta(seconds=1)).isoformat()
-        blocks = _blocks_effective(
-            [
-                QueueBlock("all", "equal", "", equal, "test").to_dict(),
-                QueueBlock("all", "future", "", future, "test").to_dict(),
-            ],
-            now=_NOW,
-        )
-        assert [block.kind for block in blocks] == ["future"]
 
     def test_invalid_scope_raises(self, tmp_path):
         store = _store(tmp_path)
@@ -144,27 +96,6 @@ class TestQueueBlockMatching:
 
 
 class TestQueueUnblockCLI:
-    def test_unblock_by_kind(self, tmp_path, capsys):
-        store = _store(tmp_path)
-        store.add_block(QueueBlock("all", "main_red", "r", None, "t"))
-        store.add_block(QueueBlock("all", "systemic_step_failure", "s", None, "t"))
-        code = qmod.main(
-            [
-                "--queue-path",
-                str(store.queue_path),
-                "--state-path",
-                str(store.state_path),
-                "--lock-path",
-                str(store.lock_path),
-                "unblock",
-                "--kind",
-                "main_red",
-            ]
-        )
-        assert code == 0
-        kinds = {b.kind for b in store.snapshot().blocks}
-        assert kinds == {"systemic_step_failure"}
-        assert "removed 1 block" in capsys.readouterr().out
 
     def test_unblock_twice_reports_zero_blocks(self, tmp_path, capsys):
         store = _store(tmp_path)

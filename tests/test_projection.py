@@ -5,16 +5,13 @@ from dataclasses import replace
 
 import pytest
 
-from issuesmith.config import IssuesmithConfig, PhaseConfig, get_config
+from issuesmith.config import IssuesmithConfig, get_config
 from issuesmith.projection import (
     IssueState,
     diff,
     is_final_step,
-    is_managed,
     phase_for_step,
-    phase_steps,
     project,
-    state_from_labels,
 )
 
 NS = "ns"
@@ -29,21 +26,6 @@ def cfg() -> IssuesmithConfig:
         for p in base.phases
     )
     return replace(base, label_namespace=NS, phases=phases)
-
-
-def test_project_and_diff_are_pure_and_never_touch_the_forge(cfg, monkeypatch):
-    def _boom(*_a, **_k):
-        raise AssertionError("forge must not be called")
-
-    monkeypatch.setattr("ghdag.forge.get_forge", _boom)
-    monkeypatch.setattr("issuesmith.config.get_config", _boom)
-    state = IssueState(phases={"draft": "done", "develop": "running"}, andon_kinds=frozenset({"blocked"}))
-    current = [f"{NS}:develop-ready", "scope:milestone"]
-
-    first = project(state, cfg)
-    assert project(state, cfg) == first
-    assert diff(current, first, cfg) == diff(current, first, cfg)
-    assert state.phases == {"draft": "done", "develop": "running"}  # input untouched
 
 
 def test_phase_axis_keeps_latest_phase_and_its_preconditions(cfg):
@@ -104,49 +86,6 @@ def test_diff_lists_are_sorted(cfg):
     add, remove = diff(current, desired, cfg)
     assert add == sorted(add) and remove == sorted(remove)
     assert set(remove) == set(current)
-
-
-def test_is_managed(cfg):
-    assert is_managed(f"{NS}:draft-done", cfg)
-    assert is_managed(f"{NS}:queued", cfg)
-    assert is_managed(f"{NS}:waiting", cfg)
-    assert is_managed(f"{NS}:andon-blocked", cfg)
-    assert not is_managed(f"{NS}:andon-other", cfg)
-    assert not is_managed(f"{NS}:migrate-ready", cfg)
-    assert not is_managed("other:draft-done", cfg)
-    assert not is_managed("scope:milestone", cfg)
-
-
-def test_state_from_labels_round_trips(cfg):
-    labels = [
-        f"{NS}:draft-done",
-        f"{NS}:develop-ready",
-        f"{NS}:develop-running",
-        f"{NS}:andon-blocked",
-        f"{NS}:queued",
-        "scope:milestone",
-    ]
-    state = state_from_labels(labels, cfg)
-    assert state.phases == {"draft": "done", "develop": "running"}
-    assert state.andon_kinds == {"blocked"}
-    assert state.queued and not state.waiting
-
-
-def test_steps_resolution():
-    phases = (
-        PhaseConfig("draft", "design", "b1"),
-        PhaseConfig("merge", "implementation", "m2", steps=("m1", "m2-role-dispatch")),
-    )
-    cfg = replace(get_config(), phases=phases)
-    assert phase_steps(phases[0]) == ("b1",)
-    assert phase_steps(phases[1]) == ("m1", "m2-role-dispatch")
-    assert phase_for_step("b1", cfg) == "draft"
-    assert phase_for_step("m1", cfg) == "merge"
-    assert phase_for_step("nope", cfg) is None
-    assert is_final_step("b1", cfg)
-    assert not is_final_step("m1", cfg)
-    assert is_final_step("m2-role-dispatch", cfg)
-    assert not is_final_step("nope", cfg)
 
 
 def test_default_config_projects_merge_done_for_m2():

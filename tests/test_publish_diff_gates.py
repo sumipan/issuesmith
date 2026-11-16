@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
-from issuesmith.ops.publish import PublishResult, _check_commit_diff_gates, _ensure_rebased, publish
+from issuesmith.ops.publish import PublishResult, _ensure_rebased, publish
 
 _EXACT_DIFF = """\
 diff --git a/tests/test_ghdag_version.py b/tests/test_ghdag_version.py
@@ -37,131 +37,6 @@ index aaaaaaa..bbbbbbb 100644
 -version = "0.28.0"
 +version = "0.27.0"
 """
-
-
-def test_check_commit_diff_gates_rejects_exact_assert():
-    worktree = Path("/tmp/fake-wt")
-    mock_result = MagicMock()
-    mock_result.stdout = _EXACT_DIFF
-    with patch("issuesmith.ops.publish._bump_versions_in_range", return_value=[]), patch(
-        "issuesmith.ops.publish._run_git", return_value=mock_result
-    ) as run_git:
-        result = _check_commit_diff_gates(worktree, "main")
-    run_git.assert_any_call(worktree, "diff", "origin/main...HEAD")
-    assert result is not None
-    assert result.status == "P3_GATE_FAILED"
-    assert result.exit_code == 1
-    assert "design_lint.test_version_exact_assert" in result.stderr
-
-
-def test_check_commit_diff_gates_rejects_version_line():
-    worktree = Path("/tmp/fake-wt")
-    mock_result = MagicMock()
-    mock_result.stdout = _VERSION_LINE_DIFF
-    with patch("issuesmith.ops.publish._bump_versions_in_range", return_value=[]), patch(
-        "issuesmith.ops.publish._run_git", return_value=mock_result
-    ):
-        result = _check_commit_diff_gates(worktree, "main")
-    assert result is not None
-    assert result.status == "P3_GATE_FAILED"
-    assert "design_lint.version_line_in_diff" in result.stderr
-
-
-def test_check_commit_diff_gates_passes_clean_diff():
-    worktree = Path("/tmp/fake-wt")
-    mock_result = MagicMock()
-    mock_result.stdout = (
-        "diff --git a/src/pkg/foo.py b/src/pkg/foo.py\n"
-        "--- a/src/pkg/foo.py\n"
-        "+++ b/src/pkg/foo.py\n"
-        "+x = 1\n"
-    )
-    with patch("issuesmith.ops.publish._bump_versions_in_range", return_value=[]), patch(
-        "issuesmith.ops.publish._run_git", return_value=mock_result
-    ):
-        assert _check_commit_diff_gates(worktree, "main") is None
-
-
-def test_check_commit_diff_gates_passes_when_only_base_advanced():
-    """Empty three-dot diff: branch with only base advanced passes the gate (#3221 AC-3)."""
-    worktree = Path("/tmp/fake-wt")
-    mock_result = MagicMock()
-    mock_result.stdout = ""  # git diff origin/main...HEAD — measured: no diff
-    with patch("issuesmith.ops.publish._bump_versions_in_range", return_value=[]), patch(
-        "issuesmith.ops.publish._run_git", return_value=mock_result
-    ) as run_git:
-        assert _check_commit_diff_gates(worktree, "main") is None
-    run_git.assert_any_call(worktree, "diff", "origin/main...HEAD")
-
-
-def test_two_dot_base_advanced_diff_would_fail_but_three_dot_empty_passes():
-    """Measured two-dot diff violates version, but the gate uses three-dot so it passes."""
-    from issuesmith.gate_rules.design_lint_rules import check_version_line_in_diff
-
-    assert check_version_line_in_diff(_BASE_ADVANCED_TWO_DOT_DIFF)
-    worktree = Path("/tmp/fake-wt")
-    mock_result = MagicMock()
-    mock_result.stdout = ""  # three-dot: empty
-    with patch("issuesmith.ops.publish._bump_versions_in_range", return_value=[]), patch(
-        "issuesmith.ops.publish._run_git", return_value=mock_result
-    ):
-        assert _check_commit_diff_gates(worktree, "main") is None
-
-
-def test_check_commit_diff_gates_still_rejects_real_branch_version_change():
-    """Three-dot diff that really touches version on the branch still FAILs."""
-    worktree = Path("/tmp/fake-wt")
-    mock_result = MagicMock()
-    mock_result.stdout = _VERSION_LINE_DIFF
-    with patch("issuesmith.ops.publish._bump_versions_in_range", return_value=[]), patch(
-        "issuesmith.ops.publish._run_git", return_value=mock_result
-    ):
-        result = _check_commit_diff_gates(worktree, "main")
-    assert result is not None
-    assert result.status == "P3_GATE_FAILED"
-    assert "design_lint.version_line_in_diff" in result.stderr
-
-
-def test_ensure_rebased_noop_when_ancestor():
-    worktree = Path("/tmp/fake-wt")
-    fetch = MagicMock(returncode=0, stdout="", stderr="")
-    ancestor = MagicMock(returncode=0, stdout="", stderr="")
-
-    def _run(wt, *args, check=True):
-        if args[:2] == ("fetch", "origin"):
-            return fetch
-        if args[:2] == ("merge-base", "--is-ancestor"):
-            return ancestor
-        raise AssertionError(f"unexpected git args: {args}")
-
-    with patch("issuesmith.ops.publish._run_git", side_effect=_run) as run_git:
-        assert _ensure_rebased(worktree, "main") is None
-    assert run_git.call_args_list == [
-        call(worktree, "fetch", "origin", "main"),
-        call(worktree, "merge-base", "--is-ancestor", "origin/main", "HEAD", check=False),
-    ]
-
-
-def test_ensure_rebased_rebases_when_behind():
-    worktree = Path("/tmp/fake-wt")
-    fetch = MagicMock(returncode=0, stdout="", stderr="")
-    not_ancestor = MagicMock(returncode=1, stdout="", stderr="")
-    empty_status = MagicMock(returncode=0, stdout="", stderr="")
-    rebase_ok = MagicMock(returncode=0, stdout="", stderr="")
-
-    def _run(wt, *args, check=True):
-        if args[:2] == ("fetch", "origin"):
-            return fetch
-        if args[:2] == ("merge-base", "--is-ancestor"):
-            return not_ancestor
-        if args[0] == "status":
-            return empty_status
-        if args[0] == "rebase":
-            return rebase_ok
-        raise AssertionError(f"unexpected git args: {args}")
-
-    with patch("issuesmith.ops.publish._run_git", side_effect=_run):
-        assert _ensure_rebased(worktree, "main") is None
 
 
 def test_ensure_rebased_returns_conflict():

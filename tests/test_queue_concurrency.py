@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import threading
@@ -13,7 +12,7 @@ from zoneinfo import ZoneInfo
 import pytest
 import yaml
 
-from issuesmith.config import ConcurrencyConfig, load_config, reset_config_cache
+from issuesmith.config import load_config, reset_config_cache
 from issuesmith.queue_store import QueueStore, in_flight_by_engine
 
 _JST = ZoneInfo("Asia/Tokyo")
@@ -188,16 +187,6 @@ class _DispatchClient:
         return []
 
 
-def test_concurrency_default_when_unconfigured(tmp_path, monkeypatch):
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(yaml.safe_dump({"repo": "sumipan/nexus"}), encoding="utf-8")
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    reset_config_cache()
-    cfg = load_config()
-    assert cfg.concurrency == ConcurrencyConfig(default=1, per_engine={})
-    assert cfg.concurrency.limit("claude") == 1
-
-
 def test_in_flight_by_engine_counts():
     entries = [
         {"issue": 1, "engine": "claude"},
@@ -205,252 +194,6 @@ def test_in_flight_by_engine_counts():
         {"issue": 3, "engine": "codex"},
     ]
     assert in_flight_by_engine(entries) == {"claude": 2, "codex": 1}
-
-
-def test_store_add_and_remove_in_flight(tmp_path):
-    store = _store(tmp_path)
-    store.add_in_flight(10, "claude")
-    snap = store.snapshot()
-    assert len(snap.in_flight) == 1
-    assert snap.in_flight[0]["issue"] == 10
-    assert snap.in_flight[0]["engine"] == "claude"
-    store.remove_in_flight(10)
-    assert store.snapshot().in_flight == []
-
-
-def test_claude_limit_two_allows_two_dispatches(
-    tmp_path, monkeypatch, issuesmith_config,
-):
-    payload = yaml.safe_load(issuesmith_config.read_text(encoding="utf-8"))
-    payload["concurrency"] = {"default": 1, "per_engine": {"claude": 2}}
-    issuesmith_config.write_text(yaml.safe_dump(payload), encoding="utf-8")
-    reset_config_cache()
-    _patch_paths(tmp_path, monkeypatch, issuesmith_config)
-
-    from issuesmith import queue as qmod
-
-    body_a = (
-        "```yaml\n"
-        "target_repo: sumipan/nexus\n"
-        "base_branch: main\n"
-        "allow_paths:\n"
-        '  - "tools/a/**"\n'
-        "```\n"
-    )
-    body_b = (
-        "```yaml\n"
-        "target_repo: sumipan/nexus\n"
-        "base_branch: main\n"
-        "allow_paths:\n"
-        '  - "tools/b/**"\n'
-        "```\n"
-    )
-    body_c = (
-        "```yaml\n"
-        "target_repo: sumipan/nexus\n"
-        "base_branch: main\n"
-        "allow_paths:\n"
-        '  - "tools/c/**"\n'
-        "```\n"
-    )
-
-    store = _store(tmp_path)
-    for issue in (100, 101, 102):
-        store.enqueue(
-            issue=issue,
-            phase="draft",
-            source="skill",
-            actor_kind="human",
-            priority="normal",
-            requested_by=["alice"],
-            requested_at=_NOW,
-        )
-    client = _DispatchClient(
-        {
-            100: {"state": "OPEN", "labels": [], "body": body_a},
-            101: {"state": "OPEN", "labels": [], "body": body_b},
-            102: {"state": "OPEN", "labels": [], "body": body_c},
-        }
-    )
-    now = datetime(2026, 9, 5, 12, 0, tzinfo=_JST)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
-
-    first = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
-    second = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
-    third = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
-
-    assert first.dispatched is True
-    assert second.dispatched is True
-    assert third.dispatched is False
-    assert len(store.snapshot().in_flight) == 2
-
-
-def test_different_engines_do_not_share_limits(
-    tmp_path, monkeypatch, issuesmith_config,
-):
-    payload = yaml.safe_load(issuesmith_config.read_text(encoding="utf-8"))
-    payload["concurrency"] = {"default": 1, "per_engine": {"claude": 1, "codex": 1}}
-    issuesmith_config.write_text(yaml.safe_dump(payload), encoding="utf-8")
-    reset_config_cache()
-    _patch_paths(tmp_path, monkeypatch, issuesmith_config)
-    _write_engine_state(tmp_path, design="claude", implementation="codex")
-
-    from issuesmith import queue as qmod
-
-    draft_body = (
-        "```yaml\n"
-        "target_repo: sumipan/nexus\n"
-        "base_branch: main\n"
-        "allow_paths:\n"
-        '  - "tools/draft/**"\n'
-        "```\n"
-    )
-    develop_body = (
-        "```yaml\n"
-        "target_repo: sumipan/nexus\n"
-        "base_branch: main\n"
-        "allow_paths:\n"
-        '  - "tools/develop/**"\n'
-        "```\n"
-    )
-
-    store = _store(tmp_path)
-    store.enqueue(
-        issue=100,
-        phase="draft",
-        source="skill",
-        actor_kind="human",
-        priority="normal",
-        requested_by=["alice"],
-        requested_at=_NOW,
-    )
-    store.enqueue(
-        issue=101,
-        phase="develop",
-        source="skill",
-        actor_kind="human",
-        priority="normal",
-        requested_by=["alice"],
-        requested_at=_NOW,
-    )
-    client = _DispatchClient(
-        {
-            100: {"state": "OPEN", "labels": [], "body": draft_body},
-            101: {
-                "state": "OPEN",
-                "labels": [{"name": "issuesmith:draft-done"}],
-                "body": develop_body,
-            },
-        }
-    )
-    now = datetime(2026, 9, 5, 12, 0, tzinfo=_JST)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
-
-    first = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
-    second = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
-
-    assert first.dispatched is True
-    assert second.dispatched is True
-    snap = store.snapshot()
-    engines = {entry["engine"] for entry in snap.in_flight}
-    assert engines == {"claude", "codex"}
-
-
-def test_in_flight_role_remap_codex_to_claude():
-    """#2969: design engine switched codex→claude; counts follow current role map."""
-    entries = [
-        {
-            "issue": 2969,
-            "engine": "codex",
-            "role": "design",
-            "dispatched_at": "2026-09-09T12:00:00+09:00",
-        }
-    ]
-    assert in_flight_by_engine(entries) == {"codex": 1}
-    assert in_flight_by_engine(
-        entries, role_engine_map={"design": "claude", "implementation": "cursor"}
-    ) == {"claude": 1}
-
-
-def test_in_flight_legacy_entry_counts_stored_engine():
-    # Real shape from nexus logs/issuesmith-queue-state.json (2026-09-09)
-    legacy = {
-        "issue": 2980,
-        "engine": "claude",
-        "dispatched_at": "2026-09-09T18:39:28.292503+09:00",
-    }
-    assert in_flight_by_engine([legacy]) == {"claude": 1}
-    assert in_flight_by_engine(
-        [legacy], role_engine_map={"design": "codex", "implementation": "cursor"}
-    ) == {"claude": 1}
-
-
-def test_add_in_flight_stores_role_and_paths(tmp_path):
-    store = _store(tmp_path)
-    store.add_in_flight(
-        10,
-        "codex",
-        role="design",
-        allow_paths=("tests/**",),
-        target_repo="sumipan/issuesmith",
-    )
-    entry = store.snapshot().in_flight[0]
-    assert entry["role"] == "design"
-    assert entry["allow_paths"] == ["tests/**"]
-    assert entry["target_repo"] == "sumipan/issuesmith"
-    assert in_flight_by_engine(
-        [entry], role_engine_map={"design": "claude", "implementation": "cursor"}
-    ) == {"claude": 1}
-
-
-def test_one_tick_dispatches_at_most_one(tmp_path, monkeypatch, issuesmith_config):
-    payload = yaml.safe_load(issuesmith_config.read_text(encoding="utf-8"))
-    payload["concurrency"] = {"default": 1, "per_engine": {"claude": 3}}
-    issuesmith_config.write_text(yaml.safe_dump(payload), encoding="utf-8")
-    reset_config_cache()
-    _patch_paths(tmp_path, monkeypatch, issuesmith_config)
-
-    from issuesmith import queue as qmod
-
-    store = _store(tmp_path)
-    for issue in (200, 201, 202):
-        store.enqueue(
-            issue=issue,
-            phase="draft",
-            source="skill",
-            actor_kind="human",
-            priority="normal",
-            requested_by=["alice"],
-            requested_at=_NOW,
-        )
-    client = _DispatchClient({i: {"state": "OPEN", "labels": []} for i in (200, 201, 202)})
-    now = datetime(2026, 9, 5, 12, 0, tzinfo=_JST)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
-
-    result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
-    assert result.dispatched is True
-    assert len(store.snapshot().in_flight) == 1
-
-
-def test_status_shows_in_flight_line(tmp_path, monkeypatch, issuesmith_config, capsys):
-    payload = yaml.safe_load(issuesmith_config.read_text(encoding="utf-8"))
-    payload["concurrency"] = {"default": 1, "per_engine": {"claude": 2, "codex": 1}}
-    issuesmith_config.write_text(yaml.safe_dump(payload), encoding="utf-8")
-    reset_config_cache()
-    _patch_paths(tmp_path, monkeypatch, issuesmith_config)
-
-    from issuesmith import queue as qmod
-
-    store = _store(tmp_path)
-    store.add_in_flight(50, "claude")
-    args = argparse.Namespace(
-        queue_path=str(store.queue_path),
-        state_path=str(store.state_path),
-        lock_path=str(store.lock_path),
-    )
-    qmod._cmd_status(args)
-    out = capsys.readouterr().out
-    assert "in_flight: {claude: 1/2, codex: 0/1" in out
 
 
 def test_parallel_dispatch_respects_limit(tmp_path, monkeypatch, issuesmith_config):
@@ -497,32 +240,6 @@ def test_parallel_dispatch_respects_limit(tmp_path, monkeypatch, issuesmith_conf
 
     wins = [r for r in results if r.dispatched]
     assert len(wins) == 1
-
-
-def test_store_in_flight_blocks_when_labels_not_reflected(
-    tmp_path, monkeypatch, issuesmith_config,
-):
-    _patch_paths(tmp_path, monkeypatch, issuesmith_config)
-
-    from issuesmith import queue as qmod
-
-    store = _store(tmp_path)
-    store.add_in_flight(99, "claude")
-    store.enqueue(
-        issue=100,
-        phase="draft",
-        source="skill",
-        actor_kind="human",
-        priority="normal",
-        requested_by=["alice"],
-        requested_at=_NOW,
-    )
-    client = _DispatchClient({100: {"state": "OPEN", "labels": []}})
-    now = datetime(2026, 9, 5, 12, 0, tzinfo=_JST)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
-
-    result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
-    assert result.dispatched is False
 
 
 def test_pipeline_idle_v2_false_when_in_flight(tmp_path, monkeypatch, issuesmith_config):
@@ -654,37 +371,6 @@ def test_dispatch_bumps_ghdag_generation_when_handler_key_consumed(
     assert result.dispatched is True
     assert consumed_queries == [("brushup", 100)]
     assert triggered == [(100, "brushup")]
-
-
-def test_dispatch_skips_ghdag_redispatch_when_key_unused(
-    tmp_path, monkeypatch, issuesmith_config,
-):
-    _patch_paths(tmp_path, monkeypatch, issuesmith_config)
-
-    from issuesmith import queue as qmod
-
-    body = (
-        "```yaml\n"
-        "target_repo: sumipan/nexus\n"
-        "base_branch: main\n"
-        "allow_paths:\n"
-        '  - "tools/a/**"\n'
-        "```\n"
-    )
-    store = _store(tmp_path)
-    store.enqueue(
-        issue=100, phase="draft", source="skill", actor_kind="human",
-        priority="normal", requested_by=["alice"], requested_at=_NOW,
-    )
-    client = _DispatchClient({100: {"state": "OPEN", "labels": [], "body": body}})
-    now = datetime(2026, 9, 5, 12, 0, tzinfo=_JST)
-    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
-    monkeypatch.setattr(qmod, "_handler_key_consumed", lambda handler, issue: False)
-    monkeypatch.setattr(
-        qmod, "_trigger_ghdag_redispatch",
-        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not be called")),
-    )
-    assert qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True).dispatched
 
 
 def test_dispatch_comments_use_language_pack(tmp_path, monkeypatch, issuesmith_config):

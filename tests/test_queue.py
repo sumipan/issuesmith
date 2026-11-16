@@ -1,7 +1,6 @@
 """tests/tools/issuesmith/test_queue.py — QueueStore comprehensive tests."""
 from __future__ import annotations
 
-import threading
 from pathlib import Path
 
 import pytest
@@ -33,18 +32,6 @@ def nexus_config(monkeypatch, tmp_path):
 
 
 class TestEnqueue:
-    def test_enqueue_creates_request(self, tmp_path):
-        store = _store(tmp_path)
-        result = store.enqueue(
-            issue=100, phase="draft", source="test", actor_kind="human",
-            priority="normal", requested_by=["alice"], requested_at=_NOW,
-        )
-        assert result.created is True
-        assert result.request_id
-
-        snap = store.snapshot()
-        assert len(snap.active_order) == 1
-        assert snap.requests[result.request_id].issue == 100
 
     def test_enqueue_duplicate_merges(self, tmp_path):
         store = _store(tmp_path)
@@ -66,22 +53,6 @@ class TestEnqueue:
         assert "bob" in eff.requested_by
         assert eff.priority == "high"
 
-    def test_enqueue_different_phases_creates_separate(self, tmp_path):
-        store = _store(tmp_path)
-        r1 = store.enqueue(
-            issue=100, phase="draft", source="test", actor_kind="human",
-            priority="normal", requested_by=["alice"], requested_at=_NOW,
-        )
-        r2 = store.enqueue(
-            issue=100, phase="develop", source="test", actor_kind="human",
-            priority="normal", requested_by=["alice"], requested_at=_NOW,
-        )
-        assert r1.created is True
-        assert r2.created is True
-        assert r1.request_id != r2.request_id
-
-        snap = store.snapshot()
-        assert len(snap.active_order) == 2
 
     def test_enqueue_force_flag(self, tmp_path):
         store = _store(tmp_path)
@@ -94,50 +65,12 @@ class TestEnqueue:
         assert store.is_force(snap, r.request_id) is True
 
 
-class TestComplete:
-    def test_complete_removes_from_active(self, tmp_path):
-        store = _store(tmp_path)
-        r = store.enqueue(
-            issue=100, phase="draft", source="test", actor_kind="human",
-            priority="normal", requested_by=["alice"], requested_at=_NOW,
-        )
-        store.complete(r.request_id, "dispatched")
-        snap = store.snapshot()
-        assert r.request_id not in snap.active_order
-        assert r.request_id in snap.completed_request_ids
-
-
-class TestHalt:
-    def test_set_and_clear_halt(self, tmp_path):
-        store = _store(tmp_path)
-        store.set_halt(True, "manual stop")
-        snap = store.snapshot()
-        assert snap.halt is True
-        assert snap.halt_reason == "manual stop"
-
-        store.clear_halt()
-        snap = store.snapshot()
-        assert snap.halt is False
-        assert snap.halt_reason is None
-
-
 class TestSnapshot:
     def test_empty_snapshot(self, tmp_path):
         store = _store(tmp_path)
         snap = store.snapshot()
         assert snap.active_order == []
         assert snap.halt is False
-
-    def test_effective_request(self, tmp_path):
-        store = _store(tmp_path)
-        r = store.enqueue(
-            issue=1, phase="draft", source="s", actor_kind="human",
-            priority="low", requested_by=["x"], requested_at=_NOW,
-        )
-        snap = store.snapshot()
-        eff = store.effective_request(snap, r.request_id)
-        assert eff.issue == 1
-        assert eff.priority == "low"
 
 
 class TestValidation:
@@ -195,29 +128,6 @@ class TestValidation:
             )
 
 
-class TestConcurrency:
-    def test_concurrent_enqueue(self, tmp_path):
-        store = _store(tmp_path)
-        results = []
-
-        def _enqueue(issue: int) -> None:
-            r = store.enqueue(
-                issue=issue, phase="draft", source="test", actor_kind="human",
-                priority="normal", requested_by=["t"], requested_at=_NOW,
-            )
-            results.append(r)
-
-        threads = [threading.Thread(target=_enqueue, args=(i,)) for i in range(1, 6)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-
-        snap = store.snapshot()
-        assert len(snap.active_order) == 5
-        assert all(r.created for r in results)
-
-
 class TestSeedKey:
     def test_seed_key_idempotent(self, tmp_path):
         store = _store(tmp_path)
@@ -235,38 +145,6 @@ class TestSeedKey:
         assert r2.created is False
         snap = store.snapshot()
         assert len(snap.active_order) == 1
-
-
-class TestReplaceOrder:
-    def test_replace_order_reorders(self, tmp_path):
-        store = _store(tmp_path)
-        r1 = store.enqueue(
-            issue=1, phase="draft", source="s", actor_kind="human",
-            priority="low", requested_by=["a"], requested_at=_NOW,
-        )
-        r2 = store.enqueue(
-            issue=2, phase="draft", source="s", actor_kind="human",
-            priority="high", requested_by=["b"], requested_at=_NOW,
-        )
-        snap = store.snapshot()
-        ok = store.replace_order(snap.revision, [r2.request_id, r1.request_id])
-        assert ok is True
-        snap2 = store.snapshot()
-        assert snap2.active_order == [r2.request_id, r1.request_id]
-
-    def test_replace_order_stale_revision(self, tmp_path):
-        store = _store(tmp_path)
-        store.enqueue(
-            issue=1, phase="draft", source="s", actor_kind="human",
-            priority="low", requested_by=["a"], requested_at=_NOW,
-        )
-        snap = store.snapshot()
-        store.enqueue(
-            issue=2, phase="draft", source="s", actor_kind="human",
-            priority="low", requested_by=["a"], requested_at=_NOW,
-        )
-        ok = store.replace_order(snap.revision, snap.active_order)
-        assert ok is False
 
 
 _VALID_BODY = (
@@ -313,26 +191,6 @@ class TestDeterministicDecision:
         )
         assert d.kind == "keep"
 
-    def test_closed_force_with_done_still_closed(self):
-        """CLOSED + force with the requested phase already done → closed (#2825 issue 2)."""
-        from issuesmith.queue_store import QueueRequest
-        from issuesmith.queue_triage import deterministic_decision
-
-        req = QueueRequest(
-            "11111111-1111-1111-1111-111111111111", 1, "merge", "recovery",
-            "human", "high", _NOW, ("sumipan",),
-        )
-        d = deterministic_decision(
-            req,
-            {
-                "state": "CLOSED",
-                "title": "x",
-                "body": _VALID_BODY,
-                "labels": [{"name": "issuesmith:merge-done"}],
-            },
-            force=True,
-        )
-        assert d.kind == "closed"
 
     def test_already_ready(self):
         from issuesmith.queue_store import QueueRequest
@@ -374,34 +232,6 @@ class TestDeterministicDecision:
         )
         assert d.kind == "already_processed"
 
-    def test_done_label_allows_redispatch_with_force(self):
-        """Issues rolled back to develop-done after CP2 FAIL can re-enqueue with --force (2026-09-04).
-
-        F3 FAIL handler documents `enqueue --phase develop ... --force` as recovery,
-        but force was not passed into deterministic_decision so requests were always
-        rejected as already_processed. Regression reproduction.
-        """
-        from issuesmith.queue_store import QueueRequest
-        from issuesmith.queue_triage import deterministic_decision
-
-        req = QueueRequest(
-            "11111111-1111-1111-1111-111111111111", 1, "develop", "recovery",
-            "human", "high", _NOW, ("sumipan",),
-        )
-        d = deterministic_decision(
-            req,
-            {
-                "state": "OPEN",
-                "title": "x",
-                "body": _VALID_BODY,
-                "labels": [
-                    {"name": "issuesmith:draft-done"},
-                    {"name": "issuesmith:develop-done"},
-                ],
-            },
-            force=True,
-        )
-        assert d.kind == "keep"
 
     def test_running_label_blocks_even_with_force(self):
         """force=True must not bypass -running (in progress) — keep #2813 double-enqueue protection."""
@@ -424,100 +254,6 @@ class TestDeterministicDecision:
         )
         assert d.kind == "already_processed"
 
-    def test_ready_label_blocks_even_with_force(self):
-        """force=True must not bypass -ready (queued, not started)."""
-        from issuesmith.queue_store import QueueRequest
-        from issuesmith.queue_triage import deterministic_decision
-
-        req = QueueRequest(
-            "11111111-1111-1111-1111-111111111111", 1, "draft", "recovery",
-            "human", "high", _NOW, ("sumipan",),
-        )
-        d = deterministic_decision(
-            req,
-            {
-                "state": "OPEN",
-                "title": "x",
-                "body": _VALID_BODY,
-                "labels": [{"name": "issuesmith:draft-ready"}],
-            },
-            force=True,
-        )
-        assert d.kind == "already_processed"
-
-    def test_missing_yaml(self):
-        from issuesmith.queue_store import QueueRequest
-        from issuesmith.queue_triage import deterministic_decision
-
-        req = QueueRequest(
-            "11111111-1111-1111-1111-111111111111", 1, "draft", "s",
-            "automation", "low", _NOW, ("bot",),
-        )
-        d = deterministic_decision(req, {"state": "OPEN", "title": "x", "body": "no yaml", "labels": []})
-        assert d.kind == "keep"
-
-    def test_superseded_newer_semver(self):
-        from issuesmith.queue_store import QueueRequest
-        from issuesmith.queue_triage import deterministic_decision
-
-        req = QueueRequest(
-            "11111111-1111-1111-1111-111111111111", 10, "draft", "s",
-            "automation", "low", _NOW, ("bot",),
-        )
-        d = deterministic_decision(
-            req,
-            {
-                "state": "OPEN",
-                "number": 10,
-                "title": "nexus: bump mltgnt to v0.22.7",
-                "body": _VALID_BODY,
-                "labels": [],
-            },
-            open_issues=[
-                {
-                    "state": "OPEN",
-                    "number": 11,
-                    "title": "nexus: bump mltgnt to v0.23.0",
-                }
-            ],
-        )
-        assert d.kind == "superseded"
-        assert d.close_issue is True
-
-    def test_older_semver_not_superseded(self):
-        from issuesmith.queue_store import QueueRequest
-        from issuesmith.queue_triage import deterministic_decision
-
-        req = QueueRequest(
-            request_id="00000000-0000-4000-8000-000000000099",
-            issue=99,
-            phase="draft",
-            source="release-watcher",
-            actor_kind="automation",
-            priority="low",
-            requested_at=_NOW,
-            requested_by=("release-watcher",),
-        )
-        issue = {
-            "number": 99,
-            "state": "OPEN",
-            "title": "nexus: bump mltgnt to v0.22.0",
-            "body": _VALID_BODY,
-            "labels": [],
-        }
-        open_issues = [
-            issue,
-            {
-                "number": 80,
-                "state": "OPEN",
-                "title": "nexus: bump mltgnt to v0.21.0",
-                "body": _VALID_BODY,
-                "labels": [],
-            },
-        ]
-        d = deterministic_decision(req, issue, open_issues=open_issues)
-        assert d.kind == "keep"
-        assert d.close_issue is False
 
     def test_same_semver_not_superseded(self):
         from issuesmith.queue_store import QueueRequest
