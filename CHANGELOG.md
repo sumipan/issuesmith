@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.189.25 - 2026-11-16
+
+### Changed
+
+- P0 `ensure_base_included`: on rebase conflict, discard and reset to `origin/<base>` when the current branch is not on the remote; otherwise keep the `p0.base_rebase_conflict` andon. Refs sumipan/nexus#6687.
+
 ## 0.189.23 - 2026-11-16
 
 ### Changed
