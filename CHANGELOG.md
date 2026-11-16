@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Changed
+
+- Replace `datetime.now` in eleven engine, lanes, and queue tests with fixed instants (T13 wall-clock convention). Refs sumipan/nexus#6197.
+
 ## 0.189.15 - 2026-11-16
 
 ### Changed

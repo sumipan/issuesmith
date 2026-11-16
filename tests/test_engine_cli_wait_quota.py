@@ -9,9 +9,11 @@ import pytest
 
 from issuesmith.engine import RetryReason, RetrySignal, main
 
+_T0 = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+
 
 def _quota_paused_sig(*, role: str = "design") -> RetrySignal:
-    after = datetime.now(timezone.utc) + timedelta(hours=1)
+    after = _T0 + timedelta(hours=1)
     return RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=after, role=role)
 
 

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import threading
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -15,7 +14,7 @@ from issuesmith.queue_store import (
 )
 from tests.conftest import _write_nexus_config
 
-_NOW = datetime.now(timezone.utc).isoformat()
+_NOW = "2026-01-01T12:00:00+00:00"
 
 
 def _store(tmp_path: Path) -> QueueStore:

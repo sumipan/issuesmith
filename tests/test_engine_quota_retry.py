@@ -18,11 +18,13 @@ from issuesmith.engine import (
     _wait_poll_sec,
 )
 
+_T0 = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+
 
 def _paused(resume_at: datetime | None, *, reason: str = "quota") -> EngineQuotaState:
     return EngineQuotaState(
         status="paused",
-        observed_at=datetime.now(timezone.utc),
+        observed_at=_T0,
         resume_at=resume_at,
         reason=reason,
     )
@@ -31,7 +33,7 @@ def _paused(resume_at: datetime | None, *, reason: str = "quota") -> EngineQuota
 def _available() -> EngineQuotaState:
     return EngineQuotaState(
         status="available",
-        observed_at=datetime.now(timezone.utc),
+        observed_at=_T0,
         resume_at=None,
         reason=None,
     )
