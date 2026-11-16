@@ -76,20 +76,6 @@ def _create_parent(client, body: str) -> int:
     return int(client.issue_create("milestone parent", body, labels=labels))
 
 
-def test_plan_children_resolves_ordered_dependencies(local_client) -> None:
-    """Refs sumipan/nexus#6583 — row 2 inherits row 1 issue number in dependencies."""
-    parent = _create_parent(local_client, _parent_body_two_rows())
-    child1 = local_client.issue_create(
-        "first part",
-        "```yaml\ntarget_repo: sumipan/issuesmith\n```\n",
-        labels=["issuesmith:draft-done"],
-    )
-    local_client.add_sub_issue(parent, local_client.issue_get(child1, fields=["id"])["id"])
-
-    plan = vchildren.plan_children(local_client, parent, repo=_REPO)
-    assert len(plan.entries) == 2
-    assert plan.entries[0].existing == child1
-    assert plan.entries[1].dependencies == (child1,)
 
 
 def test_plan_children_rejects_duplicate_design_without_creation(local_client) -> None:

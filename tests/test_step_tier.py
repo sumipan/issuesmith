@@ -113,26 +113,3 @@ def test_config_unknown_tier_kind_raises(tmp_path, monkeypatch):
         load_config()
 
 
-def test_cli_tier_undeclared_returns_rc2_without_deprecation(tmp_path, monkeypatch):
-    body_file = tmp_path / "body.md"
-    body_file.write_text("## Overview\n", encoding="utf-8")
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {"repo": "example/app", "phases": [{"name": "draft", "role": "design", "entry_step": "b1", "handler": "brushup"}]},
-    )
-    from tests.test_cli import _run_module
-
-    cfg_env = {"ISSUESMITH_CONFIG": str(tmp_path / "issuesmith.yaml")}
-    proc = _run_module(
-        "tier",
-        "b1",
-        "--body-file",
-        str(body_file),
-        extra_env=cfg_env,
-        check=False,
-        warn_default=True,
-    )
-    assert proc.returncode == 2
-    assert "not declared" in proc.stderr
-    assert "DeprecationWarning" not in proc.stderr

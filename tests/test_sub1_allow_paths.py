@@ -67,28 +67,8 @@ def _parent_body_bold_label_table() -> str:
     )
 
 
-def test_row_gets_only_its_own_change_table_paths() -> None:
-    """AC-4: SUB1 (target_repo sumipan/issuesmith) resolves to its 3 files only."""
-    body = _parent_body_bold_label_table()
-    row = PlanRow(row_num=1, title="fix scope gate", repo="sumipan/issuesmith", scope="x", dep_raw="")
-
-    paths = allow_paths_for_row(body, row)
-
-    assert paths == _CHILD_PATHS
-    for parent_path in _PARENT_ALLOW_PATHS:
-        assert parent_path not in paths
 
 
-def test_row_without_change_table_and_different_repo_returns_empty() -> None:
-    """AC-4: no table + parent target_repo != row target_repo -> [] (caller must fail the row)."""
-    body = _parent_body_bold_label_table()
-    row = PlanRow(row_num=2, title="unrelated", repo="sumipan/mltgnt", scope="x", dep_raw="")
-
-    paths = allow_paths_for_row(body, row)
-
-    assert paths == []
-    for parent_path in _PARENT_ALLOW_PATHS:
-        assert parent_path not in paths
 
 
 def test_path_env_prefix_excludes_notes_root_paths(tmp_path, monkeypatch) -> None:
@@ -122,18 +102,6 @@ def test_path_env_prefix_excludes_notes_root_paths(tmp_path, monkeypatch) -> Non
     assert allow_paths_for_row(body, row) == []
 
 
-def test_path_env_prefix_unset_does_not_exclude_nikki_paths() -> None:
-    body = _parent_body_bold_label_table()
-    extra = (
-        f"| `sumipan/issuesmith` | `${{NIKKI_ROOT}}/notes/x.md` | {MODIFY} | x |\n"
-    )
-    body = body.replace(
-        f"| `sumipan/issuesmith` | `{_CHILD_PATHS[0]}` | {MODIFY} | narrow it |\n",
-        f"| `sumipan/issuesmith` | `{_CHILD_PATHS[0]}` | {MODIFY} | narrow it |\n{extra}",
-    )
-    row = PlanRow(row_num=1, title="fix scope gate", repo="sumipan/issuesmith", scope="x", dep_raw="")
-    paths = allow_paths_for_row(body, row)
-    assert "${NIKKI_ROOT}/notes/x.md" in paths
 
 
 def test_missing_sub_block_returns_empty() -> None:

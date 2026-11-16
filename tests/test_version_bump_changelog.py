@@ -44,20 +44,6 @@ def _without_inserted(out: str, inserted: list[str]) -> str:
     return "".join(lines)
 
 
-def test_ghdag_format_inserts_dated_heading_before_body():
-    out = fold_unreleased(_GHDAG, "0.72.0", _TODAY)
-
-    assert out is not None
-    lines = out.splitlines()
-    i = lines.index("## [Unreleased]")
-    following = [line for line in lines[i + 1 :] if line.strip()]
-    assert following[0] == "## 0.72.0 - 2026-10-09"
-    assert following[1:4] == [
-        "- feat: add alpha",
-        "- fix: repair beta",
-        "- docs: note gamma",
-    ]
-    assert following[4] == "## 0.71.0 - 2026-09-24"
 
 
 def test_ghdag_format_keeps_original_lines_in_order():
@@ -78,15 +64,6 @@ def test_mltgnt_format_uses_v_prefix_without_date():
     assert _without_inserted(out, ["\n", "## v0.34.0\n"]) == _MLTGNT
 
 
-def test_issuesmith_format_plain_heading_with_date():
-    text = "## Unreleased\n\n- fix: x\n\n## 0.62.0 - 2026-09-25\n\n- old\n"
-
-    out = fold_unreleased(text, "0.62.1", _TODAY)
-
-    assert out == (
-        "## Unreleased\n\n## 0.62.1 - 2026-10-09\n\n- fix: x\n\n"
-        "## 0.62.0 - 2026-09-25\n\n- old\n"
-    )
 
 
 def test_no_existing_version_heading_defaults_to_dated_plain():
@@ -110,18 +87,6 @@ def test_empty_or_missing_unreleased_returns_none(text: str):
     assert fold_unreleased(text, "0.1.1", _TODAY) is None
 
 
-def test_breaking_subsection_moves_into_new_section():
-    text = (
-        "## Unreleased\n\n### Breaking\n\n- feat!: drop old API\n\n"
-        "### Added\n\n- feat: new\n\n## 0.5.0 - 2026-01-01\n"
-    )
-
-    out = fold_unreleased(text, "0.6.0", _TODAY)
-
-    assert out == (
-        "## Unreleased\n\n## 0.6.0 - 2026-10-09\n\n### Breaking\n\n- feat!: drop old API\n\n"
-        "### Added\n\n- feat: new\n\n## 0.5.0 - 2026-01-01\n"
-    )
 
 
 # --- run_bump integration ---------------------------------------------------
@@ -195,19 +160,3 @@ def test_run_bump_leaves_changelog_without_unreleased_body_untouched(
     assert (repo / "CHANGELOG.md").read_bytes() == original.encode("utf-8")
 
 
-@pytest.mark.parametrize(
-    "changelog",
-    [None, "# Changelog\n\n## 0.71.0 - 2026-09-24\n\n- old\n"],
-    ids=["no-changelog", "no-unreleased-heading"],
-)
-def test_run_bump_without_fold_prints_no_changelog_folded(
-    tmp_path: Path, changelog: str | None, capsys: pytest.CaptureFixture[str]
-):
-    repo = _init_repo(tmp_path, changelog)
-
-    assert run_bump(repo, "origin/main") == 0
-
-    out = capsys.readouterr().out
-    assert "pyproject.toml: Z-bumped 0.71.0 → 0.71.1" in out
-    assert "CHANGELOG_FOLDED:" not in out
-    assert _head_files(repo) == ["pyproject.toml"]

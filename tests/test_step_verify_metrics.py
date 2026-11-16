@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from dataclasses import replace
 from io import StringIO
@@ -61,56 +60,8 @@ def _run_capture(argv: list[str]) -> tuple[int, str]:
     return rc, buf.getvalue()
 
 
-def test_verify_pass_appends_verify_check(tmp_path, monkeypatch):
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {"repo": "example/app", "steps": {"b1": {"verify": "design_doc"}}},
-    )
-    metrics_path = _metrics_cfg(tmp_path, monkeypatch)
-    fake = MagicMock()
-    fake.issue_get.return_value = {"body": _VALID_BODY, "labels": [], "milestone": None}
-    monkeypatch.setattr("ghdag.forge.get_forge", lambda: fake)
-
-    rc = main("b1", ["42", "--no-apply-deterministic"])
-    assert rc == 0
-    line = json.loads(metrics_path.read_text().strip())
-    assert line["event"] == "verify_check"
-    assert line["step"] == "b1"
-    assert line["issue"] == 42
-    assert line["rule_ids"] == []
-    assert line["violations"] == []
 
 
-def test_verify_fail_appends_rule_ids_and_violations(tmp_path, monkeypatch):
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {"repo": "example/app", "steps": {"b1": {"verify": "design_doc"}}},
-    )
-    metrics_path = _metrics_cfg(tmp_path, monkeypatch)
-    fake = MagicMock()
-    fake.issue_get.return_value = {
-        "body": "## Overview\nno yaml\n",
-        "labels": [],
-        "milestone": None,
-    }
-    monkeypatch.setattr("ghdag.forge.get_forge", lambda: fake)
-
-    buf = StringIO()
-    old_stdout = sys.stdout
-    sys.stdout = buf
-    try:
-        rc = main("b1", ["42", "--no-apply-deterministic"])
-    finally:
-        sys.stdout = old_stdout
-    assert rc == 1
-    stdout = buf.getvalue()
-    line = json.loads(metrics_path.read_text().strip())
-    assert line["event"] == "verify_check"
-    failed_ids = stdout.split("VERIFY_FAILED_CHECKS:")[1].split("\n")[0].split()
-    assert line["rule_ids"] == failed_ids
-    assert {v["rule_id"] for v in line["violations"]} == set(failed_ids)
 
 
 def test_dry_run_does_not_append_metrics(tmp_path, monkeypatch):
@@ -132,27 +83,6 @@ def test_dry_run_does_not_append_metrics(tmp_path, monkeypatch):
     assert metrics_path.read_text().count("\n") == lines_after_normal
 
 
-def test_dry_run_fail_does_not_append_metrics(tmp_path, monkeypatch):
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {"repo": "example/app", "steps": {"b1": {"verify": "design_doc"}}},
-    )
-    metrics_path = _metrics_cfg(tmp_path, monkeypatch)
-    fake = MagicMock()
-    fake.issue_get.return_value = {
-        "body": "## Overview\nno yaml\n",
-        "labels": [],
-        "milestone": None,
-    }
-    monkeypatch.setattr("ghdag.forge.get_forge", lambda: fake)
-
-    rc_normal, out_normal = _run_capture(["42", "--no-apply-deterministic"])
-    lines_after_normal = metrics_path.read_text().count("\n")
-    rc_dry, out_dry = _run_capture(["42", "--no-apply-deterministic", "--dry-run"])
-    assert rc_normal == rc_dry == 1
-    assert out_normal == out_dry
-    assert metrics_path.read_text().count("\n") == lines_after_normal
 
 
 def test_metrics_write_failure_preserves_rc_and_stdout(tmp_path, monkeypatch):

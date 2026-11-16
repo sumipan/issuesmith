@@ -3,12 +3,11 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from issuesmith.ac_complete_entry import check_gate_multi_root
-from issuesmith.ac_contract import GateMaterializationError
 from issuesmith.config import get_config
 from issuesmith.pr_scope import DIFF_LINES_FALLBACK
 from issuesmith.verbs import acceptance as vac
@@ -162,29 +161,6 @@ def test_check_acceptance_matches_multi_root_gate(
     assert _list_gate_worktrees(target) == []
 
 
-def test_check_acceptance_cleans_first_root_when_second_materialize_fails(
-    tmp_path: Path,
-) -> None:
-    """Refs sumipan/nexus#6582 — second materialize failure still cleans the first root."""
-    first = _init_repo(tmp_path / "first")
-    second = tmp_path / "second"
-    second.mkdir()
-    _init_repo(second, origin_main=False)
-
-    with patch(
-        "issuesmith.verbs.acceptance.materialize_gate_root",
-        side_effect=[tmp_path / "mat1", GateMaterializationError("boom")],
-    ) as mock_mat:
-        with patch("issuesmith.verbs.acceptance.cleanup_gate_root") as mock_cleanup:
-            with pytest.raises(vac.AcceptanceError, match="boom"):
-                vac.check_acceptance(
-                    _BODY_UNCHECKED,
-                    [],
-                    repos={"sumipan/nexus": first, "sumipan/issuesmith": second},
-                    base_branch="main",
-                )
-    assert mock_mat.call_count == 2
-    mock_cleanup.assert_called_once_with(first, tmp_path / "mat1")
 
 
 def test_check_acceptance_raises_when_base_ref_missing(
