@@ -114,7 +114,7 @@ def unlanded_pins(
             if install_spec == INSTALLS_ENV:
                 inst_ver = environment_version(pkg)
             else:
-                inst_ver = installed_version(install_spec)
+                inst_ver = installed_version(Path(install_spec))
         else:
             inst_ver = None
 
