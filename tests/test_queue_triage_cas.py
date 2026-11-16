@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -14,8 +14,9 @@ import yaml
 from issuesmith.config import reset_config_cache
 from issuesmith.queue_store import QueueStore
 
-_NOW = datetime.now(timezone.utc).isoformat()
 _JST = ZoneInfo("Asia/Tokyo")
+_FIXED_NOW = datetime(2026, 9, 11, 6, 0, tzinfo=_JST)
+_NOW = _FIXED_NOW.isoformat()
 _VALID_BODY = (
     "```yaml\n"
     "target_repo: sumipan/nexus\n"
@@ -158,7 +159,7 @@ def test_cas_retry_keeps_triage_order_and_appends_new_request(
 
     monkeypatch.setattr(qmod, "_pipeline_idle_enough", lambda *a, **k: True)
     monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: ["claude"])
-    now = datetime(2026, 9, 11, 6, 0, tzinfo=_JST)
+    now = _FIXED_NOW
     qmod.dispatch_one(
         now=now,
         client=_Client(issues),
@@ -228,7 +229,7 @@ def test_cas_conflict_logged_when_retry_fails(tmp_path, monkeypatch):
 
     monkeypatch.setattr(qmod, "_pipeline_idle_enough", lambda *a, **k: True)
     monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
-    now = datetime(2026, 9, 11, 6, 0, tzinfo=_JST)
+    now = _FIXED_NOW
     qmod.dispatch_one(
         now=now,
         client=_Client(issues),

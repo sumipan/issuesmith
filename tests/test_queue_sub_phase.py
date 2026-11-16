@@ -7,7 +7,8 @@ from datetime import datetime, timezone
 from issuesmith.queue_store import QueueStore
 from issuesmith.queue_triage import DONE_LABEL, deterministic_decision
 
-_NOW = datetime.now(timezone.utc).isoformat()
+_FIXED_NOW = datetime(2026, 9, 1, 0, 0, tzinfo=timezone.utc)
+_NOW = _FIXED_NOW.isoformat()
 
 
 def _store(tmp_path):

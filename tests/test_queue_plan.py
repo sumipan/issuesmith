@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -14,8 +14,9 @@ from issuesmith.queue import (
 from issuesmith.queue_store import QueueStore
 from tests.test_queue import _VALID_BODY, _ProdShapeClient
 
-_NOW = datetime.now(timezone.utc).isoformat()
 _JST = ZoneInfo("Asia/Tokyo")
+_FIXED_NOW = datetime(2026, 9, 3, 12, 0, tzinfo=_JST)
+_NOW = _FIXED_NOW.isoformat()
 
 
 def _store(tmp_path: Path) -> QueueStore:
@@ -80,7 +81,7 @@ def test_plan_api_brake_returns_all_entries_without_forge_reads(tmp_path, monkey
     queue_plan = plan(
         store,
         NoReadClient(),
-        now=datetime(2026, 9, 3, 12, 0, tzinfo=_JST),
+        now=_FIXED_NOW,
     )
 
     assert [entry.issue for entry in queue_plan.entries] == [10, 20]
@@ -103,7 +104,7 @@ def test_apply_stale_plan_has_no_side_effects(tmp_path, monkeypatch):
     )
     client = _ready_client(10)
     _patch_dispatch_gates(monkeypatch, qmod)
-    now = datetime(2026, 9, 3, 12, 0, tzinfo=_JST)
+    now = _FIXED_NOW
     queue_plan = plan(store, client, now=now)
     store.enqueue(
         issue=11,
@@ -135,7 +136,7 @@ def test_global_pipeline_not_idle_on_all_entries(tmp_path, monkeypatch):
     )
     client = _ready_client(10)
     monkeypatch.setattr(qmod, "_dispatch_pipeline_ready", lambda *a, **k: False)
-    now = datetime(2026, 9, 3, 12, 0, tzinfo=_JST)
+    now = _FIXED_NOW
     queue_plan = plan(store, client, now=now)
     assert len(queue_plan.entries) == 1
     assert queue_plan.entries[0].reason == "pipeline_not_idle"
