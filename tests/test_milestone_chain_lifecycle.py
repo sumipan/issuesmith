@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 from issuesmith.milestone import (
     advance_milestone_chains,
     milestone_status,
@@ -29,7 +27,7 @@ from tests.test_milestone_chain import (
 _reset_cfg = _base._reset_cfg
 
 
-_NOW = datetime.now(timezone.utc).isoformat()
+_NOW = "2026-01-01T12:00:00+00:00"
 
 
 class TestIssue3130Fixes:

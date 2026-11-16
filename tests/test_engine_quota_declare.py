@@ -20,11 +20,13 @@ ENGINES = ["claude", "cursor", "codex"]
 ROLE = "implementation"
 TASK_UUID = "uuid-1"
 
+_T0 = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+
 
 def _available() -> EngineQuotaState:
     return EngineQuotaState(
         status="available",
-        observed_at=datetime.now(timezone.utc),
+        observed_at=_T0,
         resume_at=None,
         reason=None,
     )
@@ -150,7 +152,7 @@ def _use_engine(monkeypatch, engine: str) -> None:
 @pytest.mark.parametrize("engine", ENGINES)
 def test_begin_run_denied_raises_quota_paused(mocks, monkeypatch, engine):
     _use_engine(monkeypatch, engine)
-    resume_at = datetime.now(timezone.utc) + timedelta(minutes=30)
+    resume_at = _T0 + timedelta(minutes=30)
     mocks["gate"].begin_run_result = AdmissionDecision(
         allowed=False, status="DEFERRED", reason="drain", resume_at=resume_at
     )

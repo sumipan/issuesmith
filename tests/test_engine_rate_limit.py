@@ -19,6 +19,8 @@ from issuesmith.engine import (
     _rate_limit_evidence,
 )
 
+_T0 = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+
 # ---- config ----
 
 
@@ -89,7 +91,7 @@ def test_rate_limit_evidence_normalizes_whitespace():
 def _state(status, resume_at=None):
     return EngineQuotaState(
         status=status,
-        observed_at=datetime.now(timezone.utc),
+        observed_at=_T0,
         resume_at=resume_at,
         reason=None,
     )

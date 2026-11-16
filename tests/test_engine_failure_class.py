@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
@@ -11,11 +12,20 @@ from ghdag.quota import EngineQuotaState, QuotaSnapshot
 
 from issuesmith.contract import RetrySignal
 from issuesmith.engine import (
+    _ENGINE_TRANSIENT_PAUSE_SEC,
     RoleSelection,
     _execute,
     _failure_class_from_value,
     _truncate_failure_stderr,
 )
+
+_T0 = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+
+
+class _FixedDatetime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return _T0 if tz is None else _T0.astimezone(tz)
 
 
 @pytest.mark.parametrize("member", list(FailureClass))
@@ -45,11 +55,9 @@ def test_truncate_failure_stderr_keeps_tail_bytes():
 
 
 def _available() -> EngineQuotaState:
-    from datetime import datetime, timezone
-
     return EngineQuotaState(
         status="available",
-        observed_at=datetime.now(timezone.utc),
+        observed_at=_T0,
         resume_at=None,
         reason=None,
     )
@@ -137,8 +145,9 @@ def test_execute_engine_error_pauses_engine_via_quota_gate(execute_mocks, monkey
         lambda role, tier=None: RoleSelection(engine="codex", model="gpt"),
     )
     monkeypatch.setattr("issuesmith.engine.call", fake_call)
+    monkeypatch.setattr("issuesmith.engine.datetime", _FixedDatetime)
     quota_gate = execute_mocks["quota_gate"]
-    with pytest.raises(RetrySignal):
+    with pytest.raises(RetrySignal) as exc_info:
         _execute("review", "prompt")
 
     quota_gate.report.assert_called_once()
@@ -147,5 +156,7 @@ def test_execute_engine_error_pauses_engine_via_quota_gate(execute_mocks, monkey
     assert kwargs["status"] == "paused"
     assert kwargs["reason"] == "engine_transient: ENGINE_ERROR"
     assert call_count["n"] == 1
+    expected_after = _T0 + timedelta(seconds=_ENGINE_TRANSIENT_PAUSE_SEC)
+    assert exc_info.value.after == expected_after
 
 

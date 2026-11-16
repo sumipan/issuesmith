@@ -20,12 +20,14 @@ from ghdag.quota import EngineQuotaState, QuotaSnapshot
 
 from issuesmith.engine import RetryReason, RetrySignal, RoleSelection, _execute
 
+_T0 = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+
 # ---- helpers ----
 
 def _paused(resume_at, *, reason="quota"):
     return EngineQuotaState(
         status="paused",
-        observed_at=datetime.now(timezone.utc),
+        observed_at=_T0,
         resume_at=resume_at,
         reason=reason,
     )
@@ -34,7 +36,7 @@ def _paused(resume_at, *, reason="quota"):
 def _available():
     return EngineQuotaState(
         status="available",
-        observed_at=datetime.now(timezone.utc),
+        observed_at=_T0,
         resume_at=None,
         reason=None,
     )
@@ -95,7 +97,7 @@ class TestRetrySignalClass:
         assert sig.reason == RetryReason.RATE_LIMITED
 
     def test_carries_after_datetime(self):
-        after = datetime.now(timezone.utc) + timedelta(hours=2)
+        after = _T0 + timedelta(hours=2)
         sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=after, role="design")
         assert sig.after == after
 
@@ -116,9 +118,8 @@ class TestExecuteAllEnginesPaused:
 
 
     def test_after_is_earliest_resume_at(self, exe_mocks):
-        now = datetime.now(timezone.utc)
-        soon = now + timedelta(hours=1)
-        later = now + timedelta(hours=5)
+        soon = _T0 + timedelta(hours=1)
+        later = _T0 + timedelta(hours=5)
         snap = _snap({"claude": _paused(soon), "codex": _paused(later)})
         exe_mocks["quota_gate"].snapshot.return_value = snap
 
@@ -251,7 +252,7 @@ def dispatch_mocks(monkeypatch, tmp_path):
 class TestDispatchHandlesRetrySignal:
     def test_catches_retry_signal_returns_exit_0(self, dispatch_mocks, monkeypatch):
         dispatch = dispatch_mocks["dispatch"]
-        after = datetime.now(timezone.utc) + timedelta(hours=1)
+        after = _T0 + timedelta(hours=1)
         sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=after, role="design")
         monkeypatch.setattr(dispatch, "_try_python_step", MagicMock(side_effect=sig))
 

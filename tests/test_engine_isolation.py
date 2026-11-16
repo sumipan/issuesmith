@@ -15,11 +15,13 @@ from issuesmith.engine import (
     exec_file,
 )
 
+_T0 = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+
 
 def _available():
     return EngineQuotaState(
         status="available",
-        observed_at=datetime.now(timezone.utc),
+        observed_at=_T0,
         resume_at=None,
         reason=None,
     )
