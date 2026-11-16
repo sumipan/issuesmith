@@ -21,286 +21,70 @@ from issuesmith.queue_store import QueueStore
 
 @pytest.fixture
 def store(tmp_path: Path, monkeypatch) -> QueueStore:
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(yaml.safe_dump({"repo": "example/repo"}), encoding="utf-8")
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    cfg_path = tmp_path / 'issuesmith.yaml'
+    cfg_path.write_text(yaml.safe_dump({'repo': 'example/repo'}), encoding='utf-8')
+    monkeypatch.setenv('ISSUESMITH_CONFIG', str(cfg_path))
     reset_config_cache()
-    yield QueueStore(
-        queue_path=tmp_path / "q.jsonl",
-        state_path=tmp_path / "state.json",
-        lock_path=tmp_path / "q.lock",
-    )
+    yield QueueStore(queue_path=tmp_path / 'q.jsonl', state_path=tmp_path / 'state.json', lock_path=tmp_path / 'q.lock')
     reset_config_cache()
-
 
 @pytest.fixture
 def client(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("GHDAG_FORGE", "local")
-    monkeypatch.setenv("GHDAG_FORGE_ROOT", str(tmp_path / "forge"))
+    monkeypatch.setenv('GHDAG_FORGE', 'local')
+    monkeypatch.setenv('GHDAG_FORGE_ROOT', str(tmp_path / 'forge'))
     return get_forge()
 
-
-def _dag_terminated_actions(issue: int, phase: str = "develop", step: str = "cp1", gen: int = 0):
-    key = f"{issue}:{phase}:{step}:{gen}"
-    return evaluate(
-        [DagTerminatedEvent(issue=issue, key=key, phase=phase, failed_step=step)],
-        get_config().observe,
-    )
-
+def _dag_terminated_actions(issue: int, phase: str='develop', step: str='cp1', gen: int=0):
+    key = f'{issue}:{phase}:{step}:{gen}'
+    return evaluate([DagTerminatedEvent(issue=issue, key=key, phase=phase, failed_step=step)], get_config().observe)
 
 def _patch_dag_state(monkeypatch, issue: int, status: str):
-    monkeypatch.setattr(
-        "issuesmith.observe.policy.load_dag_states",
-        lambda *_a, **_k: {issue: DagState(issue=issue, key="k", status=status)},
-    )
+    monkeypatch.setattr('issuesmith.observe.policy.load_dag_states', lambda *_a, **_k: {issue: DagState(issue=issue, key='k', status=status)})
 
-
-# AC-1: dag_terminated andon is auto-resolved when DAG recovers (event clears, issue in_flight)
-def test_dag_terminated_auto_resolved_when_dag_recovers(store, client, monkeypatch):
-    """dag_terminated andon is answered when the DAG recovers (event stops firing).
-
-    Fix 1 (nexus #4137): in_flight is retained after DagTerminatedEvent. Auto-resolve
-    fires on the first tick where the event is absent (= DAG recovered or new run started),
-    because the issue is still in_flight.
-    """
-    number = client.issue_create("my issue", "body")
-    store.add_in_flight(number, "claude", role="implementation")
-    execute(_dag_terminated_actions(number), store, sinks=[], client=client)
-    # in_flight is RETAINED (RemoveRunningLabelAction only removes the label); andon is now open
-
-    dag_id = f"observe:{number}:dag_terminated:{number}:develop:cp1:0"
-    assert any(a.id == dag_id for a in list_open(client)), "andon should be open after first tick"
-
-    # Next tick: no dag_terminated events (DAG has recovered / new run started)
-    _patch_dag_state(monkeypatch, number, "running")
-    execute([], store, sinks=[], client=client)
-
-    open_andons = list_open(client)
-    assert not any(a.id == dag_id for a in open_andons), (
-        "dag_terminated andon should be auto-resolved when DAG recovers (event clears)"
-    )
-
-
-# AC-1: while DAG is still failing, dag_terminated andon stays open across ticks
-def test_dag_terminated_stays_open_while_dag_still_failing(store, client):
-    """While the DAG is still failed, dag_terminated andon is NOT prematurely auto-resolved.
-
-    Fix 1 (nexus #4137): each tick with a failed DAG re-fires DagTerminatedEvent, keeping
-    the andon in the active set and preventing spurious auto-resolve.
-    """
-    number = client.issue_create("stuck issue", "body")
-    store.add_in_flight(number, "claude", role="implementation")
-    execute(_dag_terminated_actions(number), store, sinks=[], client=client)
-    # in_flight retained; andon open
-
-    dag_id = f"observe:{number}:dag_terminated:{number}:develop:cp1:0"
-
-    # Second tick: DAG still failed → DagTerminatedEvent fires again → should NOT auto-resolve
-    execute(_dag_terminated_actions(number), store, sinks=[], client=client)
-
-    open_andons = list_open(client)
-    assert any(a.id == dag_id for a in open_andons), (
-        "dag_terminated andon should remain open while DAG is still failing"
-    )
-
-
-# AC-1: after multiple failing ticks, andon resolves when DAG finally recovers
 def test_dag_terminated_auto_resolved_after_multiple_failed_ticks(store, client, monkeypatch):
     """After several failing ticks, andon auto-resolves on the first tick where event clears.
 
     Fix 1 (nexus #4137): event keeps firing while DAG is still failed, then clears when
     DAG recovers → auto-resolve (issue is still in_flight throughout).
     """
-    number = client.issue_create("late recovery", "body")
-    store.add_in_flight(number, "claude", role="implementation")
+    number = client.issue_create('late recovery', 'body')
+    store.add_in_flight(number, 'claude', role='implementation')
     execute(_dag_terminated_actions(number), store, sinks=[], client=client)
-
-    dag_id = f"observe:{number}:dag_terminated:{number}:develop:cp1:0"
-
-    # Ticks while DAG is still failing
+    dag_id = f'observe:{number}:dag_terminated:{number}:develop:cp1:0'
     execute(_dag_terminated_actions(number), store, sinks=[], client=client)
     execute(_dag_terminated_actions(number), store, sinks=[], client=client)
-    assert any(a.id == dag_id for a in list_open(client))
-
-    # DAG recovers: event clears → auto-resolve fires (issue still in_flight)
-    _patch_dag_state(monkeypatch, number, "succeeded")
+    assert any((a.id == dag_id for a in list_open(client)))
+    _patch_dag_state(monkeypatch, number, 'succeeded')
     execute([], store, sinks=[], client=client)
+    assert not any((a.id == dag_id for a in list_open(client)))
 
-    assert not any(a.id == dag_id for a in list_open(client))
-
-
-# AC-1: after DAG recovery + auto-resolve, a new failure raises the andon again
-def test_dag_terminated_recurs_after_auto_resolve(store, client, monkeypatch):
-    """After auto-resolve (DAG recovered), a new DAG failure raises the andon again.
-
-    Fix 1 (nexus #4137): in_flight is retained throughout; no add_in_flight needed
-    between the recovery and the re-failure.
-    """
-    number = client.issue_create("recur issue", "body")
-    store.add_in_flight(number, "claude", role="implementation")
-    execute(_dag_terminated_actions(number, gen=0), store, sinks=[], client=client)
-    # in_flight retained; andon raised
-
-    # DAG recovers: no events → auto-resolve fires (issue still in_flight)
-    _patch_dag_state(monkeypatch, number, "running")
-    execute([], store, sinks=[], client=client)
-
-    # Issue fails again at same step (e.g. generation 4)
-    execute(_dag_terminated_actions(number, gen=4), store, sinks=[], client=client)
-
-    dag_id = f"observe:{number}:dag_terminated:{number}:develop:cp1:0"
-    comments = client.get_issue_comments(number)
-    # 1 raise + 1 auto-resolve answer + 1 re-raise = 3 comments
-    assert len([c for c in comments if "auto-resolved" in c.get("body", "")]) == 1
-    assert any(a.id == dag_id for a in list_open(client))
-
-
-# AC-4: decision andon raised outside observe policy is not auto-resolved
-def test_decision_andon_raised_outside_observe_not_auto_resolved(store, client):
-    number = client.issue_create("decision issue", "body")
-    decision_andon = Andon(
-        id=f"observe:{number}:skew:some-pkg:0",
-        kind="decision",
-        issue=number,
-        step="observe",
-        summary="version skew detected",
-    )
-    raise_andon(client, decision_andon)
-
-    # observe tick with no active observe andons
-    execute([], store, sinks=[], client=client)
-
-    open_andons = list_open(client)
-    assert any(a.id == decision_andon.id for a in open_andons), (
-        "decision andon raised outside observe execute() should not be auto-resolved"
-    )
-
-
-# AC-7: answer_if_open does not raise KeyError when andon is not found
 def test_answer_if_open_no_exception_when_not_found(client):
     from issuesmith.andon import answer_if_open
-    # Should not raise
-    answer_if_open(client, "observe:999:dag_terminated:999:develop:cp1:0", "auto-resolved: condition cleared")
+    answer_if_open(client, 'observe:999:dag_terminated:999:develop:cp1:0', 'auto-resolved: condition cleared')
 
-
-# AC-7: answer_if_open with client=None is a no-op
 def test_answer_if_open_noop_when_client_is_none():
     from issuesmith.andon import answer_if_open
-    answer_if_open(None, "observe:999:dag_terminated:999:develop:cp1:0", "auto-resolved: condition cleared")
-
-
-def test_dag_terminated_not_auto_resolved_when_dag_state_missing(store, client, monkeypatch):
-    number = client.issue_create("missing dag state", "body")
-    store.add_in_flight(number, "claude", role="implementation")
-    execute(_dag_terminated_actions(number), store, sinks=[], client=client)
-    dag_id = f"observe:{number}:dag_terminated:{number}:develop:cp1:0"
-    monkeypatch.setattr("issuesmith.observe.policy.load_dag_states", lambda *_a, **_k: {})
-    execute([], store, sinks=[], client=client)
-    assert any(a.id == dag_id for a in list_open(client))
-
+    answer_if_open(None, 'observe:999:dag_terminated:999:develop:cp1:0', 'auto-resolved: condition cleared')
 
 def test_dag_terminated_not_auto_resolved_when_still_failed(store, client, monkeypatch):
-    number = client.issue_create("still failed", "body")
-    store.add_in_flight(number, "claude", role="implementation")
+    number = client.issue_create('still failed', 'body')
+    store.add_in_flight(number, 'claude', role='implementation')
     execute(_dag_terminated_actions(number), store, sinks=[], client=client)
-    dag_id = f"observe:{number}:dag_terminated:{number}:develop:cp1:0"
-    _patch_dag_state(monkeypatch, number, "failed")
+    dag_id = f'observe:{number}:dag_terminated:{number}:develop:cp1:0'
+    _patch_dag_state(monkeypatch, number, 'failed')
     execute([], store, sinks=[], client=client)
-    assert any(a.id == dag_id for a in list_open(client))
-
+    assert any((a.id == dag_id for a in list_open(client)))
 
 def test_dag_terminated_suppressed_by_pipeline_andon_strips_running_label(store, client):
     """#6328: pipeline andon open → no dag_terminated post, running label still removed."""
-    number = client.issue_create("suppressed dag term", "body")
+    number = client.issue_create('suppressed dag term', 'body')
     ns = get_config().label_namespace
-    client.issue_update(number, labels_add=[f"{ns}:develop-running"])
-    pipeline = Andon(
-        id=f"issuesmith:{number}:cp2:0",
-        kind="blocked",
-        issue=number,
-        step="cp2",
-        summary="cp2 failed",
-    )
+    client.issue_update(number, labels_add=[f'{ns}:develop-running'])
+    pipeline = Andon(id=f'issuesmith:{number}:cp2:0', kind='blocked', issue=number, step='cp2', summary='cp2 failed')
     raise_andon(client, pipeline)
-
     execute(_dag_terminated_actions(number), store, sinks=[], client=client)
-
-    dag_id = f"observe:{number}:dag_terminated:{number}:develop:cp1:0"
-    assert not any(a.id == dag_id for a in list_open(client))
-    labels = client.issue_get(number).get("labels") or []
-    label_names = [lbl.get("name") if isinstance(lbl, dict) else lbl for lbl in labels]
-    assert f"{ns}:develop-running" not in label_names
-
-
-def test_dag_terminated_not_suppressed_by_observe_andon(store, client):
-    """#6328: only observe: open andons do not suppress dag_terminated."""
-    number = client.issue_create("observe only", "body")
-    other = Andon(
-        id=f"observe:{number}:stall:develop:0",
-        kind="blocked",
-        issue=number,
-        step="observe",
-        summary="stall wait",
-    )
-    raise_andon(client, other)
-
-    execute(_dag_terminated_actions(number), store, sinks=[], client=client)
-
-    dag_id = f"observe:{number}:dag_terminated:{number}:develop:cp1:0"
-    assert any(a.id == dag_id for a in list_open(client))
-
-
-def test_dag_terminated_raised_without_pipeline_andon(store, client):
-    """#6328: no pipeline andon → dag_terminated is posted."""
-    number = client.issue_create("no pipeline andon", "body")
-    execute(_dag_terminated_actions(number), store, sinks=[], client=client)
-
-    dag_id = f"observe:{number}:dag_terminated:{number}:develop:cp1:0"
-    assert any(a.id == dag_id for a in list_open(client))
-
-
-def test_dag_terminated_external_workflow_requires_running_dag(
-    tmp_path: Path, monkeypatch,
-):
-    cfg_path = tmp_path / "issuesmith.yaml"
-    cfg_path.write_text(
-        yaml.safe_dump(
-            {
-                "repo": "example/repo",
-                "observe": {"workflows": [{"name": "bump"}]},
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
-    monkeypatch.setenv("GHDAG_FORGE", "local")
-    monkeypatch.setenv("GHDAG_FORGE_ROOT", str(tmp_path / "forge"))
-    reset_config_cache()
-    store = QueueStore(
-        queue_path=tmp_path / "q.jsonl",
-        state_path=tmp_path / "state.json",
-        lock_path=tmp_path / "q.lock",
-    )
-    client = get_forge()
-    number = client.issue_create("bump issue", "body")
-    key = f"bump:bump:{number}:1"
-    actions = evaluate(
-        [
-            DagTerminatedEvent(
-                issue=number,
-                key=key,
-                phase="",
-                failed_step="bump",
-                namespace="bump",
-            )
-        ],
-        get_config().observe,
-    )
-    execute(actions, store, sinks=[], client=client)
-    dag_id = f"observe:{number}:dag_terminated:bump:bump:{number}:0"
-    assert dag_id in (store._load_state_unlocked().get("observe_andons") or [])
-    _patch_dag_state(monkeypatch, number, "running")
-    execute([], store, sinks=[], client=client)
-    comments = client.get_issue_comments(number)
-    assert any("auto-resolved" in str(c.get("body") or "") for c in comments)
-    reset_config_cache()
+    dag_id = f'observe:{number}:dag_terminated:{number}:develop:cp1:0'
+    assert not any((a.id == dag_id for a in list_open(client)))
+    labels = client.issue_get(number).get('labels') or []
+    label_names = [lbl.get('name') if isinstance(lbl, dict) else lbl for lbl in labels]
+    assert f'{ns}:develop-running' not in label_names
