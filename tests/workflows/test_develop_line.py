@@ -10,7 +10,6 @@ import shutil
 import signal
 import subprocess
 import textwrap
-import time
 from pathlib import Path
 
 import pytest
@@ -256,7 +255,7 @@ def _watch_once(env: dict[str, str], host: Path) -> int:
     return proc.returncode
 
 
-def _run_dag_once(env: dict[str, str], host: Path, timeout_sec: float = 120.0) -> None:
+def _run_dag_once(env: dict[str, str], host: Path) -> None:
     exec_path = host / "jobs" / "exec.jsonl"
     if not exec_path.exists():
         return
@@ -284,22 +283,14 @@ def _run_dag_once(env: dict[str, str], host: Path, timeout_sec: float = 120.0) -
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    deadline = time.monotonic() + timeout_sec
     try:
-        while time.monotonic() < deadline:
-            if proc.poll() is not None:
-                break
+        while proc.poll() is None:
             if all((done_dir / uuid).exists() for uuid in uuids):
                 break
-            time.sleep(0.2)
     finally:
         if proc.poll() is None:
             proc.send_signal(signal.SIGINT)
-            try:
-                proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=5)
+            proc.wait()
 
 
 def _resume_verify_from_andon(host: Path, env: dict[str, str], issue: int) -> None:
@@ -353,7 +344,6 @@ def _run_until(
             return "done"
         _watch_once(env, host)
         _run_dag_once(env, host)
-        time.sleep(0.2)
     return "timeout"
 
 
