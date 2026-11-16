@@ -78,6 +78,13 @@ def test_exact_version_scalar_rhs_fails():
     _assert_violation(vs)
 
 
+def test_slack_ts_scalar_rhs_passes():
+    """Issue #7057: Slack thread_ts literals must not be treated as semver pins."""
+    assert check_test_version_exact_assert(
+        _tests_hunk('    assert entry.thread_ts == "1700000000.000100"')
+    ) == []
+
+
 def test_fixture_version_literal_passes():
     """Issue #6203: fixture write_text with @v pin is not an assert comparison."""
     vs = check_test_version_exact_assert(
