@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Removed
+
+- The `pyproject_no_direct_pin` doctor check (direct ghdag pins in the host `pyproject.toml` are no longer rejected).
+
+### Fixed
+
+- `issuesmith doctor` no longer requires `ghdag.dag.WAIT_QUOTA_COMPANION_RE` (that name is not exported from `ghdag.dag`).
+
 ## 0.189.30 - 2026-11-16
 
 ### Added
