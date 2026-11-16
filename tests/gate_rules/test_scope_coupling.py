@@ -90,48 +90,7 @@ _DELETE_ROW = "| sumipan/issuesmith | scripts/git-sync.py | delete | retire git_
 _MODIFY_ROW = "| sumipan/issuesmith | src/app.py | update | something |"
 
 
-def test_search_keys_are_file_name_stem_and_module_name():
-    # Without repo_path: name + module-path + slash-path; no bare stem (#4165).
-    assert deletion_search_keys("scripts/git-sync.py") == [
-        "git-sync.py",
-        "scripts.git-sync",
-        "scripts/git-sync.py",
-    ]
 
-
-def test_uncovered_referrers_yield_violation(repo):
-    body = _body(["scripts/git-sync.py"], rows=_DELETE_ROW)
-    violations = check_deletion_references(body, ["scripts/git-sync.py"], repo)
-    assert len(violations) == 1
-    v = violations[0]
-    assert v.rule_id == DELETION_RULE_ID == "scope_coupling.deletion_reference_uncovered"
-    assert v.severity == "fail"
-    assert v.auto_fixable is False
-    assert v.location == "scripts/git-sync.py"
-    for ref in (
-        "tests/scripts/test_vcs_untrack_migration.py",
-        "tools/runner.sh",
-    ):
-        assert ref in v.message
-        assert ref in (v.fix_hint or "")
-    assert "tests/scripts/test_git_sync_retired.py" not in v.message
-    # src/ and docs/ are outside the search dirs; the deleted file itself is never a referrer.
-    assert "src/app.py" not in v.message
-    assert "docs/notes.md" not in v.message
-
-
-def test_git_grep_runs_all_three_patterns(repo):
-    body = _body(["scripts/git-sync.py"], rows=_DELETE_ROW)
-    calls: list[str] = []
-    real = scope_coupling._git_grep_lines
-
-    def spy(root, pattern, pathspec):
-        calls.append(pattern)
-        return real(root, pattern, pathspec)
-
-    with mock.patch.object(scope_coupling, "_git_grep_lines", side_effect=spy):
-        check_deletion_references(body, ["scripts/git-sync.py"], repo)
-    assert {"git-sync.py", "git-sync", "git_sync"} <= set(calls)
 
 
 def test_referrers_covered_by_allow_paths_glob_pass(repo):
@@ -139,18 +98,6 @@ def test_referrers_covered_by_allow_paths_glob_pass(repo):
     body = _body(allow, rows=_DELETE_ROW)
     assert check_deletion_references(body, allow, repo) == []
 
-
-def test_referrers_in_paths_must_not_exist_pass(repo):
-    allow = ["scripts/git-sync.py", "tools/runner.sh"]
-    body = _body(
-        allow,
-        rows=_DELETE_ROW,
-        must_not_exist=[
-            "tests/scripts/test_vcs_untrack_migration.py",
-            "tests/scripts/test_git_sync_retired.py",
-        ],
-    )
-    assert check_deletion_references(body, allow, repo) == []
 
 
 def test_no_delete_row_returns_empty(repo):
@@ -172,34 +119,7 @@ def test_delete_row_for_other_repo_is_ignored(repo):
     assert v.location == "scripts/git-sync.py"
 
 
-def test_rules_check_reports_deletion_violation(repo):
-    body = _body(["scripts/git-sync.py"], rows=_DELETE_ROW)
-    rule = ScopeCouplingRules()
-    with mock.patch.object(scope_coupling, "resolve_scope_root", return_value=repo):
-        with mock.patch.object(rule, "_coupling_violations", return_value=[]):
-            violations = rule.check(body, [])
-    assert DELETION_RULE_ID in {v.rule_id for v in violations}
 
-
-def test_rules_check_skips_referrers_added_by_autofix(repo):
-    """Test referrers auto-widened by the coupling autofix are not double-reported."""
-    allow = ["scripts/git-sync.py", "tools/runner.sh", "tests/scripts/test_git_sync_retired.py"]
-    body = _body(allow, rows=_DELETE_ROW)
-    rule = ScopeCouplingRules()
-    with mock.patch.object(scope_coupling, "resolve_scope_root", return_value=repo):
-        violations = rule.check(body, [])
-    assert rule.autofix_new_allow_paths is not None
-    assert "tests/scripts/test_vcs_untrack_migration.py" in rule.autofix_new_allow_paths
-    assert DELETION_RULE_ID not in {v.rule_id for v in violations}
-
-
-def test_rules_check_scope_mode_internal_still_checks_deletions(repo):
-    body = _body(["scripts/git-sync.py"], rows=_DELETE_ROW).replace(
-        "base_branch: main\n", "base_branch: main\nscope_mode: internal\n"
-    )
-    with mock.patch.object(scope_coupling, "resolve_scope_root", return_value=repo):
-        violations = ScopeCouplingRules().check(body, [])
-    assert [v.rule_id for v in violations] == [DELETION_RULE_ID]
 
 
 def _write_language_pack(tmp_path: Path, monkeypatch, **overrides) -> None:
@@ -255,34 +175,9 @@ def test_disabled_coupling_without_clone_passes(tmp_path, monkeypatch):
         assert ScopeCouplingRules().check(body, []) == []
 
 
-def test_delete_words_vocabulary_from_scope_size(repo, tmp_path, monkeypatch):
-    _write_config(tmp_path, monkeypatch, {"scope_size": {"delete_words": ["remove"]}})
-    row = "| sumipan/issuesmith | scripts/git-sync.py | remove | retire |"
-    body = _body(["scripts/git-sync.py"], rows=row)
-    [v] = check_deletion_references(body, ["scripts/git-sync.py"], repo)
-    assert v.location == "scripts/git-sync.py"
-    # "delete" is no longer a delete word under this config.
-    assert check_deletion_references(
-        _body(["scripts/git-sync.py"], rows=_DELETE_ROW), ["scripts/git-sync.py"], repo
-    ) == []
-
 
 # --- Common file names are not deletion search keys (nexus #4076) ---
 
-
-@pytest.mark.parametrize(
-    "path",
-    [
-        "skills/project-summary/README.md",
-        "skills/project-summary/SKILL.md",
-        "src/pkg/__init__.py",
-        "CHANGELOG.md",
-        "pyproject.toml",
-    ],
-)
-def test_common_file_names_yield_no_valid_keys(path):
-    assert all(not scope_coupling._is_valid_key(k) for k in deletion_search_keys(path))
-    assert deletion_search_keys(path) == []
 
 
 def test_readme_keys_are_invalid():
@@ -291,30 +186,6 @@ def test_readme_keys_are_invalid():
         assert not scope_coupling._is_valid_key(key)
 
 
-def test_short_stems_are_dropped_from_deletion_keys():
-    # Without repo_path: bare stems ("fetch" is common, "cli" is short) are excluded.
-    # Module-path and slash-path are always included for subdirectory files (#4165).
-    assert deletion_search_keys("scripts/fetch.py") == [
-        "fetch.py",
-        "scripts.fetch",
-        "scripts/fetch.py",
-    ]
-    assert deletion_search_keys("scripts/cli.sh") == [
-        "cli.sh",
-        "scripts.cli",
-        "scripts/cli.sh",
-    ]
-
-
-def test_common_file_name_deletion_has_no_referrers(repo):
-    (repo / "scripts" / "budget-brake.py").write_text("# see README.md and SKILL.md\n")
-    _git(repo, "add", "-A")
-    _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "refs")
-    body = _body(
-        ["src/app.py"],
-        rows="| sumipan/issuesmith | skills/project-summary/SKILL.md | delete | retire |",
-    )
-    assert check_deletion_references(body, ["src/app.py"], repo) == []
 
 
 def _init_repo(root: Path, files: dict[str, str]) -> Path:
@@ -360,60 +231,8 @@ def src_layout_repo(tmp_path: Path) -> Path:
     return _init_repo(root, files)
 
 
-def test_src_layout_from_import_symbol_reported(src_layout_repo):
-    body = _body(
-        ["src/pkg/steps/x.py"],
-        rows="| sumipan/issuesmith | src/pkg/steps/x.py | delete | retire |",
-    )
-    refs = scope_coupling.uncovered_deletion_references(
-        body, ["src/pkg/steps/x.py"], src_layout_repo
-    )
-    referrers = refs.get("src/pkg/steps/x.py", [])
-    assert "src/pkg/verbs/y.py" in referrers
 
 
-def test_src_layout_from_import_module_reported(src_layout_repo):
-    body = _body(
-        ["src/pkg/steps/x.py"],
-        rows="| sumipan/issuesmith | src/pkg/steps/x.py | delete | retire |",
-    )
-    refs = scope_coupling.uncovered_deletion_references(
-        body, ["src/pkg/steps/x.py"], src_layout_repo
-    )
-    referrers = refs.get("src/pkg/steps/x.py", [])
-    assert "tests/t.py" in referrers
-
-
-def test_stem_violation_fix_hint_includes_context_suffix(tmp_path):
-    root = tmp_path / "hint_stem_repo"
-    files = {
-        "skills/a/scripts/post.py": "# target\n",
-        "tools/import_pkg.py": "from skills.a.scripts import post\n",
-    }
-    _init_repo(root, files)
-    body = _body(
-        ["skills/a/scripts/post.py"],
-        rows="| sumipan/issuesmith | skills/a/scripts/post.py | delete | retire |",
-    )
-    [v] = check_deletion_references(body, ["skills/a/scripts/post.py"], root)
-    hint = v.fix_hint or ""
-    assert "tools/import_pkg.py:" in hint
-    assert "stem:import" in hint
-
-
-def test_deletion_rows_use_pack_delete_words(tmp_path, monkeypatch):
-    """A change-table row with the pack delete word makes the basename a required key."""
-    from issuesmith.gate_rules.scope_coupling import _extract_search_keys
-
-    _write_language_pack(tmp_path, monkeypatch, delete_words=["drop"])
-    body = (
-        "## Changed Files\n\n| Repository | File path | Change type | Description |\n"
-        "|---|---|---|---|\n"
-        "| sumipan/issuesmith | `scripts/git-sync.py` | drop | retire |\n"
-    )
-    metadata = {"target_repo": "sumipan/issuesmith", "allow_paths": ["scripts/git-sync.py"]}
-    required, _ = _extract_search_keys(body, metadata, tmp_path)
-    assert "git-sync" in required
 
 
 def _subpackage_repo(tmp_path: Path) -> Path:

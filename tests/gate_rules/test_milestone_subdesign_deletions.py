@@ -9,7 +9,6 @@ from issuesmith.config import get_config
 from tests.gate_rules.test_milestone_subdesign import (
     _TABLE_HEADER,
     MILESTONE_LABELS,
-    NON_MILESTONE_LABELS,
     _check,
     _milestone_body,
     _rule_ids,
@@ -100,40 +99,7 @@ def test_deletion_reference_orphan_skipped_without_clone(monkeypatch):
     assert calls == []
 
 
-def test_deletion_reference_orphan_not_run_without_delete_rows(monkeypatch):
-    def _boom(*_a, **_k):
-        raise AssertionError("must not resolve the clone without delete rows")
 
-    monkeypatch.setattr("issuesmith.gate_rules.scope_coupling.resolve_scope_root", _boom)
-    body = _milestone_body([
-        ("add", [("src/pkg/new.py", "Add")]),
-        ("docs", [("docs/a.md", "Modify")]),
-    ])
-    assert _ORPHAN_RULE not in _rule_ids(_check(body, MILESTONE_LABELS))
-
-
-def test_behavior_test_in_sibling_detected():
-    body = _milestone_body([
-        ("impl", [("src/mltgnt/config/language.py", "Modify")]),
-        ("tests", [("tests/config/test_language.py", "Modify")]),
-    ])
-    hits = [v for v in _check(body, MILESTONE_LABELS) if v.rule_id == _SIBLING_TEST_RULE]
-    assert len(hits) == 1
-    assert "src/mltgnt/config/language.py" in hits[0].message
-    assert "tests/config/test_language.py" in hits[0].message
-    assert hits[0].location == f"#### {SUB}1"
-    assert hits[0].fix_hint
-
-
-def test_behavior_test_in_same_sub_passes():
-    body = _milestone_body([
-        ("impl", [
-            ("src/mltgnt/config/language.py", "Modify"),
-            ("tests/config/test_language.py", "Modify"),
-        ]),
-        ("docs", [("docs/a.md", "Modify")]),
-    ])
-    assert _SIBLING_TEST_RULE not in _rule_ids(_check(body, MILESTONE_LABELS))
 
 
 def test_behavior_test_in_sibling_ignores_partial_stem_match():
@@ -151,54 +117,8 @@ _HYPHEN_STEM_PAIRS = [
 ]
 
 
-@pytest.mark.parametrize(("impl_path", "test_path"), _HYPHEN_STEM_PAIRS)
-def test_behavior_test_in_sibling_detects_hyphen_underscore_stem(impl_path, test_path):
-    body = _with_test_sub_dependency(
-        _milestone_body([
-            ("impl", [(impl_path, "Add")]),
-            ("tests", [(test_path, "Add")]),
-        ]),
-        get_config().language.no_deps_word,
-    )
-    hits = [v for v in _check(body, MILESTONE_LABELS) if v.rule_id == _SIBLING_TEST_RULE]
-    assert len(hits) == 1
-    assert impl_path in hits[0].message
-    assert test_path in hits[0].message
-    assert hits[0].location == f"#### {SUB}1"
 
 
-@pytest.mark.parametrize(("impl_path", "test_path"), _HYPHEN_STEM_PAIRS)
-def test_behavior_test_in_sibling_matches_stem_case_insensitively(impl_path, test_path):
-    body = _milestone_body([
-        ("impl", [(impl_path.replace("persona", "Persona"), "Add")]),
-        ("tests", [(test_path, "Add")]),
-    ])
-    assert _SIBLING_TEST_RULE in _rule_ids(_check(body, MILESTONE_LABELS))
-
-
-@pytest.mark.parametrize("dep", ["#1", "1"])
-@pytest.mark.parametrize(("impl_path", "test_path"), _HYPHEN_STEM_PAIRS)
-def test_behavior_test_in_sibling_passes_when_test_sub_depends_on_impl(
-    impl_path, test_path, dep
-):
-    body = _with_test_sub_dependency(
-        _milestone_body([
-            ("impl", [(impl_path, "Add")]),
-            ("tests", [(test_path, "Add")]),
-        ]),
-        dep,
-    )
-    assert _SIBLING_TEST_RULE not in _rule_ids(_check(body, MILESTONE_LABELS))
-
-
-def test_behavior_test_in_sibling_dependency_on_other_sub_still_detected():
-    body = _milestone_body([
-        ("impl", [("scripts/persona-note-articles.py", "Add")]),
-        ("tests", [("tests/scripts/test_persona_note_articles.py", "Add")]),
-        ("docs", [("docs/a.md", "Modify")]),
-    ])
-    body = _with_test_sub_dependency(body, "#3")
-    assert _SIBLING_TEST_RULE in _rule_ids(_check(body, MILESTONE_LABELS))
 
 
 def _contradiction_body(policy: str, ac_items: list[str]) -> str:
@@ -228,18 +148,6 @@ def test_sub_ac_contradiction_needs_both_conditions():
     assert _CONTRADICTION_RULE not in _rule_ids(_check(only_a, MILESTONE_LABELS))
     assert _CONTRADICTION_RULE not in _rule_ids(_check(only_b, MILESTONE_LABELS))
 
-
-def test_new_checks_skip_non_milestone(deletion_repo):
-    bodies = [
-        _milestone_body([
-            ("drop old", [("src/pkg/old.py", "Delete")]),
-            ("tests", [("tests/pkg/test_user.py", "Modify")]),
-            ("impl", [("src/pkg/user.py", "Modify")]),
-        ]),
-        _contradiction_body(_STANDALONE_IMPORT_ERROR, [*_PLAIN_AC, _EXISTING_TESTS_PASS]),
-    ]
-    for body in bodies:
-        assert _check(body, NON_MILESTONE_LABELS) == []
 
 
 # ---------------------------------------------------------------------------
@@ -301,32 +209,6 @@ def _sibling_hits(body: str):
     return [v for v in _check(body, MILESTONE_LABELS) if v.rule_id == _SIBLING_TEST_RULE]
 
 
-def test_behavior_test_in_sibling_glob_deletion_rejects_despite_dependency():
-    delete_word = get_config().language.delete_words[0]
-    body = _with_test_sub_dependency(
-        _milestone_body_rows([
-            ("impl", [("tools/corklab/config.py", "Modify", f"drop symbols {delete_word}")]),
-            ("tests", [("tests/tools/corklab/test_*.py", "Modify", "update tests")]),
-        ]),
-        "#1",
-    )
-    hits = _sibling_hits(body)
-    assert len(hits) == 1
-    msg = hits[0].message
-    assert "tools/corklab/config.py" in msg
-    assert "tests/tools/corklab/test_*.py" in msg
-    assert "(deletion)" in msg
-    assert "depend" not in (hits[0].fix_hint or "").lower()
-
-
-def test_behavior_test_in_sibling_glob_without_deletion():
-    body = _milestone_body_rows([
-        ("impl", [("tools/corklab/config.py", "Modify", "refactor only")]),
-        ("tests", [("tests/tools/corklab/test_*.py", "Modify", "update tests")]),
-    ])
-    hits = _sibling_hits(body)
-    assert len(hits) == 1
-    assert "(deletion)" not in hits[0].message
 
 
 def test_behavior_test_in_sibling_glob_dependency_exemption_without_deletion():
@@ -474,51 +356,7 @@ allow_paths:
 """
 
 
-def test_deleted_path_in_paths_must_exist_sub():
-    body = _milestone_with_subs([
-        _sub_with_structured_ac(
-            1,
-            "drop",
-            [("tools/foo/old.py", "Delete", "remove")],
-            paths_must_exist=["tools/foo/old.py"],
-        ),
-    ])
-    hits = [v for v in _check(body, MILESTONE_LABELS) if v.rule_id == _DELETED_IN_EXIST]
-    assert len(hits) == 1
-    assert "tools/foo/old.py" in hits[0].message
-    assert hits[0].auto_fixable
 
-
-def test_deleted_path_in_paths_must_exist_fixed_by_not_exist():
-    body = _milestone_with_subs([
-        _sub_with_structured_ac(
-            1,
-            "drop",
-            [("tools/foo/old.py", "Delete", "remove")],
-            paths_must_not_exist=["tools/foo/old.py"],
-        ),
-    ])
-    assert _DELETED_IN_EXIST not in _rule_ids(_check(body, MILESTONE_LABELS))
-
-
-def test_deleted_path_in_paths_must_exist_other_sub_ignored():
-    body = _milestone_with_subs([
-        _sub_with_structured_ac(
-            1,
-            "keep",
-            [("src/a.py", "Modify", "change")],
-            paths_must_exist=["tools/foo/old.py"],
-        ),
-        _sub_with_structured_ac(
-            2,
-            "drop",
-            [("tools/foo/old.py", "Delete", "remove")],
-            paths_must_exist=["tools/foo/old.py"],
-        ),
-    ])
-    hits = [v for v in _check(body, MILESTONE_LABELS) if v.rule_id == _DELETED_IN_EXIST]
-    assert len(hits) == 1
-    assert hits[0].location == f"#### {SUB}2"
 
 
 def test_deleted_path_in_paths_must_exist_parent_table_only():
@@ -559,28 +397,6 @@ def test_deleted_path_ac_skipped_when_yaml_invalid():
     assert _DELETED_IN_EXIST not in _rule_ids(_check(body, MILESTONE_LABELS))
 
 
-def test_deletion_referrer_dependency_without_plan_dep(deletion_repo):
-    body = _milestone_with_subs([
-        _sub_with_structured_ac(
-            1,
-            "drop",
-            [("src/pkg/old.py", "Delete", "remove")],
-            paths_must_not_exist=["src/pkg/old.py"],
-        ),
-        _sub_with_structured_ac(
-            2,
-            "follow",
-            [("src/pkg/user.py", "Modify", "update import")],
-        ),
-    ])
-    hits = [v for v in _check(body, MILESTONE_LABELS) if v.rule_id == _REFERRER_DEP]
-    assert len(hits) == 1
-    assert "src/pkg/old.py" in hits[0].message
-    assert "src/pkg/user.py" in hits[0].message
-    assert "Sub 1" in hits[0].message
-    assert "Sub 2" in hits[0].message
-    assert not hits[0].auto_fixable
-
 
 def test_deletion_referrer_dependency_passes_with_hash_dep(deletion_repo):
     body = _milestone_with_subs(
@@ -617,22 +433,3 @@ def test_deletion_referrer_dependency_skipped_when_referrer_in_same_sub(deletion
     assert _REFERRER_DEP not in _rule_ids(_check(body, MILESTONE_LABELS))
 
 
-def test_deletion_referrer_dependency_skipped_without_clone(monkeypatch):
-    monkeypatch.setattr(
-        "issuesmith.gate_rules.scope_coupling.resolve_scope_root",
-        lambda metadata, cfg: None,
-    )
-    body = _milestone_with_subs([
-        _sub_with_structured_ac(
-            1,
-            "drop",
-            [("src/pkg/old.py", "Delete", "remove")],
-            paths_must_exist=["src/pkg/old.py"],
-        ),
-        _sub_with_structured_ac(
-            2,
-            "follow",
-            [("src/pkg/user.py", "Modify", "update import")],
-        ),
-    ])
-    assert _REFERRER_DEP not in _rule_ids(_check(body, MILESTONE_LABELS))

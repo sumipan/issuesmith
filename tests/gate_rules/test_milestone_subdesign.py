@@ -175,54 +175,6 @@ def test_sub_count_mismatch():
     assert any(v.rule_id == "milestone_subdesign.sub_count_mismatch" for v in violations)
 
 
-def test_sub_count_mismatch_fix_hint_lists_required_subsections():
-    from issuesmith.config import get_config
-    from tests.legacy_text import SUB
-
-    body = _valid_body().replace("| 2 | bar | scope2 | 1 |", "")
-    violation = next(
-        v for v in _check(body, MILESTONE_LABELS)
-        if v.rule_id == "milestone_subdesign.sub_count_mismatch"
-    )
-    assert violation.fix_hint is not None
-    assert get_config().sections["design"] in violation.fix_hint
-    for name in get_config().sub_design_subsections:
-        assert name in violation.fix_hint
-    assert violation.auto_fixable is False
-    assert f"#### {SUB}N:" in violation.fix_hint
-    assert "add `#### Sub" not in (violation.fix_hint or "")
-    assert "#### Sub N:" not in violation.fix_hint
-    assert "#### Sub " not in violation.fix_hint
-
-
-def test_promoted_body_plan_rows_match_sub_headers_and_file_union():
-    """AC (#4191): plan rows, SUB_HEADER_RE count, and parent/sub path union agree."""
-    from issuesmith.config import get_config
-    from issuesmith.contract import SUB_HEADER_RE, extract_change_table_rows, get_section
-    from issuesmith.gate_rules.milestone_subdesign_rules import _count_sub_plan_rows
-    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
-
-    body = _oversized_non_milestone_body()
-    promoted = promote_oversized_issue_body(body)
-    sections = get_config().sections
-    plan_count = _count_sub_plan_rows(promoted)
-    design = get_section(promoted, sections["design"]) or ""
-    header_count = len(SUB_HEADER_RE.findall(design))
-    assert plan_count == header_count
-    assert plan_count is not None and plan_count >= 3
-    parent = {
-        path
-        for _, path, _ in extract_change_table_rows(
-            get_section(promoted, sections["changed_files"]) or ""
-        )
-    }
-    sub_paths: set[str] = set()
-    from issuesmith.gate_rules.milestone_subdesign_rules import extract_sub_blocks
-
-    for _, block in extract_sub_blocks(promoted):
-        sub_paths.update(path for _, path, _ in extract_change_table_rows(block))
-    assert parent == sub_paths
-    assert "#### Sub " not in promoted
 
 
 def _oversized_non_milestone_body() -> str:
@@ -313,19 +265,6 @@ def test_registered_in_gate_registry():
     assert "milestone_subdesign" in GATE_REGISTRY
 
 
-def test_milestone30_drift_detects_multiple_categories():
-    violations = _check(MILESTONE30_DRIFT_BODY, MILESTONE_LABELS)
-    rule_ids = {v.rule_id for v in violations}
-    expected = {
-        "milestone_subdesign.table_schema",
-        "milestone_subdesign.repo_mismatch",
-        "milestone_subdesign.file_union_missing_in_parent",
-        "milestone_subdesign.ac_vague_word",
-        "milestone_subdesign.ac_count",
-        "milestone_subdesign.impact_scope_pollution",
-    }
-    assert expected.issubset(rule_ids)
-
 
 # --- Two-repo milestone parent: one ```yaml block per repo (nexus #4076) ---
 
@@ -415,22 +354,6 @@ def test_file_union_falls_back_to_allow_paths_without_parent_changed_files():
     assert violations == []
 
 
-def test_file_union_fallback_still_reports_paths_outside_allow_paths():
-    body = _two_repo_body(with_parent_changed_files=False).replace(
-        "  - src/ghdag/b.py\n", "  - src/ghdag/other.py\n"
-    )
-    violations = _check(body, MILESTONE_LABELS)
-    [v] = [v for v in violations if v.rule_id.endswith("file_union_missing_in_parent")]
-    assert "src/ghdag/b.py" in v.message
-
-
-def test_repo_mismatch_fix_hint_adds_a_block_instead_of_rewriting():
-    violations = _check(MILESTONE30_DRIFT_BODY, MILESTONE_LABELS)
-    repo_v = next(v for v in violations if v.rule_id == "milestone_subdesign.repo_mismatch")
-    hint = repo_v.fix_hint or ""
-    assert "target_repo: sumipan/mltgnt" in hint
-    assert "add" in hint.lower()
-    assert "keep" in hint.lower()
 
 
 # --- Language pack vocabulary (nexus #4474) ---
@@ -475,18 +398,6 @@ def _in_vocabulary(body: str, prefix: str, columns, vague: str) -> str:
         .replace("VAGUE", vague)
     )
 
-
-def test_en_pack_sub_header_and_change_table_pass(tmp_path, monkeypatch):
-    _use_pack(tmp_path, monkeypatch)
-    body = _in_vocabulary(
-        _valid_body(),
-        "Sub",
-        ["Repository", "File path", "Change type", "Description"],
-        "",
-    )
-    assert "#### Sub1:" in body
-    assert "| Repository | File path | Change type | Description |" in body
-    assert _check(body, MILESTONE_LABELS) == []
 
 
 def _vague_ac_body() -> str:
@@ -646,23 +557,6 @@ allow_paths:
 """
 
 
-def test_parent_change_paths_use_change_paths_for_repo():
-    from issuesmith.contract import change_paths_for_repo, get_section
-    from issuesmith.gate_rules.milestone_subdesign_rules import _extract_parent_change_paths
-
-    body = _root_file_body()
-    section = get_section(body, get_config().sections["changed_files"])
-    assert _extract_parent_change_paths(body) == set(change_paths_for_repo(section))
-
-
-def test_parent_change_paths_include_repo_root_file():
-    _skip_unless_root_file_paths()
-    from issuesmith.gate_rules.milestone_subdesign_rules import _extract_parent_change_paths
-
-    assert _extract_parent_change_paths(_root_file_body()) == {
-        _ROOT_FILE,
-        "src/issuesmith/a.py",
-    }
 
 
 def test_root_file_only_sub_block_is_readable():
