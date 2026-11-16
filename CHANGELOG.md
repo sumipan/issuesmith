@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.190.4 - 2026-11-17
+
 ### Changed
 
 - B1 `verify: design_doc` (`collect_violations`) now evaluates host-declared issue-input gates listed in any step's `requires`, so P0-only policy gates run during design verification. Refs sumipan/nexus#6332.
