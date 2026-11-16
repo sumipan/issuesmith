@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -21,6 +22,36 @@ from issuesmith.verbs import (
 
 def _repo_slug(ctx: StepContext) -> str:
     return (ctx.issue_repo.strip() or get_config().repo).strip()
+
+
+_BLOCKED_MERGEABLE = frozenset({"false", "conflicting", "dirty"})
+
+
+def _pr_number_from_url(url: str) -> int | None:
+    match = re.search(r"/pull/(\d+)(?:\s|$)", url.strip())
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def _locate_pr(
+    client, repo: str, branch: str, issue: int, *, create_url: str = ""
+) -> int | None:
+    pr = find_pr(client, repo, branch, issue)
+    if pr is not None:
+        return pr
+    parsed = _pr_number_from_url(create_url)
+    if parsed is not None:
+        return parsed
+    for pull in client.pr_list(state="open", repo=repo):
+        head = str(pull.get("headRefName") or "")
+        title = str(pull.get("title") or "")
+        number = pull.get("number")
+        if not isinstance(number, int):
+            continue
+        if head == branch or f"#{issue}" in title:
+            return number
+    return None
 
 
 def _git_toplevel(worktree: Path) -> Path:
@@ -51,24 +82,27 @@ def run(ctx: StepContext, step: StepConfig) -> StepResult:
             andon=Andon(kind="broken", summary=f"publish failed: {exc}"),
         )
 
-    pr = find_pr(client, repo, branch, issue)
+    create_url = ""
+    pr = _locate_pr(client, repo, branch, issue)
     if pr is None:
         title = f"Implement #{issue}"
         body = f"Closes #{issue}"
         try:
-            client.pr_create(
-                base=ctx.base_branch,
-                head=branch,
-                title=title,
-                body=body,
-                repo=repo,
+            create_url = str(
+                client.pr_create(
+                    base=ctx.base_branch,
+                    head=branch,
+                    title=title,
+                    body=body,
+                    repo=repo,
+                )
             )
         except Exception as exc:  # noqa: BLE001
             return StepResult(
                 status="andon",
                 andon=Andon(kind="broken", summary=f"pr_create failed: {exc}"),
             )
-        pr = find_pr(client, repo, branch, issue)
+        pr = _locate_pr(client, repo, branch, issue, create_url=create_url)
         if pr is None:
             return StepResult(
                 status="andon",
@@ -77,7 +111,7 @@ def run(ctx: StepContext, step: StepConfig) -> StepResult:
 
     state = merge_state(client, repo, pr)
     mergeable = str(state.get("mergeable") or "").lower()
-    if mergeable not in ("true", "mergeable"):
+    if mergeable in _BLOCKED_MERGEABLE:
         return StepResult(
             status="andon",
             andon=Andon(

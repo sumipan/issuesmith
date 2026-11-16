@@ -1,4 +1,4 @@
-name: develop
+name: issuesmith
 template_dir: templates
 polling_interval: 60
 label_namespace: issuesmith

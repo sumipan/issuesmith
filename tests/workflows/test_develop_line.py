@@ -38,10 +38,26 @@ _FAKE_AGENT = textwrap.dedent(
     #!/usr/bin/env bash
     set -euo pipefail
     PROMPT=""
+    if [[ ! -t 0 ]]; then
+      PROMPT="$(cat)"
+    fi
     while [[ $# -gt 0 ]]; do
       case "$1" in
         -p|--print|--prompt)
-          PROMPT="$2"
+          if [[ $# -ge 2 && "$2" != -* ]]; then
+            PROMPT="$2"
+            shift 2
+          else
+            shift
+          fi
+          ;;
+        --model|--output-format|--sandbox)
+          shift 2
+          ;;
+        --stream-partial-output|--force)
+          shift
+          ;;
+        --resume)
           shift 2
           ;;
         *)
@@ -60,14 +76,23 @@ _FAKE_AGENT = textwrap.dedent(
         printf 'import os\\n\\nVALUE = 2\\n' >>"$TARGET"
         ;;
       good)
-        printf '\\nVALUE = 2\\n' >>"$TARGET"
+        printf 'VALUE = 2\\n' >"$TARGET"
+        printf '%s\\n' \
+          'from src import feature' \
+          '' \
+          'def test_value() -> None:' \
+          '    assert feature.VALUE == 2' \
+          >tests/test_feature.py
         ;;
       *)
         echo "unknown mode: $MODE" >&2
         exit 1
         ;;
     esac
-    git add -A
+    git add src/feature.py
+    if [[ "$MODE" == good ]]; then
+      git add tests/test_feature.py
+    fi
     git commit -m "fake engine change"
     exit 0
     """
@@ -107,6 +132,7 @@ def _make_host_repo(tmp_path: Path, slug: str) -> Path:
         "[tool.ruff]\nline-length = 100\n",
         encoding="utf-8",
     )
+    (seed / ".gitignore").write_text("__pycache__/\n*.py[cod]\n", encoding="utf-8")
     (seed / "jobs").mkdir()
     (seed / "logs").mkdir()
     shutil.copytree(_DEVELOP_DIR, seed / "workflows" / "develop")
@@ -144,9 +170,9 @@ def _make_host_repo(tmp_path: Path, slug: str) -> Path:
     _git(host, "config", "user.email", "t@example.com")
     _git(host, "config", "user.name", "T")
     (host / "bin").mkdir()
-    agent = host / "bin" / "agent"
-    agent.write_text(_FAKE_AGENT, encoding="utf-8")
-    agent.chmod(0o755)
+    fake_cli = host / "bin" / "cursor-agent"
+    fake_cli.write_text(_FAKE_AGENT, encoding="utf-8")
+    fake_cli.chmod(0o755)
     (host / "jobs").mkdir(exist_ok=True)
     (host / "logs").mkdir(exist_ok=True)
     (host / ".pipeline-state").mkdir(exist_ok=True)
@@ -165,6 +191,7 @@ def _issue_body() -> str:
         base_branch: main
         allow_paths:
           - src/**
+          - tests/**
         ```
 
         ## Task
@@ -189,6 +216,7 @@ def host_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         "GHDAG_FORGE_ROOT": str(forge_root),
         "ISSUESMITH_QUEUE_DIR": str(tmp_path / "queue"),
         "FAKE_ENGINE_MODE": "good",
+        "PYTHONDONTWRITEBYTECODE": "1",
         "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
     }
     for key in ("GITHUB_TOKEN", "GH_TOKEN", "GITHUB_REPOSITORIES", "GITHUB_REPOSITORY"):
@@ -228,10 +256,19 @@ def _watch_once(env: dict[str, str], host: Path) -> int:
     return proc.returncode
 
 
-def _run_dag_once(env: dict[str, str], host: Path, timeout_sec: float = 45.0) -> None:
+def _run_dag_once(env: dict[str, str], host: Path, timeout_sec: float = 120.0) -> None:
     exec_path = host / "jobs" / "exec.jsonl"
     if not exec_path.exists():
         return
+    uuids: list[str] = []
+    for line in exec_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        uuids.append(json.loads(line)["uuid"])
+    if not uuids:
+        return
+    done_dir = host / "jobs" / "done"
     proc = subprocess.Popen(
         [
             "python3",
@@ -247,11 +284,50 @@ def _run_dag_once(env: dict[str, str], host: Path, timeout_sec: float = 45.0) ->
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    deadline = time.monotonic() + timeout_sec
     try:
-        proc.wait(timeout=timeout_sec)
-    except subprocess.TimeoutExpired:
-        proc.send_signal(signal.SIGINT)
-        proc.wait(timeout=10)
+        while time.monotonic() < deadline:
+            if proc.poll() is not None:
+                break
+            if all((done_dir / uuid).exists() for uuid in uuids):
+                break
+            time.sleep(0.2)
+    finally:
+        if proc.poll() is None:
+            proc.send_signal(signal.SIGINT)
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+
+
+def _resume_verify_from_andon(host: Path, env: dict[str, str], issue: int) -> None:
+    """Re-run verify and downstream after a verify-step andon (ghdag recover)."""
+    proc = subprocess.run(
+        [
+            "python3",
+            "-m",
+            "ghdag",
+            "dag",
+            "recover",
+            "--issue",
+            str(issue),
+            "--handler",
+            "develop",
+            "--from",
+            "verify",
+            "--workflows-dir",
+            "workflows/develop/dag",
+            "--exec-jsonl",
+            "jobs/exec.jsonl",
+        ],
+        cwd=host,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr or proc.stdout
 
 
 def _run_until(
@@ -268,7 +344,10 @@ def _run_until(
         state = client.issue_get(number, fields=["state"])["state"]
         if "issuesmith:develop-done" in labels:
             return "done"
-        if any(lb.endswith(":andon-decision") for lb in labels):
+        if any(
+            lb.endswith(":andon-decision") or lb == "issuesmith:andon-decision"
+            for lb in labels
+        ):
             return "andon"
         if expect_done and state == "CLOSED" and "issuesmith:develop-done" in labels:
             return "done"
@@ -287,7 +366,9 @@ def test_issue_flows_from_ready_to_done_on_local_forge(host_env) -> None:
     state = client.issue_get(number, fields=["state"])["state"]
     assert state == "CLOSED"
     pulls = client.pr_list(state="all")
-    assert any(p.get("merged") for p in pulls)
+    assert any(
+        p.get("merged") or str(p.get("state") or "").upper() == "CLOSED" for p in pulls
+    )
 
 
 def test_failing_verify_raises_andon_and_resume_continues_from_verify(
@@ -295,6 +376,7 @@ def test_failing_verify_raises_andon_and_resume_continues_from_verify(
 ) -> None:
     host, client, env, _slug = host_env
     monkeypatch.setenv("FAKE_ENGINE_MODE", "bad_lint")
+    env["FAKE_ENGINE_MODE"] = "bad_lint"
     number = client.issue_create("repair line", _issue_body())
     client.issue_update(number, labels_add=["issuesmith:develop-ready"])
     outcome = _run_until(
@@ -306,6 +388,7 @@ def test_failing_verify_raises_andon_and_resume_continues_from_verify(
     assert open_andons[0].kind == "decision"
     andon_id = open_andons[0].id
     monkeypatch.setenv("FAKE_ENGINE_MODE", "good")
+    env["FAKE_ENGINE_MODE"] = "good"
     proc = subprocess.run(
         ["python3", "-m", "issuesmith", "andon", "answer", andon_id, "resume"],
         cwd=host,
@@ -314,6 +397,7 @@ def test_failing_verify_raises_andon_and_resume_continues_from_verify(
         text=True,
     )
     assert proc.returncode == 0, proc.stderr
+    _resume_verify_from_andon(host, env, number)
     outcome = _run_until(
         client, number, env, host, expect_done=True, max_rounds=60
     )

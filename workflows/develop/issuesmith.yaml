@@ -35,7 +35,6 @@ steps:
       max: 2
   review:
     module: develop_line.review
-    requires: [review]
     input_kind: worktree
     repair:
       max: 2
