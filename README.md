@@ -474,7 +474,8 @@ A file that is not found is treated as empty, which fails validation because `re
 | `api_brake` | `enabled: false` | GitHub API brake: `min_remaining` (`800`) |
 | `andon.auto_answer` | `[]` | Auto-answer rules: `name` (unique), `match` (non-empty; keys `step`, `kind`, `rule_id`), `action`, `max_per_issue` (`1`) |
 | `language_pack` | (unset: `EN`) | Path to a language pack YAML (see [Language packs](#language-packs)) |
-| `installs` | `{}` | Package name to install directory, or `"@env"` to use the version installed in this process (`importlib.metadata`), for `pins_landed` |
+| `installs` | `{}` | Package name to install directory, or `"@env"` to use the version installed in this process (`importlib.metadata`); used by `pins_landed` for line-environment versions |
+| `pin_packages` | `installs` keys | Package names the `pin_bump` gate watches for pin changes in feature Issues; omit to copy `installs` keys, or set `[]` to watch none |
 | `sections` / `sub_design_subsections` | (deprecated) | Use `language_pack` |
 
 `tests`, `metrics`, `derived_allow`, `external_leak`, `steps.*.repair` and `steps.*.review` reject unknown keys. `scope_coupling.ignore_symbols` is no longer supported and raises `ConfigError`.

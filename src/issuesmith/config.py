@@ -392,6 +392,7 @@ class IssuesmithConfig:
     language: LanguagePack = EN
     label_write_guard: Literal["warn", "enforce"] = "warn"
     installs: Mapping[str, Path | str] = field(default_factory=dict)
+    pin_packages: tuple[str, ...] = ()
     andon: AndonConfig = field(default_factory=AndonConfig)
     path_env_prefixes: tuple[str, ...] = ()
     host_is_repo_checkout: bool = True
@@ -1364,6 +1365,21 @@ def _build_observe(
     )
 
 
+def _build_pin_packages(
+    raw: Any, installs: Mapping[str, Path | str]
+) -> tuple[str, ...]:
+    if raw is None:
+        return tuple(installs)
+    if not isinstance(raw, list):
+        raise ConfigError("pin_packages must be a list of package names")
+    out: list[str] = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, str) or not item.strip():
+            raise ConfigError(f"pin_packages[{i}] must be a non-empty string")
+        out.append(item)
+    return tuple(out)
+
+
 def _build_installs(raw: Any, root: Path) -> dict[str, Path | str]:
     if raw is None:
         return {}
@@ -1486,6 +1502,8 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     )
     andon_raw = data.get("andon") if isinstance(data.get("andon"), dict) else None
     language = _build_language(data, root=root.resolve())
+    installs = _build_installs(data.get("installs"), root.resolve())
+    pin_packages = _build_pin_packages(data.get("pin_packages"), installs)
     return IssuesmithConfig(
         repo=repo,
         label_namespace=label_namespace,
@@ -1522,7 +1540,8 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         api_brake=_build_api_brake(api_brake_raw),
         language=language,
         label_write_guard=_build_label_write_guard(data.get("label_write_guard")),
-        installs=_build_installs(data.get("installs"), root.resolve()),
+        installs=installs,
+        pin_packages=pin_packages,
         andon=_build_andon(andon_raw),
         path_env_prefixes=_build_path_env_prefixes(data.get("path_env_prefixes")),
         host_is_repo_checkout=_build_host_is_repo_checkout(
