@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from importlib.metadata import version as dist_version
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -9,6 +10,7 @@ import pytest
 from packaging.version import Version
 
 from issuesmith import pins
+from issuesmith.config import INSTALLS_ENV
 
 
 def test_requires_pins_parses_mapping():
@@ -92,3 +94,35 @@ def test_unlanded_pins_base_none_is_unlanded():
     required = {"issuesmith": Version("0.133.1")}
     got = pins.unlanded_pins(required, None, {})
     assert got == ["issuesmith v0.133.1 (base=unknown, installed=unknown)"]
+
+
+def test_unlanded_pins_env_install_landed():
+    """Refs sumipan/nexus#7096 acceptance: @env with satisfied pin returns no unlanded."""
+    required = {"packaging": Version("1.0.0")}
+    base = 'packaging = "packaging @ git+https://example.invalid/packaging.git@v1.0.0"\n'
+    installs = {"packaging": INSTALLS_ENV}
+    assert pins.unlanded_pins(required, base, installs) == []
+
+
+def test_unlanded_pins_env_install_lower():
+    """Refs sumipan/nexus#7096 acceptance: @env below required pin is unlanded."""
+    env_ver = Version(dist_version("packaging"))
+    required = {"packaging": Version("9999.0.0")}
+    base = 'packaging = "packaging @ git+https://example.invalid/packaging.git@v9999.0.0"\n'
+    installs = {"packaging": INSTALLS_ENV}
+    got = pins.unlanded_pins(required, base, installs)
+    assert got == [
+        f"packaging v9999.0.0 (base=v9999.0.0, installed=v{env_ver})",
+    ]
+
+
+def test_unlanded_pins_env_install_missing():
+    """Refs sumipan/nexus#7096 acceptance: @env for absent package is installed=unknown."""
+    pkg = "issuesmith-nonexistent-package-7096"
+    required = {pkg: Version("1.0.0")}
+    base = (
+        f'{pkg} = "{pkg} @ git+https://example.invalid/{pkg}.git@v1.0.0"\n'
+    )
+    installs = {pkg: INSTALLS_ENV}
+    got = pins.unlanded_pins(required, base, installs)
+    assert got == [f"{pkg} v1.0.0 (base=v1.0.0, installed=unknown)"]

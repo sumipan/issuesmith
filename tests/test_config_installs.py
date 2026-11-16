@@ -49,3 +49,17 @@ def test_load_config_rejects_non_string_install_path(tmp_path, monkeypatch):
         load_config()
 
 
+def test_load_config_installs_env_marker_kept(tmp_path, monkeypatch):
+    """Refs sumipan/nexus#7096 acceptance: @env is not resolved as a filesystem path."""
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump(
+            {"repo": "sumipan/nexus", "installs": {"issuesmith": "@env"}},
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    cfg = load_config()
+    assert cfg.installs["issuesmith"] == "@env"
+
+

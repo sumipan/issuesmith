@@ -5,10 +5,14 @@ from __future__ import annotations
 import re
 import subprocess
 from collections.abc import Mapping
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as dist_version
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from packaging.version import InvalidVersion, Version
+
+from issuesmith.config import INSTALLS_ENV
 
 if TYPE_CHECKING:
     from issuesmith.config import IssuesmithConfig
@@ -53,6 +57,16 @@ def pin_version(pyproject_text: str, package: str) -> Version | None:
     return None
 
 
+def environment_version(package: str) -> Version | None:
+    """Return the installed distribution version for ``package`` in this process."""
+    try:
+        return Version(dist_version(package))
+    except PackageNotFoundError:
+        return None
+    except InvalidVersion:
+        return None
+
+
 def installed_version(install_dir: Path) -> Version | None:
     """Return the latest tag version at ``install_dir`` via ``git describe``."""
     try:
@@ -84,7 +98,7 @@ def _fmt_version(ver: Version | None) -> str:
 def unlanded_pins(
     required: dict[str, Version],
     base_text: str | None,
-    installs: Mapping[str, Path],
+    installs: Mapping[str, Path | str],
 ) -> list[str]:
     """Return human-readable descriptions of pins not yet landed (empty when all ok)."""
     if not required:
@@ -95,14 +109,17 @@ def unlanded_pins(
             base_ver: Version | None = None
         else:
             base_ver = pin_version(base_text, pkg)
-        install_path = installs.get(pkg)
-        if install_path is not None:
-            inst_ver = installed_version(install_path)
+        install_spec = installs.get(pkg)
+        if install_spec is not None:
+            if install_spec == INSTALLS_ENV:
+                inst_ver = environment_version(pkg)
+            else:
+                inst_ver = installed_version(Path(install_spec))
         else:
             inst_ver = None
 
         pin_ok = base_ver is not None and base_ver >= req_ver
-        if install_path is not None:
+        if install_spec is not None:
             install_ok = inst_ver is not None and inst_ver >= req_ver
             if pin_ok and install_ok:
                 continue

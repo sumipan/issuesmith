@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.190.0 - 2026-11-16
+
+### Added
+
+- `installs`: the value `"@env"` makes `pins_landed` read the installed version from the running environment via `importlib.metadata` instead of `git describe`.
+
 ## 0.189.31 - 2026-11-16
 
 ### Removed

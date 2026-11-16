@@ -24,6 +24,7 @@ class ConfigError(ValueError):
 
 _CONFIG_ENV = "ISSUESMITH_CONFIG"
 _CONFIG_FILENAME = "issuesmith.yaml"
+INSTALLS_ENV = "@env"
 
 
 def _warn_normalized_rule_id(*, field: str, before: str, after: str) -> None:
@@ -390,7 +391,7 @@ class IssuesmithConfig:
     api_brake: ApiBreakConfig = field(default_factory=ApiBreakConfig)
     language: LanguagePack = EN
     label_write_guard: Literal["warn", "enforce"] = "warn"
-    installs: Mapping[str, Path] = field(default_factory=dict)
+    installs: Mapping[str, Path | str] = field(default_factory=dict)
     andon: AndonConfig = field(default_factory=AndonConfig)
     path_env_prefixes: tuple[str, ...] = ()
     host_is_repo_checkout: bool = True
@@ -1363,16 +1364,19 @@ def _build_observe(
     )
 
 
-def _build_installs(raw: Any, root: Path) -> dict[str, Path]:
+def _build_installs(raw: Any, root: Path) -> dict[str, Path | str]:
     if raw is None:
         return {}
     if not isinstance(raw, dict):
         raise ConfigError("installs must be a mapping")
-    out: dict[str, Path] = {}
+    out: dict[str, Path | str] = {}
     for key, value in raw.items():
         if not isinstance(value, str):
             raise ConfigError(f"installs[{key!r}] must be a string path")
-        out[str(key)] = _abs(root, value)
+        if value == INSTALLS_ENV:
+            out[str(key)] = INSTALLS_ENV
+        else:
+            out[str(key)] = _abs(root, value)
     return out
 
 
