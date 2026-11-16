@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.189.31 - 2026-11-16
+
 ### Removed
 
 - The `pyproject_no_direct_pin` doctor check (direct ghdag pins in the host `pyproject.toml` are no longer rejected).
