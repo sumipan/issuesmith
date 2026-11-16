@@ -76,7 +76,7 @@ _VERSION_EXACT_ASSERT = re.compile(r'version["\]\s]*\s*==\s*["\'][0-9]+\.[0-9]+'
 _GIT_PIN_EXACT = re.compile(r"git\+https://[^\"']*@v[0-9]+\.[0-9]")
 _COUNT_EQ_ONE = re.compile(r"count\s*\(.*\)\s*==\s*1")
 _VERSIONED_TEST_DEF = re.compile(r"^\s*def\s+test_\w+_v\d+_\d+(?:_\d+)?\s*\(")
-_SEMVER_QUOTED = re.compile(r'^["\'](\d+\.\d+(?:\.\d+)?)["\']\s*$')
+_SEMVER_QUOTED = re.compile(r'^["\'](\d{1,4}\.\d{1,4}(?:\.\d{1,4})?)["\']\s*$')
 _TEST_VERSION_ASSERT_HINT = (
     "check versions / pins with a lower bound (`>=`) or do not test them;"
     " publish bumps them deterministically"

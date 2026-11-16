@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Fixed
+
+- `design_lint.test_version_exact_assert`: limit semver RHS matching to 1–4 digits per component so Slack `thread_ts` literals are not flagged. Refs sumipan/nexus#7057.
+
 ## 0.189.25 - 2026-11-16
 
 ### Changed
