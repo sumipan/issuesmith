@@ -403,6 +403,32 @@ def handle_milestone(
     return StepResult(exit_code=1, pipeline_status="WORKTREE_FAILED")
 
 
+def _branch_on_remote(worktree_dir: Path, branch: str) -> bool | None:
+    """Return whether *branch* exists on ``origin``, or ``None`` if unknown."""
+    if not branch:
+        return None
+    proc = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(worktree_dir),
+            "ls-remote",
+            "--exit-code",
+            "--heads",
+            "origin",
+            f"refs/heads/{branch}",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode == 0:
+        return True
+    if proc.returncode == 2:
+        return False
+    return None
+
+
 def _stale_base_resume_command(issue_number: int, caller_step: str | None) -> tuple[str, list[str]]:
     """Resume CLI hint and andon option keys after a STALE_BASE rebase conflict."""
     from issuesmith.config import get_config
@@ -508,6 +534,14 @@ def ensure_base_included(
         )
         return None
 
+    branch_proc = subprocess.run(
+        ["git", "-C", str(worktree_dir), "branch", "--show-current"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    current_branch = (branch_proc.stdout or "").strip()
+
     rebase = subprocess.run(
         ["git", "-C", str(worktree_dir), "rebase", f"origin/{base_branch}"],
         capture_output=True,
@@ -517,6 +551,49 @@ def ensure_base_included(
     if rebase.returncode == 0:
         print(
             f"P0_REBASE: auto-synced with origin/{base_branch}",
+            file=sys.stderr,
+        )
+        return None
+
+    on_remote = _branch_on_remote(worktree_dir, current_branch)
+    if on_remote is False:
+        subprocess.run(
+            ["git", "-C", str(worktree_dir), "rebase", "--abort"],
+            capture_output=True,
+            check=False,
+        )
+        head_proc = subprocess.run(
+            ["git", "-C", str(worktree_dir), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        discarded_sha = (head_proc.stdout or "").strip()
+        reset = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(worktree_dir),
+                "reset",
+                "--hard",
+                f"origin/{base_branch}",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if reset.returncode != 0:
+            detail = (reset.stderr or reset.stdout or "").strip()
+            return _stale_base_rebase_conflict_andon(
+                worktree_dir,
+                base_branch,
+                issue_number,
+                caller_step,
+                f"reset to origin/{base_branch} failed: {detail}",
+            )
+        print(
+            f"P0_REBASE: discarded local-only branch {current_branch} "
+            f"(was {discarded_sha}); restarted from origin/{base_branch}",
             file=sys.stderr,
         )
         return None

@@ -329,6 +329,45 @@ def test_ensure_base_included_rebase_success_returns_none(
     client.issue_comment.assert_not_called()
 
 
+def test_ensure_base_included_resets_local_only_branch_on_conflict(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Refs sumipan/nexus#6687: unpushed branch resets to origin/base on rebase conflict."""
+    origin = _init_repo(tmp_path / "origin")
+    clone = _clone(origin, tmp_path / "clone")
+    subprocess.run(
+        ["git", "-C", str(clone), "checkout", "-b", "feat/local-only"],
+        check=True,
+        capture_output=True,
+    )
+    (clone / "README.md").write_text("stale side\n", encoding="utf-8")
+    _git(clone, "add", "README.md")
+    _git(clone, "commit", "-q", "-m", "local only work")
+    discarded_sha = _git(clone, "rev-parse", "HEAD")
+
+    (origin / "README.md").write_text("main side\n", encoding="utf-8")
+    _git(origin, "add", "README.md")
+    _git(origin, "commit", "-q", "-m", "advance main")
+
+    _git(clone, "fetch", "origin", "main")
+    origin_main_sha = _git(clone, "rev-parse", "origin/main")
+
+    client = MagicMock()
+    result = wt.ensure_base_included(
+        clone,
+        "main",
+        client,
+        6687,
+        stale_base_comment_template=_STALE_BASE_COMMENT_TEMPLATE,
+    )
+    assert result is None
+    assert _git(clone, "rev-parse", "HEAD") == origin_main_sha
+    err = capsys.readouterr().err
+    assert "P0_REBASE: discarded local-only branch" in err
+    assert discarded_sha in err
+    client.issue_comment.assert_not_called()
+
+
 def test_ensure_base_included_rebase_conflict_returns_andon_decision(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
