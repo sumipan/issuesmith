@@ -13,7 +13,8 @@ import yaml
 from issuesmith.config import reset_config_cache
 from issuesmith.queue_store import QueueStore
 
-_NOW = datetime.now(timezone.utc).isoformat()
+_FIXED_NOW = datetime(2026, 9, 11, 6, 0, tzinfo=timezone.utc)
+_NOW = _FIXED_NOW.isoformat()
 _VALID_BODY = (
     "```yaml\n"
     "target_repo: sumipan/nexus\n"
@@ -58,7 +59,7 @@ def test_is_circuit_open_true_on_consecutive_timeouts(tmp_path):
     from issuesmith.queue_triage import is_circuit_open
 
     log = tmp_path / "triage.jsonl"
-    now = datetime(2026, 9, 11, 6, 0, tzinfo=timezone.utc)
+    now = _FIXED_NOW
     for i in range(3):
         _write_entry(
             log,
@@ -72,7 +73,7 @@ def test_is_circuit_open_false_when_mixed_or_stale(tmp_path):
     from issuesmith.queue_triage import is_circuit_open
 
     log = tmp_path / "triage.jsonl"
-    now = datetime(2026, 9, 11, 6, 0, tzinfo=timezone.utc)
+    now = _FIXED_NOW
     _write_entry(
         log,
         reason="llm failed: timed out after 60 seconds",
@@ -142,7 +143,7 @@ def test_dispatch_skips_llm_when_circuit_open(tmp_path, monkeypatch):
         requested_by=["a"],
         requested_at=_NOW,
     )
-    now = datetime(2026, 9, 11, 6, 0, tzinfo=timezone.utc)
+    now = _FIXED_NOW
     log = tmp_path / "issuesmith-triage.jsonl"
     for i in range(3):
         _write_entry(

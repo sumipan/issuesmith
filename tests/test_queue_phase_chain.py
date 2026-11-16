@@ -13,7 +13,8 @@ from issuesmith.config import load_config, reset_config_cache
 from issuesmith.queue_store import QueueStore
 from tests.conftest import NEXUS_TEST_PHASES
 
-_NOW = datetime.now(timezone.utc).isoformat()
+_FIXED_NOW = datetime(2026, 9, 1, 0, 0, tzinfo=timezone.utc)
+_NOW = _FIXED_NOW.isoformat()
 _JST = ZoneInfo("Asia/Tokyo")
 
 _MIGRATE_PHASE = {

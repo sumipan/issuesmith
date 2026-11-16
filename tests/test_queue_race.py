@@ -2,13 +2,15 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 from issuesmith.queue_store import QueueStore
 
-_NOW = datetime.now(timezone.utc).isoformat()
+_FIXED_NOW = datetime(2026, 9, 10, 19, 5, tzinfo=ZoneInfo("Asia/Tokyo"))
+_NOW = _FIXED_NOW.isoformat()
 _VALID_BODY = (
     "```yaml\n"
     "target_repo: sumipan/nexus\n"
@@ -130,7 +132,6 @@ def test_draft_done_still_releases_when_exec_complete(tmp_path, monkeypatch):
 def test_dispatch_recovers_before_orphan_gate(tmp_path, monkeypatch):
     """AC-2: restore develop-running into in_flight before orphan checks so dispatch stays blocked."""
     import json
-    from zoneinfo import ZoneInfo
 
     import yaml
 
@@ -292,7 +293,7 @@ def test_dispatch_recovers_before_orphan_gate(tmp_path, monkeypatch):
         def issue_comment(self, number, body):
             pass
 
-    now = datetime(2026, 9, 10, 19, 5, tzinfo=ZoneInfo("Asia/Tokyo"))
+    now = _FIXED_NOW
     # Without recovery this returns pipeline not idle (orphan #3046).
     result = qmod.dispatch_one(
         now=now,

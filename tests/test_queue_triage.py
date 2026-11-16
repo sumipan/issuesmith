@@ -16,7 +16,8 @@ from issuesmith.queue_triage import (
     triage,
 )
 
-_NOW = datetime.now(timezone.utc).isoformat()
+_FIXED_NOW = datetime(2026, 9, 1, 0, 0, tzinfo=timezone.utc)
+_NOW = _FIXED_NOW.isoformat()
 
 _VALID_BODY = (
     "```yaml\n"
@@ -120,6 +121,7 @@ def test_triage_downgrades_deps_reject_to_keep(tmp_path: Path):
 
     result = triage(
         snap,
+        now=_FIXED_NOW,
         issues={
             3166: {
                 "number": 3166,
@@ -170,6 +172,7 @@ def test_triage_downgrades_yaml_reject_to_keep(tmp_path: Path):
 
     result = triage(
         snap,
+        now=_FIXED_NOW,
         issues={
             3167: {
                 "number": 3167,
