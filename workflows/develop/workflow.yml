@@ -18,26 +18,31 @@ handlers:
         template: prepare
         engine: shell
         model: bash
+        env_passthrough: [PATH, FAKE_ENGINE_MODE, ISSUESMITH_CONFIG, PYTHONPATH, GHDAG_FORGE, GHDAG_FORGE_ROOT, ISSUESMITH_QUEUE_DIR]
       - id: implement
         template: implement
         engine: shell
         model: bash
         depends: [prepare]
+        env_passthrough: [PATH, FAKE_ENGINE_MODE, ISSUESMITH_CONFIG, PYTHONPATH, GHDAG_FORGE, GHDAG_FORGE_ROOT, ISSUESMITH_QUEUE_DIR]
       - id: verify
         template: verify
         engine: shell
         model: bash
         depends: [implement]
+        env_passthrough: [PATH, FAKE_ENGINE_MODE, ISSUESMITH_CONFIG, PYTHONPATH, GHDAG_FORGE, GHDAG_FORGE_ROOT, ISSUESMITH_QUEUE_DIR]
       - id: review
         template: review
         engine: shell
         model: bash
         depends: [verify]
+        env_passthrough: [PATH, FAKE_ENGINE_MODE, ISSUESMITH_CONFIG, PYTHONPATH, GHDAG_FORGE, GHDAG_FORGE_ROOT, ISSUESMITH_QUEUE_DIR]
       - id: merge
         template: merge
         engine: shell
         model: bash
         depends: [review]
+        env_passthrough: [PATH, FAKE_ENGINE_MODE, ISSUESMITH_CONFIG, PYTHONPATH, GHDAG_FORGE, GHDAG_FORGE_ROOT, ISSUESMITH_QUEUE_DIR]
 
   reset:
     type: reset

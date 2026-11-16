@@ -49,7 +49,9 @@ def _locate_pr(
         number = pull.get("number")
         if not isinstance(number, int):
             continue
-        if head == branch or f"#{issue}" in title:
+        if head == branch:
+            return number
+        if re.search(rf"(?<!\d)#{issue}(?!\d)", title):
             return number
     return None
 

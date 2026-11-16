@@ -9,6 +9,7 @@ import re
 import shutil
 import signal
 import subprocess
+import time
 import textwrap
 from pathlib import Path
 
@@ -175,10 +176,19 @@ def _make_host_repo(tmp_path: Path, slug: str) -> Path:
     (host / "jobs").mkdir(exist_ok=True)
     (host / "logs").mkdir(exist_ok=True)
     (host / ".pipeline-state").mkdir(exist_ok=True)
+    recover_wf = yaml.safe_load(
+        (host / "workflows" / "develop" / "workflow.yml").read_text(encoding="utf-8")
+    )
+    recover_wf["template_dir"] = "develop/templates"
+    host_workflows = host / "workflows"
+    host_workflows.mkdir(exist_ok=True)
+    (host_workflows / "issuesmith.yml").write_text(
+        yaml.safe_dump(recover_wf), encoding="utf-8"
+    )
     host_cfg = yaml.safe_load((host / "workflows" / "develop" / "issuesmith.yaml").read_text())
     host_cfg["repo"] = slug
     host_cfg["supported_repos"] = [slug]
-    host_cfg.setdefault("paths", {})["workflow"] = "workflows/develop/dag/workflow.yml"
+    host_cfg.setdefault("paths", {})["workflow"] = "workflows/issuesmith.yml"
     (host / "issuesmith.yaml").write_text(yaml.safe_dump(host_cfg), encoding="utf-8")
     return host
 
@@ -217,6 +227,7 @@ def host_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         "FAKE_ENGINE_MODE": "good",
         "PYTHONDONTWRITEBYTECODE": "1",
         "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        "GHDAG_TASK_ENV_ALLOW": "*",
     }
     for key in ("GITHUB_TOKEN", "GH_TOKEN", "GITHUB_REPOSITORIES", "GITHUB_REPOSITORY"):
         env.pop(key, None)
@@ -283,42 +294,20 @@ def _run_dag_once(env: dict[str, str], host: Path) -> None:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    max_polls = 500
+    polls = 0
     try:
         while proc.poll() is None:
+            polls += 1
+            if polls > max_polls:
+                break
             if all((done_dir / uuid).exists() for uuid in uuids):
                 break
+            time.sleep(0.05)
     finally:
         if proc.poll() is None:
             proc.send_signal(signal.SIGINT)
             proc.wait()
-
-
-def _resume_verify_from_andon(host: Path, env: dict[str, str], issue: int) -> None:
-    """Re-run verify and downstream after a verify-step andon (ghdag recover)."""
-    proc = subprocess.run(
-        [
-            "python3",
-            "-m",
-            "ghdag",
-            "dag",
-            "recover",
-            "--issue",
-            str(issue),
-            "--handler",
-            "develop",
-            "--from",
-            "verify",
-            "--workflows-dir",
-            "workflows/develop/dag",
-            "--exec-jsonl",
-            "jobs/exec.jsonl",
-        ],
-        cwd=host,
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-    assert proc.returncode == 0, proc.stderr or proc.stdout
 
 
 def _run_until(
@@ -353,12 +342,29 @@ def test_issue_flows_from_ready_to_done_on_local_forge(host_env) -> None:
     client.issue_update(number, labels_add=["issuesmith:develop-ready"])
     outcome = _run_until(client, number, env, host, expect_done=True)
     assert outcome == "done"
+    labels = _labels(client, number)
+    assert "issuesmith:develop-done" in labels
     state = client.issue_get(number, fields=["state"])["state"]
     assert state == "CLOSED"
+    forge_used = Path(getattr(client, "_root", env["GHDAG_FORGE_ROOT"]))
     pulls = client.pr_list(state="all")
-    assert any(
-        p.get("merged") or str(p.get("state") or "").upper() == "CLOSED" for p in pulls
-    )
+    issue_ref = re.compile(rf"(?<!\d)#{number}(?!\d)")
+    pr_candidates = [
+        p
+        for p in pulls
+        if issue_ref.search(str(p.get("title") or ""))
+        and str(p.get("headRefName") or "").startswith(f"feat/issue-{number}-")
+    ]
+    assert pr_candidates, f"expected PR for issue #{number}, got {pulls!r}"
+    pr = pr_candidates[0]
+    pr_num = int(pr["number"])
+    head = str(pr.get("headRefName") or "")
+    assert head.startswith(f"feat/issue-{number}-"), head
+    assert str(pr.get("state") or "").upper() == "CLOSED", pr
+    pull_path = forge_used / ".forge" / "pulls" / f"{pr_num}.json"
+    assert pull_path.is_file(), f"missing local-forge pull record: {pull_path}"
+    pull = json.loads(pull_path.read_text(encoding="utf-8"))
+    assert pull.get("merged") is True, pull
 
 
 def test_failing_verify_raises_andon_and_resume_continues_from_verify(
@@ -387,7 +393,6 @@ def test_failing_verify_raises_andon_and_resume_continues_from_verify(
         text=True,
     )
     assert proc.returncode == 0, proc.stderr
-    _resume_verify_from_andon(host, env, number)
     outcome = _run_until(
         client, number, env, host, expect_done=True, max_rounds=60
     )

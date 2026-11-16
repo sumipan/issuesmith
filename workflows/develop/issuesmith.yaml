@@ -35,6 +35,7 @@ steps:
       max: 2
   review:
     module: develop_line.review
+    requires: [review]
     input_kind: worktree
     repair:
       max: 2
@@ -43,6 +44,7 @@ steps:
       template: review.md
       success_status: REVIEW_PASS
       failure_status: REVIEW_FAIL
+      optional_variables: [issue_body, diff]
   merge:
     module: develop_line.merge
   repair:

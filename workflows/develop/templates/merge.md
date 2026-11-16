@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 # develop/merge — Issue #${issue_number}
 set -euo pipefail
-REPO_ROOT=$$(git rev-parse --show-toplevel)
-export PATH="$${REPO_ROOT}/bin:$${PATH}"
-export FAKE_ENGINE_MODE="$${FAKE_ENGINE_MODE:-good}"
 exec python3 -m issuesmith dispatch merge \
   "issue_number=${issue_number}" \
   "base_branch=${base_branch}" \

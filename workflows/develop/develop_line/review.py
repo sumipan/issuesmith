@@ -1,17 +1,27 @@
-"""Run the review LLM with issue body and worktree diff."""
+"""Review step placeholder; LLM review runs via dispatch requires."""
 
 from __future__ import annotations
 
+import os
 import subprocess
-from pathlib import Path
+import sys
 
 from issuesmith.config import StepConfig
-from issuesmith.contract import Andon, StepContext, StepResult
+from issuesmith.contract import StepContext, StepResult
 from issuesmith.forge import get_forge
-from issuesmith.gates.review import ReviewGate
 
 
-def _git_diff(worktree: Path, base_branch: str) -> str:
+def _parse_context(args: list[str]) -> dict[str, str]:
+    context: dict[str, str] = {}
+    for arg in args:
+        if "=" not in arg:
+            raise ValueError(f"not in key=value form: {arg!r}")
+        key, value = arg.split("=", 1)
+        context[key] = value
+    return context
+
+
+def _git_diff(worktree: str, base_branch: str) -> str:
     proc = subprocess.run(
         ["git", "diff", f"origin/{base_branch}...HEAD"],
         cwd=worktree,
@@ -24,34 +34,41 @@ def _git_diff(worktree: Path, base_branch: str) -> str:
     return proc.stdout
 
 
+def _enrich_review_context(context: dict[str, str]) -> dict[str, str]:
+    """Add ReviewGate optional variables for ``requires: [review]``."""
+    merged = dict(context)
+    issue = int(merged["issue_number"])
+    worktree = merged["worktree_path"]
+    base_branch = merged["base_branch"]
+    body = str(get_forge().issue_get(issue, fields=["body"]).get("body") or "")
+    merged["issue_body"] = body
+    merged["diff"] = _git_diff(worktree, base_branch)
+    return merged
+
+
 def run(ctx: StepContext, step: StepConfig) -> StepResult:
-    """Populate review gate variables and run the configured review template."""
-    review_cfg = step.review
-    if review_cfg is None:
-        return StepResult(
-            status="andon",
-            andon=Andon(kind="broken", summary="review step missing review config"),
+    _ = ctx, step
+    return StepResult(status="done", markers=["REVIEW_READY"])
+
+
+def _cli_dispatch() -> int:
+    if len(sys.argv) < 3:
+        print(
+            "usage: python3 -m develop_line.review dispatch key=value ...",
+            file=sys.stderr,
         )
+        return 2
+    context = _enrich_review_context(_parse_context(sys.argv[2:]))
+    cmd = [sys.executable, "-m", "issuesmith", "dispatch", "review"]
+    for key, value in context.items():
+        cmd.append(f"{key}={value}")
+    os.execv(cmd[0], cmd)
+    return 0  # unreachable
 
-    issue = int(ctx.issue_number)
-    forge = get_forge()
-    issue_body = str(forge.issue_get(issue, fields=["body"]).get("body") or "")
-    worktree = Path(ctx.worktree_path)
-    diff = _git_diff(worktree, ctx.base_branch)
 
-    gate = ReviewGate(
-        review_cfg,
-        "review",
-        worktree,
-        {"issue_body": issue_body, "diff": diff},
+if __name__ == "__main__":
+    if sys.argv[1:2] == ["dispatch"]:
+        raise SystemExit(_cli_dispatch())
+    raise SystemExit(
+        "usage: python3 -m develop_line.review dispatch key=value ...",
     )
-    violations = gate.check("", [])
-    if not violations:
-        return StepResult(status="done", markers=["REVIEW_DONE"])
-
-    engine_errors = [
-        v for v in violations if v.rule_id == "review.review.engine_error"
-    ]
-    kind = "broken" if engine_errors else "blocked"
-    summary = violations[0].message if violations else "review failed"
-    return StepResult(status="andon", andon=Andon(kind=kind, summary=summary))
