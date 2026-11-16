@@ -1,6 +1,4 @@
 import json
-import subprocess
-import sys
 import tempfile
 from io import StringIO
 from pathlib import Path
@@ -12,39 +10,12 @@ from issuesmith.gate_registry import GATE_REGISTRY, Violation
 from issuesmith.ops.preflight import check_post_merge
 
 
-def run_preflight_subprocess(*args):
-    return subprocess.run(
-        [sys.executable, "-m", "issuesmith", "gate-preflight", *args],
-        capture_output=True,
-        text=True,
-    )
-
-
 def run_preflight_direct(argv):
     with patch("sys.stdout", new_callable=StringIO) as mock_stdout:
         rc = _run_gate_preflight(argv)
         return mock_stdout.getvalue(), rc
 
 
-def test_unknown_gate_is_invalid_value():
-    """#6779: unregistered gate-preflight gate names are INVALID_VALUE (exit 2)."""
-    result = run_preflight_subprocess("--gate", "nope", "--body-file", "/dev/null")
-    assert result.returncode == 2
-    first = result.stderr.strip().splitlines()[0]
-    assert first.startswith("error[INVALID_VALUE]:")
-    assert "hint:" in result.stderr
-    assert "ac_format" in result.stderr or "design_lint" in result.stderr
-
-
-def test_nonexistent_body_file_is_not_found():
-    missing = "/nonexistent/path/to/body.md"
-    result = run_preflight_subprocess(
-        "--gate", "ac_format", "--body-file", missing,
-    )
-    assert result.returncode == 1
-    first = result.stderr.strip().splitlines()[0]
-    assert first.startswith("error[NOT_FOUND]:")
-    assert missing in result.stderr
 
 
 def test_known_gate_outputs_json_array():

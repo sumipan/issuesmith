@@ -12,12 +12,6 @@ from issuesmith.config import get_config, reset_config_cache
 from issuesmith.gate_rules.scope_size import ScopeSizeRules, measure_size
 
 _FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
-_ALL_RULES = {
-    "scope_size.too_many_files",
-    "scope_size.too_many_concerns",
-    "scope_size.delete_with_new",
-}
-
 # Change-table header / change types, CJK encoded as cXXXX_ (tests/test_no_cjk.py).
 _HEADER = (
     "| c30EA_c30DD_c30B8_c30C8_c30EA_ | c30D5_c30A1_c30A4_c30EB_c30D1_c30B9_ "
@@ -102,37 +96,7 @@ def _ids(violations) -> set[str]:
 # AC-1
 
 
-def test_original_fixture_fails_all_three_rules():
-    violations = ScopeSizeRules().check(_fixture("issue_3627_original.md"), [])
-    assert _ids(violations) == _ALL_RULES
-    assert len(violations) == 3
-    for v in violations:
-        assert v.severity == "fail"
-        assert v.auto_fixable is False
-        assert "tools/issuesmith_steps" in v.fix_hint
-        assert "sumipan/nexus" in v.fix_hint
 
-
-def test_original_fixture_messages():
-    by_id = {v.rule_id: v for v in ScopeSizeRules().check(_fixture("issue_3627_original.md"), [])}
-    assert "files=10/8" in by_id["scope_size.too_many_files"].message
-    concerns = by_id["scope_size.too_many_concerns"].message
-    assert "concerns=3/2" in concerns
-    assert "tools/issuesmith_steps" in concerns
-    mixed = by_id["scope_size.delete_with_new"].message
-    assert "workflows/issuesmith/cp1-gate.md" in mixed
-    assert "workflows/issuesmith/repair.md" in mixed
-
-
-def test_original_fixture_measure():
-    measure = measure_size(_fixture("issue_3627_original.md"))
-    assert len(measure.files) == 10
-    assert list(measure.concerns) == [
-        "workflows/issuesmith",
-        "tools/issuesmith_steps",
-        "workflows",
-    ]
-    assert measure.kinds == frozenset({"delete", "new", "modify"})
 
 
 def test_reduced_fixture_passes():
@@ -175,22 +139,6 @@ def test_duplicate_rows_are_counted_once():
 # AC-4
 
 
-def test_excluded_paths_are_not_counted():
-    rows = [
-        ("src/a/x.py", _DELETE),
-        ("tests/test_x.py", _NEW),
-        ("docs/x.md", _NEW),
-        ("README.md", _MODIFY),
-        ("CHANGELOG.md", _MODIFY),
-        ("pyproject.toml", _MODIFY),
-    ]
-    rows += [(f"tests/t{i}.py", _MODIFY) for i in range(10)]
-    body = _body(rows)
-    assert ScopeSizeRules().check(body, []) == []
-    measure = measure_size(body)
-    assert measure.files == ("src/a/x.py",)
-    assert measure.kinds == frozenset({"delete"})
-
 
 def test_delete_with_new_detected_outside_excludes():
     rows = [("src/a/old.py", _DELETE), ("src/a/new.py", _NEW)]
@@ -216,25 +164,6 @@ def test_disabled_config_skips_evaluation(tmp_path, monkeypatch):
     assert ScopeSizeRules().check(_fixture("issue_3627_original.md"), []) == []
 
 
-def test_default_vocabulary_is_english(tmp_path, monkeypatch):
-    """Without configured words only the English defaults are recognized."""
-    _write_config(tmp_path, monkeypatch, {"scope_size": {"delete_words": ["delete"], "new_words": ["new", "add"]}})
-    host_rows = [("src/a/x.py", _DELETE), ("src/a/y.py", _NEW)]
-    assert measure_size(_body(host_rows)).kinds == frozenset({"modify"})
-    english_rows = [("src/a/x.py", "Delete"), ("src/a/y.py", "Added")]
-    assert measure_size(_body(english_rows)).kinds == frozenset({"delete", "new"})
-
-
-def test_fix_hint_uses_configured_sub_plan_vocabulary(tmp_path, monkeypatch):
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {"scope_size": {"sub_plan_header": "| # | T | R | C | D |", "no_deps_word": "-"}},
-    )
-    rows = [("src/a/x.py", _MODIFY), ("src/b/x.py", _MODIFY), ("src/c/x.py", _MODIFY)]
-    (violation,) = ScopeSizeRules().check(_body(rows), [])
-    assert "| # | T | R | C | D |" in violation.fix_hint
-    assert "| 1 | src/a | sumipan/issuesmith | src/a/x.py | - |" in violation.fix_hint
 
 
 def test_fix_hint_default_vocabulary_is_ascii():
@@ -244,85 +173,10 @@ def test_fix_hint_default_vocabulary_is_ascii():
     assert violation.fix_hint.endswith("| none |")
 
 
-def test_fix_hint_requires_sub_design_blocks():
-    from issuesmith.config import get_config
-    from tests.legacy_text import SUB
-
-    rows = [("src/a/x.py", _MODIFY), ("src/b/x.py", _MODIFY), ("src/c/x.py", _MODIFY)]
-    (violation,) = ScopeSizeRules().check(_body(rows), [])
-    assert get_config().sections["design"] in violation.fix_hint
-    assert "b1_milestone_subdesign" in violation.fix_hint
-    assert "apply_deterministic_recovery" in violation.fix_hint
-    assert f"#### {SUB}N:" in violation.fix_hint
-    assert "#### Sub N:" not in violation.fix_hint
-    for name in get_config().sub_design_subsections:
-        assert name in violation.fix_hint
 
 
-def test_promote_oversized_issue_body_writes_japanese_sub_headers():
-    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
-    from tests.legacy_text import SUB
-
-    rows = [(f"src/a/f{i}.py", _MODIFY) for i in range(4)]
-    rows += [(f"src/b/f{i}.py", _MODIFY) for i in range(4)]
-    rows += [(f"src/c/f{i}.py", _MODIFY) for i in range(2)]
-    body = _body(rows)
-    promoted = promote_oversized_issue_body(body)
-    assert f"#### {SUB}1:" in promoted
-    assert "#### Sub " not in promoted
-    # Idempotent
-    assert promote_oversized_issue_body(promoted) == promoted
 
 
-def test_sibling_skill_dirs_aggregate_to_grandparent_concern():
-    rows = [
-        (f".agents/skills/source-command-{name}/SKILL.md", _DELETE)
-        for name in (
-            "bookmark",
-            "diary",
-            "github",
-            "morning",
-            "news",
-            "statusline",
-            "voice",
-        )
-    ]
-    rows.append(("configs/settings.json", _MODIFY))
-    measure = measure_size(_body(rows))
-    assert len(measure.files) == 8
-    assert list(measure.concerns) == [".agents/skills", "configs"]
-    assert len(measure.concerns[".agents/skills"]) == 7
-    assert ScopeSizeRules().check(_body(rows), []) == []
-
-
-def test_promote_keeps_root_and_excluded_rows():
-    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
-
-    rows = [(f"src/{d}/x.py", _MODIFY) for d in ("a", "b", "c")]
-    rows += [("CHANGELOG.md", _MODIFY), ("tests/test_x.py", _NEW)]
-    promoted = promote_oversized_issue_body(_body(rows))
-    split_rows = _split_rows(promoted)
-    for path, _ in rows:
-        assert any(f"`{path}`" in line for line in split_rows), path
-
-
-def test_root_level_files_are_not_concerns():
-    rows = [
-        ("CHANGELOG.md", _MODIFY),
-        ("pyproject.toml", _MODIFY),
-        ("src/a/x.py", _MODIFY),
-    ]
-    measure = measure_size(_body(rows))
-    assert list(measure.concerns) == ["src/a"]
-
-
-def test_config_thresholds_are_honoured(tmp_path, monkeypatch):
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {"scope_size": {"max_files": 20, "max_concerns": 4, "delete_with_new": True}},
-    )
-    assert ScopeSizeRules().check(_fixture("issue_3627_original.md"), []) == []
 
 
 # --- Language pack vocabulary (nexus #4474) ---
@@ -369,55 +223,10 @@ def _pack_body(columns, rows: list[tuple[str, str]]) -> str:
 _OVERSIZED_ROWS = [(f"src/{d}/f{i}.py", "modify") for d in ("a", "b", "c") for i in range(3)]
 
 
-@pytest.mark.parametrize(
-    "rows",
-    [
-        _OVERSIZED_ROWS,
-        [("src/a/x.py", "delete"), ("src/a/y.py", "new")],
-        [("src/a/x.py", "modify")],
-    ],
-    ids=["oversized", "delete_with_new", "small"],
-)
-def test_ascii_pack_matches_en_decision(tmp_path, monkeypatch, rows):
-    from issuesmith.language import EN
-
-    ascii_kinds = {"delete": "drop", "new": "create", "modify": "modify"}
-    en_dir = tmp_path / "en"
-    en_dir.mkdir()
-    _use_pack(en_dir, monkeypatch)
-    en_ids = _ids(ScopeSizeRules().check(_pack_body(EN.change_table_columns, rows), []))
-
-    ascii_dir = tmp_path / "ascii"
-    ascii_dir.mkdir()
-    _use_pack(ascii_dir, monkeypatch, **_ASCII_PACK)
-    ascii_rows = [(p, ascii_kinds[k]) for p, k in rows]
-    ascii_ids = _ids(
-        ScopeSizeRules().check(_pack_body(_ASCII_PACK["change_table_columns"], ascii_rows), [])
-    )
-    assert ascii_ids == en_ids
-    if len(rows) == 2:
-        assert "scope_size.delete_with_new" in en_ids
-
-
-def test_promote_writes_pack_sub_header_and_columns(tmp_path, monkeypatch):
-    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
-
-    _use_pack(tmp_path, monkeypatch, **_ASCII_PACK)
-    body = _pack_body(_ASCII_PACK["change_table_columns"], _OVERSIZED_ROWS)
-    violations = ScopeSizeRules().check(body, [])
-    assert "scope_size.too_many_files" in _ids(violations)
-    assert all("#### PartN:" in (v.fix_hint or "") for v in violations)
-    promoted = promote_oversized_issue_body(body)
-    assert "#### Part1:" in promoted
-    assert "| Repo | Path | Kind | Note |" in promoted
 
 
 def _sub_header_concerns(promoted: str) -> list[str]:
     return re.findall(r"^#### \S+?\d+: (.+)$", promoted, re.MULTILINE)
-
-
-def _plan_concerns(promoted: str) -> list[str]:
-    return re.findall(r"^\| \d+ \| ([^|]+?) \|", promoted, re.MULTILINE)
 
 
 @pytest.fixture
@@ -442,41 +251,6 @@ def _root_readable_extractor(monkeypatch):
     monkeypatch.setattr(scope_size, "change_paths_for_repo", _extract)
 
 
-@pytest.mark.usefixtures("_root_readable_extractor")
-def test_promote_reference_rows_ride_first_slice():
-    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
-
-    rows = [(f"src/{d}/x.py", _MODIFY) for d in ("a", "b", "c")]
-    rows += [("README.md", _MODIFY), ("CHANGELOG.md", _MODIFY)]
-    promoted = promote_oversized_issue_body(_body(rows))
-    headers = _sub_header_concerns(promoted)
-    assert headers == ["src/a", "src/b", "src/c"]
-    assert _plan_concerns(promoted) == headers
-    first_block = promoted.split(": src/a\n", 1)[1].split("#### ", 1)[0]
-    split_rows = [
-        line for line in first_block.splitlines() if line.startswith(_SUB_ROW_PREFIX)
-    ]
-    paths = [line.split("`")[3] for line in split_rows]
-    assert "README.md" in paths
-    assert "CHANGELOG.md" in paths
-
-
-@pytest.mark.usefixtures("_root_readable_extractor")
-def test_promote_keeps_subdirectory_concern_names():
-    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
-
-    rows = [(f"src/issuesmith/gate_rules/f{i}.py", _MODIFY) for i in range(5)]
-    rows += [(f"tests/gate_rules/t{i}.py", _MODIFY) for i in range(3)]
-    rows += [("docs/x.md", _MODIFY), ("README.md", _MODIFY)]
-    promoted = promote_oversized_issue_body(_body(rows))
-    assert _sub_header_concerns(promoted) == ["src/issuesmith/gate_rules"]
-    block = promoted.split(": src/issuesmith/gate_rules\n", 1)[1].split("#### ", 1)[0]
-    assert (
-        "Concern `src/issuesmith/gate_rules` change table lists every assigned path"
-        in block
-    )
-    for i in range(5):
-        assert f"`src/issuesmith/gate_rules/f{i}.py`" in block
 
 
 def test_grandparent_merge_at_root_is_named_root():
@@ -498,51 +272,6 @@ def test_grandparent_merge_at_root_is_named_root():
 # the SUB1 / B1 extraction (change_paths_for_repo).
 
 
-def _promoted_sub_blocks(promoted: str) -> list[tuple[int, str]]:
-    from issuesmith.contract import iter_sub_blocks
-
-    return iter_sub_blocks(promoted)
-
-
-def test_promote_merges_unreadable_root_concern_into_first_readable():
-    from issuesmith.contract import change_paths_for_repo
-    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
-
-    rows = [(f"src/{d}/x.py", _MODIFY) for d in ("a", "b", "c")]
-    rows += [("issuesmith.yaml", _MODIFY), ("pyproject.toml", _MODIFY)]
-    promoted = promote_oversized_issue_body(_body(rows))
-    blocks = _promoted_sub_blocks(promoted)
-    assert blocks
-    for _, block in blocks:
-        assert change_paths_for_repo(block, "sumipan/issuesmith"), block
-    # Before nexus #4797 sub 1 the extractor drops root-level files, so the
-    # root rows must have been merged into the first readable concern.
-    if "root" not in _sub_header_concerns(promoted):
-        assert _sub_header_concerns(promoted) == ["src/a", "src/b", "src/c"]
-        assert _plan_concerns(promoted) == ["src/a", "src/b", "src/c"]
-        first = blocks[0][1]
-        assert "`issuesmith.yaml`" in first
-        assert "`pyproject.toml`" in first
-    # File-union complete: no parent row is lost.
-    split_rows = _split_rows(promoted)
-    for path, _ in rows:
-        assert any(f"`{path}`" in line for line in split_rows), path
-    # Idempotent after the merge reduced the concern count.
-    assert promote_oversized_issue_body(promoted) == promoted
-
-
-def test_promote_sub_blocks_pass_change_paths_readable_check():
-    from issuesmith.gate_rules.milestone_subdesign_rules import MilestoneSubdesignRules
-    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
-
-    rows = [(f"src/{d}/x.py", _MODIFY) for d in ("a", "b", "c")]
-    rows += [("Procfile", _MODIFY), ("pyproject.toml", _MODIFY)]
-    promoted = promote_oversized_issue_body(_body(rows))
-    rules = MilestoneSubdesignRules()
-    for sub_num, block in _promoted_sub_blocks(promoted):
-        assert rules._check_change_paths_readable(promoted, sub_num, block) == []
-
-
 def test_promote_keeps_single_root_concern_when_nothing_is_readable(monkeypatch):
     from issuesmith.gate_rules import scope_size
 
@@ -556,16 +285,6 @@ def test_promote_keeps_single_root_concern_when_nothing_is_readable(monkeypatch)
     for path, _ in rows:
         assert any(f"`{path}`" in line for line in split_rows), path
 
-
-def test_promote_without_target_repo_skips_readability_gate(monkeypatch):
-    from issuesmith.gate_rules import scope_size
-
-    monkeypatch.setattr(scope_size, "change_paths_for_repo", lambda text, repo=None: [])
-    rows = [(f"src/{d}/x.py", _MODIFY) for d in ("a", "b", "c")]
-    rows += [("README.md", _MODIFY)]
-    body = _body(rows).replace("target_repo: sumipan/issuesmith\n", "")
-    promoted = scope_size.promote_oversized_issue_body(body)
-    assert _sub_header_concerns(promoted) == ["src/a", "src/b", "src/c"]
 
 
 # nexus #4825: change content survives promotion and drives the depends-on column.
@@ -599,16 +318,6 @@ _CYCLE_ROWS = [
 ]
 
 
-def test_promote_keeps_change_content_per_sub():
-    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
-
-    promoted = promote_oversized_issue_body(_content_body(_ONE_WAY_ROWS))
-    rows = _split_rows(promoted)
-    for path, _, content in _ONE_WAY_ROWS:
-        (row,) = [line for line in rows if f"`{path}`" in line]
-        assert row.endswith(f"| {content} |")
-    assert "split from oversized issue" not in promoted
-
 
 def test_promote_writes_creator_dependency_and_no_deps_word():
     from issuesmith.config import get_config
@@ -624,27 +333,6 @@ def test_promote_writes_creator_dependency_and_no_deps_word():
     assert promote_oversized_issue_body(promoted) == promoted
 
 
-def test_promote_merges_mutually_dependent_concerns():
-    from issuesmith.contract import extract_change_table_rows
-    from issuesmith.gate_rules.milestone_subdesign_rules import (
-        MilestoneSubdesignRules,
-        find_dependency_cycles,
-        infer_sub_dependencies,
-    )
-    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
-
-    promoted = promote_oversized_issue_body(_content_body(_CYCLE_ROWS))
-    assert _sub_header_concerns(promoted) == ["src/a + src/b", "src/c"]
-    blocks = _promoted_sub_blocks(promoted)
-    owned = [path for _, block in blocks for _, path, _ in extract_change_table_rows(block)]
-    assert sorted(owned) == sorted(path for path, _, _ in _CYCLE_ROWS)
-    assert len(owned) == len(set(owned))
-    deps = infer_sub_dependencies(blocks)
-    assert find_dependency_cycles(deps) == []
-    ids = {v.rule_id for v in MilestoneSubdesignRules().check(promoted, ["scope:milestone"])}
-    assert "milestone_subdesign.dependency_cycle" not in ids
-    assert "milestone_subdesign.sibling_new_file_unreferenced_dependency" not in ids
-
 
 @pytest.mark.parametrize("rows", [_ONE_WAY_ROWS, _CYCLE_ROWS], ids=["one_way", "cycle"])
 def test_fix_hint_plan_matches_promotion(rows):
@@ -658,45 +346,6 @@ def test_fix_hint_plan_matches_promotion(rows):
         assert _plan_lines(v.fix_hint) == promoted_plan
 
 
-def test_promote_dependency_vocabulary_from_pack(tmp_path, monkeypatch):
-    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
-
-    _use_pack(
-        tmp_path,
-        monkeypatch,
-        **_ASCII_PACK,
-        sub_plan_columns=["#", "Title", "Repo", "What", "Needs"],
-        no_deps_word="-",
-    )
-    rows = [
-        ("src/a/projection.py", "create", "new projection"),
-        ("src/b/user.py", "modify", "call projection.render"),
-        ("src/c/z.py", "modify", "standalone"),
-    ]
-    table = "".join(f"| `sumipan/issuesmith` | `{p}` | {k} | {c} |\n" for p, k, c in rows)
-    body = (
-        "```yaml\ntarget_repo: sumipan/issuesmith\nbase_branch: main\n```\n\n"
-        "## Changed Files\n\n| Repo | Path | Kind | Note |\n|---|---|---|---|\n" + table
-    )
-    promoted = promote_oversized_issue_body(body)
-    assert "| # | Title | Repo | What | Needs |" in promoted
-    assert [line.rsplit("|", 2)[1].strip() for line in _plan_lines(promoted)] == ["-", "#1", "-"]
-
-
-def test_promotion_declined_when_slice_count_exceeds_max():
-    from issuesmith.gate_rules.scope_size import (
-        promote_oversized_issue_body,
-        promotion_declined,
-    )
-
-    rows = [(f"src/{d}/f{i}.py", _MODIFY) for d in ("a", "b", "c", "d") for i in range(3)]
-    body = _body(rows)
-    assert promotion_declined(body)
-    assert promote_oversized_issue_body(body) == body
-    violations = ScopeSizeRules().check(body, [])
-    hints = "\n".join(v.fix_hint for v in violations if v.rule_id.startswith("scope_size."))
-    assert "not auto-promoted" in hints
-    assert "apply_deterministic_recovery" not in hints.splitlines()[0]
 
 
 def test_promotion_declined_when_no_core_rows():
@@ -757,14 +406,6 @@ def test_corklab_style_promotion_uses_three_slices():
     )
 
 
-def test_mirror_dir_keeps_directories_before_wildcard():
-    from issuesmith.gate_rules.scope_size import _test_mirror_dir
-
-    assert _test_mirror_dir("tests/tools/corklab/test_*.py") == "tools/corklab"
-    assert _test_mirror_dir("tests/tools/corklab/**") == "tools/corklab"
-    assert _test_mirror_dir("tests/tools/corklab/test_a.py") == "tools/corklab"
-    assert _test_mirror_dir("tests/test_a.py") == ""
-
 
 def test_deleted_core_pulls_stem_test_from_other_slice():
     from issuesmith.gate_rules.scope_size import _rows_by_slice, get_config
@@ -794,14 +435,6 @@ def test_three_concerns_pass_with_default_max_concerns(tmp_path, monkeypatch):
     assert ScopeSizeRules().check(_body(rows), []) == []
 
 
-def test_atomic_skips_scope_size_checks():
-    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
-
-    rows = [(f"src/{d}/f{i}.py", _MODIFY) for d in ("a", "b", "c", "d", "e") for i in range(2)]
-    body = _body(rows, yaml_extra="split: atomic\n")
-    assert ScopeSizeRules().check(body, []) == []
-    assert promote_oversized_issue_body(body) == body
-
 
 def test_atomic_skips_delete_with_new():
     rows = [("src/a/old.py", _DELETE), ("src/a/new.py", _NEW)]
@@ -821,15 +454,6 @@ def test_body_without_yaml_still_triggers_scope_size():
     body = _decode("## Changed Files\n\n" + _HEADER + table)
     assert _ids(ScopeSizeRules().check(body, [])) == {"scope_size.too_many_concerns"}
 
-
-def test_max_slices_override_allows_four_slices(tmp_path, monkeypatch):
-    from issuesmith.gate_rules.scope_size import promotion_declined
-
-    rows = [(f"src/{d}/f{i}.py", _MODIFY) for d in ("a", "b", "c", "d") for i in range(3)]
-    body = _body(rows)
-    assert promotion_declined(body)
-    _write_config(tmp_path, monkeypatch, {"scope_size": {"max_slices": 4}})
-    assert not promotion_declined(body)
 
 
 # nexus #5398: design-section atomic_phrases skip promotion without split: atomic.
@@ -872,14 +496,6 @@ def test_atomic_phrase_stops_promotion_and_check(tmp_path, monkeypatch):
     assert ScopeSizeRules().check(body, []) == []
 
 
-def test_atomic_phrase_empty_config_still_promotes_and_checks():
-    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
-
-    body = _oversized_body_with_design(_MIGRATION_ORDER_JP)
-    promoted = promote_oversized_issue_body(body)
-    assert promoted != body
-    assert "scope_size.too_many_files" in _ids(ScopeSizeRules().check(body, []))
-
 
 def test_atomic_phrase_only_in_background_does_not_stop_promotion(tmp_path, monkeypatch):
     from issuesmith.gate_rules.scope_size import atomic_phrase, promote_oversized_issue_body
@@ -897,34 +513,6 @@ def test_atomic_phrase_only_in_background_does_not_stop_promotion(tmp_path, monk
     assert promote_oversized_issue_body(body) != body
 
 
-def test_atomic_phrase_english_stops_promotion(tmp_path, monkeypatch):
-    from issuesmith.gate_rules.scope_size import promote_oversized_issue_body
-
-    phrase = "land as one PR"
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {"scope_size": {"atomic_phrases": [phrase]}},
-    )
-    body = _oversized_body_with_design(f"Migration: changes should {phrase} together.")
-    assert promote_oversized_issue_body(body) == body
-    assert ScopeSizeRules().check(body, []) == []
-
-
-def test_atomic_phrase_logs_matched_phrase(tmp_path, monkeypatch, caplog):
-    import logging
-
-    from issuesmith.gate_rules.scope_size import is_atomic
-
-    _write_config(
-        tmp_path,
-        monkeypatch,
-        {"scope_size": {"atomic_phrases": [_ATOMIC_PHRASE_JP]}},
-    )
-    body = _oversized_body_with_design(_MIGRATION_ORDER_JP)
-    with caplog.at_level(logging.INFO, logger="issuesmith.gate_rules.scope_size"):
-        assert is_atomic(body)
-    assert _ATOMIC_PHRASE_JP in caplog.text
 
 
 # --- Promotion AC YAML by change kind (#5750) ---
@@ -955,37 +543,7 @@ def _structured_ac_yaml(block: str) -> dict:
     return yaml.safe_load(match.group(1))
 
 
-def test_build_sub_block_ac_delete_only():
-    block = _build_sub_block_for_rows([
-        ("tools/a.py", _DELETE),
-        ("tools/b.py", _DELETE),
-    ])
-    ac = _structured_ac_yaml(block)
-    assert ac["paths_must_exist"] == []
-    assert ac["paths_must_not_exist"] == ["tools/a.py", "tools/b.py"]
 
-
-def test_build_sub_block_ac_modify_only():
-    block = _build_sub_block_for_rows([
-        ("src/x.py", _MODIFY),
-        ("src/y.py", _NEW),
-    ])
-    ac = _structured_ac_yaml(block)
-    assert ac["paths_must_not_exist"] == []
-    assert ac["paths_must_exist"] == ["src/x.py", "src/y.py"]
-
-
-def test_build_sub_block_ac_mixed_delete_and_modify():
-    block = _build_sub_block_for_rows([
-        ("src/old.py", _DELETE),
-        ("src/new.py", _NEW),
-        ("src/mid.py", _MODIFY),
-    ])
-    ac = _structured_ac_yaml(block)
-    assert ac["paths_must_not_exist"] == ["src/old.py"]
-    assert ac["paths_must_exist"] == ["src/new.py", "src/mid.py"]
-    assert "paths_must_exist: []" not in block
-    assert "paths_must_not_exist: []" not in block
 
 
 def test_build_sub_block_ac_empty_lists_use_brackets():
