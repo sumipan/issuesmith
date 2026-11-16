@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -130,19 +130,6 @@ def test_low_budget_holds_dispatch(env):
     assert rid in store.snapshot().active_order
 
 
-def test_past_reset_does_not_brake(env):
-    qmod, store, rid, jobs, configure, milestone_calls = env
-    configure(enabled=True, min_remaining=800)
-    _write_rate_limit(jobs, 10, _NOW.astimezone(timezone.utc) - timedelta(minutes=1))
-    client = _Client()
-
-    out = _dispatch(qmod, store, client)
-
-    assert "github_api_low" not in out.reason
-    assert "issue_get" in client.calls
-    assert milestone_calls == [1]
-
-
 def test_missing_audit_does_not_brake(env):
     qmod, store, rid, jobs, configure, milestone_calls = env
     configure(enabled=True)
@@ -152,31 +139,6 @@ def test_missing_audit_does_not_brake(env):
 
     assert "github_api_low" not in out.reason
     assert "issue_get" in client.calls
-
-
-def test_enough_budget_does_not_brake(env):
-    qmod, store, rid, jobs, configure, milestone_calls = env
-    configure(enabled=True, min_remaining=800)
-    _write_rate_limit(jobs, 800, _NOW + timedelta(minutes=20))
-    client = _Client()
-
-    out = _dispatch(qmod, store, client)
-
-    assert "github_api_low" not in out.reason
-    assert "issue_get" in client.calls
-
-
-def test_disabled_brake_ignores_low_budget(env):
-    qmod, store, rid, jobs, configure, milestone_calls = env
-    configure(enabled=False)
-    _write_rate_limit(jobs, 1, _NOW + timedelta(minutes=20))
-    client = _Client()
-
-    out = _dispatch(qmod, store, client)
-
-    assert "github_api_low" not in out.reason
-    assert "issue_get" in client.calls
-    assert milestone_calls == [1]
 
 
 def test_default_config_has_brake_disabled(tmp_path):

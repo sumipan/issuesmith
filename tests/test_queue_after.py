@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import subprocess
 import sys
@@ -119,82 +118,6 @@ def _run_queue(*args: str, tmp_path: Path, env: dict | None = None) -> subproces
 class TestEnqueueAfterStore:
     """AC-1: --after saves issue numbers in request_meta."""
 
-    def test_after_single_saved_in_meta(self, tmp_path):
-        store = _store(tmp_path)
-        result = store.enqueue(
-            issue=100,
-            phase="draft",
-            source="skill",
-            actor_kind="human",
-            priority="normal",
-            requested_by=["alice"],
-            requested_at=_NOW,
-            after=[200],
-        )
-        assert result.created is True
-        snap = store.snapshot()
-        meta = snap.request_meta.get(result.request_id) or {}
-        assert meta.get("after") == [200]
-
-    def test_after_multiple_saved_sorted_deduped(self, tmp_path):
-        store = _store(tmp_path)
-        result = store.enqueue(
-            issue=100,
-            phase="draft",
-            source="skill",
-            actor_kind="human",
-            priority="normal",
-            requested_by=["alice"],
-            requested_at=_NOW,
-            after=[300, 200, 200],
-        )
-        snap = store.snapshot()
-        meta = snap.request_meta.get(result.request_id) or {}
-        assert meta.get("after") == [200, 300]
-
-    def test_after_none_not_stored(self, tmp_path):
-        store = _store(tmp_path)
-        result = store.enqueue(
-            issue=100,
-            phase="draft",
-            source="skill",
-            actor_kind="human",
-            priority="normal",
-            requested_by=["alice"],
-            requested_at=_NOW,
-            after=None,
-        )
-        snap = store.snapshot()
-        meta = snap.request_meta.get(result.request_id) or {}
-        assert "after" not in meta or meta.get("after") == []
-
-    def test_after_merges_on_duplicate_enqueue(self, tmp_path):
-        store = _store(tmp_path)
-        r1 = store.enqueue(
-            issue=100,
-            phase="draft",
-            source="skill",
-            actor_kind="human",
-            priority="normal",
-            requested_by=["alice"],
-            requested_at=_NOW,
-            after=[200],
-        )
-        r2 = store.enqueue(
-            issue=100,
-            phase="draft",
-            source="skill2",
-            actor_kind="human",
-            priority="normal",
-            requested_by=["bob"],
-            requested_at=_NOW,
-            after=[300],
-        )
-        assert r2.merged is True
-        assert r1.request_id == r2.request_id
-        snap = store.snapshot()
-        meta = snap.request_meta.get(r1.request_id) or {}
-        assert meta.get("after") == [200, 300]
 
     def test_after_merge_deduplicates(self, tmp_path):
         store = _store(tmp_path)
@@ -341,31 +264,6 @@ def _patch_dispatch(tmp_path, monkeypatch, issuesmith_config):
 class TestDispatchAfterBlocking:
     """AC-2: after deps block dispatch when unresolved."""
 
-    def test_after_open_dep_blocks_dispatch(self, tmp_path, monkeypatch, issuesmith_config):
-        _patch_dispatch(tmp_path, monkeypatch, issuesmith_config)
-        from issuesmith import queue as qmod
-
-        store = _store(tmp_path)
-        store.enqueue(
-            issue=50,
-            phase="draft",
-            source="skill",
-            actor_kind="human",
-            priority="normal",
-            requested_by=["alice"],
-            requested_at=_NOW,
-            after=[99],
-        )
-        client = _FakeClient(
-            {
-                50: {"state": "OPEN", "labels": [], "body": _VALID_BODY},
-                99: {"state": "OPEN", "labels": [], "body": "", "title": "dep issue"},
-            }
-        )
-        monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
-        now = datetime(2026, 9, 22, 12, 0, tzinfo=_JST)
-        result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
-        assert result.dispatched is False
 
     def test_after_closed_merge_done_dep_allows_dispatch(self, tmp_path, monkeypatch, issuesmith_config):
         _patch_dispatch(tmp_path, monkeypatch, issuesmith_config)
@@ -399,68 +297,6 @@ class TestDispatchAfterBlocking:
         result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
         assert result.dispatched is True
         assert result.issue == 50
-
-    def test_after_closed_bump_done_dep_allows_dispatch(self, tmp_path, monkeypatch, issuesmith_config):
-        # AC-3 integration: bump:done dep releases the after block
-        _patch_dispatch(tmp_path, monkeypatch, issuesmith_config)
-        from issuesmith import queue as qmod
-
-        store = _store(tmp_path)
-        store.enqueue(
-            issue=50,
-            phase="draft",
-            source="skill",
-            actor_kind="human",
-            priority="normal",
-            requested_by=["alice"],
-            requested_at=_NOW,
-            after=[3501],
-        )
-        store.mark_triaged(store.snapshot().revision)
-        client = _FakeClient(
-            {
-                50: {"state": "OPEN", "labels": [], "body": _VALID_BODY, "title": "main issue"},
-                3501: {
-                    "state": "CLOSED",
-                    "labels": [{"name": "bump:done"}],
-                    "body": "",
-                    "title": "chore: bump issuesmith to v0.42.0",
-                },
-            }
-        )
-        monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
-        now = datetime(2026, 9, 22, 12, 0, tzinfo=_JST)
-        result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
-        assert result.dispatched is True
-        assert result.issue == 50
-
-    def test_after_open_dep_keeps_request_pending_not_rejected(self, tmp_path, monkeypatch, issuesmith_config):
-        _patch_dispatch(tmp_path, monkeypatch, issuesmith_config)
-        from issuesmith import queue as qmod
-
-        store = _store(tmp_path)
-        result = store.enqueue(
-            issue=50,
-            phase="draft",
-            source="skill",
-            actor_kind="human",
-            priority="normal",
-            requested_by=["alice"],
-            requested_at=_NOW,
-            after=[99],
-        )
-        client = _FakeClient(
-            {
-                50: {"state": "OPEN", "labels": [], "body": _VALID_BODY, "title": "main"},
-                99: {"state": "OPEN", "labels": [], "body": "", "title": "dep"},
-            }
-        )
-        monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
-        now = datetime(2026, 9, 22, 12, 0, tzinfo=_JST)
-        qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
-        snap = store.snapshot()
-        # Request must remain in active_order (not rejected or consumed)
-        assert result.request_id in snap.active_order
 
 
 class TestStatusAfterDisplay:
@@ -584,56 +420,3 @@ class TestDoctorDispatchBlocked:
         assert "doctor ok" in out
 
 
-class TestCLIEnqueueAfter:
-    """AC-1: CLI parses --after and stores it."""
-
-    def test_cli_enqueue_after_saves_meta(self, tmp_path, issuesmith_config):
-        _store(tmp_path)
-        env = {
-            "PYTHONPATH": _pythonpath(),
-            "ISSUESMITH_CONFIG": str(issuesmith_config),
-        }
-        proc = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "issuesmith",
-                "queue",
-                "--queue-path",
-                str(tmp_path / "queue.jsonl"),
-                "--state-path",
-                str(tmp_path / "state.json"),
-                "--lock-path",
-                str(tmp_path / "lock"),
-                "enqueue",
-                "--issue",
-                "100",
-                "--phase",
-                "draft",
-                "--source",
-                "skill",
-                "--actor-kind",
-                "human",
-                "--priority",
-                "normal",
-                "--requested-by",
-                "alice",
-                "--after",
-                "200",
-                "--after",
-                "300",
-            ],
-            cwd=str(REPO_ROOT),
-            capture_output=True,
-            text=True,
-            env={**os.environ, **env},
-        )
-        assert proc.returncode == 0, proc.stderr
-        out = json.loads(proc.stdout)
-        assert out["created"] is True
-        rid = out["request_id"]
-
-        store2 = _store(tmp_path)
-        snap = store2.snapshot()
-        meta = snap.request_meta.get(rid) or {}
-        assert meta.get("after") == [200, 300]

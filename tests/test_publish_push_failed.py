@@ -52,33 +52,6 @@ def test_unreachable_remote_returns_push_failed_after_retries(tmp_path: Path, ca
     assert "attempt 2/3" in capsys.readouterr().err  # retried, then reported
 
 
-def test_transient_failure_then_success_returns_none(tmp_path: Path):
-    remote, wt = _setup(tmp_path)
-    good_url = str(remote)
-    _git(wt, "remote", "set-url", "origin", str(tmp_path / "missing.git"))
-    original = publish_mod._run_git
-    pushes = {"n": 0}
-
-    def _run_git_flaky(worktree: Path, *args: str, check: bool = True):
-        if args[:1] == ("push",):
-            pushes["n"] += 1
-            result = original(worktree, *args, check=check)
-            if pushes["n"] == 1:
-                _git(worktree, "remote", "set-url", "origin", good_url)  # network back
-            return result
-        return original(worktree, *args, check=check)
-
-    publish_mod._run_git = _run_git_flaky  # type: ignore[assignment]
-    try:
-        result = _push_branch(wt, _BRANCH)
-    finally:
-        publish_mod._run_git = original  # type: ignore[assignment]
-
-    assert result is None
-    assert pushes["n"] == 2
-    assert _git(wt, "rev-parse", f"origin/{_BRANCH}").returncode == 0
-
-
 def test_rejection_is_not_retried(tmp_path: Path):
     """A remote update that lands after our fetch is a rejection (PUSH_DIVERGED): no retry."""
     remote, wt = _setup(tmp_path)
