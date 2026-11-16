@@ -19,7 +19,7 @@ from issuesmith.queue_store import QueueStore
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_PATH = REPO_ROOT / "src"
-_NOW = datetime.now(ZoneInfo("Asia/Tokyo")).isoformat()
+_NOW = datetime(2026, 9, 22, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo")).isoformat()
 _JST = ZoneInfo("Asia/Tokyo")
 
 _VALID_BODY = (

@@ -13,7 +13,7 @@ from issuesmith.config import ApiBreakConfig, get_config
 from issuesmith.queue_store import QueueStore
 
 _NOW = datetime(2026, 9, 25, 13, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
-_ENQUEUED_AT = datetime.now().astimezone().isoformat()
+_ENQUEUED_AT = _NOW.isoformat()
 
 
 class _Client:

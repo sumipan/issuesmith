@@ -2,13 +2,11 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 
 from issuesmith.queue_store import QueueStore
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "issuesmith"
-_NOW = datetime.now(timezone.utc).isoformat()
 
 
 class TestV1StateMigration:

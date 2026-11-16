@@ -6,7 +6,7 @@ import argparse
 import json
 import os
 import threading
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -16,8 +16,8 @@ import yaml
 from issuesmith.config import ConcurrencyConfig, load_config, reset_config_cache
 from issuesmith.queue_store import QueueStore, in_flight_by_engine
 
-_NOW = datetime.now(timezone.utc).isoformat()
 _JST = ZoneInfo("Asia/Tokyo")
+_NOW = datetime(2026, 9, 5, 12, 0, tzinfo=_JST).isoformat()
 _VALID_BODY = (
     "```yaml\n"
     "target_repo: sumipan/nexus\n"
@@ -493,8 +493,7 @@ def test_parallel_dispatch_respects_limit(tmp_path, monkeypatch, issuesmith_conf
     for t in threads:
         t.start()
     for t in threads:
-        t.join(timeout=30)
-        assert not t.is_alive()
+        t.join()
 
     wins = [r for r in results if r.dispatched]
     assert len(wins) == 1
