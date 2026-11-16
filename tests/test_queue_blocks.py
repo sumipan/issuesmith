@@ -15,7 +15,7 @@ from issuesmith.queue_store import (
     _blocks_effective,
 )
 
-_NOW = datetime.now(timezone.utc)
+_NOW = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
 
 
 def _store(tmp_path: Path) -> QueueStore:

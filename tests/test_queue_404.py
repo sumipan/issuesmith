@@ -9,7 +9,7 @@ from ghdag.forge import GitHubApiError
 
 from issuesmith.queue_store import QueueStore
 
-_NOW = datetime.now().astimezone().isoformat()
+_NOW = datetime(2026, 9, 4, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo")).isoformat()
 _VALID_BODY = (
     "```yaml\n"
     "target_repo: sumipan/nexus\n"

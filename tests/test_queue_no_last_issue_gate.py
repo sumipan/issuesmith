@@ -9,7 +9,7 @@ from issuesmith import queue as qmod
 from issuesmith.queue_store import QueueStore
 from tests.test_queue import _VALID_BODY, _store
 
-_NOW = datetime.now(timezone.utc).isoformat()
+_NOW = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc).isoformat()
 
 
 def _write_legacy_last_issue(tmp_path, issue):

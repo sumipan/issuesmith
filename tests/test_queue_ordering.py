@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -13,8 +13,8 @@ import yaml
 from issuesmith.config import ConcurrencyConfig, load_config, reset_config_cache
 from issuesmith.queue_store import QueueStore
 
-_NOW = datetime.now(timezone.utc).isoformat()
 _JST = ZoneInfo("Asia/Tokyo")
+_NOW = datetime(2026, 9, 9, 12, 0, tzinfo=_JST).isoformat()
 
 
 def _body(repo: str, *paths: str) -> str:

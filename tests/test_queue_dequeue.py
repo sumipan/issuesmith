@@ -9,7 +9,7 @@ from ghdag.forge import GitHubApiError
 
 from issuesmith.queue_store import QueueStore
 
-_NOW = datetime.now(timezone.utc).isoformat()
+_NOW = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc).isoformat()
 
 
 def _store(tmp_path: Path) -> QueueStore:

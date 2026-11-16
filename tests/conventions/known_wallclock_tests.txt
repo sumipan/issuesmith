@@ -1,14 +1,4 @@
 # Existing wall-clock-dependent tests (T13). Shrink-only ledger; do not add paths.
-tests/test_queue_404.py
-tests/test_queue_after.py
-tests/test_queue_api_brake.py
-tests/test_queue_blocks.py
-tests/test_queue_concurrency.py
-tests/test_queue_dequeue.py
-tests/test_queue_language_pack.py
-tests/test_queue_migration.py
-tests/test_queue_no_last_issue_gate.py
-tests/test_queue_ordering.py
 tests/test_queue_phase_chain.py
 tests/test_queue_plan.py
 tests/test_queue_race.py

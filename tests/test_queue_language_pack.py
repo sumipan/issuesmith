@@ -20,7 +20,7 @@ import issuesmith.config as config_module
 from issuesmith.language import EN, LanguagePack, load_language_pack
 from issuesmith.queue_store import QueueRequest, QueueStore
 
-_NOW = datetime.now(timezone.utc).isoformat()
+_NOW = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc).isoformat()
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _PREFIX = "[custom-pack]"
 
