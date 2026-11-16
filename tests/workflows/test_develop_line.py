@@ -7,9 +7,7 @@ import json
 import os
 import re
 import shutil
-import signal
 import subprocess
-import time
 import textwrap
 from pathlib import Path
 
@@ -65,7 +63,11 @@ _FAKE_AGENT = textwrap.dedent(
           ;;
       esac
     done
-    MODE="${FAKE_ENGINE_MODE:-good}"
+    MODE_FILE="$(dirname "$0")/fake-engine-mode"
+    MODE="good"
+    if [[ -f "$MODE_FILE" ]]; then
+      MODE="$(cat "$MODE_FILE")"
+    fi
     if [[ "$PROMPT" == *"Review order"* ]] || [[ "$PROMPT" == *"REVIEW_PASS"* ]]; then
       printf '%s\\n' 'PIPELINE_STATUS: REVIEW_PASS'
       exit 0
@@ -224,7 +226,6 @@ def host_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         "GHDAG_FORGE": "local",
         "GHDAG_FORGE_ROOT": str(forge_root),
         "ISSUESMITH_QUEUE_DIR": str(tmp_path / "queue"),
-        "FAKE_ENGINE_MODE": "good",
         "PYTHONDONTWRITEBYTECODE": "1",
         "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
         "GHDAG_TASK_ENV_ALLOW": "*",
@@ -239,6 +240,10 @@ def host_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     client = get_forge()
     yield host, client, env, slug
     reset_config_cache()
+
+
+def _set_fake_engine_mode(host: Path, mode: str) -> None:
+    (host / "bin" / "fake-engine-mode").write_text(mode, encoding="utf-8")
 
 
 def _labels(client, number: int) -> set[str]:
@@ -266,7 +271,58 @@ def _watch_once(env: dict[str, str], host: Path) -> int:
     return proc.returncode
 
 
+_STOP_HOOKS = textwrap.dedent(
+    """\
+    import os
+    import signal
+    from pathlib import Path
+
+    from ghdag.dag.hooks import DefaultHooks
+
+    _UUIDS = set(os.environ["DEVELOP_LINE_TEST_UUIDS"].split(","))
+    _DONE_DIR = Path(os.environ["DEVELOP_LINE_TEST_DONE_DIR"])
+
+
+    class StopWhenDoneHooks(DefaultHooks):
+        def __init__(self):
+            self._terminal = set()
+
+        def _mark(self, uuid):
+            self._terminal.add(uuid)
+            if all(u in self._terminal or (_DONE_DIR / u).exists() for u in _UUIDS):
+                os.kill(os.getpid(), signal.SIGINT)
+
+        def on_task_success(self, uuid, task, metrics):
+            self._mark(uuid)
+
+        def on_task_failure(self, uuid, task, returncode, stderr_text, metrics):
+            self._mark(uuid)
+
+        def on_task_rejected(self, uuid, task, retry_depth, is_final, metrics):
+            if is_final:
+                self._mark(uuid)
+
+        def on_task_dep_failed(self, uuid, task, failed_dep):
+            self._mark(uuid)
+
+        def on_task_empty_result(self, uuid, task, stderr_text, metrics):
+            self._mark(uuid)
+
+        def on_task_cancelled(self, uuid, task):
+            self._mark(uuid)
+
+
+    HOOKS_CLASS = StopWhenDoneHooks
+    """
+)
+
+
 def _run_dag_once(env: dict[str, str], host: Path) -> None:
+    """Run ``ghdag run`` until every queued task is terminal.
+
+    A ``--hooks`` module sends SIGINT to the runner once the last task finishes,
+    so the test blocks on the process instead of polling a clock.
+    """
     exec_path = host / "jobs" / "exec.jsonl"
     if not exec_path.exists():
         return
@@ -276,10 +332,19 @@ def _run_dag_once(env: dict[str, str], host: Path) -> None:
         if not line:
             continue
         uuids.append(json.loads(line)["uuid"])
-    if not uuids:
-        return
     done_dir = host / "jobs" / "done"
-    proc = subprocess.Popen(
+    if all((done_dir / uuid).exists() for uuid in uuids):
+        return
+    hooks_dir = host / "bin" / "hooks"
+    hooks_dir.mkdir(exist_ok=True)
+    (hooks_dir / "develop_line_stop_hooks.py").write_text(_STOP_HOOKS, encoding="utf-8")
+    run_env = {
+        **env,
+        "PYTHONPATH": f"{hooks_dir}{os.pathsep}{env.get('PYTHONPATH', '')}",
+        "DEVELOP_LINE_TEST_UUIDS": ",".join(uuids),
+        "DEVELOP_LINE_TEST_DONE_DIR": str(done_dir),
+    }
+    subprocess.run(
         [
             "python3",
             "-m",
@@ -288,26 +353,15 @@ def _run_dag_once(env: dict[str, str], host: Path) -> None:
             str(exec_path),
             "--interval-sec",
             "0.2",
+            "--hooks",
+            "develop_line_stop_hooks",
         ],
         cwd=host,
-        env=env,
+        env=run_env,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        check=False,
     )
-    max_polls = 500
-    polls = 0
-    try:
-        while proc.poll() is None:
-            polls += 1
-            if polls > max_polls:
-                break
-            if all((done_dir / uuid).exists() for uuid in uuids):
-                break
-            time.sleep(0.05)
-    finally:
-        if proc.poll() is None:
-            proc.send_signal(signal.SIGINT)
-            proc.wait()
 
 
 def _run_until(
@@ -368,11 +422,10 @@ def test_issue_flows_from_ready_to_done_on_local_forge(host_env) -> None:
 
 
 def test_failing_verify_raises_andon_and_resume_continues_from_verify(
-    host_env, monkeypatch: pytest.MonkeyPatch
+    host_env,
 ) -> None:
     host, client, env, _slug = host_env
-    monkeypatch.setenv("FAKE_ENGINE_MODE", "bad_lint")
-    env["FAKE_ENGINE_MODE"] = "bad_lint"
+    _set_fake_engine_mode(host, "bad_lint")
     number = client.issue_create("repair line", _issue_body())
     client.issue_update(number, labels_add=["issuesmith:develop-ready"])
     outcome = _run_until(
@@ -383,8 +436,7 @@ def test_failing_verify_raises_andon_and_resume_continues_from_verify(
     assert open_andons
     assert open_andons[0].kind == "decision"
     andon_id = open_andons[0].id
-    monkeypatch.setenv("FAKE_ENGINE_MODE", "good")
-    env["FAKE_ENGINE_MODE"] = "good"
+    _set_fake_engine_mode(host, "good")
     proc = subprocess.run(
         ["python3", "-m", "issuesmith", "andon", "answer", andon_id, "resume"],
         cwd=host,
@@ -425,11 +477,14 @@ def test_step_modules_import_only_public_issuesmith_modules() -> None:
                     pytest.fail(f"{path.name} must not import ghdag ({mod})")
 
 
-def test_reference_config_passes_config_show(host_env) -> None:
-    host, _client, env, _slug = host_env
+def test_reference_config_passes_config_show() -> None:
+    env = {
+        **os.environ,
+        "ISSUESMITH_CONFIG": "workflows/develop/issuesmith.yaml",
+    }
     proc = subprocess.run(
         ["python3", "-m", "issuesmith", "config", "show"],
-        cwd=host,
+        cwd=_REPO_ROOT,
         env=env,
         capture_output=True,
         text=True,
