@@ -6,8 +6,9 @@ from unittest.mock import MagicMock, patch
 
 import issuesmith.gate_rules  # noqa: F401 - populates issuesmith.gate_registry.GATE_REGISTRY
 from issuesmith.cli import _run_gate_preflight
+from issuesmith.config import reset_config_cache
 from issuesmith.gate_registry import GATE_REGISTRY, Violation
-from issuesmith.ops.preflight import check_post_merge
+from issuesmith.ops.preflight import check_post_merge, main
 
 
 def run_preflight_direct(argv):
@@ -83,6 +84,35 @@ def test_check_post_merge_tag_fails_with_recovery_command():
     ok, msg = results[0]
     assert ok is False
     assert "git tag v0.1.0" in msg
+
+
+def test_doctor_output_names_no_consumer_package(capsys):
+    """refs #7080: doctor JSON must not name a specific consumer package."""
+    main(as_json=True)
+    out = capsys.readouterr().out
+    assert "mltgnt" not in out
+
+
+def test_direct_ghdag_pin_does_not_fail_doctor(tmp_path, monkeypatch, capsys):
+    """refs #7080: a direct ghdag pin in pyproject.toml is not a doctor failure."""
+    pyproject = """\
+[project]
+name = "fake"
+version = "0.0.0"
+dependencies = [
+  "ghdag @ git+https://github.com/sumipan/ghdag.git@v0.141.0",
+]
+"""
+    (tmp_path / "pyproject.toml").write_text(pyproject, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    reset_config_cache()
+    try:
+        main(as_json=True)
+        rows = json.loads(capsys.readouterr().out)
+        for row in rows:
+            assert "ghdag pin" not in str(row.get("detail", "")).lower()
+    finally:
+        reset_config_cache()
 
 
 def test_check_post_merge_stable_install_fails_with_recovery_command():

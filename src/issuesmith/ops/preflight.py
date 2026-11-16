@@ -2,18 +2,13 @@
 """**Runtime environment** health check to run before driving the issuesmith pipeline.
 
 A **runtime check**, as opposed to the (static) template render tests. Exits 1
-unless all of the following hold. Independently of template / yml changes, it
-verifies that the environment where ghdag actually runs (SHR / dag-runner /
-ghdag_runner) is not broken.
+unless all checks pass. Independently of template / yml changes, it verifies
+that the environment where ghdag actually runs (SHR / dag-runner / ghdag_runner)
+is not broken.
 
-Checks:
-
-  1. pyproject.toml has no direct ghdag dependency (confirms it is transitive)
-  2. `import ghdag` succeeds and `get_command_adapter("shell")` resolves correctly
-
-ghdag is obtained as a transitive dependency via mltgnt (#1148). A direct
-dependency would mean double bookkeeping, with the host and mltgnt pinning
-different versions.
+Checks include: installed ghdag version, upstream API names issuesmith uses at
+runtime, shell command adapter registration, agent skill manifests, and config
+gate chains.
 
 Past incident: pip resolve read a stale egg-info and kept downgrading ghdag to
 v0.15.0; ShellAdapter disappeared and every SHR dispatch failed. Template render
@@ -28,35 +23,12 @@ from __future__ import annotations
 import importlib
 import json
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Callable
 
 import yaml
-
-from issuesmith.config import get_config
-
-REPO_ROOT = get_config().root
-PYPROJECT = REPO_ROOT / "pyproject.toml"
-
-_GHDAG_PIN_RE = re.compile(
-    r"ghdag\s*@\s*git\+https://github\.com/sumipan/ghdag\.git@v?(\d+\.\d+\.\d+)"
-)
-
-
-def _check_pyproject_no_direct_pin() -> tuple[bool, str]:
-    """Confirm pyproject.toml has no direct ghdag dependency (it should be transitive)."""
-    text = PYPROJECT.read_text(encoding="utf-8")
-    m = _GHDAG_PIN_RE.search(text)
-    if m:
-        return False, (
-            f"pyproject.toml has a direct ghdag pin: v{m.group(1)}\n"
-            "Obtain ghdag as a transitive dependency via mltgnt. Remove the direct pin."
-        )
-    return True, "pyproject.toml: no direct ghdag dependency (obtained transitively)"
-
 
 # ghdag names issuesmith reaches at runtime through getattr(..., None) or late imports, so a
 # missing name would not fail at import time. Kept in sync with
@@ -66,7 +38,6 @@ REQUIRED_UPSTREAM_APIS: tuple[tuple[str, str, str | None], ...] = (
     ("ghdag.quota", "QuotaGate", "modify"),
     ("ghdag.forge", "GitHubClient", "graphql"),
     ("ghdag.dag", "PIPELINE_WAIT_QUOTA", None),
-    ("ghdag.dag", "WAIT_QUOTA_COMPANION_RE", None),
     ("ghdag.dag", "plan_recover", None),
     ("ghdag.forge", "get_forge", None),
 )
@@ -110,7 +81,7 @@ def _check_installed_ghdag() -> tuple[bool, str]:
     except Exception as e:
         return False, f"importlib.metadata.version('ghdag') failed: {e}"
 
-    return True, f"installed ghdag: v{actual} (transitive dependency via mltgnt)"
+    return True, f"installed ghdag: v{actual}"
 
 
 def _check_shell_adapter() -> tuple[bool, str]:
@@ -311,7 +282,6 @@ def _check_requires_chain() -> tuple[bool, str]:
 
 
 _PREFLIGHT_CHECKS = (
-    _check_pyproject_no_direct_pin,
     _check_installed_ghdag,
     _check_upstream_apis,
     _check_shell_adapter,

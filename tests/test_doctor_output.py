@@ -8,11 +8,18 @@ from unittest.mock import patch
 from issuesmith.cli import _cmd_doctor
 
 
+def _failing_installed_ghdag() -> tuple[bool, str]:
+    return False, "fail"
+
+
+_failing_installed_ghdag.__name__ = "_check_installed_ghdag"
+
+
 def test_doctor_json_fail_exits_1(capsys) -> None:
     """refs #6779: any failed check yields exit code 1 in JSON mode."""
     with patch(
-        "issuesmith.ops.preflight._check_pyproject_no_direct_pin",
-        return_value=(False, "fail"),
+        "issuesmith.ops.preflight._PREFLIGHT_CHECKS",
+        (_failing_installed_ghdag,),
     ):
         rc = _cmd_doctor(["--json"])
     assert rc == 1

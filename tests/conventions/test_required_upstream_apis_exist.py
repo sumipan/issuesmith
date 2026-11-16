@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib
 import types
+from typing import Callable
 
 import pytest
 
@@ -74,3 +75,44 @@ def test_detects_missing_module_and_name():
         (("ghdag.gone", "X", None), ("ghdag.quota", "Missing", None)), resolver=resolver
     )
     assert missing == ["ghdag.gone.X", "ghdag.quota.Missing"]
+
+
+def _resolver_with_all_default_upstream_apis(*, dag: object) -> Callable[[str], object]:
+    quota_gate = type(
+        "QuotaGate",
+        (),
+        {"read_state": lambda self: {}, "modify": lambda self, fn: {}},
+    )
+    ghdag_quota = types.SimpleNamespace(QuotaGate=quota_gate)
+    ghdag_forge = types.SimpleNamespace(
+        GitHubClient=type("GitHubClient", (), {"graphql": lambda self, q: {}}),
+        get_forge=lambda: None,
+    )
+
+    def resolver(module: str) -> object:
+        if module == "ghdag.quota":
+            return ghdag_quota
+        if module == "ghdag.forge":
+            return ghdag_forge
+        if module == "ghdag.dag":
+            return dag
+        raise ImportError(module)
+
+    return resolver
+
+
+def test_ghdag_dag_without_wait_quota_companion_re_is_not_missing():
+    """refs #7080: doctor list does not require ghdag.dag.WAIT_QUOTA_COMPANION_RE."""
+    ghdag_dag = types.SimpleNamespace(
+        PIPELINE_WAIT_QUOTA="WAIT",
+        plan_recover=lambda: [],
+    )
+    resolver = _resolver_with_all_default_upstream_apis(dag=ghdag_dag)
+    assert missing_upstream_apis(resolver=resolver) == []
+
+
+def test_default_list_reports_absent_plan_recover():
+    """refs #7080: default list still reports a missing runtime API name."""
+    ghdag_dag = types.SimpleNamespace(PIPELINE_WAIT_QUOTA="WAIT")
+    resolver = _resolver_with_all_default_upstream_apis(dag=ghdag_dag)
+    assert missing_upstream_apis(resolver=resolver) == ["ghdag.dag.plan_recover"]
