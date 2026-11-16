@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Added
+
+- Reference develop line under `workflows/develop/` (ghdag workflow, dispatch templates, `develop_line.*` step modules, and acceptance tests). Refs sumipan/nexus#6614.
+
 ## 0.189.27 - 2026-11-16
 
 ### Fixed

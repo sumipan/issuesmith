@@ -4,7 +4,7 @@ issuesmith is a suite for building an agent-first software factory: a production
 
 The suite includes design and merge gates, a request queue with triage, lane planning, LLM role switching, label projection, andons, and the single CLI that workflow templates call. [ghdag](https://github.com/sumipan/ghdag) runs the DAGs, polls labels, and moves Issues between phases; issuesmith supplies the Issue side of that loop.
 
-**What it is not:** issuesmith is not a scheduler or a DAG runner (that is ghdag), and it does not call an LLM API directly. LLM steps run through the engine CLIs (`claude`, `codex`, `cursor`) that ghdag dispatches. Step implementations and order templates live in the host repository; issuesmith does not bundle reference workflows or step modules.
+**What it is not:** issuesmith is not a scheduler or a DAG runner (that is ghdag), and it does not call an LLM API directly. LLM steps run through the engine CLIs (`claude`, `codex`, `cursor`) that ghdag dispatches. Production hosts still own their wiring (`issuesmith.yaml`, `workflow.yml`); this repository also ships a small **reference develop line** under `workflows/develop/` that you can copy or import verbatim.
 
 ## Status
 
@@ -40,61 +40,55 @@ See [TESTING.md](./TESTING.md) for what tests should and should not pin.
 
 ## Quick Start
 
-1. Put an `issuesmith.yaml` at the root of the host repository. `repo` and `phases` are required; every other key has a default (see [Configuration](#configuration)):
+### Reference develop line (`workflows/develop/`)
 
-```yaml
-repo: owner/my-repo
-supported_repos:
-  - owner/my-repo
-phases:
-  - name: draft
-    role: design
-    entry_step: design
-    handler: brushup
-    writes_files: false
-    advance_when: [deps_terminal]
-  - name: develop
-    role: implementation
-    entry_step: implement
-    handler: impl
-    steps: [prepare, implement, report, review]
-    preconditions: [draft-done]
-    advance_when: [deps_terminal]
-  - name: merge
-    role: implementation
-    entry_step: merge
-    handler: merge
-    steps: [finalize, merge]
-    advance_when: [deps_terminal, closing_pr_exists]
-steps:
-  implement:
-    module: my_project.steps.implement
-    requires: [lint, tests, pr_scope]
-    input_kind: worktree
-```
+issuesmith ships one minimal develop phase you can run end-to-end after checkout:
 
-`steps.implement.module` is a host-side Python module (not shipped with issuesmith). Its shape is described under [Protocols and extension points](#protocols-and-extension-points).
+| Path | Role |
+|---|---|
+| `workflows/develop/issuesmith.yaml` | Example config (`develop_line.*` modules, gates, engines) |
+| `workflows/develop/workflow.yml` | ghdag workflow (`issuesmith:develop-ready` → prepare → implement → verify → review → merge) |
+| `workflows/develop/templates/*.md` | Shell templates that call `python3 -m issuesmith dispatch …` |
+| `workflows/develop/prompts/implement.md` / `review.md` | LLM orders |
+| `workflows/develop/develop_line/prepare.py` | Step `develop_line.prepare` |
+| `workflows/develop/develop_line/implement.py` | Step `develop_line.implement` (and repair) |
+| `workflows/develop/develop_line/verify.py` | Step `develop_line.verify` |
+| `workflows/develop/develop_line/review.py` | Step `develop_line.review` |
+| `workflows/develop/develop_line/merge.py` | Step `develop_line.merge` |
 
-2. Check the environment and the resolved configuration:
+**Host setup (summary):**
+
+1. Check out this repository (or your fork) at the same tag you installed, e.g. next to the host app repo.
+2. Point Python at the reference modules and config:
 
 ```bash
-export ISSUESMITH_CONFIG=/path/to/issuesmith.yaml   # not needed when the file is in cwd or a parent
+export PYTHONPATH="/path/to/issuesmith/checkout/workflows/develop${PYTHONPATH:+:$PYTHONPATH}"
+export ISSUESMITH_CONFIG=/path/to/host/issuesmith.yaml   # copy of workflows/develop/issuesmith.yaml at repo root
+```
+
+3. Copy or symlink wiring only — keep `develop_line.*` imports unchanged:
+   - Copy `workflows/develop/issuesmith.yaml` and adjust `repo`, `supported_repos`, paths, and engines.
+   - Copy `workflows/develop/workflow.yml` into the host (or a `workflows/develop/dag/` subfolder) and set `paths.workflow` in your config to that file.
+   - Point `paths.template_dir` at `workflows/develop/prompts` (or a copy).
+   - Point ghdag `template_dir` at `workflows/develop/templates` (relative to the workflow file).
+
+4. Run the watcher (from the host repository root):
+
+```bash
+mkdir -p jobs
+python3 -m ghdag watch workflows/develop --exec-jsonl jobs/exec.jsonl
+```
+
+5. Label an Issue `issuesmith:develop-ready` with a leading YAML block (`base_branch`, `allow_paths`). The line uses `python3 -m issuesmith context`, then `develop_line.prepare` through `develop_line.merge`.
+
+Check the resolved config:
+
+```bash
 python3 -m issuesmith doctor
-python3 -m issuesmith config show
-python3 -m issuesmith engine show
+ISSUESMITH_CONFIG=workflows/develop/issuesmith.yaml python3 -m issuesmith config show
 ```
 
-3. Run a gate on an Issue body, queue an Issue, and resume a stopped run:
-
-```bash
-python3 -m issuesmith gate design_lint --body-file body.md
-python3 -m issuesmith queue enqueue --issue 123 --phase draft --source cli \
-  --actor-kind human --priority normal --requested-by me
-python3 -m issuesmith queue tick
-python3 -m issuesmith resume 123 --from implement
-```
-
-Day-to-day operation uses `python3 -m issuesmith andon list`, `python3 -m issuesmith observe --json`, `python3 -m issuesmith lanes check --json` and `python3 -m issuesmith metrics rework --since 2026-10-01`.
+For custom pipelines, define your own `steps.<id>.module` host modules (see [Protocols and extension points](#protocols-and-extension-points)). Day-to-day operation also uses `python3 -m issuesmith andon list`, `python3 -m issuesmith observe --json`, and `python3 -m issuesmith queue tick`.
 
 ## CLI Reference
 

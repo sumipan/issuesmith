@@ -1,0 +1,51 @@
+repo: example/reference-host
+supported_repos:
+  - example/reference-host
+label_namespace: issuesmith
+paths:
+  workflow: workflows/develop/workflow.yml
+  template_dir: workflows/develop/prompts
+  worktrees_dir: .worktrees
+engines:
+  implementation:
+    heavy: [[cursor, auto]]
+    timeout_sec: 3600
+  review:
+    heavy: [[cursor, auto]]
+    timeout_sec: 1800
+phases:
+  - name: develop
+    role: implementation
+    entry_step: prepare
+    handler: develop
+    steps: [prepare, implement, verify, review, merge]
+    advance_when: [deps_terminal]
+terminal_labels: [issuesmith:develop-done]
+steps:
+  prepare:
+    module: develop_line.prepare
+  implement:
+    module: develop_line.implement
+    template: implement.md
+  verify:
+    module: develop_line.verify
+    requires: [lint, tests, pr_scope]
+    input_kind: worktree
+    repair:
+      max: 2
+  review:
+    module: develop_line.review
+    requires: [review]
+    input_kind: worktree
+    repair:
+      max: 2
+    review:
+      role: review
+      template: review.md
+      success_status: REVIEW_PASS
+      failure_status: REVIEW_FAIL
+  merge:
+    module: develop_line.merge
+  repair:
+    module: develop_line.implement
+    template: implement.md
