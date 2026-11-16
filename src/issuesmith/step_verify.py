@@ -101,12 +101,20 @@ def _host_issue_gate_violations(
     from issuesmith.gates import GateBuildContext, resolve_gate
     from issuesmith.scope_gate import resolve_scope_root
 
+    cfg = get_config()
+    gate_ids: list[str] = []
+    for step in cfg.steps.values():
+        for gate_id in step.requires:
+            if ":" in gate_id and gate_id not in gate_ids:
+                gate_ids.append(gate_id)
+    if not gate_ids:
+        return []
+
     try:
         metadata = parse_issue_metadata(body)
     except Exception:
         return []
 
-    cfg = get_config()
     root = resolve_scope_root(metadata, cfg)
     if root is None:
         return []
@@ -125,28 +133,23 @@ def _host_issue_gate_violations(
     )
 
     violations: list[Violation] = []
-    seen: set[str] = set()
-    for step in cfg.steps.values():
-        for gate_id in step.requires:
-            if ":" not in gate_id or gate_id in seen:
-                continue
-            seen.add(gate_id)
-            try:
-                entry = resolve_gate(gate_id)
-            except Exception as exc:
-                violations.append(_host_gate_error_violation(gate_id, exc))
-                continue
-            if entry.input_kind != "issue":
-                continue
-            try:
-                gate = entry.build(build_ctx)
-            except Exception as exc:
-                violations.append(_host_gate_error_violation(gate_id, exc))
-                continue
-            try:
-                violations.extend(gate.check(body, labels))
-            except Exception as exc:
-                violations.append(_host_gate_error_violation(gate_id, exc))
+    for gate_id in gate_ids:
+        try:
+            entry = resolve_gate(gate_id)
+        except Exception as exc:
+            violations.append(_host_gate_error_violation(gate_id, exc))
+            continue
+        if entry.input_kind != "issue":
+            continue
+        try:
+            gate = entry.build(build_ctx)
+        except Exception as exc:
+            violations.append(_host_gate_error_violation(gate_id, exc))
+            continue
+        try:
+            violations.extend(gate.check(body, labels))
+        except Exception as exc:
+            violations.append(_host_gate_error_violation(gate_id, exc))
     return violations
 
 
