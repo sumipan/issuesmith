@@ -74,6 +74,85 @@ def check_paths_must_not_exist_validity(body: str, labels: list[str] | None = No
     return check_paths_must_not_exist_contract(body, root)
 
 
+def _normalize_metadata_allow_paths(metadata: dict) -> list[str]:
+    raw = metadata.get("allow_paths", [])
+    if isinstance(raw, str):
+        return [p.lstrip("- ").strip() for p in raw.splitlines() if p.strip()]
+    if isinstance(raw, list):
+        return [str(p).lstrip("- ").strip() for p in raw if str(p).strip()]
+    return []
+
+
+def _host_gate_error_violation(gate_id: str, exc: BaseException) -> Violation:
+    return Violation(
+        rule_id="step_verify.host_gate_error",
+        severity="fail",
+        message=f"{gate_id}: {type(exc).__name__}: {exc}",
+        location=None,
+        auto_fixable=False,
+        fix_hint=None,
+    )
+
+
+def _host_issue_gate_violations(
+    body: str, labels: list[str], *, issue_number: int | None
+) -> list[Violation]:
+    from issuesmith.context_hook import parse_issue_metadata
+    from issuesmith.gates import GateBuildContext, resolve_gate
+    from issuesmith.scope_gate import resolve_scope_root
+
+    cfg = get_config()
+    gate_ids: list[str] = []
+    for step in cfg.steps.values():
+        for gate_id in step.requires:
+            if ":" in gate_id and gate_id not in gate_ids:
+                gate_ids.append(gate_id)
+    if not gate_ids:
+        return []
+
+    try:
+        metadata = parse_issue_metadata(body)
+    except Exception:
+        return []
+
+    root = resolve_scope_root(metadata, cfg)
+    if root is None:
+        return []
+
+    base_branch = str(metadata.get("base_branch") or "main")
+    allow_paths = _normalize_metadata_allow_paths(metadata)
+    variables: dict[str, str] = {}
+    if issue_number is not None:
+        variables["issue_number"] = str(issue_number)
+
+    build_ctx = GateBuildContext(
+        worktree_path=root,
+        allow_paths=allow_paths,
+        base_branch=base_branch,
+        variables=variables,
+    )
+
+    violations: list[Violation] = []
+    for gate_id in gate_ids:
+        try:
+            entry = resolve_gate(gate_id)
+        except Exception as exc:
+            violations.append(_host_gate_error_violation(gate_id, exc))
+            continue
+        if entry.input_kind != "issue":
+            continue
+        try:
+            gate = entry.build(build_ctx)
+        except Exception as exc:
+            violations.append(_host_gate_error_violation(gate_id, exc))
+            continue
+        try:
+            violations.extend(gate.check(body, labels))
+        except Exception as exc:
+            violations.append(_host_gate_error_violation(gate_id, exc))
+    return violations
+
+
 def collect_violations(body: str, labels: list[str], *, issue_number: int | None = None):
     from issuesmith.gate_rules.deps_format import DepsFormatRules
 
@@ -92,6 +171,9 @@ def collect_violations(body: str, labels: list[str], *, issue_number: int | None
             )
         else:
             violations.extend(GATE_REGISTRY[gate]().check(body, gate_labels))
+    violations.extend(
+        _host_issue_gate_violations(body, labels, issue_number=effective_issue)
+    )
     return [
         v
         for v in violations
