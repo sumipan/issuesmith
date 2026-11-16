@@ -1,6 +1,4 @@
 import json
-import subprocess
-import sys
 import tempfile
 from io import StringIO
 from pathlib import Path
@@ -10,14 +8,6 @@ import issuesmith.gate_rules  # noqa: F401 - populates issuesmith.gate_registry.
 from issuesmith.cli import _run_gate_preflight
 from issuesmith.gate_registry import GATE_REGISTRY, Violation
 from issuesmith.ops.preflight import check_post_merge
-
-
-def run_preflight_subprocess(*args):
-    return subprocess.run(
-        [sys.executable, "-m", "issuesmith", "gate-preflight", *args],
-        capture_output=True,
-        text=True,
-    )
 
 
 def run_preflight_direct(argv):

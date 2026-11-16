@@ -12,12 +12,6 @@ from issuesmith.config import get_config, reset_config_cache
 from issuesmith.gate_rules.scope_size import ScopeSizeRules, measure_size
 
 _FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
-_ALL_RULES = {
-    "scope_size.too_many_files",
-    "scope_size.too_many_concerns",
-    "scope_size.delete_with_new",
-}
-
 # Change-table header / change types, CJK encoded as cXXXX_ (tests/test_no_cjk.py).
 _HEADER = (
     "| c30EA_c30DD_c30B8_c30C8_c30EA_ | c30D5_c30A1_c30A4_c30EB_c30D1_c30B9_ "
@@ -235,10 +229,6 @@ def _sub_header_concerns(promoted: str) -> list[str]:
     return re.findall(r"^#### \S+?\d+: (.+)$", promoted, re.MULTILINE)
 
 
-def _plan_concerns(promoted: str) -> list[str]:
-    return re.findall(r"^\| \d+ \| ([^|]+?) \|", promoted, re.MULTILINE)
-
-
 @pytest.fixture
 def _root_readable_extractor(monkeypatch):
     """Simulate nexus #4797 sub 1: change_paths_for_repo keeps root-level files.
@@ -280,14 +270,6 @@ def test_grandparent_merge_at_root_is_named_root():
 
 # nexus #4852: producer-side gate — every promoted sub block must be readable by
 # the SUB1 / B1 extraction (change_paths_for_repo).
-
-
-def _promoted_sub_blocks(promoted: str) -> list[tuple[int, str]]:
-    from issuesmith.contract import iter_sub_blocks
-
-    return iter_sub_blocks(promoted)
-
-
 
 
 def test_promote_keeps_single_root_concern_when_nothing_is_readable(monkeypatch):

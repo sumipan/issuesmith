@@ -110,17 +110,6 @@ def test_behavior_test_in_sibling_ignores_partial_stem_match():
     assert _SIBLING_TEST_RULE not in _rule_ids(_check(body, MILESTONE_LABELS))
 
 
-# #4745: scripts/persona-note-articles.py vs tests/scripts/test_persona_note_articles.py
-_HYPHEN_STEM_PAIRS = [
-    ("scripts/persona-note-articles.py", "tests/scripts/test_persona_note_articles.py"),
-    ("scripts/persona-sources-note.py", "tests/scripts/test_persona_sources_note.py"),
-]
-
-
-
-
-
-
 def _contradiction_body(policy: str, ac_items: list[str]) -> str:
     block = _sub_block(1, "drop", "tools/foo/a.py", ac_items=ac_items).replace(
         "**Design Policy**: Sub1 c306E_Design Policy", f"**Design Policy**: {policy}"

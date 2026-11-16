@@ -177,43 +177,6 @@ def test_sub_count_mismatch():
 
 
 
-def _oversized_non_milestone_body() -> str:
-    """Non-milestone body that trips scope_size (3+ concerns, many files)."""
-    from tests.legacy_text import CHANGE_TYPE, DESCRIPTION, FILE_PATH, REPOSITORY
-
-    header = f"| {REPOSITORY} | {FILE_PATH} | {CHANGE_TYPE} | {DESCRIPTION} |"
-    rows = [
-        ("src/a/f1.py", "Modify"),
-        ("src/a/f2.py", "Modify"),
-        ("src/a/f3.py", "Modify"),
-        ("src/b/f1.py", "Modify"),
-        ("src/b/f2.py", "Modify"),
-        ("src/b/f3.py", "Modify"),
-        ("src/c/f1.py", "Modify"),
-        ("src/c/f2.py", "Modify"),
-        ("src/c/f3.py", "Modify"),
-    ]
-    table = "\n".join(
-        f"| `sumipan/nexus` | `{path}` | {kind} | x |" for path, kind in rows
-    )
-    return f"""\
-```yaml
-target_repo: sumipan/nexus
-base_branch: main
-allow_paths:
-  - src/**
-```
-
-## Design
-single-issue design before promotion
-
-## Changed Files
-{header}
-|---|---|---|---|
-{table}
-"""
-
-
 def test_subsection_missing():
     # ASCII fixture data.
     body = _valid_body().replace("**Design Policy**: Sub1 c306E_Design Policy", "")
