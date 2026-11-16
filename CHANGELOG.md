@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.190.5 - 2026-11-17
+
+### Added
+
+- `pin_packages`: optional list of package names for the `pin_bump` gate (defaults to `installs` keys when omitted).
+
 ## 0.190.4 - 2026-11-17
 
 ### Changed

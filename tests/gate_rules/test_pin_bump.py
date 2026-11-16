@@ -258,6 +258,75 @@ Bump the ghdag pin from 0.120.2 to 0.121.0.
 
 
 
+def _write_pin_packages_config(tmp_path, monkeypatch, payload: dict) -> None:
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+
+
+def test_pin_packages_outside_installs_is_watched(tmp_path, monkeypatch):
+    """Refs sumipan/nexus#7148: pin_packages can list packages not in installs."""
+    _write_pin_packages_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "repo": "sumipan/nexus",
+            "installs": {},
+            "pin_packages": ["ghdag"],
+        },
+    )
+    body = """\
+```yaml
+target_repo: sumipan/nexus
+base_branch: main
+allow_paths:
+  - pyproject.toml
+  - src/foo.py
+```
+
+## Design
+
+Bump the ghdag pin to ghdag v0.121.0 in pyproject.toml.
+"""
+    violations = _check(body, [])
+    assert len(violations) == 1
+    assert violations[0].rule_id == "pin_bump.in_feature_issue"
+    assert "ghdag" in violations[0].message
+
+
+def test_self_package_read_from_pin_packages(tmp_path, monkeypatch):
+    """Refs sumipan/nexus#7148: self-package detection uses pin_packages, not installs."""
+    _write_pin_packages_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "repo": "sumipan/issuesmith",
+            "installs": {},
+            "pin_packages": ["issuesmith"],
+        },
+    )
+    metadata = {"target_repo": "sumipan/issuesmith"}
+    assert _self_package(metadata) == "issuesmith"
+    body = """\
+```yaml
+target_repo: sumipan/issuesmith
+base_branch: main
+allow_paths:
+  - src/foo.py
+requires_pins:
+  issuesmith: v0.157.2
+```
+
+## Design
+
+Feature work only.
+"""
+    violations = _check(body, [])
+    assert len(violations) == 1
+    assert violations[0].rule_id == "pin_bump.self_requires_pin"
+
+
 @pytest.mark.parametrize("required_version", ["0.120.2", "v0.120.2"])
 def test_pin_bump_ignores_required_version_on_a_line_with_the_pin_word(required_version: str):
     body = f"""\

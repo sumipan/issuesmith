@@ -47,7 +47,7 @@ def _self_package(metadata: dict) -> str | None:
     if not target_repo:
         return None
     name = str(target_repo).rsplit("/", 1)[-1]
-    if name in get_config().installs:
+    if name in get_config().pin_packages:
         return name
     return None
 
@@ -197,7 +197,7 @@ class PinBumpRules:
             pkg_names = frozenset(str(k) for k in required)
         else:
             pkg_names = frozenset()
-        package_names = frozenset(cfg.installs) | pkg_names
+        package_names = frozenset(cfg.pin_packages) | pkg_names
         if self_package is not None:
             package_names = package_names - {self_package}
         required_pins = required if isinstance(required, dict) else {}

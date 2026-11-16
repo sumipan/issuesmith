@@ -9,23 +9,23 @@ The suite includes design and merge gates, a request queue with triage, lane pla
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.190.4-blue)
+![version](https://img.shields.io/badge/version-v0.190.5-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.190.4** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.190.5** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.190.4"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.190.5"
 ```
 
 The gates, forge access, `observe`, `andon`, `lanes` and `metrics` import ghdag, so install the `ghdag` extra unless another package already provides ghdag. The base package alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.190.4"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.190.5"
 ```
 
 | Item | Value |
@@ -474,7 +474,8 @@ A file that is not found is treated as empty, which fails validation because `re
 | `api_brake` | `enabled: false` | GitHub API brake: `min_remaining` (`800`) |
 | `andon.auto_answer` | `[]` | Auto-answer rules: `name` (unique), `match` (non-empty; keys `step`, `kind`, `rule_id`), `action`, `max_per_issue` (`1`) |
 | `language_pack` | (unset: `EN`) | Path to a language pack YAML (see [Language packs](#language-packs)) |
-| `installs` | `{}` | Package name to install directory, or `"@env"` to use the version installed in this process (`importlib.metadata`), for `pins_landed` |
+| `installs` | `{}` | Package name to install directory, or `"@env"` to use the version installed in this process (`importlib.metadata`); used by `pins_landed` for line-environment versions |
+| `pin_packages` | `installs` keys | Package names the `pin_bump` gate watches for pin changes in feature Issues; omit to copy `installs` keys, or set `[]` to watch none |
 | `sections` / `sub_design_subsections` | (deprecated) | Use `language_pack` |
 
 `tests`, `metrics`, `derived_allow`, `external_leak`, `steps.*.repair` and `steps.*.review` reject unknown keys. `scope_coupling.ignore_symbols` is no longer supported and raises `ConfigError`.
