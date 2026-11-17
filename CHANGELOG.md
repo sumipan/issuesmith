@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.190.6 - 2026-11-17
+
 ### Added
 
 - `ISSUESMITH_FETCH_TIMEOUT_SEC` (default 300s) caps each base `git fetch` during P0; `fetch_base_or_raise` errors now include the failure reason after the remote/ref prefix.
