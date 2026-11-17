@@ -7,6 +7,7 @@ from typing import Sequence
 
 from issuesmith.gate_registry import Violation
 from issuesmith.gates import Verdict
+from issuesmith.gates.base import ContractInput
 from issuesmith.pr_scope import check_pr_diff_scope
 
 
@@ -51,6 +52,7 @@ class PrScopeGate:
         cfg = get_config()
         derived_allow = cfg.derived_allow
         files = _worktree.changed_files(self._worktree_path, self._base_branch)
+        untracked = _worktree.untracked_files(self._worktree_path)
         violations: list[Violation] = []
         in_scope: list[str] = []
         out_of_scope: list[str] = []
@@ -62,7 +64,19 @@ class PrScopeGate:
                 continue
             v = file_violations[0]
             if v.rule_id == "pr_diff_scope.forbidden_path":
-                violations.append(v)
+                if f in untracked:
+                    violations.append(Violation(
+                        rule_id="pr_scope.untracked_forbidden",
+                        severity="fail",
+                        message=(
+                            f"{v.message} (untracked; removed by pr_scope fix)"
+                        ),
+                        location=f,
+                        auto_fixable=True,
+                        fix_hint=f"rm -- {f}",
+                    ))
+                else:
+                    violations.append(v)
                 continue
             if v.rule_id == "pr_diff_scope.out_of_scope":
                 if f == "pyproject.toml":
@@ -138,6 +152,23 @@ class PrScopeGate:
                 ledger_globs=derived_allow.ledger_globs,
             ))
         return violations
+
+    def fix(self, inp: ContractInput) -> ContractInput:
+        from issuesmith.gates import worktree as _worktree
+
+        untracked = _worktree.untracked_files(self._worktree_path)
+        for f in _worktree.changed_files(self._worktree_path, self._base_branch):
+            if f not in untracked:
+                continue
+            file_violations = check_pr_diff_scope([f], self._allow_paths)
+            if not file_violations:
+                continue
+            if file_violations[0].rule_id != "pr_diff_scope.forbidden_path":
+                continue
+            target = self._worktree_path / f
+            if target.is_file():
+                target.unlink()
+        return inp
 
 
 __all__ = ["check_pr_scope", "PrScopeGate"]

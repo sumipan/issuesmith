@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.192.0 - 2026-11-17
+
+### Fixed
+
+- `PrScopeGate` auto-removes untracked worktree files that match `forbidden_pr_paths` via `fix`, instead of raising a non-repairable `pr_diff_scope.forbidden_path` violation.
+
 ## 0.191.3 - 2026-11-17
 
 ### Added
