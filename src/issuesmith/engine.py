@@ -162,7 +162,7 @@ DEFAULT_PAUSE_TTL_SEC: dict[str, int] = {
 }
 TIMEOUT_ENV_VAR = "ISSUESMITH_TIMEOUT_SEC"
 
-# Host-side workaround until ghdag classify_common_failure has RATE_LIMIT (#2798).
+# Host-side workaround until ghdag classify_common_failure has RATE_LIMIT.
 _RATE_LIMIT_EVIDENCE_MAX_LEN = 200
 _RATE_LIMIT_LINE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"too many requests", re.IGNORECASE),

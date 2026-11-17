@@ -240,8 +240,8 @@ class ScopeGateConfig:
 class ScopeCouplingConfig:
     """CP1/B1 scope coupling gate.
 
-    ``enabled: false`` turns the gate off entirely when the gate
-    contradicts scope_breadth on core-module changes and is disabled until redesigned.
+    ``enabled: false`` turns the gate off entirely (it can contradict scope_breadth
+    on core-module changes, so hosts may keep it off until it is redesigned).
     ``data_file_tests`` makes the file name of a modified data / config file a required key
     so tests pinning its contents join allow_paths.
     """
