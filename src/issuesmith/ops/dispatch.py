@@ -57,7 +57,7 @@ TEMPLATE_DIR = _cfg.paths.template_dir
 _STEP_MODULES: dict[str, str] | None = None
 
 # Maximum number of LLM repair cycles before raising andon(decision).
-# Step ID used for the repair template (nexus-side workflow template).
+# Step ID used for the host-side repair workflow template.
 _REPAIR_STEP_ID: str = "repair"
 
 
@@ -864,7 +864,7 @@ def run_requires_loop(
     # Bounded: every round re-evaluates all gates (full pytest included), and a base
     # branch that moves every few seconds re-creates base_freshness.behind_base each
     # time. After _MAX_AUTO_FIX_ROUNDS the remaining auto-fixable violations are
-    # waived (publish rebases onto the base at P3 anyway) (nexus #3865 / #3864).
+    # waived (publish rebases onto the base at P3 anyway).
     has_auto_fixable = any(v.auto_fixable for v in result.blocking)
     if has_auto_fixable and auto_fix_round >= _MAX_AUTO_FIX_ROUNDS:
         waived = [v for v in result.blocking if v.auto_fixable]
@@ -1091,7 +1091,7 @@ def _handle_retry_signal(
     *,
     task_uuid: str | None = None,
 ) -> None:
-    """Hand the running task back to ghdag as a quota wait (sumipan/nexus#3515, #5757).
+    """Hand the running task back to ghdag as a quota wait.
 
     1. Project the waiting marker onto the Issue.
     2. Emit ``PIPELINE_STATUS: WAIT_QUOTA`` plus the ``WAIT_QUOTA: after=<iso> engines=<a,b>``
@@ -1144,7 +1144,7 @@ def handle_retry_signal(
     *,
     task_uuid: "str | None" = None,
 ) -> None:
-    """Public wrapper for _handle_retry_signal (sumipan/nexus#3663)."""
+    """Public wrapper for :func:`_handle_retry_signal` (stable import path for hosts)."""
     _handle_retry_signal(sig, step_id, issue_number, task_uuid=task_uuid)
 
 

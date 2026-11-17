@@ -107,7 +107,7 @@ def project(
 
     Compatibility wrapper over :func:`issuesmith.projection.project`: at most one
     phase-axis label, at most one attention-axis label, the additive ``queued`` marker
-    while the issue has a pending queue request (sumipan/nexus#3601), and the
+    while the issue has a pending queue request, and the
     precondition labels of active phases (#3626).
     """
     state = _state(

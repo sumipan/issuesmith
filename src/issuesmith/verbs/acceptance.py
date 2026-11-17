@@ -1,4 +1,4 @@
-"""Acceptance verbs — gate checks, contract, and review tier (#6582 / nexus #6477)."""
+"""Acceptance verbs — gate checks, contract, and review tier."""
 
 from __future__ import annotations
 

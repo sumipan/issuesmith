@@ -369,7 +369,8 @@ def _issue_from_key(key: str) -> int | None:
     """Return the issue number from ``<workflow>:<handler>:<issue>[:<generation>]``.
 
     Recovery / redispatch append a generation suffix (``issuesmith:impl:3548:1``); the issue
-    number is always the third segment, never the last one (sumipan/nexus#3523).
+    number is always the third segment, never the last one (generation suffixes
+    add a fourth segment).
     """
     parts = key.split(":")
     if len(parts) >= 3 and parts[2].isdigit():

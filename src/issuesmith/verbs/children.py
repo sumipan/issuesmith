@@ -1,4 +1,4 @@
-"""Child-issue verbs — split plan, create, validate, allow_paths widen (#6583 / nexus #6477)."""
+"""Child-issue verbs — split plan, create, validate, allow_paths widen."""
 
 from __future__ import annotations
 
