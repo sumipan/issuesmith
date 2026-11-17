@@ -8,8 +8,10 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -20,6 +22,10 @@ from issuesmith.config import reset_config_cache
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DEVELOP_DIR = _REPO_ROOT / "workflows" / "develop"
+if str(_DEVELOP_DIR) not in sys.path:
+    sys.path.insert(0, str(_DEVELOP_DIR))
+from develop_hooks import DevelopLineHooks  # noqa: E402
+
 _ALLOWED_ISSMITH_IMPORTS = frozenset(
     {
         "issuesmith.contract",
@@ -493,6 +499,79 @@ def test_reference_config_passes_config_show() -> None:
     payload = json.loads(proc.stdout)
     steps = set(payload.get("steps") or {})
     assert steps == {"verify", "prepare", "review", "merge", "implement", "repair"}
+
+
+@pytest.fixture
+def develop_hooks_forge(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Local forge + reference develop config for develop_hooks tests (nexus#7150)."""
+    forge_root = tmp_path / "forge"
+    forge_root.mkdir()
+    monkeypatch.setenv("GHDAG_FORGE", "local")
+    monkeypatch.setenv("GHDAG_FORGE_ROOT", str(forge_root))
+    monkeypatch.setenv("ISSUESMITH_CONFIG", "workflows/develop/issuesmith.yaml")
+    for key in ("GITHUB_TOKEN", "GH_TOKEN", "GITHUB_REPOSITORIES", "GITHUB_REPOSITORY"):
+        monkeypatch.delenv(key, raising=False)
+    reset_config_cache()
+    client = get_forge()
+    yield client
+    reset_config_cache()
+
+
+def _ensure_issue_number(client, number: int) -> None:
+    while True:
+        n = client.issue_create("padding", "")
+        if n >= number:
+            return
+
+
+def _comment_count(client, number: int) -> int:
+    return len(client.get_issue_comments(number))
+
+
+def test_develop_hooks_comments_once_on_line_task_failure(develop_hooks_forge) -> None:
+    client = develop_hooks_forge
+    _ensure_issue_number(client, 42)
+    assert client.issue_get(42, fields=["number"])["number"] == 42
+    before = _comment_count(client, 42)
+    task = SimpleNamespace(
+        idempotency_key="issuesmith:develop:42",
+        annotations={"step_name": "verify"},
+    )
+    metrics = SimpleNamespace(failure_class=None)
+    DevelopLineHooks().on_task_failure(
+        "task-uuid-1", task, 1, "boom", metrics
+    )
+    assert _comment_count(client, 42) == before + 1
+    body = client.get_issue_comments(42)[-1]["body"]
+    assert "<!-- issuesmith-task-failure -->" in body
+    assert "verify" in body
+    assert "boom" in body
+    assert "python3 -m issuesmith resume 42 --from verify --handler develop" in body
+
+
+def test_develop_hooks_parses_generation_key(develop_hooks_forge) -> None:
+    client = develop_hooks_forge
+    _ensure_issue_number(client, 42)
+    before = _comment_count(client, 42)
+    task = SimpleNamespace(
+        idempotency_key="issuesmith:develop:42:3",
+        annotations={"step_name": "implement"},
+    )
+    metrics = SimpleNamespace(failure_class=None)
+    DevelopLineHooks().on_task_failure("uuid-g", task, 2, "err", metrics)
+    assert _comment_count(client, 42) == before + 1
+
+
+def test_develop_hooks_ignores_non_line_task(develop_hooks_forge) -> None:
+    client = develop_hooks_forge
+    _ensure_issue_number(client, 42)
+    before = _comment_count(client, 42)
+    hooks = DevelopLineHooks()
+    metrics = SimpleNamespace(failure_class=None)
+    for key in (None, "other:develop:42", "issuesmith:develop:abc"):
+        task = SimpleNamespace(idempotency_key=key, annotations={})
+        hooks.on_task_failure("u", task, 1, "x", metrics)
+    assert _comment_count(client, 42) == before
 
 
 def test_readme_quick_start_references_existing_files() -> None:

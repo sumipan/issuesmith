@@ -9,23 +9,23 @@ The suite includes design and merge gates, a request queue with triage, lane pla
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.190.6-blue)
+![version](https://img.shields.io/badge/version-v0.190.7-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.190.6** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.190.7** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.190.6"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.190.7"
 ```
 
 The gates, forge access, `observe`, `andon`, `lanes` and `metrics` import ghdag, so install the `ghdag` extra unless another package already provides ghdag. The base package alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.190.6"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.190.7"
 ```
 
 | Item | Value |
@@ -55,6 +55,7 @@ issuesmith ships one minimal develop phase you can run end-to-end after checkout
 | `workflows/develop/develop_line/verify.py` | Step `develop_line.verify` |
 | `workflows/develop/develop_line/review.py` | Step `develop_line.review` |
 | `workflows/develop/develop_line/merge.py` | Step `develop_line.merge` |
+| `workflows/develop/develop_hooks.py` | ghdag runner hooks: failure record on the Issue |
 
 **Host setup (summary):**
 
@@ -77,6 +78,7 @@ export ISSUESMITH_CONFIG=/path/to/host/issuesmith.yaml   # copy of workflows/dev
 ```bash
 mkdir -p jobs
 python3 -m ghdag watch workflows/develop --exec-jsonl jobs/exec.jsonl
+python3 -m ghdag run jobs/exec.jsonl --hooks develop_hooks
 ```
 
 5. Label an Issue `issuesmith:develop-ready` with a leading YAML block (`base_branch`, `allow_paths`). The line uses `python3 -m issuesmith context`, then `develop_line.prepare` through `develop_line.merge`.
