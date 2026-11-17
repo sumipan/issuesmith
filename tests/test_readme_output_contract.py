@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from issuesmith.cli import _ERROR_EXIT
+from issuesmith.cli_errors import ERROR_EXIT
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _README = _REPO_ROOT / "README.md"
@@ -32,4 +32,4 @@ def test_readme_error_table_matches_cli() -> None:
     """refs #6780: README error codes and exit codes match ``_ERROR_EXIT``."""
     readme = _README.read_text(encoding="utf-8")
     documented = _readme_error_exit_table(readme)
-    assert documented == dict(_ERROR_EXIT)
+    assert documented == dict(ERROR_EXIT)

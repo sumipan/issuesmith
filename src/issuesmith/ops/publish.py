@@ -611,7 +611,9 @@ def publish(
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
+    from issuesmith.cli_errors import ContractParser
+
+    parser = ContractParser(command="publish", description=__doc__)
     parser.add_argument("--issue", type=int, required=True)
     parser.add_argument("--branch", required=True)
     parser.add_argument("--base", required=True)

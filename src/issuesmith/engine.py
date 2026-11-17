@@ -1815,7 +1815,12 @@ def _cmd_clear(args: argparse.Namespace) -> int:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Switch issuesmith design/implementation LLMs")
+    from issuesmith.cli_errors import ContractParser
+
+    parser = ContractParser(
+        command="engine",
+        description="Switch issuesmith design/implementation LLMs",
+    )
     subparsers = parser.add_subparsers(dest="action", required=True)
     show_parser = subparsers.add_parser("show", help="show effective role assignments")
     show_parser.add_argument("--json", action="store_true")

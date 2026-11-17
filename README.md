@@ -9,23 +9,23 @@ The suite includes design and merge gates, a request queue with triage, lane pla
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.190.8-blue)
+![version](https://img.shields.io/badge/version-v0.191.0-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.190.8** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.191.0** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.190.8"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.191.0"
 ```
 
 The gates, forge access, `observe`, `andon`, `lanes` and `metrics` import ghdag, so install the `ghdag` extra unless another package already provides ghdag. The base package alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.190.8"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.191.0"
 ```
 
 | Item | Value |
@@ -214,7 +214,7 @@ Commands routed through `issuesmith.cli` print usage errors to **stderr** in a m
 - Invalid user input must not print a Python traceback.
 - `--help` / `-h` exits **0** and prints usage on stdout.
 
-### Error codes (`issuesmith.cli`)
+### Error codes
 
 | Code | Exit | When |
 |---|---|---|
@@ -222,11 +222,12 @@ Commands routed through `issuesmith.cli` print usage errors to **stderr** in a m
 | `UNKNOWN_ARGUMENT` | 2 | Undeclared option or extra positional argument |
 | `MISSING_ARGUMENT` | 2 | Required argument missing (including omitted subcommand) |
 | `INVALID_VALUE` | 2 | Value shape is wrong (for example a non-integer Issue number) |
-| `NOT_FOUND` | 1 | Named object does not exist (andon, body file, …) |
+| `NOT_FOUND` | 1 | Named object does not exist (andon, body file, queue entry, …) |
 | `CONFIG_ERROR` | 1 | Resolved configuration fails validation |
 | `FAILED` | 1 | External failure (for example forge API error) |
+| `CONFLICT` | 1 | Target exists but the operation is not allowed in the current state |
 
-`queue`, `engine`, `gh`, `dispatch`, `publish`, `smoke`, and other module-level argparse entry points keep argparse-style usage lines and exit **2** on usage mistakes; only stderr wording standardized in this section applies to commands implemented in `issuesmith.cli`.
+Commands implemented in `issuesmith.cli` and the module-level parsers for `queue`, `engine`, `metrics rework`, `publish`, `smoke`, and `version-bump` use this contract on usage mistakes. `gh`, `dispatch`, `tier`, `verify`, and `convert-to-milestone` still use their legacy argparse stderr shapes.
 
 ### `--json` commands
 
@@ -297,6 +298,7 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/body_editor.py` | Issue body H2 section editing and milestone normalizers |
 | `issuesmith/branch_reuse.py` | Find and record reusable branches from earlier runs |
 | `issuesmith/bump_commits.py` | Publish version-bump commit detection and rewrite helpers |
+| `issuesmith/cli_errors.py` | Shared CLI usage-error contract (`fail`, `ContractParser`, `ERROR_EXIT`) |
 | `issuesmith/cli.py` | Unified CLI (`_HANDLERS`) |
 | `issuesmith/config.py` | `issuesmith.yaml` loading, validation and defaults |
 | `issuesmith/context_hook.py` | ghdag context hook and Issue YAML metadata parsing |
