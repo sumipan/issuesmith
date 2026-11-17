@@ -9,23 +9,23 @@ The suite includes design and merge gates, a request queue with triage, lane pla
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.193.1-blue)
+![version](https://img.shields.io/badge/version-v0.193.2-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.193.1** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.193.2** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.193.1"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.193.2"
 ```
 
 The gates, forge access, `observe`, `andon`, `lanes` and `metrics` import ghdag, so install the `ghdag` extra unless another package already provides ghdag. The base package alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.193.1"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.193.2"
 ```
 
 | Item | Value |
@@ -442,6 +442,7 @@ A file that is not found is treated as empty, which fails validation because `re
 | Name | Default | Description |
 |---|---|---|
 | `ISSUESMITH_CONFIG` | (unset) | Path to `issuesmith.yaml` |
+| `ISSUESMITH_CALLER_STEP` | (unset) | Set for the duration of `dispatch` to the dispatched step id; `ensure_base_included` reads it when reconciling the base branch |
 | `ISSUESMITH_QUEUE_DIR` | (unset) | Directory for the queue, queue state, lock and triage log (overrides the `paths` defaults) |
 | `ISSUESMITH_ENGINE_WAIT_POLL_SEC` | `60` | Re-check period while every engine is paused; values outside 1-60 give 60 |
 | `ISSUESMITH_ENGINE_WAIT_INTERVAL_SEC` | `60` | Legacy name, read only when `ISSUESMITH_ENGINE_WAIT_POLL_SEC` is unset |
