@@ -1,4 +1,4 @@
-"""Reusable allow_paths scope measurement for issuesmith consumers (#4276).
+"""Reusable allow_paths scope measurement for issuesmith consumers.
 
 Public API for resolving measurement roots, counting matched files/lines,
 evaluating thresholds, and formatting P0 scope comments. Does not reference
@@ -49,19 +49,19 @@ class ScopeVerdict:
 
 
 def resolve_scope_root(metadata: dict, cfg: IssuesmithConfig) -> Path | None:
-    """Measurement root for ``metadata['target_repo']``: nexus root, or
-    ``paths.external_dir/<repo>`` for cross-repo (#3487).
+    """Measurement root for ``metadata['target_repo']``: config root, or
+    ``paths.external_dir/<repo>`` for cross-repo.
 
     Single source of truth for "where does allow_paths get measured", shared by
     the CP1 breadth gate (``gate_rules.scope_breadth``), ``gate-preflight``, and
     the P0 step. Same directory layout ``context_hook.target_clone_path`` builds
     and ``worktree`` clones into, so every caller measures the same tree.
     Returns ``None`` when the target is cross-repo and no clone exists yet, or
-    when the clone cannot be fast-forwarded to ``origin/<base_branch>`` (#4452)
+    when the clone cannot be fast-forwarded to ``origin/<base_branch>``
     — callers must fail closed, never substitute a default.
     """
     target_repo = (metadata.get("target_repo") or "").strip()
-    if not target_repo or target_repo == "sumipan/nexus":
+    if not target_repo or target_repo == cfg.repo:
         return cfg.root
     parts = target_repo.split("/", 1)
     if len(parts) != 2:

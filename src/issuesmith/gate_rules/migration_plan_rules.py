@@ -23,9 +23,9 @@ def _migration_procedure_skeleton() -> str:
 (write the commands MG1 runs here)
 
 ```bash
-# e.g. update /var/tmp/mltgnt to the latest main
-cd /var/tmp/mltgnt && git fetch origin && git checkout main && git pull origin main
-pip install -e "/var/tmp/mltgnt/[dev]" --no-deps
+# e.g. update /var/tmp/<repo> to the latest main
+cd /var/tmp/<repo> && git fetch origin && git checkout main && git pull origin main
+pip install -e "/var/tmp/<repo>/[dev]" --no-deps
 
 # check that the merged file exists
 test -f <target file> && echo "OK: file exists"
@@ -48,13 +48,13 @@ def _state_survey_skeleton() -> str:
 _POST_MERGE_SKELETON = """\
 post_merge:
   - kind: stable_install
-    repo: sumipan/<repo>
+    repo: <owner>/<repo>
     path: /var/tmp/<repo>
   - kind: tag
-    repo: sumipan/<repo>
+    repo: <owner>/<repo>
     tag: v0.1.0
   - kind: restart
-    processes: [release_watcher, mltgnt_daemon]
+    processes: [<process>]
   - kind: manual_check
     description: "run python3 scripts/preflight.py after MG1; no WARN is reported"
 """

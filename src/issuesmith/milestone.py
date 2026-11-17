@@ -1349,7 +1349,8 @@ def _sub1_build_dep_section(
         title = str(data.get("title") or "?")
         state = str(data.get("state") or "?")
         dep_repo = str(_sub1_safe_metadata(str(data.get("body") or "")).get("target_repo") or "")
-        if row_repo == "sumipan/nexus" and dep_repo and dep_repo != "sumipan/nexus":
+        host_repo = get_config().repo
+        if row_repo == host_repo and dep_repo and dep_repo != host_repo:
             cross_repo = True
         lines.append(_msg("child_dependency_row", index=idx, issue=num, title=title, state=state))
     if cross_repo:

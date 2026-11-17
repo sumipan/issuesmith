@@ -20,6 +20,7 @@ from issuesmith.scope_gate import resolve_scope_root
 
 def _cfg(tmp_path, external_dir=None):
     cfg = MagicMock()
+    cfg.repo = "owner-a/repo-a"
     cfg.root = tmp_path / "nexus"
     cfg.paths.external_dir = external_dir or (tmp_path / "nexus" / ".claude" / "external")
     return cfg
@@ -30,9 +31,10 @@ def test_no_target_repo_resolves_to_nexus_root(tmp_path):
     assert resolve_scope_root({}, cfg) == cfg.root
 
 
-def test_target_repo_is_nexus_resolves_to_nexus_root(tmp_path):
+def test_target_repo_equal_to_config_repo_resolves_to_root(tmp_path):
+    """Refs #7156."""
     cfg = _cfg(tmp_path)
-    assert resolve_scope_root({"target_repo": "sumipan/nexus"}, cfg) == cfg.root
+    assert resolve_scope_root({"target_repo": "owner-a/repo-a"}, cfg) == cfg.root
 
 
 def test_cross_repo_resolves_to_external_dir_repo_when_clone_present(tmp_path):
@@ -133,7 +135,7 @@ def test_fake_git_dir_skips_fetch(tmp_path, monkeypatch):
     assert not rec.fetched()
 
 
-@pytest.mark.parametrize("meta", [{}, {"target_repo": ""}, {"target_repo": "sumipan/nexus"}])
+@pytest.mark.parametrize("meta", [{}, {"target_repo": ""}, {"target_repo": "owner-a/repo-a"}])
 def test_nexus_target_does_not_call_git(tmp_path, monkeypatch, meta):
     cfg = _cfg(tmp_path)
     rec = _Recorder(monkeypatch)

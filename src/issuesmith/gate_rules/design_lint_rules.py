@@ -42,8 +42,8 @@ else:  # pragma: no cover - Python 3.10 compatibility
 _YAML_CONTRACT_FIXES: dict[str, tuple[bool, str]] = {
     "missing_required": (
         True,
-        "add `target_repo: sumipan/nexus` (nexus itself) or"
-        " `target_repo: sumipan/<repo>` to the leading YAML block",
+        "add `target_repo: <owner>/<repo>` (the repository the change lands in)"
+        " to the leading YAML block",
     ),
     "annotation_in_path": (
         True,
@@ -417,7 +417,7 @@ def _paths_must_exist_from_ac(body: str) -> list[str]:
 
 
 def _new_test_candidates_from_body(body: str, metadata: dict) -> list[str]:
-    target_repo = metadata.get("target_repo") or "sumipan/nexus"
+    target_repo = metadata.get("target_repo") or get_config().repo
     seen: set[str] = set()
     candidates: list[str] = []
 
