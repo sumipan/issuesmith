@@ -52,8 +52,8 @@ def resolve_base_ref(repo_dir: Path, base: str) -> str:
     """Return the start-point ref for a new branch off *base*.
 
     ``origin/<base>`` wins so the branch start matches the ``origin/<base>...HEAD``
-    range used by pr_scope; a local base may carry unpushed auto-commits
-    (nexus #4111). ``refs/heads/<base>`` is only a fallback for local-only repos.
+    range used by pr_scope; a local base may carry unpushed auto-commits.
+    ``refs/heads/<base>`` is only a fallback for local-only repos.
     """
     for ref, result in (
         (f"refs/remotes/origin/{base}", f"origin/{base}"),

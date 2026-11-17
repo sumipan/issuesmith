@@ -1,6 +1,6 @@
 """issuesmith instance configuration (issuesmith.yaml).
 
-Resolves nexus-specific values (repo name, paths, engines, timezone) from a
+Resolves instance-specific values (repo name, paths, engines, timezone) from a
 config file so the package can be reused outside this repository.
 """
 
@@ -42,7 +42,7 @@ def _normalize_config_rule_id(value: str, *, field: str) -> str:
     _warn_normalized_rule_id(field=field, before=value, after=after)
     return after
 
-# src/issuesmith/config.py → parents[2] == sumipan/issuesmith repo root
+# Path(__file__).resolve().parents[2] is the issuesmith repository root (package layout).
 _PACKAGE_FILE = Path(__file__).resolve()
 
 
@@ -238,12 +238,12 @@ class ScopeGateConfig:
 
 @dataclass(frozen=True)
 class ScopeCouplingConfig:
-    """CP1/B1 scope coupling gate (#3520).
+    """CP1/B1 scope coupling gate.
 
-    ``enabled: false`` turns the gate off entirely (nexus #3527: the gate
-    contradicts scope_breadth on core-module changes and is disabled until redesigned).
+    ``enabled: false`` turns the gate off entirely (it can contradict scope_breadth
+    on core-module changes, so hosts may keep it off until it is redesigned).
     ``data_file_tests`` makes the file name of a modified data / config file a required key
-    so tests pinning its contents join allow_paths (nexus #3949).
+    so tests pinning its contents join allow_paths.
     """
 
     enabled: bool = True
@@ -253,7 +253,7 @@ class ScopeCouplingConfig:
 
 @dataclass(frozen=True)
 class ScopeSizeConfig:
-    """B1 Issue size gate (nexus #3665): limits read from the Issue's change table."""
+    """B1 Issue size gate: limits read from the Issue's change table."""
 
     enabled: bool = True
     max_files: int = 8
@@ -912,7 +912,7 @@ def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
         # ``issuesmith.gates.validate_step_requires`` (doctor / dispatch / config show).
         # Loading the config must not import the gate registry: the registry pulls in every
         # gate rule, some of which call ``get_config()`` at import time, which re-enters this
-        # loader while ``issuesmith.gates`` is half-initialised (sumipan/nexus#3687).
+        # loader while ``issuesmith.gates`` is half-initialised.
         requires: tuple[str, ...] = ()
         requires_declared: bool = False
         input_kind: str = "issue"
