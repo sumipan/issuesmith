@@ -126,3 +126,5 @@ def test_fetch_failure_raises_with_git_stderr(tmp_path: Path, monkeypatch: pytes
         wt.fetch_base_or_raise(repo, "main", remote="sumipan/issuesmith")
     reason = str(exc.value)[len(prefix) :]
     assert reason
+    # The reason must come from git's stderr, not the exit-code fallback.
+    assert not reason.startswith("git fetch exited")
