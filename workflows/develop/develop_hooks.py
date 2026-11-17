@@ -29,11 +29,9 @@ def parse_line_key(key: object, namespace: str) -> tuple[str, int] | None:
         return None
     if parts[0] != namespace:
         return None
-    try:
-        issue = int(parts[2])
-    except ValueError:
+    if not (parts[2].isascii() and parts[2].isdigit()):
         return None
-    return parts[1], issue
+    return parts[1], int(parts[2])
 
 
 def _stderr_tail(text: str) -> str:
@@ -88,12 +86,16 @@ class DevelopLineHooks(AuditHooks):
         metrics: TaskMetrics,
     ) -> None:
         super().on_task_failure(uuid, task, returncode, stderr_text, metrics)
-        cfg = get_config()
-        parsed = parse_line_key(task.idempotency_key, cfg.label_namespace)
+        try:
+            namespace = get_config().label_namespace
+        except Exception as exc:  # noqa: BLE001 — runner must not crash on config errors
+            print(f"[develop_hooks] config load failed: {exc}", file=sys.stderr)
+            return
+        parsed = parse_line_key(task.idempotency_key, namespace)
         if parsed is None:
             return
         handler, issue = parsed
-        step = str(task.annotations.get("step_name") or "-")
+        step = str((task.annotations or {}).get("step_name") or "-")
         fc = metrics.failure_class
         failure_class = fc.value if fc is not None else None
         body = format_failure_comment(
