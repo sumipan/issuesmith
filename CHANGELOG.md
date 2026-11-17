@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Fixed
+
+- ``tests`` gate: pytest subprocess no longer inherits the host ``ISSUESMITH_CONFIG`` so worktree runs use the worktree tree's config discovery (same as post-merge M1).
+
 ## 0.192.0 - 2026-11-17
 
 ### Fixed

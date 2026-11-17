@@ -307,6 +307,7 @@ def _run_pytest_impl(root: Path, args: list[str], *, timeout: float | None = Non
     outer task timeout kills the whole step.
     """
     env = dict(os.environ)
+    env.pop("ISSUESMITH_CONFIG", None)
     src = root / "src"
     if src.is_dir():
         existing = env.get("PYTHONPATH", "")
