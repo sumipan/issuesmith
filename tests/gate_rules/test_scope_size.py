@@ -49,10 +49,25 @@ def _vocabulary() -> dict:
 
 
 def _write_config(tmp_path: Path, monkeypatch, extra: dict | None = None) -> None:
+    import dataclasses
+
+    from issuesmith import config as config_module
+
+    en = config_module.EN
+    vocab = _vocabulary()
+    pack_data = {f.name: getattr(en, f.name) for f in dataclasses.fields(en)}
+    pack_data.update(vocab)
+    pack_data["sections"] = dict(en.sections)
+    pack_data["messages"] = dict(en.messages)
+    pack_path = tmp_path / "language_pack.yaml"
+    plain = {
+        k: list(v) if isinstance(v, tuple) else v for k, v in pack_data.items()
+    }
+    pack_path.write_text(yaml.safe_dump(plain), encoding="utf-8")
     data: dict = {
         "repo": "sumipan/issuesmith",
-        "sections": {"changed_files": "Changed Files"},
-        "scope_size": {**_vocabulary(), "max_concerns": 2},
+        "language_pack": str(pack_path),
+        "scope_size": {"max_concerns": 2},
     }
     for key, value in (extra or {}).items():
         if key == "scope_size":

@@ -177,21 +177,8 @@ def test_required_engines_paused_same_path_no_duplicate(tmp_path, monkeypatch):
         return real_snapshot(self, *args, **kwargs)
 
     monkeypatch.setattr(QuotaGate, "snapshot", counting_snapshot)
-    assert qmod._required_engines_paused(q, e, brake_path=q) == ["claude", "cursor"]
+    assert qmod._required_engines_paused(q, e) == ["claude", "cursor"]
     assert snap_count["n"] == 1
-
-
-def test_required_engines_paused_union_dedupes(tmp_path):
-    """Same engine paused on both gates still returns once."""
-    from issuesmith import queue as qmod
-
-    q = tmp_path / "quota.json"
-    b = tmp_path / "brake.json"
-    e = tmp_path / "engine.yml"
-    _write_quota(q, {"claude": "paused"})
-    _write_quota(b, {"claude": "paused"})
-    _write_engine_state(e, "claude", "cursor")
-    assert qmod._required_engines_paused(q, e, brake_path=b) == ["claude"]
 
 
 _FIXTURES = Path(__file__).resolve().parent / "fixtures"

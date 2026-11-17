@@ -14,7 +14,6 @@ from issuesmith.engine import (
     _RETRY_WAIT_MAX_SECONDS,
     _WAIT_MAX_SEC_DEFAULT,
     RoleSelection,
-    _execute,
     _wait_poll_sec,
 )
 
@@ -190,35 +189,6 @@ def test_wait_poll_sec_normalization(monkeypatch, poll, interval, expected):
     if interval is not None:
         monkeypatch.setenv("ISSUESMITH_ENGINE_WAIT_INTERVAL_SEC", interval)
     assert _wait_poll_sec() == expected
-
-
-def test_call_managed_receives_quota_gate_not_brake(
-    execute_mocks, monkeypatch, tmp_path
-):
-    """AC-7: call always receives the global quota_gate."""
-    quota_path = tmp_path / "quota.json"
-    brake_path = tmp_path / "brake.json"
-    monkeypatch.setattr("issuesmith.engine.QUOTA_STATE_PATH", quota_path)
-    monkeypatch.setattr("issuesmith.engine.BRAKE_STATE_PATH", brake_path)
-
-    quota_gate = RecordingQuotaGate()
-    brake_gate = RecordingQuotaGate()
-    gates = {str(quota_path): quota_gate, str(brake_path): brake_gate}
-    monkeypatch.setattr(
-        "issuesmith.engine.QuotaGate",
-        lambda state_path: gates[str(state_path)],
-    )
-    available = _snapshot({"claude": _available(), "codex": _available()})
-    quota_gate.snapshot_result = available
-    brake_gate.snapshot_result = available
-    monkeypatch.setattr(
-        "issuesmith.engine.call", execute_mocks["call"]
-    )
-
-    _execute("design", "prompt")
-
-    assert execute_mocks["call"].calls[-1]["quota_gate"] is quota_gate
-    assert execute_mocks["call"].calls[-1]["quota_gate"] is not brake_gate
 
 
 def test_run_verified_emit_propagates_quota_retry(execute_mocks, monkeypatch, tmp_path):

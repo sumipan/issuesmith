@@ -138,39 +138,30 @@ def test_readme_lists_every_pack_field():
 # --- legacy keys -------------------------------------------------------------
 
 
+@pytest.mark.parametrize("with_pack", [False, True], ids=["no_pack", "with_pack"])
 @pytest.mark.parametrize(
-    "payload",
+    "payload,legacy_key",
     [
-        {"scope_size": {"delete_words": ["remove"]}},
-        {"scope_size": {"new_words": ["create"]}},
-        {"scope_size": {"sub_plan_header": "| a | b |"}},
-        {"scope_size": {"no_deps_word": "-"}},
-        {"sections": {"design": "Plan"}},
-        {"sub_design_subsections": ["A", "B", "C", "D"]},
+        ({"scope_size": {"delete_words": ["remove"]}}, "scope_size.delete_words"),
+        ({"scope_size": {"new_words": ["create"]}}, "scope_size.new_words"),
+        ({"scope_size": {"sub_plan_header": "| a | b |"}}, "scope_size.sub_plan_header"),
+        ({"scope_size": {"no_deps_word": "-"}}, "scope_size.no_deps_word"),
+        ({"sections": {"design": "Plan"}}, "sections"),
+        ({"sub_design_subsections": ["A", "B", "C", "D"]}, "sub_design_subsections"),
     ],
 )
-def test_each_legacy_key_warns(tmp_path, monkeypatch, payload):
-    _use_config(tmp_path, monkeypatch, payload)
-    with pytest.warns(DeprecationWarning):
+def test_each_legacy_key_raises(tmp_path, monkeypatch, with_pack, payload, legacy_key):
+    """Refs sumipan/nexus#7158 — legacy vocabulary keys raise ConfigError."""
+    merged = dict(payload)
+    if with_pack:
+        _write_yaml(tmp_path / "pack.yaml", _CUSTOM)
+        merged["language_pack"] = "pack.yaml"
+    _use_config(tmp_path, monkeypatch, merged)
+    with pytest.raises(ConfigError) as exc:
         load_config()
-
-
-def test_pack_wins_over_legacy_keys_with_warning(tmp_path, monkeypatch):
-    _write_yaml(tmp_path / "pack.yaml", _CUSTOM)
-    _use_config(
-        tmp_path,
-        monkeypatch,
-        {
-            "language_pack": "pack.yaml",
-            "sections": {"design": "Ignored"},
-            "scope_size": {"delete_words": ["ignored"], "max_files": 5},
-        },
-    )
-    with pytest.warns(DeprecationWarning, match="ignored because language_pack"):
-        cfg = get_config()
-    assert cfg.sections["design"] == _CUSTOM_SECTIONS["design"]
-    assert cfg.scope_size.delete_words == ("remove",)
-    assert cfg.scope_size.max_files == 5
+    msg = str(exc.value)
+    assert legacy_key in msg
+    assert "language_pack" in msg
 
 
 def test_lazy_sub_header_re_follows_config(tmp_path, monkeypatch):

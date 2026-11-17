@@ -7,6 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Removed
+
+- **BREAKING:** `paths.brake_state` is no longer read; set engine pause state via `paths.quota_state` only. Configurations that still set `paths.brake_state` raise `ConfigError`.
+- **BREAKING:** Top-level `sections` and `sub_design_subsections`, and `scope_size` vocabulary keys `delete_words`, `new_words`, `sub_plan_header`, and `no_deps_word`, are no longer accepted in `issuesmith.yaml`. Move them into a `language_pack` file; any of these keys raises `ConfigError` whether or not `language_pack` is set.
+
 ## 0.191.0 - 2026-11-17
 
 ### Changed

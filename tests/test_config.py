@@ -79,8 +79,8 @@ def test_light_engine_not_in_heavy_rejected():
         )
 
 
-def test_brake_state_explicit_resolves_relative(tmp_path, monkeypatch):
-    """AC-2: explicit paths.brake_state becomes an absolute Path relative to the config file."""
+def test_paths_brake_state_raises(tmp_path, monkeypatch):
+    """Refs sumipan/nexus#7158 — paths.brake_state raises ConfigError."""
     cfg_dir = tmp_path / "instance"
     cfg_dir.mkdir()
     cfg_path = cfg_dir / "issuesmith.yaml"
@@ -95,11 +95,8 @@ def test_brake_state_explicit_resolves_relative(tmp_path, monkeypatch):
     monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
     reset_config_cache()
 
-    cfg = load_config()
-
-    assert cfg.paths.quota_state == (cfg_dir / "jobs/quota-gate.json").resolve()
-    assert cfg.paths.brake_state == (cfg_dir / "jobs/issuesmith-brake.json").resolve()
-    assert cfg.paths.brake_state != cfg.paths.quota_state
+    with pytest.raises(ConfigError, match="quota_state"):
+        load_config()
 
 
 def test_host_is_repo_checkout_rejects_non_bool(tmp_path, monkeypatch):
@@ -191,23 +188,6 @@ def _load_with(tmp_path, monkeypatch, extra: dict):
     monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
     reset_config_cache()
     return load_config()
-
-
-@pytest.mark.parametrize(
-    "bad",
-    [
-        {"delete_words": []},
-        {"delete_words": "delete"},
-        {"new_words": [1]},
-        {"sub_plan_header": ""},
-        {"no_deps_word": 3},
-    ],
-)
-def test_scope_size_vocabulary_rejects_invalid(tmp_path, monkeypatch, bad):
-    from issuesmith.config import ConfigError
-
-    with pytest.raises(ConfigError):
-        _load_with(tmp_path, monkeypatch, {"scope_size": bad})
 
 
 def test_scope_size_overrides(tmp_path, monkeypatch):

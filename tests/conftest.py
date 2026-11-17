@@ -461,7 +461,6 @@ def _no_side_effects(tmp_path_factory):
         # Redirect runtime-data paths so dispatch/triage/quota writes go to basetemp.
         stack.enter_context(patch.dict(os.environ, {"ISSUESMITH_QUEUE_DIR": str(basetemp)}))
         stack.enter_context(patch.object(_qmod, "QUOTA_STATE_PATH", new=basetemp / "quota-gate.json"))
-        stack.enter_context(patch.object(_qmod, "BRAKE_STATE_PATH", new=basetemp / "brake.json"))
         stack.enter_context(patch.object(_qmod, "EXEC_PATH", new=basetemp / "exec.jsonl"))
         stack.enter_context(patch.object(_qmod, "DONE_DIR", new=basetemp / "done"))
         stack.enter_context(patch.object(_qmod, "JOBS_DIR", new=basetemp))

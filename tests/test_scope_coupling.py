@@ -31,13 +31,7 @@ def ascii_sections_config(tmp_path, monkeypatch):
 
     cfg_path = tmp_path / "issuesmith.yaml"
     cfg_path.write_text(
-        yaml.safe_dump({
-            "repo": "sumipan/issuesmith",
-            "sections": {
-                "acceptance_criteria": "Acceptance Criteria",
-                "changed_files": "Changed Files",
-            },
-        }),
+        yaml.safe_dump({"repo": "sumipan/issuesmith"}),
         encoding="utf-8",
     )
     monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
