@@ -8,6 +8,7 @@ phase names, labels, comments, templates, Slack, or ``jobs/`` paths.
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 import sys
 from collections.abc import Callable
@@ -96,23 +97,79 @@ def _lock_wait_seconds() -> int:
         return 30
 
 
-def fetch_base_gate_result(
-    repo_dir: Path, base: str, *, max_attempts: int = 3
-) -> tuple[bool, bool]:
-    """Fetch origin base with lock + retries.
+_FETCH_TIMEOUT_DEFAULT_SEC = 300.0
 
-    Returns ``(success, transient_exhausted)``. ``transient_exhausted`` is
-    ``True`` only when every attempt failed with a transient ref-lock error.
-    """
+
+def _fetch_timeout_sec() -> float:
+    raw = os.environ.get("ISSUESMITH_FETCH_TIMEOUT_SEC", str(_FETCH_TIMEOUT_DEFAULT_SEC))
+    try:
+        value = float(raw)
+    except ValueError:
+        return _FETCH_TIMEOUT_DEFAULT_SEC
+    if value <= 0:
+        return _FETCH_TIMEOUT_DEFAULT_SEC
+    return value
+
+
+def _fetch_failure_reason(returncode: int, stderr: str, *, timed_out: bool) -> str:
+    if timed_out:
+        return f"timed out after {_fetch_timeout_sec()} s"
+    lines = [line.strip() for line in (stderr or "").splitlines() if line.strip()]
+    if lines:
+        return lines[-1]
+    return f"git fetch exited {returncode}"
+
+
+def _run_git_fetch(repo_dir: Path, base: str) -> tuple[int, str, bool]:
+    """Run ``git fetch`` for *base*; returns ``(returncode, stderr, timed_out)``."""
+    cmd = [
+        "git",
+        "-C",
+        str(repo_dir),
+        "fetch",
+        "origin",
+        f"refs/heads/{base}:refs/remotes/origin/{base}",
+    ]
+    timeout = _fetch_timeout_sec()
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        _stdout, stderr = proc.communicate(timeout=timeout)
+        return proc.returncode or 0, stderr or "", False
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        _stdout, stderr = proc.communicate()
+        limit = _fetch_timeout_sec()
+        print(
+            f"P0_FETCH_TIMEOUT: git fetch origin {base} exceeded {limit} s in {repo_dir}",
+            file=sys.stderr,
+        )
+        return 1, stderr or "", True
+
+
+def _fetch_base(
+    repo_dir: Path, base: str, *, max_attempts: int
+) -> tuple[bool, bool, str]:
+    """Fetch origin *base* with lock, timeout, and retries. Third value is failure reason."""
     lock_dir = _git_common_dir(repo_dir) / "issuesmith-fetch.lock"
     lock_wait = _lock_wait_seconds()
     transient_attempts = 0
 
     for attempt in range(1, max_attempts + 1):
         waited = 0
+        lock_acquired = False
         while True:
             try:
                 lock_dir.mkdir()
+                lock_acquired = True
                 break
             except FileExistsError:
                 waited += 1
@@ -120,28 +177,19 @@ def fetch_base_gate_result(
                     break
                 _sleep(1)
 
-        proc = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(repo_dir),
-                "fetch",
-                "origin",
-                f"refs/heads/{base}:refs/remotes/origin/{base}",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        try:
-            lock_dir.rmdir()
-        except OSError:
-            pass
+        returncode, stderr, timed_out = _run_git_fetch(repo_dir, base)
+        if lock_acquired:
+            try:
+                lock_dir.rmdir()
+            except OSError:
+                pass
 
-        if proc.returncode == 0:
-            return True, False
+        if returncode == 0:
+            return True, False, ""
 
-        stderr = proc.stderr or ""
+        if timed_out:
+            return False, False, _fetch_failure_reason(returncode, stderr, timed_out=True)
+
         if _is_transient_fetch_error(stderr):
             transient_attempts += 1
             print(
@@ -165,11 +213,26 @@ def fetch_base_gate_result(
 
         if stderr:
             print(stderr, file=sys.stderr, end="" if stderr.endswith("\n") else "\n")
-        return False, False
+        reason = _fetch_failure_reason(returncode, stderr, timed_out=False)
+        return False, False, reason
 
     if transient_attempts >= max_attempts:
-        return False, True
-    return False, False
+        return False, True, ""
+    return False, False, ""
+
+
+def fetch_base_gate_result(
+    repo_dir: Path, base: str, *, max_attempts: int = 3
+) -> tuple[bool, bool]:
+    """Fetch origin base with lock + retries.
+
+    Returns ``(success, transient_exhausted)``. ``transient_exhausted`` is
+    ``True`` only when every attempt failed with a transient ref-lock error.
+    """
+    success, transient_exhausted, _reason = _fetch_base(
+        repo_dir, base, max_attempts=max_attempts
+    )
+    return success, transient_exhausted
 
 
 def fetch_base_with_retry(repo_dir: Path, base: str, *, max_attempts: int = 3) -> bool:
@@ -184,9 +247,11 @@ def fetch_base_with_retry(repo_dir: Path, base: str, *, max_attempts: int = 3) -
 
 def fetch_base_or_raise(repo_dir: Path, base: str, *, remote: str = "origin") -> None:
     """Fetch *base* from *remote*, raising :class:`WorktreeError` after retry exhaustion."""
-    if fetch_base_with_retry(repo_dir, base):
+    success, _transient, reason = _fetch_base(repo_dir, base, max_attempts=3)
+    if success:
         return
-    raise WorktreeError(f"failed to fetch {remote}:{base}")
+    suffix = f": {reason}" if reason else ""
+    raise WorktreeError(f"failed to fetch {remote}:{base}{suffix}")
 
 
 def prepare_worktree(
