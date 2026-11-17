@@ -762,7 +762,6 @@ def format_text(result: Mapping[str, Any]) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-
     from issuesmith.cli_errors import ContractParser
 
     parser = ContractParser(command="metrics rework")
