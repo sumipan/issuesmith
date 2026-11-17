@@ -1383,8 +1383,8 @@ class BaseFreshnessGate:
 
         A silent ``--ff-only`` failure used to leave the branch behind while the loop
         believed the fix succeeded; with a base that moves every few seconds the
-        requires loop then re-ran every gate until the task timeout when the base branch
-        moves frequently. A rebase that conflicts is aborted and reported.
+        requires loop then re-ran every gate until the task timeout. A rebase
+        that conflicts is aborted and reported.
         """
         ff = subprocess.run(
             ["git", "merge", "--ff-only", f"origin/{self._base}"],
