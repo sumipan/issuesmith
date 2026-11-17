@@ -230,7 +230,7 @@ def _run_version_bump(worktree: Path, base_branch: str) -> subprocess.CompletedP
     )
 
 
-# Public name for callers outside publish (M1 version_behind_base gate, nexus #3936).
+# Public name for callers outside publish (M1 version_behind_base gate).
 run_version_bump = _run_version_bump
 
 
@@ -339,7 +339,7 @@ def _resolve_changelog_conflicts(changelog_path: Path) -> bool:
 
 
 # Transient fetch failures (shared .git ref lock, network) are retried before
-# giving up (sumipan/nexus#4747). Delays in seconds between attempts.
+# giving up after retries are exhausted. Delays in seconds between attempts.
 _FETCH_RETRY_DELAYS: tuple[float, ...] = (2.0, 5.0)
 
 
@@ -383,7 +383,7 @@ def _ensure_rebased(
 
     Returns None on success, PublishResult on failure (``FETCH_FAILED``,
     ``DIRTY_WORKTREE`` or ``REBASE_CONFLICT``). Before rebasing, discards RUNTIME_DIR_EXCLUDES dirt
-    that is outside allow_paths so nexus worktrees can rebase past jobs/chat
+    that is outside allow_paths so host worktrees can rebase past jobs/chat
     noise.
     """
     paths = allow_paths or []
@@ -457,8 +457,8 @@ def _ensure_rebased(
     )
 
 
-# Transient push failures (network, auth refresh) are retried before giving up
-# (sumipan/nexus#3680). Delays in seconds between attempts; patched to () in tests.
+# Transient push failures (network, auth refresh) are retried before giving up.
+# Delays in seconds between attempts; patched to () in tests.
 _PUSH_RETRY_DELAYS: tuple[float, ...] = (2.0, 5.0)
 _PUSH_REJECTED_MARKERS = ("[rejected]", "stale info", "non-fast-forward", "fetch first")
 
@@ -494,7 +494,7 @@ def _push_branch(worktree: Path, branch: str) -> PublishResult | None:
 
     Plain pushes never raise: a failure after retries is returned as
     ``PUSH_FAILED`` with git's stderr so the step reports it instead of
-    crashing with a bare ``CalledProcessError`` (sumipan/nexus#3680).
+    crashing with a bare ``CalledProcessError``.
 
     After ``_ensure_rebased``, a previously pushed tip may no longer be an
     ancestor of HEAD (same content, new SHAs). Plain ``git push`` then fails
@@ -506,7 +506,7 @@ def _push_branch(worktree: Path, branch: str) -> PublishResult | None:
     # (``+refs/heads/main:refs/remotes/origin/main``, the default for the /var/tmp/<repo>
     # clones) never create ``origin/<branch>`` from a bare ``git fetch origin <branch>``, so
     # every second publish believed the branch was new and pushed without the lease
-    # (rejected non-fast-forward; sumipan/nexus#3628 gen 3, 2026-09-25).
+    # (rejected non-fast-forward when the remote ref was missing and no lease was used).
     _run_git(
         worktree,
         "fetch",
@@ -648,7 +648,7 @@ def main(argv: list[str]) -> int:
             target_count=args.target_count,
         )
     except subprocess.CalledProcessError as exc:
-        # Keep git's own diagnosis instead of a bare traceback (sumipan/nexus#4747).
+        # Keep git's own diagnosis instead of a bare traceback.
         cmd = " ".join(exc.cmd) if isinstance(exc.cmd, (list, tuple)) else str(exc.cmd)
         print(f"command failed with exit {exc.returncode}: {cmd}", file=sys.stderr)
         for stream in (exc.stderr, exc.output):
@@ -664,7 +664,7 @@ def main(argv: list[str]) -> int:
     return result.exit_code
 
 
-# The bump helpers are shared with the M1 version_behind_base gate (nexus #3936).
+# The bump helpers are shared with the M1 version_behind_base gate.
 __all__ = [
     "PublishResult",
     "_bump_versions_in_range",

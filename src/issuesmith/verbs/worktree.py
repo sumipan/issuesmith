@@ -1,4 +1,4 @@
-"""prepare_worktree verb — public worktree orchestration (#6581 / nexus #6477)."""
+"""prepare_worktree verb — public worktree orchestration."""
 
 from __future__ import annotations
 

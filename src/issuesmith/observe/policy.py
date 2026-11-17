@@ -83,7 +83,7 @@ class ReleaseInFlightAction:
 
 @dataclass(frozen=True)
 class RemoveRunningLabelAction:
-    """Remove the -running label without releasing in_flight (nexus #4137 Fix 1).
+    """Remove the -running label without releasing in_flight.
 
     Used by DagTerminatedEvent so that the allow_paths lock is preserved until
     the DAG recovers (dag recover) or is explicitly reset/abandoned.
@@ -438,7 +438,7 @@ def execute(
     condition disappears the id is forgotten, so a later recurrence is reported once more.
     With ``client`` the andon is canonical (Issue comment + attention label via
     ``raise_andon``, sinks included) for actions bound to an Issue; without ``client`` or for
-    ``issue == 0`` it is only emitted to ``sinks``. (sumipan/nexus#3621)
+    ``issue == 0`` it is only emitted to ``sinks``.
     """
     from issuesmith.andon import Andon, answer_if_open, raise_andon
 

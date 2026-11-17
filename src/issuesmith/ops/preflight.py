@@ -32,7 +32,7 @@ import yaml
 
 # ghdag names issuesmith reaches at runtime through getattr(..., None) or late imports, so a
 # missing name would not fail at import time. Kept in sync with
-# tests/conventions/test_required_upstream_apis_exist.py (sumipan/nexus#3571).
+# tests/conventions/test_required_upstream_apis_exist.py.
 REQUIRED_UPSTREAM_APIS: tuple[tuple[str, str, str | None], ...] = (
     ("ghdag.quota", "QuotaGate", "read_state"),
     ("ghdag.quota", "QuotaGate", "modify"),
