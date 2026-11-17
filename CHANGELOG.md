@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.193.0 - 2026-11-17
+
 ### Added
 
 - Bundled reference develop line under `issuesmith.lines.develop` (step modules, hooks, and packaged wiring files).
