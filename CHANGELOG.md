@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.191.0 - 2026-11-17
+
 ### Changed
 
 - Usage errors for `queue`, `engine`, `metrics rework`, `smoke`, `publish`, and `version-bump` use the shared `error[<CODE>]:` + `hint:` stderr contract (via `issuesmith.cli_errors`). `queue` runtime failures now include codes (`NOT_FOUND`, `CONFLICT`, `INVALID_VALUE`, `FAILED`); new code `CONFLICT` (exit 1) when an in-flight release is blocked by a running DAG.
