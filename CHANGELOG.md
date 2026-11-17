@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.191.2 - 2026-11-17
+
 ### Removed
 
 - **BREAKING:** `paths.brake_state` is no longer read; set engine pause state via `paths.quota_state` only. Configurations that still set `paths.brake_state` raise `ConfigError`.
