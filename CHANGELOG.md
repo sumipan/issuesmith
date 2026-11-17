@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.190.8 - 2026-11-17
+
+### Fixed
+
+- Host-repository scope measurement and default `target_repo` follow configured `repo` instead of a hardcoded slug.
+
 ## 0.190.7 - 2026-11-17
 
 ### Added

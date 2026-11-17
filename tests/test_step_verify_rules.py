@@ -5,7 +5,7 @@ from issuesmith.step_verify import DESIGN_DOC_GATES, collect_violations, format_
 
 _VALID_BODY = (
     '```yaml\n'
-    'target_repo: sumipan/nexus\n'
+    'target_repo: sumipan/issuesmith\n'
     'base_branch: main\n'
     'allow_paths:\n'
     '  - "**"\n'

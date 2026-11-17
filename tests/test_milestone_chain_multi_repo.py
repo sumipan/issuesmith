@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import pytest
+import yaml
 
 from issuesmith.config import reset_config_cache
 from issuesmith.language import EN
-from issuesmith.milestone import validate_children
+from issuesmith.milestone import _sub1_build_dep_section, validate_children
 from tests.legacy_text import CHANGE_TYPE, DESCRIPTION, FILE_PATH, MODIFY, REPOSITORY
 
 # Split-plan / section vocabulary comes from the language pack (EN in tests); the
@@ -102,6 +103,41 @@ def _reset_cfg():
     reset_config_cache()
     yield
     reset_config_cache()
+
+
+@pytest.fixture
+def _config_owner_a(tmp_path, monkeypatch):
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(yaml.safe_dump({"repo": "owner-a/repo-a"}), encoding="utf-8")
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    yield
+    reset_config_cache()
+
+
+@pytest.mark.parametrize(
+    ("dep_target_repo", "expect_note"),
+    [
+        ("owner-a/repo-b", True),
+        ("owner-a/repo-a", False),
+    ],
+)
+def test_cross_repo_note_follows_config_repo(
+    _config_owner_a, dep_target_repo, expect_note,
+):
+    """Refs #7156."""
+    note = EN.messages["milestone.child_cross_repo_note"]
+
+    class Client:
+        def issue_get(self, number, fields=None):
+            return {
+                "title": "dep",
+                "state": "OPEN",
+                "body": f"```yaml\ntarget_repo: {dep_target_repo}\n```\n",
+            }
+
+    out = _sub1_build_dep_section("#99", row_repo="owner-a/repo-a", client=Client())
+    assert (note in out) is expect_note
 
 
 class TestValidateChildrenMultiRepo:

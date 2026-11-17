@@ -5,6 +5,10 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+import yaml
+
+from issuesmith.config import reset_config_cache
 from issuesmith.gate_rules import GATE_REGISTRY
 from issuesmith.gate_rules.design_lint_rules import DesignLintRules, _pytest_module_name
 from tests import legacy_text
@@ -282,5 +286,53 @@ def test_resolve_scope_root_none_skips(monkeypatch):
     )
     all_v = DesignLintRules().check(body, [])
     assert [v for v in all_v if v.rule_id == "design_lint.test_basename_collision"] == []
+
+
+@pytest.fixture
+def _config_owner_a(tmp_path, monkeypatch):
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "owner-a/repo-a", "scope_gate": {"enabled": False}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    yield
+    reset_config_cache()
+
+
+def test_missing_target_repo_defaults_to_config_repo(
+    tmp_path, monkeypatch, _config_owner_a,
+):
+    """Refs #7156."""
+    repo = _git_repo(tmp_path)
+    _track(repo, "tests/b/test_x.py")
+    _commit(repo)
+    monkeypatch.setattr(
+        "issuesmith.gate_rules.design_lint_rules.resolve_scope_root",
+        lambda metadata, cfg: repo,
+    )
+    head = (
+        "base_branch: main\n"
+        "allow_paths:\n"
+        '  - "tests/**"\n'
+    )
+    table = (
+        "| `owner-a/repo-a` | `tests/a/test_x.py` | new | x |\n"
+    )
+    body = (
+        f"```yaml\n{head}```\n\n## Changed Files\n\n"
+        f"{_CHANGE_TABLE_HEADER}{table}"
+    )
+    all_v = DesignLintRules().check(body, [])
+    collisions = [
+        v for v in all_v if v.rule_id == "design_lint.test_basename_collision"
+    ]
+    assert len(collisions) == 1
+    missing = [
+        v for v in all_v if v.rule_id == "design_lint.yaml_contract.missing_required"
+    ]
+    assert len(missing) == 1
+    assert "<owner>/<repo>" in (missing[0].fix_hint or "")
 
 

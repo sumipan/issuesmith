@@ -9,7 +9,7 @@ from issuesmith.scope_gate import ScopeMeasure
 
 _NEXUS_BODY = (
     "```yaml\n"
-    "target_repo: sumipan/nexus\n"
+    "target_repo: sumipan/issuesmith\n"
     "base_branch: main\n"
     "allow_paths:\n"
     '  - "src/**"\n'
@@ -88,7 +88,7 @@ def _use_pack(tmp_path, monkeypatch, pack_path):
 def _narrowable_body(ac_heading: str) -> str:
     return (
         "```yaml\n"
-        "target_repo: sumipan/nexus\n"
+        "target_repo: sumipan/issuesmith\n"
         "base_branch: main\n"
         "allow_paths:\n"
         '  - "src/**"\n'
