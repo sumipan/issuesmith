@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 from importlib import resources
-from importlib.resources.abc import Traversable
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from importlib.abc import Traversable
 
 LINES: tuple[str, ...] = ("develop",)
 
 
 def _resource_tree(root: Traversable, prefix: str = "") -> list[tuple[str, Traversable]]:
-    out: list[tuple[str, resources.abc.Traversable]] = []
+    out: list[tuple[str, Traversable]] = []
     for child in sorted(root.iterdir(), key=lambda node: node.name):
         rel = f"{prefix}/{child.name}" if prefix else child.name
         if child.is_file():

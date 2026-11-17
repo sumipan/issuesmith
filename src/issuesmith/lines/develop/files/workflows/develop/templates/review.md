@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # develop/review — Issue #${issue_number}
 set -euo pipefail
-exec python3 -m issuesmith dispatch review \
+exec python3 -m issuesmith.lines.develop.review dispatch \
   "issue_number=${issue_number}" \
   "base_branch=${base_branch}" \
   "branch=${branch}" \

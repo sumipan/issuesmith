@@ -63,6 +63,21 @@ python3 -m issuesmith config extract-line develop .
 ```
 
 3. Edit the extracted `issuesmith.yaml`: set `repo`, `supported_repos`, engines, and paths as needed. Step `module` values already point at `issuesmith.lines.develop.*`.
+
+```yaml
+steps:
+  prepare:
+    module: issuesmith.lines.develop.prepare
+  implement:
+    module: issuesmith.lines.develop.implement
+  verify:
+    module: issuesmith.lines.develop.verify
+  review:
+    module: issuesmith.lines.develop.review
+  merge:
+    module: issuesmith.lines.develop.merge
+```
+
 4. Run the watcher (from the host repository root):
 
 ```bash
@@ -324,6 +339,14 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/github_api.py` | `gh` command: Issue / PR helpers with label and target guards |
 | `issuesmith/lanes.py` | Lane ledger planning: capacity, candidates, enqueue and patrol report |
 | `issuesmith/language.py` | Language packs |
+| `issuesmith/lines/__init__.py` | Bundled reference lines (`LINES`) and `extract_line` for `config extract-line` |
+| `issuesmith/lines/develop/__init__.py` | Reference develop line package marker |
+| `issuesmith/lines/develop/prepare.py` | Reference develop step: prepare |
+| `issuesmith/lines/develop/implement.py` | Reference develop step: implement (and repair) |
+| `issuesmith/lines/develop/verify.py` | Reference develop step: verify |
+| `issuesmith/lines/develop/review.py` | Reference develop step: review (adds Issue body and diff to the review dispatch) |
+| `issuesmith/lines/develop/merge.py` | Reference develop step: merge |
+| `issuesmith/lines/develop/hooks.py` | ghdag runner hooks for the reference develop line (`DevelopLineHooks`) |
 | `issuesmith/merge.py` | PR merge and verification helpers |
 | `issuesmith/metrics_events.py` | Metrics JSONL event writers |
 | `issuesmith/metrics_rework.py` | Rework metrics (`metrics rework`) |

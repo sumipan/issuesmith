@@ -20,7 +20,7 @@ phases:
     handler: develop
     steps: [prepare, implement, verify, review, merge]
     advance_when: [deps_terminal]
-    terminal_labels: [issuesmith:develop-done]
+terminal_labels: [issuesmith:develop-done]
 steps:
   prepare:
     module: issuesmith.lines.develop.prepare

@@ -565,11 +565,24 @@ _EXPECTED_EXTRACT_PATHS = frozenset(
 )
 
 
-def _build_wheel(tmp_path: Path) -> tuple[Path, Path]:
+@pytest.fixture(scope="module")
+def built_wheel_site(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Build the wheel once (offline, no build isolation) and install it to a target dir."""
+    tmp_path = tmp_path_factory.mktemp("wheel")
     wheel_dir = tmp_path / "wheels"
     wheel_dir.mkdir()
     proc = subprocess.run(
-        [sys.executable, "-m", "pip", "wheel", str(_REPO_ROOT), "--no-deps", "-w", str(wheel_dir)],
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "wheel",
+            str(_REPO_ROOT),
+            "--no-deps",
+            "--no-build-isolation",
+            "-w",
+            str(wheel_dir),
+        ],
         capture_output=True,
         text=True,
     )
@@ -593,12 +606,14 @@ def _build_wheel(tmp_path: Path) -> tuple[Path, Path]:
         text=True,
     )
     assert ins.returncode == 0, ins.stderr
-    return wheels[0], install_root
+    return install_root
 
 
-def test_built_wheel_imports_reference_line_modules(tmp_path: Path) -> None:
+def test_built_wheel_imports_reference_line_modules(
+    tmp_path: Path, built_wheel_site: Path
+) -> None:
     """refs #7197 AC1: wheel install exposes packaged develop-line modules."""
-    _wheel, install_root = _build_wheel(tmp_path)
+    install_root = built_wheel_site
     install_str = str(install_root.resolve())
     script = textwrap.dedent(
         f"""\
@@ -622,9 +637,11 @@ def test_built_wheel_imports_reference_line_modules(tmp_path: Path) -> None:
     assert probe.returncode == 0, probe.stderr + probe.stdout
 
 
-def test_built_wheel_extract_line_writes_all_files(tmp_path: Path) -> None:
+def test_built_wheel_extract_line_writes_all_files(
+    tmp_path: Path, built_wheel_site: Path
+) -> None:
     """refs #7197 AC2: extract-line from wheel writes nine wiring files."""
-    _wheel, install_root = _build_wheel(tmp_path)
+    install_root = built_wheel_site
     dest = tmp_path / "extracted"
     (tmp_path / "cwd").mkdir()
     proc = subprocess.run(
@@ -645,6 +662,7 @@ def test_extract_line_refuses_existing_file(tmp_path: Path) -> None:
     """refs #7197 AC7: extract-line refuses to overwrite existing wiring."""
     dest = tmp_path / "host"
     extract_line("develop", dest)
+    before = (dest / "issuesmith.yaml").read_text(encoding="utf-8")
     proc = subprocess.run(
         [sys.executable, "-m", "issuesmith", "config", "extract-line", "develop", str(dest)],
         cwd=_REPO_ROOT,
@@ -654,7 +672,6 @@ def test_extract_line_refuses_existing_file(tmp_path: Path) -> None:
     )
     assert proc.returncode == 1, proc.stderr
     assert "error[CONFLICT]" in proc.stderr
-    before = (dest / "issuesmith.yaml").read_text(encoding="utf-8")
     assert (dest / "issuesmith.yaml").read_text(encoding="utf-8") == before
     file_count = sum(1 for path in dest.rglob("*") if path.is_file())
     assert file_count == len(_EXPECTED_EXTRACT_PATHS)
