@@ -10,6 +10,8 @@ import sys
 from dataclasses import asdict
 from typing import Any, Sequence
 
+from issuesmith.cli_errors import ContractParser, fail
+
 _ANDON_USAGE = """\
 usage: issuesmith andon <subcommand> ...
 
@@ -41,47 +43,7 @@ commands:
   andon list | show | answer | note | auto-answer
 """
 
-_ERROR_EXIT: dict[str, int] = {
-    "UNKNOWN_COMMAND": 2,
-    "UNKNOWN_ARGUMENT": 2,
-    "MISSING_ARGUMENT": 2,
-    "INVALID_VALUE": 2,
-    "NOT_FOUND": 1,
-    "CONFIG_ERROR": 1,
-    "FAILED": 1,
-}
-
-
-def _fail(code: str, message: str, hint: str | None = None) -> int:
-    print(f"error[{code}]: {message}", file=sys.stderr)
-    if hint:
-        print(f"hint: {hint}", file=sys.stderr)
-    return _ERROR_EXIT[code]
-
-
-class _Parser(argparse.ArgumentParser):
-    def __init__(self, *args: Any, command: str = "", **kwargs: Any) -> None:
-        if "prog" not in kwargs and command:
-            kwargs["prog"] = f"issuesmith {command}"
-        super().__init__(*args, **kwargs)
-
-    def error(self, message: str) -> None:  # noqa: ARG002 — argparse API
-        lower = message.lower()
-        if "unrecognized arguments" in lower or "unrecognized option" in lower:
-            code = "UNKNOWN_ARGUMENT"
-        elif "the following arguments are required" in lower or "required:" in lower:
-            code = "MISSING_ARGUMENT"
-        elif message.startswith("invalid choice:"):
-            code = "UNKNOWN_COMMAND"
-        elif "invalid int value" in lower or "invalid choice" in lower:
-            code = "INVALID_VALUE"
-        else:
-            code = "INVALID_VALUE"
-        rc = _fail(code, message, self.format_usage())
-        raise SystemExit(rc)
-
-
-def _parse_args(parser: _Parser, argv: list[str]) -> argparse.Namespace | int:
+def _parse_args(parser: ContractParser, argv: list[str]) -> argparse.Namespace | int:
     """Parse argv; on argparse failure return an exit code instead of raising."""
     try:
         return parser.parse_args(argv)
@@ -104,7 +66,7 @@ def _run_gate_preflight(argv: list[str]) -> int:
     import issuesmith.gate_rules  # noqa: F401 — populates GATE_REGISTRY
     from issuesmith.gate_registry import GATE_REGISTRY
 
-    parser = _Parser(command="gate-preflight")
+    parser = ContractParser(command="gate-preflight")
     parser.add_argument("--gate", required=True, help="Gate name (rule-class GATE_REGISTRY)")
     parser.add_argument("--body-file", required=True, help="Path to issue body text file")
     parser.add_argument("--labels-file", default=None, help="Path to newline-separated labels file")
@@ -115,7 +77,7 @@ def _run_gate_preflight(argv: list[str]) -> int:
 
     if args.gate not in GATE_REGISTRY:
         registered = ", ".join(sorted(GATE_REGISTRY))
-        return _fail(
+        return fail(
             "INVALID_VALUE",
             f"gate {args.gate!r} is not registered",
             f"registered gates: {registered}",
@@ -123,7 +85,7 @@ def _run_gate_preflight(argv: list[str]) -> int:
 
     body_path = Path(args.body_file)
     if not body_path.exists():
-        return _fail("NOT_FOUND", f"body file {args.body_file!r} does not exist")
+        return fail("NOT_FOUND", f"body file {args.body_file!r} does not exist")
 
     body = body_path.read_text(encoding="utf-8")
 
@@ -204,8 +166,8 @@ def _cmd_queue(argv: list[str]) -> int:
     return int(queue_main(argv))
 
 
-def _deps_parser() -> _Parser:
-    parser = _Parser(command="deps")
+def _deps_parser() -> ContractParser:
+    parser = ContractParser(command="deps")
     sub = parser.add_subparsers(dest="cmd", required=True)
     check = sub.add_parser("check")
     check.add_argument("issue", type=int)
@@ -226,7 +188,7 @@ def _cmd_deps(argv: list[str]) -> int:
     if args.cmd == "check":
         print(json.dumps(check_result_to_dict(check_issue(args.issue))))
         return 0
-    return _fail("UNKNOWN_COMMAND", f"unknown deps subcommand: {args.cmd}")
+    return fail("UNKNOWN_COMMAND", f"unknown deps subcommand: {args.cmd}")
 
 
 def _cmd_tier(argv: list[str]) -> int:
@@ -297,8 +259,8 @@ _LABELS_USAGE = (
 )
 
 
-def _andon_parser() -> _Parser:
-    parser = _Parser(command="andon")
+def _andon_parser() -> ContractParser:
+    parser = ContractParser(command="andon")
     sub = parser.add_subparsers(dest="subcmd", required=True)
     p_list = sub.add_parser("list")
     p_list.add_argument("--all", action="store_true")
@@ -341,7 +303,7 @@ def _cmd_andon(argv: list[str]) -> int:
     )
 
     if not argv:
-        return _fail(
+        return fail(
             "MISSING_ARGUMENT",
             "subcommand required",
             "subcommands: list, show, answer, note, auto-answer",
@@ -380,7 +342,7 @@ def _cmd_andon(argv: list[str]) -> int:
         andons = list_open(client)
         matched = [a for a in andons if a.id == args.andon_id]
         if not matched:
-            return _fail("NOT_FOUND", f"andon not found: {args.andon_id}")
+            return fail("NOT_FOUND", f"andon not found: {args.andon_id}")
         print(to_comment(matched[0]))
         return 0
 
@@ -407,7 +369,7 @@ def _cmd_andon(argv: list[str]) -> int:
         try:
             answer(client, args.andon_id, args.action, answered_by=args.by)
         except ValueError as exc:
-            return _fail("INVALID_VALUE", str(exc))
+            return fail("INVALID_VALUE", str(exc))
         print(f"answered {args.andon_id} with: {args.action}")
         return 0
 
@@ -415,17 +377,17 @@ def _cmd_andon(argv: list[str]) -> int:
         try:
             note(client, args.andon_id, args.key, args.value)
         except KeyError:
-            return _fail("NOT_FOUND", f"andon not found: {args.andon_id}")
+            return fail("NOT_FOUND", f"andon not found: {args.andon_id}")
         except ValueError as exc:
-            return _fail("INVALID_VALUE", str(exc))
+            return fail("INVALID_VALUE", str(exc))
         print(f"noted {args.andon_id}: {args.key}={args.value}")
         return 0
 
-    return _fail("UNKNOWN_COMMAND", f"unknown andon subcommand: {args.subcmd}")
+    return fail("UNKNOWN_COMMAND", f"unknown andon subcommand: {args.subcmd}")
 
 
-def _labels_parser() -> _Parser:
-    parser = _Parser(command="labels")
+def _labels_parser() -> ContractParser:
+    parser = ContractParser(command="labels")
     sub = parser.add_subparsers(dest="subcmd", required=True)
     p = sub.add_parser("reconcile")
     p.add_argument("--fix", action="store_true")
@@ -435,7 +397,7 @@ def _labels_parser() -> _Parser:
 
 def _cmd_labels(argv: list[str]) -> int:
     if not argv:
-        return _fail("MISSING_ARGUMENT", "subcommand required", "subcommands: reconcile")
+        return fail("MISSING_ARGUMENT", "subcommand required", "subcommands: reconcile")
     parser = _labels_parser()
     if argv[0] in {"-h", "--help"}:
         parser.print_help()
@@ -451,11 +413,11 @@ def _cmd_labels(argv: list[str]) -> int:
 
         reconcile(get_forge(), fix=args.fix, as_json=args.json)
         return 0
-    return _fail("UNKNOWN_COMMAND", f"unknown labels subcommand: {args.subcmd}")
+    return fail("UNKNOWN_COMMAND", f"unknown labels subcommand: {args.subcmd}")
 
 
-def _doctor_parser() -> _Parser:
-    parser = _Parser(command="doctor")
+def _doctor_parser() -> ContractParser:
+    parser = ContractParser(command="doctor")
     parser.add_argument("--json", action="store_true")
     return parser
 
@@ -493,7 +455,7 @@ def _cmd_version_bump(argv: list[str]) -> int:
 
 
 def _cmd_resume(argv: list[str]) -> int:
-    parser = _Parser(command="resume")
+    parser = ContractParser(command="resume")
     parser.add_argument("issue", type=int)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--from", dest="from_step")
@@ -547,8 +509,8 @@ def _cmd_convert_to_milestone(argv: list[str]) -> int:
     return int(convert_main(argv))
 
 
-def _milestone_parser() -> _Parser:
-    parser = _Parser(command="milestone")
+def _milestone_parser() -> ContractParser:
+    parser = ContractParser(command="milestone")
     sub = parser.add_subparsers(dest="cmd", required=True)
     p_status = sub.add_parser("status")
     p_status.add_argument("parent", type=int)
@@ -572,7 +534,7 @@ def _cmd_milestone(argv: list[str]) -> int:
     )
 
     if not argv:
-        return _fail(
+        return fail(
             "MISSING_ARGUMENT",
             "subcommand required",
             "subcommands: status, resume, prune, consolidate",
@@ -593,7 +555,7 @@ def _cmd_milestone(argv: list[str]) -> int:
         return milestone_prune(dry_run=args.dry_run)
     if args.cmd == "consolidate":
         return milestone_consolidate(args.child, args.into_sibling)
-    return _fail("UNKNOWN_COMMAND", f"unknown milestone subcommand: {args.cmd}")
+    return fail("UNKNOWN_COMMAND", f"unknown milestone subcommand: {args.cmd}")
 
 
 def _json_default(o: object) -> object:
@@ -602,8 +564,8 @@ def _json_default(o: object) -> object:
     return str(o)
 
 
-def _config_parser() -> _Parser:
-    parser = _Parser(command="config")
+def _config_parser() -> ContractParser:
+    parser = ContractParser(command="config")
     sub = parser.add_subparsers(dest="subcmd", required=True)
     sub.add_parser("show")
     return parser
@@ -614,7 +576,7 @@ def _cmd_config(argv: list[str]) -> int:
     from issuesmith.gates import validate_step_requires
 
     if not argv:
-        return _fail("MISSING_ARGUMENT", "subcommand required", "subcommands: show")
+        return fail("MISSING_ARGUMENT", "subcommand required", "subcommands: show")
     parser = _config_parser()
     if argv[0] in {"-h", "--help"}:
         parser.print_help()
@@ -624,20 +586,20 @@ def _cmd_config(argv: list[str]) -> int:
         return parsed
     args = parsed
     if args.subcmd != "show":
-        return _fail("UNKNOWN_COMMAND", f"unknown config subcommand: {args.subcmd}")
+        return fail("UNKNOWN_COMMAND", f"unknown config subcommand: {args.subcmd}")
     cfg = get_config()
     print(json.dumps(asdict(cfg), default=_json_default, indent=2))
     try:
         validate_step_requires(cfg.steps)
     except ConfigError as exc:
-        return _fail("CONFIG_ERROR", f"invalid requires: {exc}")
+        return fail("CONFIG_ERROR", f"invalid requires: {exc}")
     return 0
 
 
 def _cmd_observe(argv: list[str]) -> int:
     import json as _json
 
-    parser = _Parser(command="observe")
+    parser = ContractParser(command="observe")
     parser.add_argument("--apply", action="store_true", help="Execute policy actions")
     parser.add_argument("--json", action="store_true", dest="as_json", help="JSON output")
     parsed = _parse_args(parser, argv)
@@ -726,8 +688,8 @@ def _lanes_role_engine_map(cfg: Any) -> dict[str, str]:
     return {ph.role: resolve_engine(ph.name) for ph in cfg.phases}
 
 
-def _lanes_parser() -> _Parser:
-    parser = _Parser(command="lanes")
+def _lanes_parser() -> ContractParser:
+    parser = ContractParser(command="lanes")
     sub = parser.add_subparsers(dest="subcmd", required=True)
     p_check = sub.add_parser("check")
     p_check.add_argument("--apply", action="store_true")
@@ -761,7 +723,7 @@ def _cmd_lanes(argv: list[str]) -> int:
     from issuesmith.quota_gate import is_github_api_low, read_github_api_state
 
     if not argv:
-        return _fail(
+        return fail(
             "MISSING_ARGUMENT",
             "subcommand required",
             "subcommands: check, report",
@@ -893,7 +855,7 @@ def _cmd_lanes(argv: list[str]) -> int:
         print(summary)
         return 0
 
-    return _fail("UNKNOWN_COMMAND", f"unknown lanes subcommand: {args.subcmd}")
+    return fail("UNKNOWN_COMMAND", f"unknown lanes subcommand: {args.subcmd}")
 
 
 _HANDLERS = {
@@ -930,7 +892,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = list(sys.argv[1:] if argv is None else argv)
     if not args:
         command_hint = ", ".join(sorted(_HANDLERS))
-        raise SystemExit(_fail("MISSING_ARGUMENT", "command required", f"commands: {command_hint}"))
+        raise SystemExit(fail("MISSING_ARGUMENT", "command required", f"commands: {command_hint}"))
     if args[0] in {"-h", "--help"}:
         print(_USAGE, end="")
         raise SystemExit(0)
@@ -939,7 +901,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     if handler is None:
         command_hint = ", ".join(sorted(_HANDLERS))
         raise SystemExit(
-            _fail("UNKNOWN_COMMAND", f"unknown command: {cmd}", f"commands: {command_hint}")
+            fail("UNKNOWN_COMMAND", f"unknown command: {cmd}", f"commands: {command_hint}")
         )
     raise SystemExit(handler(rest))
 

@@ -762,9 +762,10 @@ def format_text(result: Mapping[str, Any]) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    import argparse
 
-    parser = argparse.ArgumentParser(prog="issuesmith metrics rework")
+    from issuesmith.cli_errors import ContractParser
+
+    parser = ContractParser(command="metrics rework")
     parser.add_argument("--since", help="Include rows on/after this date (YYYY-MM-DD)")
     parser.add_argument("--issue", type=int, help="Filter to one issue number")
     parser.add_argument("--audit", type=Path, help="ghdag audit JSONL path")

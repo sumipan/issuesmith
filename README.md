@@ -214,7 +214,7 @@ Commands routed through `issuesmith.cli` print usage errors to **stderr** in a m
 - Invalid user input must not print a Python traceback.
 - `--help` / `-h` exits **0** and prints usage on stdout.
 
-### Error codes (`issuesmith.cli`)
+### Error codes
 
 | Code | Exit | When |
 |---|---|---|
@@ -222,11 +222,12 @@ Commands routed through `issuesmith.cli` print usage errors to **stderr** in a m
 | `UNKNOWN_ARGUMENT` | 2 | Undeclared option or extra positional argument |
 | `MISSING_ARGUMENT` | 2 | Required argument missing (including omitted subcommand) |
 | `INVALID_VALUE` | 2 | Value shape is wrong (for example a non-integer Issue number) |
-| `NOT_FOUND` | 1 | Named object does not exist (andon, body file, …) |
+| `NOT_FOUND` | 1 | Named object does not exist (andon, body file, queue entry, …) |
 | `CONFIG_ERROR` | 1 | Resolved configuration fails validation |
 | `FAILED` | 1 | External failure (for example forge API error) |
+| `CONFLICT` | 1 | Target exists but the operation is not allowed in the current state |
 
-`queue`, `engine`, `gh`, `dispatch`, `publish`, `smoke`, and other module-level argparse entry points keep argparse-style usage lines and exit **2** on usage mistakes; only stderr wording standardized in this section applies to commands implemented in `issuesmith.cli`.
+Commands implemented in `issuesmith.cli` and the module-level parsers for `queue`, `engine`, `metrics rework`, `publish`, `smoke`, and `version-bump` use this contract on usage mistakes. `gh`, `dispatch`, `tier`, `verify`, and `convert-to-milestone` still use their legacy argparse stderr shapes.
 
 ### `--json` commands
 
@@ -297,6 +298,7 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/body_editor.py` | Issue body H2 section editing and milestone normalizers |
 | `issuesmith/branch_reuse.py` | Find and record reusable branches from earlier runs |
 | `issuesmith/bump_commits.py` | Publish version-bump commit detection and rewrite helpers |
+| `issuesmith/cli_errors.py` | Shared CLI usage-error contract (`fail`, `ContractParser`, `ERROR_EXIT`) |
 | `issuesmith/cli.py` | Unified CLI (`_HANDLERS`) |
 | `issuesmith/config.py` | `issuesmith.yaml` loading, validation and defaults |
 | `issuesmith/context_hook.py` | ghdag context hook and Issue YAML metadata parsing |

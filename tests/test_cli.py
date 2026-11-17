@@ -67,6 +67,13 @@ def test_engine_show_runs(tmp_path: Path) -> None:
         (["andon", "list", "--bogus"], "UNKNOWN_ARGUMENT"),
         (["config", "show", "--bogus"], "UNKNOWN_ARGUMENT"),
         (["andon", "answer"], "MISSING_ARGUMENT"),
+        (["queue", "status", "--bogus"], "UNKNOWN_ARGUMENT"),
+        (["engine", "show", "--bogus"], "UNKNOWN_ARGUMENT"),
+        (["metrics", "rework", "--bogus"], "UNKNOWN_ARGUMENT"),
+        (["smoke", "--bogus"], "UNKNOWN_ARGUMENT"),
+        (["publish"], "MISSING_ARGUMENT"),
+        (["version-bump"], "MISSING_ARGUMENT"),
+        (["queue", "nosuch"], "UNKNOWN_COMMAND"),
     ],
 )
 def test_usage_errors_exit_2_with_code_and_hint(capsys, argv: list[str], code: str) -> None:
@@ -80,6 +87,37 @@ def test_usage_errors_exit_2_with_code_and_hint(capsys, argv: list[str], code: s
     lines = [ln for ln in err.splitlines() if ln.strip()]
     assert lines[0].startswith(f"error[{code}]:")
     assert any(ln.startswith("hint:") for ln in lines)
+    assert "issuesmith.queue" not in err
+    assert "python3 -m issuesmith" not in err
+
+
+def test_queue_runtime_errors_have_code(tmp_path: Path, capsys) -> None:
+    """refs sumipan/nexus#7157: queue runtime failures use error codes."""
+    from issuesmith import cli
+
+    qp = tmp_path / "queue.jsonl"
+    sp = tmp_path / "state.json"
+    lp = tmp_path / "lock"
+    paths = [
+        "--queue-path",
+        str(qp),
+        "--state-path",
+        str(sp),
+        "--lock-path",
+        str(lp),
+    ]
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["queue", *paths, "release", "--issue", "999999"])
+    assert exc_info.value.code == 1
+    err = capsys.readouterr().err
+    assert err.splitlines()[0].startswith("error[NOT_FOUND]:")
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["queue", *paths, "dequeue", "--request-id", "missing", "--reason", "x"])
+    assert exc_info.value.code == 1
+    err = capsys.readouterr().err
+    assert err.splitlines()[0].startswith("error[NOT_FOUND]:")
 
 
 def test_resume_in_handlers() -> None:

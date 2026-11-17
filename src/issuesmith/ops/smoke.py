@@ -218,8 +218,9 @@ def _check_raw_add_label_in_templates() -> list[str]:
 
 
 def main(argv: list[str]) -> int:
-    import argparse
-    parser = argparse.ArgumentParser(description="issuesmith pipeline smoke test")
+    from issuesmith.cli_errors import ContractParser
+
+    parser = ContractParser(command="smoke", description="issuesmith pipeline smoke test")
     parser.add_argument("issues", nargs="*", type=int)
     parser.add_argument("--workflow", default="issuesmith", help="workflow name")
     args = parser.parse_args(argv)

@@ -20,6 +20,7 @@ import yaml
 from ghdag.forge import ForgePort, GitHubApiError, get_forge
 from ghdag.quota import QuotaGate
 
+from issuesmith.cli_errors import ContractParser, fail
 from issuesmith.config import get_config
 from issuesmith.dep_extractor import check_dependencies
 from issuesmith.forge_api import api_request
@@ -2449,8 +2450,7 @@ def _cmd_enqueue(args: argparse.Namespace) -> int:
             after=getattr(args, "after", None) or None,
         )
     except QueueValidationError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
+        return fail("INVALID_VALUE", str(exc))
     print(
         json.dumps(
             {
@@ -2648,7 +2648,7 @@ def _queue_doctor_payload(args: argparse.Namespace) -> tuple[int, dict[str, Any]
     try:
         client = get_forge(repo=REPO)
     except Exception as exc:
-        print(f"error: forge client unavailable: {exc}", file=sys.stderr)
+        fail("FAILED", f"forge client unavailable: {exc}")
         return 1, {
             "ok": False,
             "orphan_active_order_ids": [],
@@ -2658,7 +2658,7 @@ def _queue_doctor_payload(args: argparse.Namespace) -> tuple[int, dict[str, Any]
     try:
         untracked = _find_untracked_running(client, snap)
     except Exception as exc:
-        print(f"error: untracked check failed: {exc}", file=sys.stderr)
+        fail("FAILED", f"untracked check failed: {exc}")
         return 1, {
             "ok": False,
             "orphan_active_order_ids": [],
@@ -2749,8 +2749,7 @@ def _cmd_dequeue(args: argparse.Namespace) -> int:
     reason = str(args.reason) if args.reason else ""
     snap = store.snapshot()
     if request_id not in snap.active_order:
-        print(f"error: request {request_id} is not in active_order", file=sys.stderr)
-        return 1
+        return fail("NOT_FOUND", f"request {request_id} is not in active_order")
 
     req = store.effective_request(snap, request_id)
     store.complete(request_id, "dequeued", extra_meta={"reason": reason})
@@ -2910,21 +2909,19 @@ def _cmd_release(args: argparse.Namespace) -> int:
         None,
     )
     if entry is None:
-        print(f"error: no in_flight entry for issue #{issue}", file=sys.stderr)
-        print("hint: run 'queue status' to list in_flight entries", file=sys.stderr)
-        return 1
+        return fail(
+            "NOT_FOUND",
+            f"no in_flight entry for issue #{issue}",
+            "run 'queue status' to list in_flight entries",
+        )
     dag_states = load_dag_states(EXEC_PATH, DONE_DIR, DONE_DIR.parent / "running")
     state = dag_states.get(issue)
     if state is not None and state.status == "running":
-        print(
-            f"error: issue #{issue} DAG is currently running; cannot release in_flight",
-            file=sys.stderr,
+        return fail(
+            "CONFLICT",
+            f"issue #{issue} DAG is currently running; cannot release in_flight",
+            "wait for the DAG to finish (or cancel it), then retry",
         )
-        print(
-            "hint: wait for the DAG to finish (or cancel it), then retry",
-            file=sys.stderr,
-        )
-        return 1
     store.remove_in_flight(issue)
     role = entry.get("role", "unknown")
     dispatched_at = entry.get("dispatched_at", "unknown")
@@ -2946,7 +2943,7 @@ def _cmd_release(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="issuesmith.queue")
+    parser = ContractParser(command="queue")
     parser.add_argument("--queue-path", default=None)
     parser.add_argument("--state-path", default=None)
     parser.add_argument("--lock-path", default=None)

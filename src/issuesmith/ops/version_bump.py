@@ -6,7 +6,6 @@ Y if any of A1–A3 / B1–B4 match; otherwise Z. Never touches the X (major) di
 
 from __future__ import annotations
 
-import argparse
 import re
 import subprocess
 import sys
@@ -424,7 +423,9 @@ def run_bump(worktree: Path, base: str) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    from issuesmith.cli_errors import ContractParser
+
+    parser = ContractParser(command="version-bump", description=__doc__)
     parser.add_argument("--worktree", required=True)
     parser.add_argument("--base", required=True)
     args = parser.parse_args(argv)
