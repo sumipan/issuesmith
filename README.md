@@ -439,6 +439,7 @@ A file that is not found is treated as empty, which fails validation because `re
 | `ISSUESMITH_REPAIR_ACTIVE` | (unset) | Set internally during a repair run to stop nested repairs |
 | `METRICS_JSONL_PATH` | `paths.metrics` | Engine metrics JSONL path |
 | `ISSUESMITH_FETCH_LOCK_WAIT` | `30` | Seconds to wait for the base-fetch lock (legacy P0 env name emits `DeprecationWarning`) |
+| `ISSUESMITH_FETCH_TIMEOUT_SEC` | `300` | Wall-clock limit (seconds) for a single base `git fetch` in P0 |
 | `GHDAG_TASK_UUID` | (set by ghdag) | Current DAG task UUID, recorded as `parent_uuid` in metrics and dispatch |
 | `AGENT_SKILLS_DIR` | `~/.agents/skills` | Skills directory checked by `doctor` |
 

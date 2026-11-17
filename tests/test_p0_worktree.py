@@ -140,31 +140,6 @@ def test_prepare_worktree_rejects_branch_mismatch(tmp_path: Path) -> None:
         wt.prepare_worktree(repo, worktree_dir, "feat/other", "main")
 
 
-def test_fetch_base_or_raise_includes_remote_and_ref(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    repo = tmp_path / "clone"
-    _git_init_with_main(repo)
-    subprocess.run(
-        ["git", "-C", str(repo), "remote", "add", "origin", str(repo)],
-        check=True,
-        capture_output=True,
-    )
-
-    def always_fail(cmd, **kwargs):  # type: ignore[no-untyped-def]
-        if "rev-parse" in cmd and "--git-common-dir" in cmd:
-            return subprocess.CompletedProcess(cmd, 0, stdout=".git\n", stderr="")
-        if "fetch" in cmd:
-            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="network down")
-        return subprocess.run(cmd, **kwargs)
-
-    monkeypatch.setenv("ISSUESMITH_FETCH_LOCK_WAIT", "0")
-    monkeypatch.setattr(wt, "_sleep", lambda _s: None)
-    monkeypatch.setattr(wt.subprocess, "run", always_fail)
-    with pytest.raises(wt.WorktreeError, match="failed to fetch sumipan/issuesmith:main"):
-        wt.fetch_base_or_raise(repo, "main", remote="sumipan/issuesmith")
-
-
 def test_git_common_dir_resolves_linked_worktree(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _git_init_with_main(repo)

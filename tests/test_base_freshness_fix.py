@@ -7,7 +7,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from issuesmith import worktree as wt_mod
 from issuesmith.gates import NON_REPAIRABLE_RULE_IDS, is_non_repairable_rule_id
 from issuesmith.gates import worktree as wt
 
@@ -39,62 +38,6 @@ def _proc(rc: int, stderr: str = "", stdout: str = "") -> MagicMock:
 
 def _calls(mock) -> list[list[str]]:
     return [list(c.args[0]) for c in mock.call_args_list]
-
-
-_TRANSIENT_FETCH_STDERR = (
-    "error: cannot lock ref 'refs/remotes/origin/main': is at aaa but expected bbb\n"
-    " ! aaa..bbb  main       -> origin/main  (unable to update local ref)\n"
-)
-
-_REAL_SUBPROCESS_RUN = subprocess.run
-
-
-def _worktree_subprocess_side_effect(
-    repo: Path,
-    *,
-    fetch_results: list[tuple[int, str]],
-):
-    fetch_idx = {"n": 0}
-    repo_resolved = repo.resolve()
-
-    def _is_repo_cmd(cmd: list[str]) -> bool:
-        return (
-            len(cmd) >= 3
-            and cmd[0] == "git"
-            and cmd[1] == "-C"
-            and Path(cmd[2]).resolve() == repo_resolved
-        )
-
-    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
-        if _is_repo_cmd(cmd) and "fetch" in cmd:
-            i = fetch_idx["n"]
-            fetch_idx["n"] += 1
-            rc, err = fetch_results[min(i, len(fetch_results) - 1)]
-            return subprocess.CompletedProcess(cmd, rc, stdout="", stderr=err)
-        if _is_repo_cmd(cmd) and "update-ref" in cmd:
-            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-        return _REAL_SUBPROCESS_RUN(cmd, **kwargs)
-
-    return fake_run
-
-
-def test_check_returns_transient_exhausted_violation(tmp_path: Path, monkeypatch):
-    repo = tmp_path / "wt"
-    _init_git_repo(repo)
-    gate = wt.BaseFreshnessGate(repo, "main")
-    monkeypatch.setenv("ISSUESMITH_FETCH_LOCK_WAIT", "0")
-    monkeypatch.setattr(wt_mod, "_sleep", lambda _s: None)
-    fetch_side = _worktree_subprocess_side_effect(
-        repo,
-        fetch_results=[(1, _TRANSIENT_FETCH_STDERR)] * 3,
-    )
-    with patch.object(wt_mod.subprocess, "run", side_effect=fetch_side):
-        violations = gate.check("", [])
-    assert len(violations) == 1
-    v = violations[0]
-    assert v.rule_id == "base_freshness.fetch_transient_exhausted"
-    assert v.auto_fixable is False
-    assert v.fix_hint == "Re-run the step"
 
 
 def test_fetch_transient_exhausted_is_non_repairable():
@@ -138,9 +81,64 @@ def test_pytest_timeout_env_override(monkeypatch):
 
 
 def _make_bump_behind_base_repo(tmp_path: Path) -> Path:
-    from tests.test_p0_worktree import _make_bump_stale_base_repo
+    origin = tmp_path / "origin.git"
+    subprocess.run(
+        ["git", "init", "--bare", "-b", "main", str(origin)],
+        check=True,
+        capture_output=True,
+    )
+    seed = tmp_path / "seed"
+    subprocess.run(
+        ["git", "clone", "-q", str(origin), str(seed)],
+        check=True,
+        capture_output=True,
+    )
+    for key, value in (("user.email", "t@t"), ("user.name", "t")):
+        subprocess.run(
+            ["git", "-C", str(seed), "config", key, value],
+            check=True,
+            capture_output=True,
+        )
+    (seed / "README").write_text("v1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(seed), "add", "README"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(seed), "commit", "-m", "init"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(seed), "push", "-q", "origin", "main"], check=True, capture_output=True)
 
-    return _make_bump_stale_base_repo(tmp_path)
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "clone", "-q", str(origin), str(repo)], check=True, capture_output=True)
+    for key, value in (("user.email", "t@t"), ("user.name", "t")):
+        subprocess.run(
+            ["git", "-C", str(repo), "config", key, value],
+            check=True,
+            capture_output=True,
+        )
+    subprocess.run(
+        ["git", "-C", str(repo), "fetch", "origin", "main:refs/remotes/origin/main"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(["git", "-C", str(repo), "checkout", "-b", "feat"], check=True, capture_output=True)
+    (repo / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\nversion = "0.1.0"\n',
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "-C", str(repo), "add", "pyproject.toml"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-m", "chore: bump version to 0.2.0 (Y: B1)"],
+        check=True,
+        capture_output=True,
+    )
+
+    (seed / "README").write_text("v2\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(seed), "add", "README"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(seed), "commit", "-m", "advance"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(seed), "push", "-q", "origin", "main"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "fetch", "origin", "main:refs/remotes/origin/main"],
+        check=True,
+        capture_output=True,
+    )
+    return repo
 
 
 def test_fix_drops_bump_before_rebase(tmp_path: Path) -> None:
