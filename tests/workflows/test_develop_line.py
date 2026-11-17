@@ -1,4 +1,4 @@
-"""Reference develop line acceptance tests (sumipan/nexus#6614)."""
+"""Reference develop line acceptance tests."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import ast
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import textwrap
@@ -19,12 +18,12 @@ from ghdag.forge import get_forge
 
 from issuesmith.andon import list_open
 from issuesmith.config import reset_config_cache
+from issuesmith.lines import LINES, extract_line
+from issuesmith.lines.develop.hooks import DevelopLineHooks
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_DEVELOP_DIR = _REPO_ROOT / "workflows" / "develop"
-if str(_DEVELOP_DIR) not in sys.path:
-    sys.path.insert(0, str(_DEVELOP_DIR))
-from develop_hooks import DevelopLineHooks  # noqa: E402
+_PACKAGE_FILES = _REPO_ROOT / "src" / "issuesmith" / "lines" / "develop" / "files"
+_LINE_DEV_DIR = _REPO_ROOT / "src" / "issuesmith" / "lines" / "develop"
 
 _ALLOWED_ISSMITH_IMPORTS = frozenset(
     {
@@ -143,20 +142,11 @@ def _make_host_repo(tmp_path: Path, slug: str) -> Path:
     (seed / ".gitignore").write_text("__pycache__/\n*.py[cod]\n", encoding="utf-8")
     (seed / "jobs").mkdir()
     (seed / "logs").mkdir()
-    shutil.copytree(_DEVELOP_DIR, seed / "workflows" / "develop")
-    dag_dir = seed / "workflows" / "develop" / "dag"
-    dag_dir.mkdir()
-    wf_src = seed / "workflows" / "develop" / "workflow.yml"
-    wf_data = yaml.safe_load(wf_src.read_text(encoding="utf-8"))
-    wf_data["template_dir"] = "../templates"
-    (dag_dir / "workflow.yml").write_text(
-        yaml.safe_dump(wf_data), encoding="utf-8"
-    )
-    cfg_path = seed / "workflows" / "develop" / "issuesmith.yaml"
+    extract_line("develop", seed)
+    cfg_path = seed / "issuesmith.yaml"
     data = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
     data["repo"] = slug
     data["supported_repos"] = [slug]
-    data.setdefault("paths", {})["workflow"] = "workflows/develop/dag/workflow.yml"
     for role in ("implementation", "review"):
         eng = data.get("engines", {}).get(role)
         if isinstance(eng, dict):
@@ -184,20 +174,6 @@ def _make_host_repo(tmp_path: Path, slug: str) -> Path:
     (host / "jobs").mkdir(exist_ok=True)
     (host / "logs").mkdir(exist_ok=True)
     (host / ".pipeline-state").mkdir(exist_ok=True)
-    recover_wf = yaml.safe_load(
-        (host / "workflows" / "develop" / "workflow.yml").read_text(encoding="utf-8")
-    )
-    recover_wf["template_dir"] = "develop/templates"
-    host_workflows = host / "workflows"
-    host_workflows.mkdir(exist_ok=True)
-    (host_workflows / "issuesmith.yml").write_text(
-        yaml.safe_dump(recover_wf), encoding="utf-8"
-    )
-    host_cfg = yaml.safe_load((host / "workflows" / "develop" / "issuesmith.yaml").read_text())
-    host_cfg["repo"] = slug
-    host_cfg["supported_repos"] = [slug]
-    host_cfg.setdefault("paths", {})["workflow"] = "workflows/issuesmith.yml"
-    (host / "issuesmith.yaml").write_text(yaml.safe_dump(host_cfg), encoding="utf-8")
     return host
 
 
@@ -228,7 +204,7 @@ def host_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     env = {
         **os.environ,
         "ISSUESMITH_CONFIG": str(host / "issuesmith.yaml"),
-        "PYTHONPATH": f"{host / 'workflows' / 'develop'}{os.pathsep}{os.environ.get('PYTHONPATH', '')}",
+        "PYTHONPATH": f"{_REPO_ROOT / 'src'}{os.pathsep}{os.environ.get('PYTHONPATH', '')}",
         "GHDAG_FORGE": "local",
         "GHDAG_FORGE_ROOT": str(forge_root),
         "ISSUESMITH_QUEUE_DIR": str(tmp_path / "queue"),
@@ -264,7 +240,7 @@ def _watch_once(env: dict[str, str], host: Path) -> int:
             "-m",
             "ghdag",
             "watch",
-            "workflows/develop/dag",
+            "workflows",
             "--once",
             "--exec-jsonl",
             str(host / "jobs" / "exec.jsonl"),
@@ -458,9 +434,9 @@ def test_failing_verify_raises_andon_and_resume_continues_from_verify(
 
 
 def test_step_modules_import_only_public_issuesmith_modules() -> None:
-    line_dir = _DEVELOP_DIR / "develop_line"
+    line_dir = _LINE_DEV_DIR
     for path in sorted(line_dir.glob("*.py")):
-        if path.name == "__init__.py":
+        if path.name in {"__init__.py", "hooks.py"}:
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
 
@@ -486,7 +462,7 @@ def test_step_modules_import_only_public_issuesmith_modules() -> None:
 def test_reference_config_passes_config_show() -> None:
     env = {
         **os.environ,
-        "ISSUESMITH_CONFIG": "workflows/develop/issuesmith.yaml",
+        "ISSUESMITH_CONFIG": str(_PACKAGE_FILES / "issuesmith.yaml"),
     }
     proc = subprocess.run(
         ["python3", "-m", "issuesmith", "config", "show"],
@@ -508,7 +484,7 @@ def develop_hooks_forge(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     forge_root.mkdir()
     monkeypatch.setenv("GHDAG_FORGE", "local")
     monkeypatch.setenv("GHDAG_FORGE_ROOT", str(forge_root))
-    monkeypatch.setenv("ISSUESMITH_CONFIG", "workflows/develop/issuesmith.yaml")
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(_PACKAGE_FILES / "issuesmith.yaml"))
     for key in ("GITHUB_TOKEN", "GH_TOKEN", "GITHUB_REPOSITORIES", "GITHUB_REPOSITORY"):
         monkeypatch.delenv(key, raising=False)
     reset_config_cache()
@@ -574,14 +550,155 @@ def test_develop_hooks_ignores_non_line_task(develop_hooks_forge) -> None:
     assert _comment_count(client, 42) == before
 
 
-def test_readme_quick_start_references_existing_files() -> None:
-    readme = (_REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    match = re.search(r"## Quick Start\n(.*?)(?:\n## |\Z)", readme, re.DOTALL)
-    assert match, "Quick Start section missing"
-    section = match.group(1)
-    for path in re.findall(r"workflows/develop/[\w./-]+", section):
-        if path.endswith("/"):
-            continue
-        assert (_REPO_ROOT / path).exists(), path
-    for mod in re.findall(r"develop_line\.(\w+)", section):
-        assert (_DEVELOP_DIR / "develop_line" / f"{mod}.py").exists(), mod
+_EXPECTED_EXTRACT_PATHS = frozenset(
+    {
+        "issuesmith.yaml",
+        "workflows/issuesmith.yml",
+        "workflows/develop/templates/prepare.md",
+        "workflows/develop/templates/implement.md",
+        "workflows/develop/templates/verify.md",
+        "workflows/develop/templates/review.md",
+        "workflows/develop/templates/merge.md",
+        "workflows/develop/prompts/implement.md",
+        "workflows/develop/prompts/review.md",
+    }
+)
+
+
+@pytest.fixture(scope="module")
+def built_wheel_site(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Build the wheel once (offline, no build isolation) and install it to a target dir."""
+    tmp_path = tmp_path_factory.mktemp("wheel")
+    wheel_dir = tmp_path / "wheels"
+    wheel_dir.mkdir()
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "wheel",
+            str(_REPO_ROOT),
+            "--no-deps",
+            "--no-build-isolation",
+            "-w",
+            str(wheel_dir),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    wheels = sorted(wheel_dir.glob("issuesmith-*.whl"))
+    assert len(wheels) == 1, wheels
+    install_root = tmp_path / "site"
+    install_root.mkdir()
+    ins = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            str(wheels[0]),
+            "--no-deps",
+            "--target",
+            str(install_root),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert ins.returncode == 0, ins.stderr
+    return install_root
+
+
+def test_built_wheel_imports_reference_line_modules(
+    tmp_path: Path, built_wheel_site: Path
+) -> None:
+    """refs #7197 AC1: wheel install exposes packaged develop-line modules."""
+    install_root = built_wheel_site
+    install_str = str(install_root.resolve())
+    script = textwrap.dedent(
+        f"""\
+        import issuesmith
+        from pathlib import Path
+        root = Path({install_str!r}).resolve()
+        pkg = Path(issuesmith.__file__).resolve()
+        assert str(root) in str(pkg), (root, pkg)
+        from issuesmith.lines.develop import hooks, implement, merge, prepare, review, verify
+        assert hasattr(hooks, "DevelopLineHooks")
+        """
+    )
+    (tmp_path / "outside").mkdir()
+    probe = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=tmp_path / "outside",
+        env={**os.environ, "PYTHONPATH": str(install_root)},
+        capture_output=True,
+        text=True,
+    )
+    assert probe.returncode == 0, probe.stderr + probe.stdout
+
+
+def test_built_wheel_extract_line_writes_all_files(
+    tmp_path: Path, built_wheel_site: Path
+) -> None:
+    """refs #7197 AC2: extract-line from wheel writes nine wiring files."""
+    install_root = built_wheel_site
+    dest = tmp_path / "extracted"
+    (tmp_path / "cwd").mkdir()
+    proc = subprocess.run(
+        [sys.executable, "-m", "issuesmith", "config", "extract-line", "develop", str(dest)],
+        cwd=tmp_path / "cwd",
+        env={**os.environ, "PYTHONPATH": str(install_root)},
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    paths = {line.strip() for line in proc.stdout.splitlines() if line.strip()}
+    assert paths == _EXPECTED_EXTRACT_PATHS
+    for rel in _EXPECTED_EXTRACT_PATHS:
+        assert (dest / rel).is_file(), rel
+
+
+def test_extract_line_refuses_existing_file(tmp_path: Path) -> None:
+    """refs #7197 AC7: extract-line refuses to overwrite existing wiring."""
+    dest = tmp_path / "host"
+    extract_line("develop", dest)
+    before = (dest / "issuesmith.yaml").read_text(encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, "-m", "issuesmith", "config", "extract-line", "develop", str(dest)],
+        cwd=_REPO_ROOT,
+        env={**os.environ, "PYTHONPATH": str(_REPO_ROOT / "src")},
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 1, proc.stderr
+    assert "error[CONFLICT]" in proc.stderr
+    assert (dest / "issuesmith.yaml").read_text(encoding="utf-8") == before
+    file_count = sum(1 for path in dest.rglob("*") if path.is_file())
+    assert file_count == len(_EXPECTED_EXTRACT_PATHS)
+
+
+def test_extract_line_rejects_unknown_line(tmp_path: Path) -> None:
+    """refs #7197 AC8: unknown line name is INVALID_VALUE with develop hint."""
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "issuesmith",
+            "config",
+            "extract-line",
+            "nosuch",
+            str(tmp_path / "out"),
+        ],
+        cwd=_REPO_ROOT,
+        env={**os.environ, "PYTHONPATH": str(_REPO_ROOT / "src")},
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 2, proc.stderr
+    assert "error[INVALID_VALUE]" in proc.stderr
+    assert f"lines: {', '.join(LINES)}" in proc.stderr
+
+
+def test_repository_has_no_legacy_workflows_develop_tree() -> None:
+    """refs #7197 AC10: reference line wiring is not duplicated under workflows/develop."""
+    assert not (_REPO_ROOT / "workflows" / "develop").exists()

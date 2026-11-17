@@ -4,28 +4,28 @@ issuesmith is a suite for building an agent-first software factory: a production
 
 The suite includes design and merge gates, a request queue with triage, lane planning, LLM role switching, label projection, andons, and the single CLI that workflow templates call. [ghdag](https://github.com/sumipan/ghdag) runs the DAGs, polls labels, and moves Issues between phases; issuesmith supplies the Issue side of that loop.
 
-**What it is not:** issuesmith is not a scheduler or a DAG runner (that is ghdag), and it does not call an LLM API directly. LLM steps run through the engine CLIs (`claude`, `codex`, `cursor`) that ghdag dispatches. Production hosts still own their wiring (`issuesmith.yaml`, `workflow.yml`); this repository also ships a small **reference develop line** under `workflows/develop/` that you can copy or import verbatim.
+**What it is not:** issuesmith is not a scheduler or a DAG runner (that is ghdag), and it does not call an LLM API directly. LLM steps run through the engine CLIs (`claude`, `codex`, `cursor`) that ghdag dispatches. Production hosts still own their wiring (`issuesmith.yaml`, `workflow.yml`); the installed package also ships a **reference develop line** (`issuesmith.lines.develop`) with wiring you extract into your host repo.
 
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.192.1-blue)
+![version](https://img.shields.io/badge/version-v0.193.0-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.192.1** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.193.0** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.192.1"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.193.0"
 ```
 
 The gates, forge access, `observe`, `andon`, `lanes` and `metrics` import ghdag, so install the `ghdag` extra unless another package already provides ghdag. The base package alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.192.1"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.193.0"
 ```
 
 | Item | Value |
@@ -40,54 +40,60 @@ See [TESTING.md](./TESTING.md) for what tests should and should not pin.
 
 ## Quick Start
 
-### Reference develop line (`workflows/develop/`)
+### Reference develop line (packaged)
 
-issuesmith ships one minimal develop phase you can run end-to-end after checkout:
+The package bundles one minimal develop phase. Step modules live at `issuesmith.lines.develop.*`; wiring files live under `issuesmith.lines.develop.files` inside the wheel and are written to your host with `config extract-line`.
 
-| Path | Role |
+| Piece | Role |
 |---|---|
-| `workflows/develop/issuesmith.yaml` | Example config (`develop_line.*` modules, gates, engines) |
-| `workflows/develop/workflow.yml` | ghdag workflow (`issuesmith:develop-ready` → prepare → implement → verify → review → merge) |
-| `workflows/develop/templates/*.md` | Shell templates that call `python3 -m issuesmith dispatch …` |
-| `workflows/develop/prompts/implement.md` / `review.md` | LLM orders |
-| `workflows/develop/develop_line/prepare.py` | Step `develop_line.prepare` |
-| `workflows/develop/develop_line/implement.py` | Step `develop_line.implement` (and repair) |
-| `workflows/develop/develop_line/verify.py` | Step `develop_line.verify` |
-| `workflows/develop/develop_line/review.py` | Step `develop_line.review` |
-| `workflows/develop/develop_line/merge.py` | Step `develop_line.merge` |
-| `workflows/develop/develop_hooks.py` | ghdag runner hooks: failure record on the Issue |
+| `issuesmith.lines.develop.prepare` … `merge` | Step modules referenced from `steps.<id>.module` |
+| `issuesmith.lines.develop.hooks` (`DevelopLineHooks`) | ghdag runner hooks: failure record on the Issue |
+| `config extract-line develop <dir>` | Writes `issuesmith.yaml`, `workflows/issuesmith.yml`, templates, and prompts under `<dir>` |
+| Extracted `workflows/issuesmith.yml` | ghdag workflow (`issuesmith:develop-ready` → prepare → implement → verify → review → merge) |
+| Extracted `workflows/develop/templates/*.md` | Shell templates that call `python3 -m issuesmith dispatch …` |
+| Extracted `workflows/develop/prompts/*.md` | LLM orders |
 
 **Host setup (summary):**
 
-1. Check out this repository (or your fork) at the same tag you installed, e.g. next to the host app repo.
-2. Point Python at the reference modules and config:
+1. Install issuesmith at the tag you pin (see [Installation](#installation)); no checkout of this repository is required for the reference modules.
+2. From your host repository root, extract wiring once (fails if any target path already exists):
 
 ```bash
-export PYTHONPATH="/path/to/issuesmith/checkout/workflows/develop${PYTHONPATH:+:$PYTHONPATH}"
-export ISSUESMITH_CONFIG=/path/to/host/issuesmith.yaml   # copy of workflows/develop/issuesmith.yaml at repo root
+python3 -m issuesmith config extract-line develop .
 ```
 
-3. Copy or symlink wiring only — keep `develop_line.*` imports unchanged:
-   - Copy `workflows/develop/issuesmith.yaml` and adjust `repo`, `supported_repos`, paths, and engines.
-   - Copy `workflows/develop/workflow.yml` into the host (or a `workflows/develop/dag/` subfolder) and set `paths.workflow` in your config to that file.
-   - Point `paths.template_dir` at `workflows/develop/prompts` (or a copy).
-   - Point ghdag `template_dir` at `workflows/develop/templates` (relative to the workflow file).
+3. Edit the extracted `issuesmith.yaml`: set `repo`, `supported_repos`, engines, and paths as needed. Step `module` values already point at `issuesmith.lines.develop.*`.
+
+```yaml
+steps:
+  prepare:
+    module: issuesmith.lines.develop.prepare
+  implement:
+    module: issuesmith.lines.develop.implement
+  verify:
+    module: issuesmith.lines.develop.verify
+  review:
+    module: issuesmith.lines.develop.review
+  merge:
+    module: issuesmith.lines.develop.merge
+```
 
 4. Run the watcher (from the host repository root):
 
 ```bash
-mkdir -p jobs
-python3 -m ghdag watch workflows/develop --exec-jsonl jobs/exec.jsonl
-python3 -m ghdag run jobs/exec.jsonl --hooks develop_hooks
+mkdir -p jobs logs .pipeline-state
+export ISSUESMITH_CONFIG=$PWD/issuesmith.yaml
+python3 -m ghdag watch workflows --exec-jsonl jobs/exec.jsonl
+python3 -m ghdag run jobs/exec.jsonl --hooks issuesmith.lines.develop.hooks
 ```
 
-5. Label an Issue `issuesmith:develop-ready` with a leading YAML block (`base_branch`, `allow_paths`). The line uses `python3 -m issuesmith context`, then `develop_line.prepare` through `develop_line.merge`.
+5. Label an Issue `issuesmith:develop-ready` with a leading YAML block (`base_branch`, `allow_paths`). The line uses `python3 -m issuesmith context`, then packaged prepare through merge steps.
 
 Check the resolved config:
 
 ```bash
 python3 -m issuesmith doctor
-ISSUESMITH_CONFIG=workflows/develop/issuesmith.yaml python3 -m issuesmith config show
+python3 -m issuesmith config show
 ```
 
 For custom pipelines, define your own `steps.<id>.module` host modules (see [Protocols and extension points](#protocols-and-extension-points)). Day-to-day operation also uses `python3 -m issuesmith andon list`, `python3 -m issuesmith observe --json`, and `python3 -m issuesmith queue tick`.
@@ -121,6 +127,7 @@ Run a command as `python3 -m issuesmith <command>` or through the `issuesmith` c
 | `convert-to-milestone <issue> [--dry-run]` | Move an Issue that entered the develop path back to the milestone path |
 | `milestone <subcommand>` | Milestone chain (see [`milestone`](#milestone-subcommands)) |
 | `config show` | Print the resolved configuration as JSON and validate `steps.*.requires` (exit 1 when invalid) |
+| `config extract-line <name> <dir>` | Write bundled reference-line wiring into `<dir>` (refuses when paths exist) |
 | `observe [--apply] [--json]` | Collect observe events; `--apply` also runs the policy actions |
 | `lanes <subcommand>` | Lane ledger planning (see [`lanes`](#lanes-subcommands)) |
 | `metrics rework [--since YYYY-MM-DD] [--issue N] [--audit PATH] [--json]` | Rework report from `paths.metrics` and an optional ghdag audit JSONL; `--since` uses `timezone` |
@@ -275,7 +282,7 @@ Gate ids usable in `steps.*.requires`: `ac_complete`, `ac_contract`, `ac_format`
 
 ### Public API Stability
 
-issuesmith is pre-1.0 and follows `0.Y.Z`: a `Y` bump may change or remove public API, a `Z` bump does not. The seven modules in the [Public API](#public-api) table are the supported surface; anything else may change in any release.
+issuesmith is pre-1.0 and follows `0.Y.Z`: a `Y` bump may change or remove public API, a `Z` bump does not. The seven modules in the [Public API](#public-api) table are the supported surface; anything else may change in any release. Bundled reference-line step modules and the files under `issuesmith.lines.*/files/` may change in `0.Y.0` releases; module path changes are listed under Breaking in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Architecture
 
@@ -332,6 +339,14 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/github_api.py` | `gh` command: Issue / PR helpers with label and target guards |
 | `issuesmith/lanes.py` | Lane ledger planning: capacity, candidates, enqueue and patrol report |
 | `issuesmith/language.py` | Language packs |
+| `issuesmith/lines/__init__.py` | Bundled reference lines (`LINES`) and `extract_line` for `config extract-line` |
+| `issuesmith/lines/develop/__init__.py` | Reference develop line package marker |
+| `issuesmith/lines/develop/prepare.py` | Reference develop step: prepare |
+| `issuesmith/lines/develop/implement.py` | Reference develop step: implement (and repair) |
+| `issuesmith/lines/develop/verify.py` | Reference develop step: verify |
+| `issuesmith/lines/develop/review.py` | Reference develop step: review (adds Issue body and diff to the review dispatch) |
+| `issuesmith/lines/develop/merge.py` | Reference develop step: merge |
+| `issuesmith/lines/develop/hooks.py` | ghdag runner hooks for the reference develop line (`DevelopLineHooks`) |
 | `issuesmith/merge.py` | PR merge and verification helpers |
 | `issuesmith/metrics_events.py` | Metrics JSONL event writers |
 | `issuesmith/metrics_rework.py` | Rework metrics (`metrics rework`) |

@@ -54,7 +54,7 @@ def run(ctx: StepContext, step: StepConfig) -> StepResult:
 def _cli_dispatch() -> int:
     if len(sys.argv) < 3:
         print(
-            "usage: python3 -m develop_line.review dispatch key=value ...",
+            "usage: python3 -m issuesmith.lines.develop.review dispatch key=value ...",
             file=sys.stderr,
         )
         return 2
@@ -70,5 +70,5 @@ if __name__ == "__main__":
     if sys.argv[1:2] == ["dispatch"]:
         raise SystemExit(_cli_dispatch())
     raise SystemExit(
-        "usage: python3 -m develop_line.review dispatch key=value ...",
+        "usage: python3 -m issuesmith.lines.develop.review dispatch key=value ...",
     )

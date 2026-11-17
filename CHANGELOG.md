@@ -7,6 +7,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.193.0 - 2026-11-17
+
+### Added
+
+- Bundled reference develop line under `issuesmith.lines.develop` (step modules, hooks, and packaged wiring files).
+- `python3 -m issuesmith config extract-line <name> <dir>` writes reference-line wiring into a host repository.
+- `issuesmith doctor` check `step_modules` imports each configured `steps.<id>.module` and verifies `run` is callable.
+
+### Changed
+
+- **BREAKING:** Removed `workflows/develop/` from the repository. Step modules are `issuesmith.lines.develop.prepare` / `implement` / `verify` / `review` / `merge`; runner hooks are `issuesmith.lines.develop.hooks`. Extract `issuesmith.yaml` and `workflows/issuesmith.yml` with `config extract-line develop`.
+
 ## 0.192.1 - 2026-11-17
 
 ### Fixed
