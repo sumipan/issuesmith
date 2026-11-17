@@ -20,6 +20,14 @@ import yaml
 # language_pack must not leak into tests). Popped before any module calls get_config().
 os.environ.pop("ISSUESMITH_CONFIG", None)
 
+# Keep the suite off the real GitHub: a host token must never reach a forge client.
+for _key in ("GITHUB_TOKEN", "GH_TOKEN", "GITHUB_REPOSITORIES", "GITHUB_REPOSITORY"):
+    os.environ.pop(_key, None)
+os.environ["GHDAG_FORGE"] = "local"
+_SESSION_FORGE_ROOT = tempfile.mkdtemp(prefix="issuesmith-pytest-forge-")
+os.environ["GHDAG_FORGE_ROOT"] = _SESSION_FORGE_ROOT
+atexit.register(shutil.rmtree, _SESSION_FORGE_ROOT, ignore_errors=True)
+
 import issuesmith.config as config_module  # noqa: E402
 from issuesmith.language import EN  # noqa: E402
 from tests import legacy_text  # noqa: E402
@@ -296,6 +304,16 @@ def no_gh_fetch(request):
         yield
 
 
+@pytest.fixture(autouse=True)
+def _reapply_suite_local_forge(no_gh_fetch):
+    """Re-strip host GitHub env after context_hook load_dotenv at import time."""
+    for _key in ("GITHUB_TOKEN", "GH_TOKEN", "GITHUB_REPOSITORIES", "GITHUB_REPOSITORY"):
+        os.environ.pop(_key, None)
+    os.environ["GHDAG_FORGE"] = "local"
+    os.environ.setdefault("GHDAG_FORGE_ROOT", _SESSION_FORGE_ROOT)
+    yield
+
+
 _WRITE_MODES = frozenset({"w", "a", "x", "r+", "wb", "ab", "xb", "r+b"})
 
 
@@ -306,12 +324,16 @@ def _no_side_effects(tmp_path_factory):
     import issuesmith.queue_triage as _qtriage
 
     basetemp = tmp_path_factory.getbasetemp().resolve()
+    session_forge_root = Path(_SESSION_FORGE_ROOT).resolve()
 
     def _safe(path) -> bool:
         if isinstance(path, int):
             return True
         try:
-            return Path(path).resolve().is_relative_to(basetemp)
+            resolved = Path(path).resolve()
+            if resolved.is_relative_to(basetemp):
+                return True
+            return resolved.is_relative_to(session_forge_root)
         except (TypeError, ValueError, OSError):
             return False
 
