@@ -442,6 +442,7 @@ A file that is not found is treated as empty, which fails validation because `re
 | Name | Default | Description |
 |---|---|---|
 | `ISSUESMITH_CONFIG` | (unset) | Path to `issuesmith.yaml` |
+| `ISSUESMITH_CALLER_STEP` | (unset) | Set for the duration of `dispatch` to the dispatched step id; `ensure_base_included` reads it when reconciling the base branch |
 | `ISSUESMITH_QUEUE_DIR` | (unset) | Directory for the queue, queue state, lock and triage log (overrides the `paths` defaults) |
 | `ISSUESMITH_ENGINE_WAIT_POLL_SEC` | `60` | Re-check period while every engine is paused; values outside 1-60 give 60 |
 | `ISSUESMITH_ENGINE_WAIT_INTERVAL_SEC` | `60` | Legacy name, read only when `ISSUESMITH_ENGINE_WAIT_POLL_SEC` is unset |
