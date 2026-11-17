@@ -279,7 +279,7 @@ def _run_pytest_impl(root: Path, args: list[str], *, timeout: float | None = Non
 
     A run that exceeds ``timeout`` (default ``ISSUESMITH_PYTEST_TIMEOUT_SEC`` or 1500 s)
     returns exit code 124 with a one-line message instead of hanging until the
-    outer task timeout kills the whole step (nexus #3864).
+    outer task timeout kills the whole step.
     """
     env = dict(os.environ)
     src = root / "src"
@@ -920,7 +920,7 @@ class TestsGate:
     - Failures that also fail on `origin/<base_branch>` are non-blocking (preexisting).
     - rc=2 (collection error) or rc=1 with no parseable IDs → fail-safe blocking violation.
 
-    Assumes this gate runs outside a pytest session (dispatch process), not inside the nexus
+    Assumes this gate runs outside a pytest session (dispatch process), not inside the host
     pytest harness, so tests/harness/pollution.py will not see worktree diffs from here.
     """
 
@@ -1274,7 +1274,7 @@ class ExternalLeakGate:
             print("[external_leak] cjk: skipped (reason=host_target)", file=sys.stderr)
             return []
         if state == "unknown":
-            # Fail closed: an unreadable body must not look like a clean pass (nexus #4116).
+            # Fail closed: an unreadable body must not look like a clean pass for external_leak.
             print("[external_leak] cjk: skipped (reason=target_unknown)", file=sys.stderr)
             return [Violation(
                 rule_id="external_leak.target_unknown",
@@ -1383,8 +1383,8 @@ class BaseFreshnessGate:
 
         A silent ``--ff-only`` failure used to leave the branch behind while the loop
         believed the fix succeeded; with a base that moves every few seconds the
-        requires loop then re-ran every gate until the task timeout (2026-09-25,
-        nexus #3865 / #3864). A rebase that conflicts is aborted and reported.
+        requires loop then re-ran every gate until the task timeout. A rebase
+        that conflicts is aborted and reported.
         """
         ff = subprocess.run(
             ["git", "merge", "--ff-only", f"origin/{self._base}"],

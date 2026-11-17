@@ -62,7 +62,7 @@ _BACKTICK_IDENT_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]{3,})`")
 _MOVE_KEYWORDS: tuple[str, ...] = ("move", "rename")
 
 # Data / config file extensions whose modification requires the tests that pin their contents
-# (nexus #3949).
+# in allow_paths so coupling covers fixtures and golden files, not only Python modules.
 _DATA_FILE_EXTS: frozenset[str] = frozenset({".yml", ".yaml", ".json", ".toml", ".txt"})
 
 # Matches ${identifier} template variable syntax inside backticks.
@@ -253,11 +253,11 @@ def _extract_search_keys(
     root: Path,
     data_file_tests: bool = True,
 ) -> tuple[set[str], set[str]]:
-    """Return ``(required, optional)`` search keys (sumipan/nexus#3527).
+    """Return ``(required, optional)`` search keys for scope coupling search.
 
     required — derived from declarations: basenames of deleted / moved files (change table,
         ``paths_must_not_exist``), file names with extension of modified data / config files
-        (``_DATA_FILE_EXTS``, when ``data_file_tests``; nexus #3949) and public symbols named in the body whose definition lives in
+        (``_DATA_FILE_EXTS``, when ``data_file_tests``) and public symbols named in the body whose definition lives in
         a file the Issue changes (allow_paths or change table). Their callers / tests must be in
         allow_paths.
     optional — string-match only: basenames of allow_paths entries and identifiers defined
@@ -489,7 +489,7 @@ def check_paths_must_not_exist_contract(
 
 
 # ---------------------------------------------------------------------------
-# Deletion reference check (nexus #3953)
+# Deletion reference check: imports and string refs to deleted paths must stay in allow_paths.
 # ---------------------------------------------------------------------------
 
 DELETION_RULE_ID = "scope_coupling.deletion_reference_uncovered"
@@ -722,7 +722,7 @@ def _key_matches_line(key: str, kind: str, line: str) -> bool:
 
 
 def _deleted_paths(body: str, target_repo: str) -> list[str]:
-    # Same change-type vocabulary as scope_size (host config, e.g. nexus adds its own word).
+    # Same change-type vocabulary as scope_size (host config may add its own delete words).
     delete_words = [w.lower() for w in get_config().scope_size.delete_words]
     paths: list[str] = []
     for repo, path, change_type in extract_change_table_rows(body):
@@ -1081,7 +1081,7 @@ class ScopeCouplingRules:
         cfg = get_config()
         if not cfg.scope_coupling.enabled:
             # ``enabled: false`` turns off the caller/test coupling check only; deleted-file
-            # referrers are always checked (nexus #3953).
+            # referrers are always checked so removals cannot slip past with coupling disabled.
             try:
                 metadata = parse_issue_metadata(body)
             except Exception:
@@ -1157,7 +1157,7 @@ class ScopeCouplingRules:
                     ),
                 )
             )
-        # Referrers already added by the autofix widening are covered (nexus #3953).
+        # Referrers already added by the autofix widening are covered; do not report them again.
         effective = self.autofix_new_allow_paths or allow_paths
         hits, sibling = _deletion_hits(body, effective, root)
         violations.extend(_deletion_violations(hits, sibling))
