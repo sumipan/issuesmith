@@ -191,6 +191,31 @@ def changed_files(worktree_path: Path, base_branch: str) -> list[str]:
     )
 
 
+def untracked_files(worktree_path: Path) -> set[str]:
+    """Return relative paths of untracked files in the worktree (POSIX slashes).
+
+    Uses ``git status --porcelain -z`` so paths are not shell-quoted. Returns an
+    empty set when git exits non-zero. Paths ignored by ``.gitignore`` are omitted.
+    """
+    proc = subprocess.run(
+        ["git", "status", "--porcelain", "-z", "--untracked-files=all"],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(worktree_path),
+    )
+    if proc.returncode != 0:
+        return set()
+    found: set[str] = set()
+    for entry in proc.stdout.split("\0"):
+        if len(entry) < 4 or not entry.startswith("??"):
+            continue
+        fname = entry[3:].strip()
+        if fname:
+            found.add(fname)
+    return found
+
+
 class LintGate:
     """Run ruff check on changed .py files in the worktree; fix via ruff --fix."""
 
@@ -1594,6 +1619,7 @@ WORKTREE_GATES: dict[str, object] = {
 
 __all__ = [
     "changed_files",
+    "untracked_files",
     "derive_static_test_allow_paths",
     "derive_static_ledger_allow_paths",
     "derive_test_allow_paths",
