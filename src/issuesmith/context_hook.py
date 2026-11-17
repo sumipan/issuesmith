@@ -13,7 +13,7 @@ Output (JSON):
         "base_branch": "main",
         "allow_paths": "- src/**\n- tests/**",
         "branch": "feat/issue-42-a1b2c3d4",
-        "worktree_path": "/path/to/nexus/.claude/worktrees/issue-42-a1b2c3d4",
+        "worktree_path": "/path/to/host/.claude/worktrees/issue-42-a1b2c3d4",
         ...
     }
 """
@@ -408,7 +408,7 @@ def parse_issue_metadata(body: str) -> dict:
 def parse_issue_metadata_blocks(body: str) -> list[dict]:
     """Parse every ```yaml ... ``` block in the Issue body, in order, and return them as a list of dicts.
 
-    A milestone parent that spans repositories carries one metadata block per repository (nexus #4076).
+    A milestone parent that spans repositories carries one metadata block per repository.
     Blocks that fail to parse, are empty, or are not a dict are skipped. No exception is raised.
     The existing `parse_issue_metadata` (first block only) is unchanged.
     """
@@ -425,7 +425,7 @@ def parse_issue_metadata_blocks(body: str) -> list[dict]:
 
 # When the ghdag dispatcher starts this as a subprocess, the parent process
 # (ghdag_runner etc.) has not sourced .env, so GITHUB_TOKEN etc. are not visible.
-# Load it ourselves. find_dotenv walks up from __file__, so the parent nexus repo's
+# Load it ourselves. find_dotenv walks up from __file__, so the host repository's
 # .env is found even when started from a worktree.
 # (override=False is the default, so explicitly exported values are not overwritten)
 try:

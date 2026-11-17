@@ -110,7 +110,7 @@ _PATH_SUFFIXES = (".py", ".yaml", ".yml", ".json", ".toml", ".md", ".sh")
 # post_merge kinds and the required keys per kind. Checked early by B1's
 # b1_migration.post_merge_schema. stable_install / tag / restart match the
 # ops/preflight.check_post_merge handlers; manual_check is a human verification
-# step that M2 lists as pending instead of failing (nexus #3945).
+# step that M2 lists as pending instead of failing.
 KNOWN_POST_MERGE_KINDS: frozenset[str] = frozenset(
     {"stable_install", "tag", "restart", "manual_check"}
 )

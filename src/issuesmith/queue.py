@@ -1035,7 +1035,7 @@ def _recheck_dependents_after_merge(
     client: ForgePort, issue_number: int, open_issues: list[dict[str, Any]]
 ) -> None:
     """When a released in_flight Issue reaches a terminal label, re-run the scope_coupling
-    deletion check on the open Issues that depend on it (nexus #3953)."""
+    deletion check on the open Issues that depend on it."""
     closing = _closing_phase_name()
     if closing is None:
         return

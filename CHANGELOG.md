@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Added
+
+- Convention test forbidding host repository and owner names in `src/issuesmith` comments and docstrings.
+
+### Changed
+
+- Comments and docstrings in core package modules no longer reference the host repository or owner.
+
 ## 0.191.2 - 2026-11-17
 
 ### Removed

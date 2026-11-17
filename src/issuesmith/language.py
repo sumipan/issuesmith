@@ -1,4 +1,4 @@
-"""Language packs: host-facing vocabulary and GitHub-posted text (nexus #4469).
+"""Language packs: host-facing vocabulary and GitHub-posted text.
 
 A :class:`LanguagePack` holds two kinds of strings:
 

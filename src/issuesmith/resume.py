@@ -126,8 +126,8 @@ def _exec_step_handlers(issue: int) -> list[tuple[str, str]]:
 def _infer_handler_from_exec(issue: int, step: str) -> str | None:
     """Handler whose DAG ran ``step`` for ``issue`` according to exec.jsonl.
 
-    The workflow YAML table maps m1 / m2 to merge, but nexus runs them inside the
-    impl DAG (sumipan/nexus#3844); the exec record says which DAG actually has the step.
+    The workflow YAML table maps m1 / m2 to merge, but the host may run them inside the
+    impl DAG; the exec record says which DAG actually has the step.
     """
     return next((h for h, s in _exec_step_handlers(issue) if s == step), None)
 
@@ -271,7 +271,7 @@ def _clear_stale_results(steps: "list[StepStatus]", from_step: str, *, force: bo
 
     ghdag keeps a non-empty result file and discards the rerun's stdout
     (``result_finalize=preserve_nonempty``), so a re-executed step was judged by its
-    previous PIPELINE_STATUS (sumipan/nexus#3638). Clear them before ``dag recover``.
+    previous PIPELINE_STATUS. Clear them before ``dag recover``.
 
     Only steps that recover will actually re-run are touched: succeeded steps keep their
     results (downstream steps read them) unless ``force`` also resets their done markers.
@@ -299,8 +299,7 @@ def _restore_running_state(issue: int, handler: str) -> None:
     When a DAG terminates the observe policy releases in_flight and projects
     ``<phase>-ready`` (#3662). ``resume --from`` restarts the same DAG, so the
     ``<phase>-running`` label (the P3 finalizer requires it) and the in_flight entry
-    must come back; before this they were restored by hand on every recovery
-    (sumipan/nexus#3627 / #3696, 2026-09-24).
+    must come back; before this they were restored by hand on every recovery.
     """
     from dataclasses import replace
 
@@ -391,7 +390,7 @@ def _resume_from_step(
         return 1
 
     # ghdag recover rejects an unknown step of an existing run, but a handler with no run
-    # for the issue resets 0 steps and exits 0 (sumipan/nexus#3844). An issue with no exec
+    # for the issue resets 0 steps and exits 0. An issue with no exec
     # record at all is left to recover as before: nothing tells the right handler.
     if not steps:
         exec_pairs = _exec_step_handlers(issue)
