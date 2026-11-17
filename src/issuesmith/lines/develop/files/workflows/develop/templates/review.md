@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 # develop/review — Issue #${issue_number}
 set -euo pipefail
-REPO_ROOT=$$(git rev-parse --show-toplevel)
-export PYTHONPATH="$${REPO_ROOT}/workflows/develop:$${PYTHONPATH:-}"
-exec python3 -m develop_line.review dispatch \
+exec python3 -m issuesmith dispatch review \
   "issue_number=${issue_number}" \
   "base_branch=${base_branch}" \
   "branch=${branch}" \

@@ -3,7 +3,7 @@ supported_repos:
   - example/reference-host
 label_namespace: issuesmith
 paths:
-  workflow: workflows/develop/workflow.yml
+  workflow: workflows/issuesmith.yml
   template_dir: workflows/develop/prompts
   worktrees_dir: .worktrees
 engines:
@@ -20,21 +20,21 @@ phases:
     handler: develop
     steps: [prepare, implement, verify, review, merge]
     advance_when: [deps_terminal]
-terminal_labels: [issuesmith:develop-done]
+    terminal_labels: [issuesmith:develop-done]
 steps:
   prepare:
-    module: develop_line.prepare
+    module: issuesmith.lines.develop.prepare
   implement:
-    module: develop_line.implement
+    module: issuesmith.lines.develop.implement
     template: implement.md
   verify:
-    module: develop_line.verify
+    module: issuesmith.lines.develop.verify
     requires: [lint, tests, pr_scope]
     input_kind: worktree
     repair:
       max: 2
   review:
-    module: develop_line.review
+    module: issuesmith.lines.develop.review
     requires: [review]
     input_kind: worktree
     repair:
@@ -46,7 +46,7 @@ steps:
       failure_status: REVIEW_FAIL
       optional_variables: [issue_body, diff]
   merge:
-    module: develop_line.merge
+    module: issuesmith.lines.develop.merge
   repair:
-    module: develop_line.implement
+    module: issuesmith.lines.develop.implement
     template: implement.md

@@ -31,8 +31,15 @@ _LEDGER_PATH = REPO_ROOT / "tests/conventions/known_vocabulary_hits.txt"
 
 
 def _src_py_files() -> list[Path]:
+    # Core package must not embed consumer workflow vocabulary; bundled reference
+    # lines under lines/ are consumer workflow code shipped with the package.
     root = REPO_ROOT / "src/issuesmith"
-    return sorted(p for p in root.rglob("*.py") if p.is_file())
+    lines_root = root / "lines"
+    return sorted(
+        p
+        for p in root.rglob("*.py")
+        if p.is_file() and lines_root not in p.parents and p != lines_root / "__init__.py"
+    )
 
 
 def _count_hits(path: Path) -> int:

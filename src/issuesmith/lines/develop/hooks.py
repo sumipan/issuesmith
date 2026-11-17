@@ -11,8 +11,8 @@ from issuesmith.config import get_config
 from issuesmith.forge import get_forge
 
 if TYPE_CHECKING:
-    from ghdag.core.models.metrics import TaskMetrics
-    from ghdag.dag.models import Task
+    from ghdag.dag import Task
+    from ghdag.metrics import TaskMetrics
 
 COMMENT_MARKER = "<!-- issuesmith-task-failure -->"
 _FENCE = "`" * 3

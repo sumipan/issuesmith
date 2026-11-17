@@ -263,6 +263,31 @@ def _check_advance_when() -> tuple[bool, str]:
         return False, f"advance_when: FAIL ({exc})"
 
 
+def _check_step_modules() -> tuple[bool, str]:
+    try:
+        from issuesmith.config import get_config
+
+        cfg = get_config()
+        problems: list[str] = []
+        for step_id, step in cfg.steps.items():
+            mod_name = (step.module or "").strip()
+            if not mod_name:
+                continue
+            try:
+                mod = importlib.import_module(mod_name)
+            except Exception as exc:
+                problems.append(f"{step_id}: {mod_name} ({exc})")
+                continue
+            run_fn = getattr(mod, "run", None)
+            if not callable(run_fn):
+                problems.append(f"{step_id}: {mod_name} (run not callable)")
+        if problems:
+            return False, "step_modules: FAIL " + "; ".join(problems)
+        return True, "step_modules: ok"
+    except Exception as exc:
+        return False, f"step_modules: FAIL (error: {exc})"
+
+
 def _check_requires_chain() -> tuple[bool, str]:
     """Check that all step requires declarations reference known gate ids."""
     from issuesmith.config import ConfigError
@@ -288,6 +313,7 @@ _PREFLIGHT_CHECKS = (
     _check_agent_skill_manifests,
     _check_requires_chain,
     _check_advance_when,
+    _check_step_modules,
 )
 
 

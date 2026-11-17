@@ -8,6 +8,7 @@ import json
 import os
 import sys
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any, Sequence
 
 from issuesmith.cli_errors import ContractParser, fail
@@ -564,19 +565,27 @@ def _json_default(o: object) -> object:
     return str(o)
 
 
+def _config_subcommand_hint() -> str:
+    return "subcommands: show, extract-line"
+
+
 def _config_parser() -> ContractParser:
     parser = ContractParser(command="config")
     sub = parser.add_subparsers(dest="subcmd", required=True)
     sub.add_parser("show")
+    extract = sub.add_parser("extract-line")
+    extract.add_argument("line_name")
+    extract.add_argument("dest_dir")
     return parser
 
 
 def _cmd_config(argv: list[str]) -> int:
     from issuesmith.config import ConfigError, get_config
     from issuesmith.gates import validate_step_requires
+    from issuesmith.lines import LINES, extract_line
 
     if not argv:
-        return fail("MISSING_ARGUMENT", "subcommand required", "subcommands: show")
+        return fail("MISSING_ARGUMENT", "subcommand required", _config_subcommand_hint())
     parser = _config_parser()
     if argv[0] in {"-h", "--help"}:
         parser.print_help()
@@ -585,6 +594,22 @@ def _cmd_config(argv: list[str]) -> int:
     if isinstance(parsed, int):
         return parsed
     args = parsed
+    if args.subcmd == "extract-line":
+        if args.line_name not in LINES:
+            return fail(
+                "INVALID_VALUE",
+                f"unknown line: {args.line_name}",
+                f"lines: {', '.join(LINES)}",
+            )
+        dest = Path(args.dest_dir)
+        try:
+            written = extract_line(args.line_name, dest)
+        except FileExistsError as exc:
+            return fail("CONFLICT", str(exc))
+        dest_resolved = dest.resolve()
+        for path in sorted(written, key=lambda p: str(p.relative_to(dest_resolved))):
+            print(path.relative_to(dest_resolved))
+        return 0
     if args.subcmd != "show":
         return fail("UNKNOWN_COMMAND", f"unknown config subcommand: {args.subcmd}")
     cfg = get_config()

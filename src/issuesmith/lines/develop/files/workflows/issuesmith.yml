@@ -1,5 +1,5 @@
 name: issuesmith
-template_dir: templates
+template_dir: develop/templates
 polling_interval: 60
 label_namespace: issuesmith
 reset_label: "issuesmith:reset"
