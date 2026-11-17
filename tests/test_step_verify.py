@@ -13,7 +13,7 @@ from issuesmith.step_verify import main
 
 _VALID_BODY = (
     '```yaml\n'
-    'target_repo: sumipan/nexus\n'
+    'target_repo: example/app\n'
     'base_branch: main\n'
     'allow_paths:\n'
     '  - "**"\n'
@@ -188,7 +188,7 @@ MY_GATE = GateEntry(input_kind="issue", build=_build)
     )
     body = (
         "```yaml\n"
-        "target_repo: sumipan/nexus\n"
+        "target_repo: example/app\n"
         "base_branch: release/2.0\n"
         "allow_paths:\n"
         "  - src/foo.py\n"

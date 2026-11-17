@@ -15,7 +15,7 @@ from issuesmith.step_verify import main
 
 _VALID_BODY = (
     "```yaml\n"
-    "target_repo: sumipan/nexus\n"
+    "target_repo: sumipan/issuesmith\n"
     "base_branch: main\n"
     "allow_paths:\n"
     '  - "**"\n'
@@ -68,7 +68,10 @@ def test_dry_run_does_not_append_metrics(tmp_path, monkeypatch):
     _write_config(
         tmp_path,
         monkeypatch,
-        {"repo": "example/app", "steps": {"b1": {"verify": "design_doc"}}},
+        {
+            "repo": "sumipan/issuesmith",
+            "steps": {"b1": {"verify": "design_doc"}},
+        },
     )
     metrics_path = _metrics_cfg(tmp_path, monkeypatch)
     fake = MagicMock()
