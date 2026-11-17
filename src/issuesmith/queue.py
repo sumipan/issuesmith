@@ -73,21 +73,6 @@ JOBS_DIR = _cfg.paths.exec_jsonl.parent
 DONE_DIR = _cfg.paths.done_dir
 EXEC_PATH = _cfg.paths.exec_jsonl
 QUOTA_STATE_PATH = _cfg.paths.quota_state
-BRAKE_STATE_PATH = _cfg.paths.brake_state or _cfg.paths.quota_state
-
-_BRAKE_PATH_DEPRECATED_WARNED = False
-
-
-def _warn_brake_path_deprecated() -> None:
-    global _BRAKE_PATH_DEPRECATED_WARNED
-    if not _BRAKE_PATH_DEPRECATED_WARNED:
-        print(
-            "warning: brake_state is deprecated for engine pause detection; "
-            "using quota_state only",
-            file=sys.stderr,
-            flush=True,
-        )
-        _BRAKE_PATH_DEPRECATED_WARNED = True
 
 
 def _global_blocks(snap: QueueSnapshot) -> tuple[QueueBlock, ...]:
@@ -1167,19 +1152,9 @@ def _required_engines_paused(
     quota_path: Path | None = None,
     engine_state_path: Path | None = None,
     role: str | None = None,
-    brake_path: Path | None = None,
 ) -> list[str]:
     """Return paused engines among those required for dispatch (quota state only)."""
     resolved_quota = quota_path or QUOTA_STATE_PATH
-    if brake_path is not None and brake_path != resolved_quota:
-        _warn_brake_path_deprecated()
-    elif (
-        brake_path is None
-        and quota_path is None
-        and BRAKE_STATE_PATH != QUOTA_STATE_PATH
-    ):
-        _warn_brake_path_deprecated()
-
     snapshot = QuotaGate(state_path=resolved_quota).snapshot()
     if not snapshot.engines:
         return []

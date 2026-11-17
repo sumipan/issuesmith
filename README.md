@@ -277,13 +277,6 @@ Gate ids usable in `steps.*.requires`: `ac_complete`, `ac_contract`, `ac_format`
 
 issuesmith is pre-1.0 and follows `0.Y.Z`: a `Y` bump may change or remove public API, a `Z` bump does not. The seven modules in the [Public API](#public-api) table are the supported surface; anything else may change in any release.
 
-### Deprecated API
-
-| Item | Replacement |
-|---|---|
-| `paths.brake_state` for engine pause / quota dispatch | `paths.quota_state` (legacy `halt*` fields are converted on read and not written back) |
-| `issuesmith.yaml` keys `sections`, `sub_design_subsections`, `scope_size.delete_words` / `new_words` / `sub_plan_header` / `no_deps_word` (emit `DeprecationWarning`) | `language_pack` |
-
 ## Architecture
 
 ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, label transitions and idempotency. issuesmith provides the gates, steps and tools that the workflow templates call. A phase may advance when its `preconditions` labels are present, its `excludes` labels are absent and every `advance_when` predicate passes. After a step finishes, its `requires` gates run; auto-fixable violations are fixed in place, other blocking violations start a repair run (`steps.*.repair`) or raise an andon (`steps.*.andon_when`). Label writes from steps go through `forge_guard`; managed labels are derived by `projection` and written only by `ops/labels.project_issue`.
@@ -481,7 +474,6 @@ A file that is not found is treated as empty, which fails validation because `re
 | `language_pack` | (unset: `EN`) | Path to a language pack YAML (see [Language packs](#language-packs)) |
 | `installs` | `{}` | Package name to install directory, or `"@env"` to use the version installed in this process (`importlib.metadata`); used by `pins_landed` for line-environment versions |
 | `pin_packages` | `installs` keys | Package names the `pin_bump` gate watches for pin changes in feature Issues; omit to copy `installs` keys, or set `[]` to watch none |
-| `sections` / `sub_design_subsections` | (deprecated) | Use `language_pack` |
 
 `tests`, `metrics`, `derived_allow`, `external_leak`, `steps.*.repair` and `steps.*.review` reject unknown keys. `scope_coupling.ignore_symbols` is no longer supported and raises `ConfigError`.
 
@@ -526,7 +518,7 @@ A file that is not found is treated as empty, which fails validation because `re
 
 #### `paths` keys
 
-Relative to the config file directory: `queue` `jobs/issuesmith-queue.jsonl`, `queue_state` `logs/issuesmith-queue-state.json`, `queue_lock` `logs/issuesmith-queue.lock`, `triage_log` `jobs/issuesmith-triage.jsonl`, `seed` `configs/night-queue.yaml`, `night_state` `logs/night-queue-state.json`, `exec_jsonl` `jobs/exec.jsonl`, `done_dir` `jobs/done`, `quota_state` `jobs/quota-gate.json`, `metrics` `jobs/metrics.jsonl`, `worktrees_dir` `.claude/worktrees`, `external_dir` `.claude/external`, `workflow` `workflows/issuesmith.yml`, `template_dir` `workflows/issuesmith`, `engine_state` `.pipeline-state/issuesmith-engine.yml`, `brake_state` (deprecated alias of `quota_state` for reads only; dispatch pause uses `quota_state`), `lanes` (unset; the ledger read by the `lanes` command).
+Relative to the config file directory: `queue` `jobs/issuesmith-queue.jsonl`, `queue_state` `logs/issuesmith-queue-state.json`, `queue_lock` `logs/issuesmith-queue.lock`, `triage_log` `jobs/issuesmith-triage.jsonl`, `seed` `configs/night-queue.yaml`, `night_state` `logs/night-queue-state.json`, `exec_jsonl` `jobs/exec.jsonl`, `done_dir` `jobs/done`, `quota_state` `jobs/quota-gate.json`, `metrics` `jobs/metrics.jsonl`, `worktrees_dir` `.claude/worktrees`, `external_dir` `.claude/external`, `workflow` `workflows/issuesmith.yml`, `template_dir` `workflows/issuesmith`, `engine_state` `.pipeline-state/issuesmith-engine.yml`, `lanes` (unset; the ledger read by the `lanes` command).
 
 #### `observe` keys
 
@@ -562,7 +554,7 @@ The pack file is a YAML mapping keyed by `LanguagePack` field names. Fields the 
 | `order_after_words` | list | `after`, `once`, `depends on` |
 | `messages` | mapping | GitHub-posted text keyed `<module>.<id>` (`str.format` templates); copy the keys from `EN.messages` |
 
-Logs, exception messages, CLI help and violation text stay English and are not part of a pack. Without `language_pack`, the deprecated `sections`, `sub_design_subsections` and `scope_size` vocabulary keys still override the matching `EN` fields; with `language_pack` set they are ignored. Both cases emit a `DeprecationWarning`.
+Logs, exception messages, CLI help and violation text stay English and are not part of a pack.
 
 ## Error Reference
 

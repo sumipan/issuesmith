@@ -127,7 +127,6 @@ class RecordingCallManaged:
 @pytest.fixture
 def mocks(monkeypatch, tmp_path):
     monkeypatch.setattr("issuesmith.engine.QUOTA_STATE_PATH", tmp_path / "quota.json")
-    monkeypatch.setattr("issuesmith.engine.BRAKE_STATE_PATH", tmp_path / "quota.json")
     monkeypatch.setattr("issuesmith.engine._record_task_metrics", lambda **kwargs: None)
     monkeypatch.setattr("issuesmith.engine._resolve_timeout_sec", lambda role: 600.0)
     monkeypatch.setattr("issuesmith.engine.time.sleep", lambda *a, **k: None)

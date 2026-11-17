@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 import shlex
 import warnings
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Mapping
 
@@ -102,9 +102,6 @@ class PathsConfig:
     workflow: Path
     template_dir: Path
     engine_state: Path
-    # For the budget brake. When unset, _build_paths falls back to quota_state.
-    # Defaults to None for manually built test configs (None means quota_state).
-    brake_state: Path | None = None
     lanes: Path | None = None
 
 
@@ -267,8 +264,7 @@ class ScopeSizeConfig:
         "tests/", "docs/", "README.md", "CHANGELOG.md", "pyproject.toml",
     )
     # Vocabulary of the host's Issue bodies, derived from the language pack
-    # (``Config.language``). The legacy ``scope_size.*`` keys still override it for
-    # one release. Kind words are matched case-insensitively.
+    # (``Config.language``). Kind words are matched case-insensitively.
     delete_words: tuple[str, ...] = EN.delete_words
     new_words: tuple[str, ...] = EN.new_words
     sub_plan_header: str = EN.sub_plan_header
@@ -527,12 +523,10 @@ def _build_paths(raw: Mapping[str, Any] | None, root: Path) -> PathsConfig:
             if key in raw and raw[key] is not None:
                 src[key] = str(raw[key])
     resolved = {k: _abs(root, v) for k, v in src.items()}
-    # brake_state has no fixed default: when unset it falls back to quota_state of the
-    # same config (existing users keep a single gate).
     if raw and raw.get("brake_state") is not None:
-        resolved["brake_state"] = _abs(root, str(raw["brake_state"]))
-    else:
-        resolved["brake_state"] = resolved["quota_state"]
+        raise ConfigError(
+            "paths.brake_state is no longer supported; use paths.quota_state"
+        )
     lanes: Path | None = None
     if raw and raw.get("lanes") is not None:
         lanes = _abs(root, str(raw["lanes"]))
@@ -760,25 +754,6 @@ def _build_host_is_repo_checkout(raw: object) -> bool:
     raise ConfigError(f"host_is_repo_checkout must be true or false, got {raw!r}")
 
 
-def _build_sections(raw: Mapping[str, Any] | None, base: Mapping[str, str]) -> dict[str, str]:
-    sections = dict(base)
-    if raw:
-        for key, value in raw.items():
-            if value is None:
-                continue
-            sections[str(key)] = str(value)
-    return sections
-
-
-def _build_sub_design_subsections(raw: Any, base: tuple[str, ...]) -> tuple[str, ...]:
-    if raw is None:
-        return base
-    if not isinstance(raw, list):
-        raise ValueError("sub_design_subsections must be a list of strings")
-    return tuple(str(x) for x in raw)
-
-
-# Legacy vocabulary keys superseded by ``language_pack`` (read for one release).
 _LEGACY_SCOPE_SIZE_VOCAB: tuple[str, ...] = (
     "delete_words", "new_words", "sub_plan_header", "no_deps_word",
 )
@@ -792,83 +767,23 @@ def _legacy_vocab_keys(data: Mapping[str, Any]) -> list[str]:
     return keys
 
 
-def _validate_legacy_scope_size_vocab(raw: Mapping[str, Any]) -> dict[str, Any]:
-    """Validate legacy ``scope_size`` vocabulary keys; return the normalized values present."""
-    out: dict[str, Any] = {}
-    for key in ("delete_words", "new_words"):
-        if key not in raw:
-            continue
-        value = raw[key]
-        if (
-            not isinstance(value, (list, tuple))
-            or not value
-            or not all(isinstance(x, str) and x.strip() for x in value)
-        ):
-            raise ConfigError(f"scope_size.{key} must be a non-empty list of strings")
-        out[key] = tuple(x.strip().lower() for x in value)
-    for key in ("sub_plan_header", "no_deps_word"):
-        if key not in raw:
-            continue
-        value = raw[key]
-        if not isinstance(value, str) or not value.strip():
-            raise ConfigError(f"scope_size.{key} must be a non-empty string")
-        out[key] = value.strip()
-    return out
-
-
-def _header_columns(header: str) -> tuple[str, ...]:
-    """``| a | b |`` -> ``("a", "b")``."""
-    return tuple(cell.strip() for cell in header.strip().strip("|").split("|"))
+def _reject_legacy_vocab_keys(data: Mapping[str, Any]) -> None:
+    for key in _legacy_vocab_keys(data):
+        raise ConfigError(
+            f"issuesmith.yaml: {key} is no longer supported; "
+            "set it in the language_pack file"
+        )
 
 
 def _build_language(data: Mapping[str, Any], *, root: Path) -> LanguagePack:
-    """Resolve ``Config.language``: ``language_pack`` file, else EN plus legacy keys.
-
-    Legacy keys (``sections``, ``sub_design_subsections`` and the ``scope_size``
-    vocabulary) emit a ``DeprecationWarning``. With ``language_pack`` set they are
-    ignored; without it they override the matching :data:`EN` fields.
-    """
+    """Resolve ``Config.language``: ``language_pack`` file when set, else EN."""
+    _reject_legacy_vocab_keys(data)
     pack_raw = data.get("language_pack")
-    legacy = _legacy_vocab_keys(data)
-    scope_size_raw = data.get("scope_size")
-    legacy_scope = (
-        _validate_legacy_scope_size_vocab(scope_size_raw)
-        if isinstance(scope_size_raw, Mapping)
-        else {}
-    )
     if pack_raw is not None:
         if not isinstance(pack_raw, str) or not pack_raw.strip():
             raise ConfigError("language_pack must be a path string")
-        pack = load_language_pack(_abs(root, pack_raw.strip()))
-        if legacy:
-            warnings.warn(
-                f"issuesmith.yaml: {', '.join(legacy)} ignored because language_pack is set;"
-                " remove them (they will be dropped in the next release)",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        return pack
-    if not legacy:
-        return EN
-    warnings.warn(
-        f"issuesmith.yaml: {', '.join(legacy)} are deprecated; move them to a"
-        " language_pack file (they will be dropped in the next release)",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    sections_raw = data.get("sections") if isinstance(data.get("sections"), dict) else None
-    overrides: dict[str, Any] = {
-        "sections": _build_sections(sections_raw, EN.sections),
-        "sub_design_subsections": _build_sub_design_subsections(
-            data.get("sub_design_subsections"), EN.sub_design_subsections
-        ),
-    }
-    for key in ("delete_words", "new_words", "no_deps_word"):
-        if key in legacy_scope:
-            overrides[key] = legacy_scope[key]
-    if "sub_plan_header" in legacy_scope:
-        overrides["sub_plan_columns"] = _header_columns(legacy_scope["sub_plan_header"])
-    return replace(EN, **overrides)
+        return load_language_pack(_abs(root, pack_raw.strip()))
+    return EN
 
 
 def _build_repair(raw: Any, step_id: str) -> RepairConfig:

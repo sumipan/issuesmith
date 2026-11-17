@@ -89,7 +89,6 @@ LEGACY_STATE_FILE = REPO_ROOT / ".issuesmith-engine"
 METRICS_FILE = _cfg.paths.metrics
 METRICS_ENV_VAR = "METRICS_JSONL_PATH"
 QUOTA_STATE_PATH = _cfg.paths.quota_state
-BRAKE_STATE_PATH = _cfg.paths.brake_state or _cfg.paths.quota_state
 
 _ENGINE_TRANSIENT_PAUSE_SEC = 600
 
@@ -803,16 +802,6 @@ def _record_task_metrics(
     )
 
 
-def _dual_gate_snapshots(
-    quota_gate: QuotaGate, brake_gate: QuotaGate
-) -> tuple[Any, Any]:
-    """Read quota and brake snapshots; reuse when both gates are the same object."""
-    quota_snap = quota_gate.snapshot()
-    if brake_gate is quota_gate:
-        return quota_snap, quota_snap
-    return quota_snap, brake_gate.snapshot()
-
-
 def _engine_paused(engine_name: str, *snapshots: Any) -> bool:
     """True if any snapshot marks the engine as paused."""
     for snap in snapshots:
@@ -902,19 +891,13 @@ def _execute(
     started_mono = time.monotonic()
     total_deadline = started_mono + float(timeout_sec)
 
-    # global quota: read + write (call / rate_limit_detected)
-    # budget brake: read-only pause check
+    # global quota: read + write (call / rate_limit_detected) and pause checks
     quota_gate = QuotaGate(state_path=QUOTA_STATE_PATH)
-    if BRAKE_STATE_PATH == QUOTA_STATE_PATH:
-        brake_gate = quota_gate
-    else:
-        brake_gate = QuotaGate(state_path=BRAKE_STATE_PATH)
-
-    quota_snap, brake_snap = _dual_gate_snapshots(quota_gate, brake_gate)
-    paused = _paused_engines(role, quota_snap, brake_snap)
+    quota_snap = quota_gate.snapshot()
+    paused = _paused_engines(role, quota_snap)
     llm_route = _build_role_route(role, selection, tier, paused)
     if not llm_route:
-        after = _earliest_paused_resume_at(list(ROLE_ENGINES[role]), quota_snap, brake_snap)
+        after = _earliest_paused_resume_at(list(ROLE_ENGINES[role]), quota_snap)
         raise RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=after, role=role)
 
     remaining_timeout = total_deadline - time.monotonic()
@@ -1003,14 +986,10 @@ def _execute(
                 resume_at=resume_at,
                 reason=report_reason,
             )
-            rate_quota_snap, rate_brake_snap = _dual_gate_snapshots(
-                quota_gate, brake_gate
-            )
+            rate_quota_snap = quota_gate.snapshot()
             paused_after = set(paused)
             paused_after.add(result.engine_used)
-            paused_after.update(
-                _paused_engines(role, rate_quota_snap, rate_brake_snap)
-            )
+            paused_after.update(_paused_engines(role, rate_quota_snap))
             retry_route = _build_role_route(
                 role, selection, tier, frozenset(paused_after)
             )
@@ -1067,10 +1046,8 @@ def _execute(
         result.returncode != 0
         and result.failure_class is FailureClass.QUOTA_EXHAUSTED
     ):
-        post_quota_snap, post_brake_snap = _dual_gate_snapshots(quota_gate, brake_gate)
-        after = _earliest_paused_resume_at(
-            list(ROLE_ENGINES[role]), post_quota_snap, post_brake_snap
-        )
+        post_quota_snap = quota_gate.snapshot()
+        after = _earliest_paused_resume_at(list(ROLE_ENGINES[role]), post_quota_snap)
         raise RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=after, role=role)
     if (
         result.returncode != 0
