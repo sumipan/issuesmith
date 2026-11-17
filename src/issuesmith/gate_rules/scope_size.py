@@ -1,11 +1,11 @@
-"""B1 Issue size gate (nexus #3665).
+"""B1 Issue size gate.
 
 Judges an Issue's size from its own change table (no clone is read, unlike
 ``scope_breadth``): counted files, concerns (distinct parent directories of
 counted files) and whether deletion and creation are mixed. An oversized
 Issue fails with a fix_hint that proposes a sub-issue split plan; the gate
 never rewrites the body itself. Recovery promotes oversized Issues via
-:func:`promote_oversized_issue_body` (nexus #4191).
+:func:`promote_oversized_issue_body` when the body must be split upstream.
 """
 
 from __future__ import annotations
@@ -522,7 +522,7 @@ def _merge_unreadable_concerns(
     changed_label: str,
     ac_label: str,
 ) -> dict[str, list[_Row]]:
-    """Fold concerns whose sub block SUB1 cannot read into a readable one (nexus #4852).
+    """Fold concerns whose sub block SUB1 cannot read into a readable one.
 
     Each concern's sub block is read back with :func:`change_paths_for_repo`
     (the SUB1 / B1 extraction). Rows of an unreadable concern move to the first

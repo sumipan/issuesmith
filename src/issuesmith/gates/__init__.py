@@ -282,7 +282,7 @@ def validate_step_requires(steps: "Mapping[str, Any]") -> None:
 
     Unknown gate ids and input_kind mismatches are checked for both fields using the
     same rules. Kept out of ``config.load_config`` so loading the config never imports
-    the gate registry (sumipan/nexus#3687). Raises ``issuesmith.config.ConfigError``.
+    the gate registry so config loading stays free of gate imports. Raises ``issuesmith.config.ConfigError``.
     Call from doctor, dispatch and ``config show``.
     """
     from issuesmith.config import ConfigError  # noqa: PLC0415 - config must not import gates
