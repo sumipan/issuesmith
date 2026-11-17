@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Added
+
+- Reference develop line: `workflows/develop/develop_hooks.py` (`DevelopLineHooks`) posts an Issue comment when a line task fails; use `python3 -m ghdag run jobs/exec.jsonl --hooks develop_hooks`.
+
 ## 0.190.6 - 2026-11-17
 
 ### Added

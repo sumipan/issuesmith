@@ -55,6 +55,7 @@ issuesmith ships one minimal develop phase you can run end-to-end after checkout
 | `workflows/develop/develop_line/verify.py` | Step `develop_line.verify` |
 | `workflows/develop/develop_line/review.py` | Step `develop_line.review` |
 | `workflows/develop/develop_line/merge.py` | Step `develop_line.merge` |
+| `workflows/develop/develop_hooks.py` | ghdag runner hooks: failure record on the Issue |
 
 **Host setup (summary):**
 
@@ -77,6 +78,7 @@ export ISSUESMITH_CONFIG=/path/to/host/issuesmith.yaml   # copy of workflows/dev
 ```bash
 mkdir -p jobs
 python3 -m ghdag watch workflows/develop --exec-jsonl jobs/exec.jsonl
+python3 -m ghdag run jobs/exec.jsonl --hooks develop_hooks
 ```
 
 5. Label an Issue `issuesmith:develop-ready` with a leading YAML block (`base_branch`, `allow_paths`). The line uses `python3 -m issuesmith context`, then `develop_line.prepare` through `develop_line.merge`.
