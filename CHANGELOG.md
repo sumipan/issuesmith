@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.191.3 - 2026-11-17
+
 ### Added
 
 - Convention test forbidding host repository and owner names in `src/issuesmith` comments and docstrings.
