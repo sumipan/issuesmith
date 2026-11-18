@@ -282,5 +282,3 @@ def test_tests_gate_fails_when_python_command_missing(
     assert len(violations) == 1
     assert violations[0].rule_id == "tests.collection_error"
     assert str(missing) in violations[0].message
-
-
