@@ -678,7 +678,7 @@ def test_unmet_acceptance_contract_stops_at_verify(host_env) -> None:
     open_andons = list_open(client)
     assert open_andons
     andon = next(a for a in open_andons if a.step == "verify")
-    assert "paths_must_exist" in andon.summary
+    assert "ac_contract.paths_must_exist" in andon.summary
     labels = _labels(client, number)
     assert "issuesmith:develop-done" not in labels
 
