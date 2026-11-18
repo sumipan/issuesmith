@@ -166,6 +166,26 @@ def test_count_eq_one_inside_string_is_not_code():
     assert check_test_version_exact_assert(diff) == []
 
 
+def _lint_self_test_file_diff() -> str:
+    return (_FIXTURES / "lint_self_test_file.diff").read_text(encoding="utf-8")
+
+
+def test_lint_self_test_file_is_skipped():
+    """Issue #7218: lint self-test files are not scanned for exact version asserts."""
+    parts = _lint_self_test_file_diff().split("diff --git ")
+    assert len(parts) >= 3, "fixture needs 2 hunks"
+    section_one = "diff --git " + parts[1]
+    assert check_test_version_exact_assert(section_one) == []
+
+
+def test_other_test_file_still_violates_with_self_test_file():
+    """Issue #7218: other tests/ files still violate when mixed with self-test files."""
+    vs = check_test_version_exact_assert(_lint_self_test_file_diff())
+    assert len(vs) == 1
+    assert vs[0].rule_id == _RULE_ID
+    assert vs[0].location == "tests/pkg/test_other.py"
+
+
 def test_violation_names_file_and_line_content():
     """Issue #7031: the first matching file and added line appear on the violation."""
     sample = (_FIXTURES / "version_assert_line.txt").read_text(encoding="utf-8").rstrip("\n")

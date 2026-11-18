@@ -1,0 +1,12 @@
+diff --git a/tests/gate_rules/test_design_lint_version_assert.py b/tests/gate_rules/test_design_lint_version_assert.py
+index 1111111..2222222 100644
+--- a/tests/gate_rules/test_design_lint_version_assert.py
++++ b/tests/gate_rules/test_design_lint_version_assert.py
+@@ -1 +1,2 @@
++    assert project["version"] == "0.26.0"
+diff --git a/tests/pkg/test_other.py b/tests/pkg/test_other.py
+index 1111111..2222222 100644
+--- a/tests/pkg/test_other.py
++++ b/tests/pkg/test_other.py
+@@ -1 +1,2 @@
++    assert project["version"] == "0.26.0"

@@ -81,6 +81,13 @@ _TEST_VERSION_ASSERT_HINT = (
     "check versions / pins with a lower bound (`>=`) or do not test them;"
     " publish bumps them deterministically"
 )
+_VERSION_ASSERT_LINT_SELF_TESTS: frozenset[str] = frozenset(
+    {
+        "tests/gate_rules/test_design_lint_version_assert.py",
+        "tests/test_publish_diff_gate.py",
+        "tests/test_publish_diff_gates.py",
+    }
+)
 
 
 def _is_tests_path(path: str) -> bool:
@@ -191,6 +198,7 @@ def check_test_version_exact_assert(diff: str) -> list[Violation]:
 
     Only added lines of ``.py`` files under tests/ are evaluated; unchanged context
     lines and fixture data files (``.diff`` etc.) never contribute (#6242).
+    Files that test this lint itself are excluded from counting (#7218).
     """
     in_tests = False
     current_file = "tests/"
@@ -228,7 +236,9 @@ def check_test_version_exact_assert(diff: str) -> list[Violation]:
         if line.startswith("+++ b/"):
             new_path = line[6:].strip()
             in_tests = _is_tests_path(new_path) and new_path.endswith(".py")
-            if in_tests:
+            if new_path in _VERSION_ASSERT_LINT_SELF_TESTS:
+                in_tests = False
+            elif in_tests:
                 current_file = new_path
             continue
         if not in_tests:
