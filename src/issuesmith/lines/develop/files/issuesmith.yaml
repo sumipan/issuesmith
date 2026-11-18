@@ -24,12 +24,13 @@ terminal_labels: [issuesmith:develop-done]
 steps:
   prepare:
     module: issuesmith.lines.develop.prepare
+    requires: [deps, design_lint, ac_format, scope_coupling, allow_paths_forbidden, scope_breadth]
   implement:
     module: issuesmith.lines.develop.implement
     template: implement.md
   verify:
     module: issuesmith.lines.develop.verify
-    requires: [lint, tests, pr_scope]
+    requires: [base_freshness, lint, tests, pr_scope, ac_contract]
     input_kind: worktree
     repair:
       max: 2
