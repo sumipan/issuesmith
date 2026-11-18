@@ -193,19 +193,26 @@ def check_test_version_exact_assert(diff: str) -> list[Violation]:
     lines and fixture data files (``.diff`` etc.) never contribute (#6242).
     """
     in_tests = False
+    current_file = "tests/"
     file_has_count_eq_one = False
     plus_git_pin = False
 
-    def _violation() -> list[Violation]:
+    def _violation(line_content: str | None = None) -> list[Violation]:
+        base = (
+            "tests/ contains an exact version or git pin assert;"
+            " the deterministic publish bump breaks it in cascade"
+        )
+        if line_content is not None:
+            stripped = line_content.strip()
+            message = f"{base}: {stripped}" if stripped else base
+        else:
+            message = base
         return [
             Violation(
                 rule_id="design_lint.test_version_exact_assert",
                 severity="fail",
-                message=(
-                    "tests/ contains an exact version or git pin assert;"
-                    " the deterministic publish bump breaks it in cascade"
-                ),
-                location="tests/",
+                message=message,
+                location=current_file,
                 auto_fixable=False,
                 fix_hint=_TEST_VERSION_ASSERT_HINT,
             )
@@ -214,12 +221,15 @@ def check_test_version_exact_assert(diff: str) -> list[Violation]:
     for line in diff.splitlines():
         if line.startswith("diff --git "):
             in_tests = bool(re.search(r"[ab]/tests/\S*\.py\b", line))
+            current_file = "tests/"
             file_has_count_eq_one = False
             plus_git_pin = False
             continue
         if line.startswith("+++ b/"):
             new_path = line[6:].strip()
             in_tests = _is_tests_path(new_path) and new_path.endswith(".py")
+            if in_tests:
+                current_file = new_path
             continue
         if not in_tests:
             continue
@@ -235,19 +245,19 @@ def check_test_version_exact_assert(diff: str) -> list[Violation]:
             file_has_count_eq_one = True
 
         if _VERSIONED_TEST_DEF.match(content):
-            return _violation()
+            return _violation(content)
 
         if _VERSION_EXACT_ASSERT.search(content):
-            return _violation()
+            return _violation(content)
 
         if _rhs_pins_exact_version(content):
-            return _violation()
+            return _violation(content)
 
         has_git_pin = bool(_GIT_PIN_EXACT.search(content))
         if has_git_pin:
             plus_git_pin = True
             if "==" in content or _COUNT_EQ_ONE.search(content):
-                return _violation()
+                return _violation(content)
 
         if plus_git_pin and file_has_count_eq_one:
             return _violation()

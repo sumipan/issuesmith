@@ -270,7 +270,7 @@ Supported Python imports are limited to seven modules (`issuesmith.__all__` is e
 
 Deeper import paths (for example `issuesmith.engine`, `issuesmith.merge`, or other subpackages) may still resolve while the interface shrinks, but they are not part of the supported public API and may change or be removed in any release.
 
-Gate ids usable in `steps.*.requires`: `ac_complete`, `ac_contract`, `ac_format`, `allow_paths_forbidden`, `base_freshness`, `deps`, `deps_format`, `design_lint`, `external_leak`, `importer_import`, `lint`, `migration_plan`, `milestone_consistency`, `milestone_subdesign`, `pin_bump`, `pr_scope`, `scope`, `scope_breadth`, `scope_coupling`, `scope_size`, `tests` (`GATE_REGISTRY`), plus `review` (`STEP_BOUND_GATES`; needs `steps.<id>.review`). A `module.path:attr` reference loads an external gate.
+Gate ids usable in `steps.*.requires`: `ac_complete`, `ac_contract`, `ac_format`, `allow_paths_forbidden`, `base_freshness`, `deps`, `deps_format`, `design_lint`, `external_leak`, `importer_import`, `lint`, `migration_plan`, `milestone_consistency`, `milestone_subdesign`, `pin_bump`, `pr_scope`, `publish_diff`, `scope`, `scope_breadth`, `scope_coupling`, `scope_size`, `tests` (`GATE_REGISTRY`), plus `review` (`STEP_BOUND_GATES`; needs `steps.<id>.review`). A `module.path:attr` reference loads an external gate.
 
 ### Protocols and extension points
 
@@ -335,7 +335,7 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/gates/pr_scope.py` | PR scope gate |
 | `issuesmith/gates/review.py` | `review` gate: runs `steps.<id>.review` through `run-guarded` and maps its problems to violations |
 | `issuesmith/gates/scope.py` | Scope gate |
-| `issuesmith/gates/worktree.py` | `lint`, `tests`, `external_leak`, `base_freshness` and `importer_import` gates |
+| `issuesmith/gates/worktree.py` | `lint`, `tests`, `external_leak`, `base_freshness`, `importer_import` and `publish_diff` gates |
 | `issuesmith/github_api.py` | `gh` command: Issue / PR helpers with label and target guards |
 | `issuesmith/lanes.py` | Lane ledger planning: capacity, candidates, enqueue and patrol report |
 | `issuesmith/language.py` | Language packs |
@@ -416,6 +416,7 @@ Gate ids in `GATE_REGISTRY` (usable in `steps.*.requires`). `input_kind` is the 
 | `milestone_subdesign` | issue | no | yes | Milestone sub-design blocks, dependency inference and fixes |
 | `pin_bump` | issue | no | yes | Reject dependency pin changes in feature Issues |
 | `pr_scope` | worktree | no | yes | PR diff paths stay within allow_paths (plus derived test paths) |
+| `publish_diff` | worktree | no | yes | pyproject.toml version-line changes and exact version asserts under tests/ in the branch diff (same checks as publish) |
 | `scope` | worktree | no | yes | Changed files stay within allow_paths |
 | `scope_breadth` | issue | yes | no | P0 allow_paths breadth; oversized scope must split (no repair loop) |
 | `scope_coupling` | issue | no | yes | Caller / test coupling and deletion-reference rules |

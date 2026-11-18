@@ -1,4 +1,4 @@
-"""Worktree gates: lint, tests, external_leak, base_freshness (#3626), importer_import (#5013).
+"""Worktree gates: lint, tests, external_leak, base_freshness (#3626), importer_import (#5013), publish_diff (#7031).
 
 Each gate checks the worktree filesystem state and, where possible, applies a
 deterministic fix (narrowing-only: ruff --fix, git ff). fix() never widens
@@ -21,7 +21,12 @@ from collections import Counter
 from pathlib import Path
 from typing import Literal, Sequence
 
+from issuesmith.bump_commits import BumpCommitsError, bump_versions_in_range, strip_bump_version_lines
 from issuesmith.gate_registry import Violation
+from issuesmith.gate_rules.design_lint_rules import (
+    check_test_version_exact_assert,
+    check_version_line_in_diff,
+)
 from issuesmith.gates.base import ContractInput
 from issuesmith.worktree import fetch_base_gate_result
 
@@ -1582,6 +1587,69 @@ class ImporterImportGate:
         return inp  # no deterministic fix: the repair LLM edits the importer
 
 
+def _branch_diff_for_publish_checks(worktree_path: Path, base_branch: str) -> str:
+    """Unified diff from merge-base to the working tree, including untracked files."""
+    baseline = _baseline_ref(worktree_path, base_branch)
+    proc = subprocess.run(
+        ["git", "diff", baseline],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(worktree_path),
+    )
+    diff = proc.stdout or ""
+    proc_ut = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard"],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(worktree_path),
+    )
+    if proc_ut.returncode == 0:
+        for rel in proc_ut.stdout.splitlines():
+            rel = rel.strip()
+            if not rel:
+                continue
+            full = worktree_path / rel
+            if not full.is_file():
+                continue
+            ni = subprocess.run(
+                ["git", "diff", "--no-index", "--", "/dev/null", rel],
+                capture_output=True,
+                text=True,
+                check=False,
+                cwd=str(worktree_path),
+            )
+            if ni.stdout:
+                diff += ni.stdout
+    try:
+        versions = bump_versions_in_range(worktree_path, base_branch)
+    except BumpCommitsError:
+        versions = []
+    return strip_bump_version_lines(diff, versions)
+
+
+class PublishDiffGate:
+    """Match publish P3 diff gates on the worktree branch diff (#7031)."""
+
+    def __init__(self, worktree_path: Path, base_branch: str = "main") -> None:
+        self._root = worktree_path
+        self._base = base_branch
+
+    def check(self, body: str, labels: list[str]) -> list[Violation]:
+        diff = _branch_diff_for_publish_checks(self._root, self._base)
+        return check_version_line_in_diff(diff) + check_test_version_exact_assert(diff)
+
+    def fix(self, inp: ContractInput) -> ContractInput:
+        return inp
+
+
+def _build_publish_diff(
+    worktree_path: Path, allow_paths: list[str], base_branch: str
+) -> PublishDiffGate:
+    return PublishDiffGate(worktree_path, base_branch)
+
+
 def _build_lint(worktree_path: Path, allow_paths: list[str], base_branch: str) -> LintGate:
     return LintGate(worktree_path, allow_paths, base_branch)
 
@@ -1616,6 +1684,7 @@ WORKTREE_GATES: dict[str, object] = {
     "external_leak": _build_external_leak,
     "base_freshness": _build_base_freshness,
     "importer_import": _build_importer_import,
+    "publish_diff": _build_publish_diff,
 }
 
 __all__ = [
@@ -1635,6 +1704,7 @@ __all__ = [
     "is_external_target",
     "BaseFreshnessGate",
     "ImporterImportGate",
+    "PublishDiffGate",
     "WORKTREE_GATES",
     "_run_pytest",
     "_parse_failed_ids",
