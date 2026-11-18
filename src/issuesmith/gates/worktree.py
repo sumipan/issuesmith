@@ -317,10 +317,24 @@ def _run_pytest_impl(root: Path, args: list[str], *, timeout: float | None = Non
     if src.is_dir():
         existing = env.get("PYTHONPATH", "")
         env["PYTHONPATH"] = (str(src) + ":" + existing) if existing else str(src)
+    from issuesmith.config import get_config
+
+    python_command = get_config().tests.python_command
+    cmd = [
+        *python_command,
+        "-m",
+        "pytest",
+        "-q",
+        "-rfE",
+        "--tb=no",
+        "-p",
+        "no:cacheprovider",
+        *args,
+    ]
     limit = timeout if timeout is not None else _pytest_timeout_sec()
     try:
         proc = subprocess.run(
-            ["python", "-m", "pytest", "-q", "-rfE", "--tb=no", "-p", "no:cacheprovider", *args],
+            cmd,
             capture_output=True, text=True, check=False,
             cwd=str(root), env=env, timeout=limit,
         )
@@ -328,6 +342,11 @@ def _run_pytest_impl(root: Path, args: list[str], *, timeout: float | None = Non
         partial = ((exc.stdout or b"") if isinstance(exc.stdout, bytes) else (exc.stdout or "").encode())
         tail = partial.decode(errors="replace")[-2000:]
         return 124, f"pytest timed out after {limit:.0f} s\n{tail}"
+    except OSError as exc:
+        return (
+            127,
+            f"tests.python_command could not be started: {' '.join(python_command)}: {exc}",
+        )
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
 

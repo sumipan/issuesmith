@@ -376,3 +376,60 @@ def test_main_health_halt_on_red_non_bool_raises(tmp_path, monkeypatch, bad):
     reset_config_cache()
     with pytest.raises(ValueError, match="halt_on_red"):
         load_config()
+
+
+@pytest.mark.parametrize(
+    "bad_command",
+    [
+        "python",
+        {},
+        [],
+        [""],
+    ],
+)
+def test_tests_python_command_invalid_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bad_command: object,
+) -> None:
+    """Ref: sumipan/nexus#7273 AC4 — invalid ``tests.python_command`` raises ConfigError."""
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "example/repo", "tests": {"python_command": bad_command}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    with pytest.raises(ConfigError, match="tests.python_command"):
+        load_config()
+
+
+def test_tests_python_command_relative_head_resolves_against_config_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ref: sumipan/nexus#7273 AC5 — relative launcher paths resolve from config dir."""
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "py").write_text("#!/bin/sh\n", encoding="utf-8")
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({
+            "repo": "example/repo",
+            "tests": {"python_command": ["scripts/py", "-X"]},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    cfg = load_config(cfg_path)
+    assert cfg.tests.python_command[0] == str((tmp_path / "scripts/py").resolve())
+    assert cfg.tests.python_command[1:] == ("-X",)
+
+    cfg_path.write_text(
+        yaml.safe_dump({
+            "repo": "example/repo",
+            "tests": {"python_command": ["python3"]},
+        }),
+        encoding="utf-8",
+    )
+    reset_config_cache()
+    cfg = load_config(cfg_path)
+    assert cfg.tests.python_command == ("python3",)

@@ -1,12 +1,16 @@
 """Tests for TestsGate run modes: mapped-first run, durations, interruption (issue #3271)."""
 from __future__ import annotations
 
+import json
+import stat
 import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 import issuesmith.gates.worktree as wt
+from issuesmith.config import reset_config_cache
 from issuesmith.gates.worktree import TestsGate, _mapped_test_paths
 
 # ---------------------------------------------------------------------------
@@ -199,5 +203,84 @@ def test_rc2_stays_collection_error(
     violations = TestsGate(tmp_path, base_branch="main").check("", [])
 
     assert [v.rule_id for v in violations] == ["tests.collection_error"]
+
+
+_LAUNCHER = '''\
+#!/usr/bin/env python3
+import json
+import os
+import sys
+
+log_path = os.environ["LAUNCHER_LOG"]
+with open(log_path, "a", encoding="utf-8") as fh:
+    fh.write(json.dumps({"cwd": os.getcwd(), "role": os.environ.get("LAUNCHER_ROLE", "")}) + "\\n")
+os.execv(sys.executable, [sys.executable] + sys.argv[1:])
+'''
+
+
+def _write_launcher(path: Path) -> None:
+    path.write_text(_LAUNCHER, encoding="utf-8")
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+
+
+def test_tests_gate_baseline_and_rerun_use_configured_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ref: sumipan/nexus#7273 AC3 — main, baseline, and flaky reruns share python_command."""
+    launcher = tmp_path / "launcher.py"
+    _write_launcher(launcher)
+    log_path = tmp_path / "launcher-log.jsonl"
+    monkeypatch.setenv("LAUNCHER_LOG", str(log_path))
+
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({
+            "repo": "example/repo",
+            "tests": {"python_command": [str(launcher)], "flaky_reruns": 1},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+
+    clone = _setup_repo(tmp_path, {
+        "src/foo.py": _FOO,
+        "tests/test_foo.py": _TEST_FOO,
+    })
+    _commit(clone, {"src/foo.py": "def value():\n    return 2\n"})
+
+    violations = TestsGate(clone, base_branch="main").check("", [])
+    assert any(v.rule_id == "tests.pytest_failure" for v in violations)
+
+    entries = [json.loads(ln) for ln in log_path.read_text(encoding="utf-8").splitlines()]
+    cwds = {e["cwd"] for e in entries}
+    assert str(clone.resolve()) in cwds
+    assert any(cwd != str(clone.resolve()) for cwd in cwds)
+    assert sum(1 for e in entries if e["cwd"] == str(clone.resolve())) >= 2
+
+
+def test_tests_gate_fails_when_python_command_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ref: sumipan/nexus#7273 AC6 — missing launcher -> tests.collection_error."""
+    missing = tmp_path / "no-such-launcher"
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({
+            "repo": "example/repo",
+            "tests": {"python_command": [str(missing)]},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_foo.py").write_text("def test_foo():\n    assert True\n")
+
+    violations = TestsGate(tmp_path, base_branch="main").check("", [])
+
+    assert len(violations) == 1
+    assert violations[0].rule_id == "tests.collection_error"
+    assert str(missing) in violations[0].message
 
 

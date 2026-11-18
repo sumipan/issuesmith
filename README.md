@@ -503,7 +503,7 @@ A file that is not found is treated as empty, which fails validation because `re
 | `scope_gate` | `enabled: true` | P0 allow_paths size: `max_files` (`80`), `max_lines` (`20000`), `hard_max_files` (`200`) |
 | `scope_coupling` | `enabled: true` | `search_dirs` (`[tests, src]`), `data_file_tests` (`true`) |
 | `scope_size` | `enabled: true` | B1 Issue size: `max_files` (`8`), `max_concerns` (`4`), `max_slices` (`3`), `delete_with_new` (`false`), `exclude_prefixes`, `atomic_phrases` (`[]`, phrases matched in the design section skip sub-plan promotion, same as `split: atomic`) |
-| `tests` | `flaky_reruns: 2` | Reruns of newly failing tests (`0` turns flaky detection off) |
+| `tests` | `flaky_reruns: 2`, `python_command: [python]` | Reruns of newly failing tests (`0` turns flaky detection off); `python_command` is the argv prefix used to launch pytest (baseline and flaky reruns too) |
 | `metrics` | `done_step: m2` | Rework metrics: `done_step`, `repair_templates`, `cause_targets` |
 | `derived_allow` | `enabled: true`, `ledger_globs: [tests/conventions/known_*.txt]` | Let repair (and impl ahead of repair) edit tests outside allow_paths when they reference in-scope changes, or shrink matching ledgers; newly failing tests still extend the set via TestsGate (`[]` turns ledger derivation off) |
 | `external_leak` | `cjk_free_external_targets: false` | Fail added CJK lines on branches whose `target_repo` is not `repo` |
@@ -515,6 +515,8 @@ A file that is not found is treated as empty, which fails validation because `re
 | `pin_packages` | `installs` keys | Package names the `pin_bump` gate watches for pin changes in feature Issues; omit to copy `installs` keys, or set `[]` to watch none |
 
 `tests`, `metrics`, `derived_allow`, `external_leak`, `steps.*.repair` and `steps.*.review` reject unknown keys. `scope_coupling.ignore_symbols` is no longer supported and raises `ConfigError`.
+
+When the host environment that runs the pipeline differs from the target repository’s runtime dependencies, set `tests.python_command` to a launcher that selects the right interpreter for the worktree (pytest’s cwd). Relative launcher paths that contain `/` resolve against the directory of `issuesmith.yaml`; bare names are looked up on `PATH`. If the configured launcher cannot be started, the `tests` gate fails with `tests.collection_error` and names the command.
 
 #### `engines.<role>` fields
 
