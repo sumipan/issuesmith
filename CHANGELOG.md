@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.195.2 - 2026-11-19
+
 ### Fixed
 
 - `design_lint.test_version_exact_assert`: skip files that test this lint so violation examples in their diffs do not fail P1/P3 on the fixing Issue (#7218).
