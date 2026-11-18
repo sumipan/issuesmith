@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.194.2 - 2026-11-18
+
 ### Changed
 
 - Reference develop line (`config extract-line develop`): `prepare` and `verify` now declare the same generic gates as production-style hosts (`deps`, `design_lint`, `ac_format`, `scope_coupling`, `allow_paths_forbidden`, `scope_breadth` on prepare; `base_freshness` and `ac_contract` on verify). Issues without `target_repo` in the leading YAML block stop at prepare until the body is fixed.
