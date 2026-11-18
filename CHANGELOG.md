@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.194.3 - 2026-11-19
+
 ### Fixed
 
 - `sync_readme_version`: also replace `version = "<old>"` in README when publish bumps `pyproject.toml`, so Status-table pyproject version strings stay in sync (#7245).
