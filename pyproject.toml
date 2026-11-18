@@ -23,7 +23,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-ghdag = ["ghdag @ git+https://github.com/sumipan/ghdag.git@v0.144.0"]
+ghdag = ["ghdag @ git+https://github.com/sumipan/ghdag.git@v0.145.0"]
 dev = [
   "pytest>=7.0.0",
   "pytest-timeout>=2.3.1",
@@ -32,7 +32,7 @@ dev = [
   "ruff>=0.4.0",
   "setuptools>=64",
   "wheel",
-  "ghdag @ git+https://github.com/sumipan/ghdag.git@v0.144.0",
+  "ghdag @ git+https://github.com/sumipan/ghdag.git@v0.145.0",
 ]
 
 [project.scripts]
