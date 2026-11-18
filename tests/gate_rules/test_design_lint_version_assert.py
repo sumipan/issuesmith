@@ -96,8 +96,12 @@ def test_two_part_string_rhs_is_not_a_version_pin():
 
 def test_two_part_string_with_version_lhs_still_violates():
     """Issue #7052: version LHS still flags two-part exact asserts."""
-    diff = (_FIXTURES / "version_lhs_two_part.diff").read_text(encoding="utf-8")
-    _assert_violation(check_test_version_exact_assert(diff))
+    two_part = "1." + "0"
+    _assert_violation(
+        check_test_version_exact_assert(
+            _tests_hunk(f'    assert project["version"] == "{two_part}"')
+        )
+    )
 
 
 def test_fixture_version_literal_passes():

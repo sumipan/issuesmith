@@ -1,6 +1,0 @@
-diff --git a/tests/pkg/test_example.py b/tests/pkg/test_example.py
-index 1111111..2222222 100644
---- a/tests/pkg/test_example.py
-+++ b/tests/pkg/test_example.py
-@@ -1 +1,2 @@
-+    assert project["version"] == "1.0"
