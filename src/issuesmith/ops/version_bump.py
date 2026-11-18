@@ -339,13 +339,17 @@ def fold_unreleased(text: str, version: str, today: date) -> str | None:
 
 
 def sync_readme_version(text: str, old: str, new: str) -> tuple[str, int]:
-    """Replace current-version references ``v<old>`` / `` `<old>` `` with ``<new>`` (#6236).
+    """Replace ``v<old>`` / `` `<old>` `` / ``version = "<old>"`` with ``<new>`` (#6236, #7245).
 
     Lines containing ``since v<old>`` are history and stay as-is. Neighbouring digits
     or dots block a match, so ``0.1.3`` never hits ``0.1.30`` or ``10.1.3``.
     """
     esc = re.escape(old)
-    pattern = re.compile(rf"(?<![\w.])(v){esc}(?![\d.]*\d)|(`){esc}(`)")
+    pattern = re.compile(
+        rf"(?<![\w.])(v){esc}(?![\d.]*\d)"
+        rf"|(`){esc}(`)"
+        rf'|(?<![\w.])(version[ \t]*=[ \t]*"){esc}(")'
+    )
     since = f"since v{old}"
     count = 0
     out: list[str] = []
@@ -359,7 +363,9 @@ def sync_readme_version(text: str, old: str, new: str) -> tuple[str, int]:
             count += 1
             if m.group(1):
                 return f"v{new}"
-            return f"`{new}`"
+            if m.group(2) is not None:
+                return f"`{new}`"
+            return f"{m.group(4)}{new}{m.group(5)}"
 
         out.append(pattern.sub(_sub, line))
     return "".join(out), count
