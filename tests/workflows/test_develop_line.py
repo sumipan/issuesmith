@@ -436,11 +436,11 @@ def test_run_dag_once_stops_runner_that_never_finishes(tmp_path: Path, runner_pr
         textwrap.dedent(
             f"""\
             import os
-            import time
+            import signal
             from pathlib import Path
 
             Path({str(pid_file)!r}).write_text(str(os.getpid()))
-            time.sleep(3600)
+            signal.pause()
             """
         ),
         encoding="utf-8",
