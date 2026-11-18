@@ -6,6 +6,7 @@ import ast
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import textwrap
@@ -193,8 +194,31 @@ def _issue_body() -> str:
     )
 
 
+_RUNNER_TIMEOUT_SEC = 60.0
+_RUNNER_STOP_GRACE_SEC = 10.0
+
+
 @pytest.fixture
-def host_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def runner_procs(monkeypatch: pytest.MonkeyPatch):
+    """Record ghdag runners and assert they exit after each test (refs #7257)."""
+    recorded: list[subprocess.Popen[bytes]] = []
+    real_popen = subprocess.Popen
+
+    def recording_popen(*args, **kwargs):
+        proc = real_popen(*args, **kwargs)
+        argv = list(args[0]) if args else list(kwargs.get("args") or [])
+        if "ghdag" in argv and "run" in argv:
+            recorded.append(proc)
+        return proc
+
+    monkeypatch.setattr(subprocess, "Popen", recording_popen)
+    yield recorded
+    for proc in recorded:
+        assert proc.poll() is not None, "ghdag run process still running after test"
+
+
+@pytest.fixture
+def host_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, runner_procs):
     slug = "example/reference-host"
     host = _make_host_repo(tmp_path, slug)
     forge_root = tmp_path / "forge"
@@ -299,11 +323,32 @@ _STOP_HOOKS = textwrap.dedent(
 )
 
 
-def _run_dag_once(env: dict[str, str], host: Path) -> None:
+def _stop_runner(proc: subprocess.Popen[bytes]) -> None:
+    """Stop a ghdag runner started by this module; no-op if it already exited.
+
+    SIGTERM lets the runner terminate its task process groups before exiting;
+    SIGKILL is the fallback after _RUNNER_STOP_GRACE_SEC.
+    """
+    if proc.poll() is not None:
+        return
+    proc.send_signal(signal.SIGTERM)
+    try:
+        proc.wait(timeout=_RUNNER_STOP_GRACE_SEC)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
+def _run_dag_once(
+    env: dict[str, str],
+    host: Path,
+    *,
+    timeout_sec: float = _RUNNER_TIMEOUT_SEC,
+) -> None:
     """Run ``ghdag run`` until every queued task is terminal.
 
-    A ``--hooks`` module sends SIGINT to the runner once the last task finishes,
-    so the test blocks on the process instead of polling a clock.
+    Fails the test (pytest.fail) if the runner is still running after
+    timeout_sec; the runner is stopped on every exit path.
     """
     exec_path = host / "jobs" / "exec.jsonl"
     if not exec_path.exists():
@@ -318,7 +363,7 @@ def _run_dag_once(env: dict[str, str], host: Path) -> None:
     if all((done_dir / uuid).exists() for uuid in uuids):
         return
     hooks_dir = host / "bin" / "hooks"
-    hooks_dir.mkdir(exist_ok=True)
+    hooks_dir.mkdir(parents=True, exist_ok=True)
     (hooks_dir / "develop_line_stop_hooks.py").write_text(_STOP_HOOKS, encoding="utf-8")
     run_env = {
         **env,
@@ -326,7 +371,7 @@ def _run_dag_once(env: dict[str, str], host: Path) -> None:
         "DEVELOP_LINE_TEST_UUIDS": ",".join(uuids),
         "DEVELOP_LINE_TEST_DONE_DIR": str(done_dir),
     }
-    subprocess.run(
+    proc = subprocess.Popen(
         [
             "python3",
             "-m",
@@ -342,8 +387,18 @@ def _run_dag_once(env: dict[str, str], host: Path) -> None:
         env=run_env,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        check=False,
     )
+    try:
+        try:
+            proc.wait(timeout=timeout_sec)
+        except subprocess.TimeoutExpired:
+            unfinished = [u for u in uuids if not (done_dir / u).exists()]
+            _stop_runner(proc)
+            pytest.fail(
+                f"ghdag run on {exec_path} did not finish within {timeout_sec}s; unfinished tasks: {unfinished!r}"
+            )
+    finally:
+        _stop_runner(proc)
 
 
 def _run_until(
@@ -360,16 +415,66 @@ def _run_until(
         state = client.issue_get(number, fields=["state"])["state"]
         if "issuesmith:develop-done" in labels:
             return "done"
-        if any(
-            lb.endswith(":andon-decision") or lb == "issuesmith:andon-decision"
-            for lb in labels
-        ):
+        if any(lb.endswith(":andon-decision") or lb == "issuesmith:andon-decision" for lb in labels):
             return "andon"
         if expect_done and state == "CLOSED" and "issuesmith:develop-done" in labels:
             return "done"
         _watch_once(env, host)
         _run_dag_once(env, host)
     return "timeout"
+
+
+def test_run_dag_once_stops_runner_that_never_finishes(tmp_path: Path, runner_procs) -> None:
+    """refs #7257 AC1: timeout stops runner and task when the queue never finishes."""
+    host = tmp_path
+    jobs = host / "jobs"
+    done = jobs / "done"
+    done.mkdir(parents=True)
+    pid_file = jobs / "never-ends.pid"
+    task_script = jobs / "never_ends_sleep.py"
+    task_script.write_text(
+        textwrap.dedent(
+            f"""\
+            import os
+            import signal
+            from pathlib import Path
+
+            Path({str(pid_file)!r}).write_text(str(os.getpid()))
+            signal.pause()
+            """
+        ),
+        encoding="utf-8",
+    )
+    order = jobs / "20261118120000-shell-order-never-ends.md"
+    order.write_text(f"exec python3 {task_script}\n", encoding="utf-8")
+    exec_path = jobs / "exec.jsonl"
+    exec_path.write_text(
+        json.dumps(
+            {
+                "uuid": "never-ends",
+                "command": f"bash -o pipefail {order}",
+                "idempotency_key": "develop-line-test:never-ends",
+                "result_path": "jobs/never-ends-result.md",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    env = {
+        **os.environ,
+        "PYTHONPATH": f"{_REPO_ROOT / 'src'}{os.pathsep}{os.environ.get('PYTHONPATH', '')}",
+    }
+    with pytest.raises(pytest.fail.Exception) as excinfo:
+        _run_dag_once(env, host, timeout_sec=2.0)
+    msg = str(excinfo.value)
+    assert str(exec_path) in msg
+    assert "never-ends" in msg
+    assert runner_procs
+    for proc in runner_procs:
+        assert proc.poll() is not None
+    pid = int(pid_file.read_text(encoding="utf-8").strip())
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
 
 
 def test_issue_flows_from_ready_to_done_on_local_forge(host_env) -> None:
@@ -410,9 +515,7 @@ def test_failing_verify_raises_andon_and_resume_continues_from_verify(
     _set_fake_engine_mode(host, "bad_lint")
     number = client.issue_create("repair line", _issue_body())
     client.issue_update(number, labels_add=["issuesmith:develop-ready"])
-    outcome = _run_until(
-        client, number, env, host, expect_done=False, max_rounds=60
-    )
+    outcome = _run_until(client, number, env, host, expect_done=False, max_rounds=60)
     assert outcome == "andon"
     open_andons = list_open(client)
     assert open_andons
@@ -427,9 +530,7 @@ def test_failing_verify_raises_andon_and_resume_continues_from_verify(
         text=True,
     )
     assert proc.returncode == 0, proc.stderr
-    outcome = _run_until(
-        client, number, env, host, expect_done=True, max_rounds=60
-    )
+    outcome = _run_until(client, number, env, host, expect_done=True, max_rounds=60)
     assert outcome == "done"
 
 
@@ -441,10 +542,7 @@ def test_step_modules_import_only_public_issuesmith_modules() -> None:
         tree = ast.parse(path.read_text(encoding="utf-8"))
 
         def _ok(name: str) -> bool:
-            return any(
-                name == allowed or name.startswith(f"{allowed}.")
-                for allowed in _ALLOWED_ISSMITH_IMPORTS
-            )
+            return any(name == allowed or name.startswith(f"{allowed}.") for allowed in _ALLOWED_ISSMITH_IMPORTS)
 
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -514,9 +612,7 @@ def test_develop_hooks_comments_once_on_line_task_failure(develop_hooks_forge) -
         annotations={"step_name": "verify"},
     )
     metrics = SimpleNamespace(failure_class=None)
-    DevelopLineHooks().on_task_failure(
-        "task-uuid-1", task, 1, "boom", metrics
-    )
+    DevelopLineHooks().on_task_failure("task-uuid-1", task, 1, "boom", metrics)
     assert _comment_count(client, 42) == before + 1
     body = client.get_issue_comments(42)[-1]["body"]
     assert "<!-- issuesmith-task-failure -->" in body
@@ -609,9 +705,7 @@ def built_wheel_site(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return install_root
 
 
-def test_built_wheel_imports_reference_line_modules(
-    tmp_path: Path, built_wheel_site: Path
-) -> None:
+def test_built_wheel_imports_reference_line_modules(tmp_path: Path, built_wheel_site: Path) -> None:
     """refs #7197 AC1: wheel install exposes packaged develop-line modules."""
     install_root = built_wheel_site
     install_str = str(install_root.resolve())
@@ -637,9 +731,7 @@ def test_built_wheel_imports_reference_line_modules(
     assert probe.returncode == 0, probe.stderr + probe.stdout
 
 
-def test_built_wheel_extract_line_writes_all_files(
-    tmp_path: Path, built_wheel_site: Path
-) -> None:
+def test_built_wheel_extract_line_writes_all_files(tmp_path: Path, built_wheel_site: Path) -> None:
     """refs #7197 AC2: extract-line from wheel writes nine wiring files."""
     install_root = built_wheel_site
     dest = tmp_path / "extracted"
