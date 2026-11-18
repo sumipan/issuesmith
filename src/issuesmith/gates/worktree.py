@@ -752,6 +752,71 @@ def derive_ledger_allow_paths(
     return sorted(derived)
 
 
+def _path_from_pathlib_div(node: ast.AST) -> str | None:
+    """Join string constants on the right spine of a ``Path / \"a\" / \"b\"`` chain."""
+    if not (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div)):
+        return None
+    parts: list[str] = []
+    current: ast.AST = node
+    while isinstance(current, ast.BinOp) and isinstance(current.op, ast.Div):
+        right = current.right
+        if isinstance(right, ast.Constant) and isinstance(right.value, str):
+            parts.insert(0, right.value)
+        else:
+            break
+        current = current.left
+    if not parts:
+        return None
+    return "/".join(parts)
+
+
+def _doc_path_candidates_in_tree(tree: ast.AST) -> set[str]:
+    candidates: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            candidates.add(node.value)
+        elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            joined = _path_from_pathlib_div(node)
+            if joined:
+                candidates.add(joined)
+    return candidates
+
+
+def derive_doc_allow_paths(
+    root: Path,
+    base_branch: str,
+    failed_ids: list[str],
+    allow_paths: list[str],
+) -> list[str]:
+    """Return ``.md`` docs repair may edit when failing tests name them explicitly (#7125)."""
+    derived: set[str] = set()
+    parsed_files: set[str] = set()
+    for test_id in failed_ids:
+        path = test_id.split("::")[0]
+        if not path.startswith(_DERIVED_TESTS_PREFIX):
+            continue
+        if path in parsed_files:
+            continue
+        parsed_files.add(path)
+        if not _exists_on_base(root, base_branch, path):
+            continue
+        try:
+            tree = ast.parse((root / path).read_text(encoding="utf-8"))
+        except (OSError, SyntaxError, ValueError):
+            continue
+        for cand in _doc_path_candidates_in_tree(tree):
+            if not cand.endswith(".md"):
+                continue
+            if cand.startswith("/") or ".." in cand.split("/"):
+                continue
+            if not _exists_on_base(root, base_branch, cand):
+                continue
+            if any(fnmatch.fnmatch(cand, pat) for pat in allow_paths):
+                continue
+            derived.add(cand)
+    return sorted(derived)
+
+
 def derive_static_ledger_allow_paths(
     root: Path,
     base_branch: str,
@@ -918,6 +983,8 @@ def check_derived_test_guard(
     """
     violations: list[Violation] = []
     for path in paths:
+        if path.endswith(".md"):
+            continue
         if any(fnmatch.fnmatch(path, pat) for pat in ledger_globs):
             ledger_violation = _check_ledger_shrinks(root, base_branch, path)
             if ledger_violation is not None:
@@ -1002,7 +1069,10 @@ class TestsGate:
         ledgers = derive_ledger_allow_paths(
             self._root, self._base, new_ids, self._allow_paths, derived_allow.ledger_globs
         )
-        return sorted(set(tests) | set(ledgers))
+        docs = derive_doc_allow_paths(
+            self._root, self._base, new_ids, self._allow_paths
+        )
+        return sorted(set(tests) | set(ledgers) | set(docs))
 
     def _new_ids(self, ids: list[str]) -> list[str] | None:
         """Return IDs that do not fail on base, or None when the baseline is unavailable."""
@@ -1713,6 +1783,7 @@ __all__ = [
     "derive_static_ledger_allow_paths",
     "derive_test_allow_paths",
     "derive_ledger_allow_paths",
+    "derive_doc_allow_paths",
     "check_derived_test_guard",
     "LintGate",
     "TestsGate",
