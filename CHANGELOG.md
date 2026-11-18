@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.193.5 - 2026-11-18
+
 ### Fixed
 
 - `design_lint.test_version_exact_assert`: pattern d (RHS semver pin) requires a three-part version string so two-part literals such as Slack `thread_ts` are not flagged (#7052).
