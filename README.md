@@ -9,23 +9,23 @@ The suite includes design and merge gates, a request queue with triage, lane pla
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.195.2-blue)
+![version](https://img.shields.io/badge/version-v0.195.3-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.195.2** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.195.3** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.195.2"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.195.3"
 ```
 
 The gates, forge access, `observe`, `andon`, `lanes` and `metrics` import ghdag, so install the `ghdag` extra unless another package already provides ghdag. The base package alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.195.2"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.195.3"
 ```
 
 | Item | Value |
@@ -474,7 +474,7 @@ A file that is not found is treated as empty, which fails validation because `re
 | `ISSUESMITH_PYTEST_TIMEOUT_SEC` | `1500` | Timeout of one pytest run in the `tests` gate |
 | `ISSUESMITH_REPAIR_ACTIVE` | (unset) | Set internally during a repair run to stop nested repairs |
 | `METRICS_JSONL_PATH` | `paths.metrics` | Engine metrics JSONL path |
-| `ISSUESMITH_FETCH_LOCK_WAIT` | `30` | Seconds to wait for the base-fetch lock (legacy P0 env name emits `DeprecationWarning`) |
+| `ISSUESMITH_FETCH_LOCK_WAIT` | `30` | Seconds to wait for the base-fetch lock |
 | `ISSUESMITH_FETCH_TIMEOUT_SEC` | `300` | Wall-clock limit (seconds) for a single base `git fetch` in P0 |
 | `GHDAG_TASK_UUID` | (set by ghdag) | Current DAG task UUID, recorded as `parent_uuid` in metrics and dispatch |
 | `AGENT_SKILLS_DIR` | `~/.agents/skills` | Skills directory checked by `doctor` |
