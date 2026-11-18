@@ -82,6 +82,8 @@ _FAKE_AGENT = textwrap.dedent(
     case "$MODE" in
       bad_lint)
         printf 'import os\\n\\nVALUE = 2\\n' >>"$TARGET"
+        git add src/feature.py
+        git commit -m "fake engine change" || true
         ;;
       good)
         printf 'VALUE = 2\\n' >"$TARGET"
@@ -91,17 +93,51 @@ _FAKE_AGENT = textwrap.dedent(
           'def test_value() -> None:' \
           '    assert feature.VALUE == 2' \
           >tests/test_feature.py
+        git add src/feature.py tests/test_feature.py
+        git commit -m "fake engine change" || true
+        ;;
+      out_of_scope)
+        printf 'VALUE = 2\\n' >"$TARGET"
+        printf '%s\\n' \
+          'from src import feature' \
+          '' \
+          'def test_value() -> None:' \
+          '    assert feature.VALUE == 2' \
+          >tests/test_feature.py
+        mkdir -p docs
+        printf 'note\\n' >docs/note.md
+        git add src/feature.py tests/test_feature.py docs/note.md
+        git commit -m "fake engine change" || true
+        ;;
+      base_conflict)
+        git rebase --abort 2>/dev/null || true
+        git merge --abort 2>/dev/null || true
+        ORIGIN="$(git remote get-url origin)"
+        PUSH_DIR="$(mktemp -d)"
+        if git clone "$ORIGIN" "$PUSH_DIR" 2>/dev/null; then
+          git -C "$PUSH_DIR" config user.email "t@example.com"
+          git -C "$PUSH_DIR" config user.name "T"
+          printf 'VALUE = 3\\n' >"$PUSH_DIR/src/feature.py"
+          git -C "$PUSH_DIR" add src/feature.py
+          git -C "$PUSH_DIR" commit -m "advance main" || true
+          git -C "$PUSH_DIR" push origin main || true
+          rm -rf "$PUSH_DIR"
+        fi
+        printf 'VALUE = 2\\n' >"$TARGET"
+        printf '%s\\n' \
+          'from src import feature' \
+          '' \
+          'def test_value() -> None:' \
+          '    assert feature.VALUE == 2' \
+          >tests/test_feature.py
+        git add src/feature.py tests/test_feature.py
+        git commit -m "fake engine change" || true
         ;;
       *)
         echo "unknown mode: $MODE" >&2
         exit 1
         ;;
     esac
-    git add src/feature.py
-    if [[ "$MODE" == good ]]; then
-      git add tests/test_feature.py
-    fi
-    git commit -m "fake engine change"
     exit 0
     """
 )
@@ -178,10 +214,11 @@ def _make_host_repo(tmp_path: Path, slug: str) -> Path:
     return host
 
 
-def _issue_body() -> str:
-    return textwrap.dedent(
+def _issue_body(*, acceptance_yaml: str | None = None) -> str:
+    base = textwrap.dedent(
         """\
         ```yaml
+        target_repo: example/reference-host
         base_branch: main
         allow_paths:
           - src/**
@@ -192,6 +229,65 @@ def _issue_body() -> str:
         Bump VALUE in src/feature.py.
         """
     )
+    if acceptance_yaml is None:
+        return base
+    ac = (
+        "## Acceptance Criteria\n\n"
+        "```yaml\n"
+        f"{acceptance_yaml.strip()}\n"
+        "```\n"
+    )
+    return base + "\n" + ac
+
+
+def _broken_acceptance_issue_body() -> str:
+    return textwrap.dedent(
+        """\
+        ```yaml
+        target_repo: example/reference-host
+        base_branch: main
+        allow_paths:
+          - src/**
+          - tests/**
+        ```
+
+        ## Acceptance Criteria
+
+        ```yaml
+        paths_must_exist: [
+        ```
+        """
+    )
+
+
+def _readme_gate_rows(readme_text: str) -> dict[str, str]:
+    """Map step id to the gate-id cell from the reference-line gates table."""
+    rows: dict[str, str] = {}
+    in_table = False
+    for line in readme_text.splitlines():
+        if line.strip() == "### Reference line gates by step":
+            in_table = True
+            continue
+        if in_table and line.startswith("### "):
+            break
+        if not in_table or not line.startswith("|"):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) < 2 or cells[0] in ("Step", "---", "------"):
+            continue
+        step = cells[0].strip("`")
+        rows[step] = cells[1]
+    return rows
+
+
+def _config_step_requires(config_path: Path) -> dict[str, list[str]]:
+    data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    out: dict[str, list[str]] = {}
+    for step_id, step in (data.get("steps") or {}).items():
+        requires = step.get("requires") or []
+        if requires:
+            out[step_id] = list(requires)
+    return out
 
 
 _RUNNER_TIMEOUT_SEC = 60.0
@@ -415,6 +511,8 @@ def _run_until(
         state = client.issue_get(number, fields=["state"])["state"]
         if "issuesmith:develop-done" in labels:
             return "done"
+        if list_open(client):
+            return "andon"
         if any(lb.endswith(":andon-decision") or lb == "issuesmith:andon-decision" for lb in labels):
             return "andon"
         if expect_done and state == "CLOSED" and "issuesmith:develop-done" in labels:
@@ -532,6 +630,88 @@ def test_failing_verify_raises_andon_and_resume_continues_from_verify(
     assert proc.returncode == 0, proc.stderr
     outcome = _run_until(client, number, env, host, expect_done=True, max_rounds=60)
     assert outcome == "done"
+
+
+def test_broken_acceptance_yaml_stops_at_prepare(host_env) -> None:
+    """refs #7258 AC2: invalid Acceptance Criteria YAML blocks prepare (non-repairable)."""
+    host, client, env, _slug = host_env
+    number = client.issue_create("broken ac yaml", _broken_acceptance_issue_body())
+    client.issue_update(number, labels_add=["issuesmith:develop-ready"])
+    outcome = _run_until(client, number, env, host, expect_done=False, max_rounds=40)
+    assert outcome == "andon"
+    open_andons = list_open(client)
+    assert open_andons
+    andon = open_andons[0]
+    assert andon.kind == "decision"
+    assert andon.step == "prepare"
+    assert "failed to parse the YAML block" in andon.summary
+    labels = _labels(client, number)
+    assert "issuesmith:develop-done" not in labels
+
+
+def test_out_of_allow_paths_change_stops_at_verify(host_env) -> None:
+    """refs #7258 AC3a: changes outside allow_paths stop at verify with a widen option."""
+    host, client, env, _slug = host_env
+    _set_fake_engine_mode(host, "out_of_scope")
+    number = client.issue_create("out of scope", _issue_body())
+    client.issue_update(number, labels_add=["issuesmith:develop-ready"])
+    outcome = _run_until(client, number, env, host, expect_done=False, max_rounds=80)
+    assert outcome == "andon"
+    open_andons = list_open(client)
+    assert open_andons
+    andon = open_andons[0]
+    assert andon.kind == "decision"
+    assert andon.step == "verify"
+    assert any(opt == "widen:docs/note.md" for opt in andon.options)
+    labels = _labels(client, number)
+    assert "issuesmith:develop-done" not in labels
+
+
+def test_unmet_acceptance_contract_stops_at_verify(host_env) -> None:
+    """refs #7258 AC3b: missing paths_must_exist paths stop at verify."""
+    host, client, env, _slug = host_env
+    body = _issue_body(acceptance_yaml="paths_must_exist:\n  - src/missing.py\npaths_must_not_exist: []")
+    number = client.issue_create("unmet ac contract", body)
+    client.issue_update(number, labels_add=["issuesmith:develop-ready"])
+    outcome = _run_until(client, number, env, host, expect_done=False, max_rounds=80)
+    assert outcome == "andon"
+    open_andons = list_open(client)
+    assert open_andons
+    andon = next(a for a in open_andons if a.step == "verify")
+    assert "ac_contract.paths_must_exist" in andon.summary
+    labels = _labels(client, number)
+    assert "issuesmith:develop-done" not in labels
+
+
+def test_base_conflict_stops_at_verify(host_env) -> None:
+    """refs #7258 AC3c: base_freshness blocks merge when origin main conflicts."""
+    host, client, env, _slug = host_env
+    _set_fake_engine_mode(host, "base_conflict")
+    number = client.issue_create("base conflict", _issue_body())
+    client.issue_update(number, labels_add=["issuesmith:develop-ready"])
+    outcome = _run_until(client, number, env, host, expect_done=False, max_rounds=80)
+    assert outcome == "andon"
+    open_andons = list_open(client)
+    assert open_andons
+    assert any(a.step == "verify" for a in open_andons)
+    show = _git(host, "show", "origin/main:src/feature.py")
+    assert show.returncode == 0, show.stderr
+    assert "VALUE = 3" in show.stdout
+    labels = _labels(client, number)
+    assert "issuesmith:develop-done" not in labels
+
+
+def test_readme_lists_reference_line_gates_per_step() -> None:
+    """refs #7258 AC4: README gate table matches packaged reference line requires."""
+    config_path = _PACKAGE_FILES / "issuesmith.yaml"
+    requires = _config_step_requires(config_path)
+    readme = (_REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    rows = _readme_gate_rows(readme)
+    for step_id, gate_ids in requires.items():
+        assert step_id in rows, f"missing README row for step {step_id!r}"
+        row = rows[step_id]
+        for gate_id in gate_ids:
+            assert gate_id in row, f"README row for {step_id!r} missing gate {gate_id!r}"
 
 
 def test_step_modules_import_only_public_issuesmith_modules() -> None:

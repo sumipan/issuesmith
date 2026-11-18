@@ -9,23 +9,23 @@ The suite includes design and merge gates, a request queue with triage, lane pla
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.194.1-blue)
+![version](https://img.shields.io/badge/version-v0.194.2-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.194.1** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.194.2** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.194.1"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.194.2"
 ```
 
 The gates, forge access, `observe`, `andon`, `lanes` and `metrics` import ghdag, so install the `ghdag` extra unless another package already provides ghdag. The base package alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.194.1"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.194.2"
 ```
 
 | Item | Value |
@@ -87,7 +87,29 @@ python3 -m ghdag watch workflows --exec-jsonl jobs/exec.jsonl
 python3 -m ghdag run jobs/exec.jsonl --hooks issuesmith.lines.develop.hooks
 ```
 
-5. Label an Issue `issuesmith:develop-ready` with a leading YAML block (`base_branch`, `allow_paths`). The line uses `python3 -m issuesmith context`, then packaged prepare through merge steps.
+5. Label an Issue `issuesmith:develop-ready` with a leading YAML block that names the host repository, base branch, and change scope:
+
+```yaml
+target_repo: your-org/your-host
+base_branch: main
+allow_paths:
+  - src/**
+  - tests/**
+```
+
+`target_repo` must match an entry in `supported_repos`. Optionally add a `## Acceptance Criteria` section with a fenced `yaml` block (`paths_must_exist`, `paths_must_not_exist`, `greps_must_be_empty`) so the `ac_format` and `ac_contract` gates can enforce it. The line uses `python3 -m issuesmith context`, then packaged prepare through merge steps.
+
+### Reference line gates by step
+
+Each step’s `requires` gates are listed in the extracted `issuesmith.yaml`. Gate ids are defined in [Gates](#gates).
+
+| Step | `requires` gates |
+|---|---|
+| `prepare` | `deps`, `design_lint`, `ac_format`, `scope_coupling`, `allow_paths_forbidden`, `scope_breadth` |
+| `verify` | `base_freshness`, `lint`, `tests`, `pr_scope`, `ac_contract` |
+| `review` | `review` (bound gate; see [Gates](#gates)) |
+
+**When the line stops:** Violations from issue-shaped gates on `prepare` (`design_lint`, `ac_format`, `scope_breadth`, and similar) are not auto-repaired. Dispatch raises an andon of kind `decision`; the summary looks like `non-repairable gate violation in step prepare: <message>`. Fix the Issue body, then `python3 -m issuesmith andon answer <id> resume` to continue from `prepare` (the worktree is kept). On `verify`, repairable gate failures run the repair step up to twice; if they persist, an andon `decision` opens (`pr_scope` adds `widen:<files>` to the options list).
 
 Check the resolved config:
 
