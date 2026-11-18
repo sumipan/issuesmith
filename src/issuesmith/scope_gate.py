@@ -62,7 +62,10 @@ def resolve_scope_root(metadata: dict, cfg: IssuesmithConfig) -> Path | None:
     """
     target_repo = (metadata.get("target_repo") or "").strip()
     if not target_repo or target_repo == cfg.repo:
-        return cfg.root
+        if cfg.host_is_repo_checkout:
+            return cfg.root
+        # The host root is not a checkout of ``cfg.repo``: measure the clone, like any other target.
+        target_repo = cfg.repo
     parts = target_repo.split("/", 1)
     if len(parts) != 2:
         return None
