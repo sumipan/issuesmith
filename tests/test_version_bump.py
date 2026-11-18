@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from issuesmith.ops.version_bump import decide_bump, run_bump
+from issuesmith.ops.version_bump import decide_bump, run_bump, sync_readme_version
 
 _STALE_BUMP_SUBJECT = (
     "chore: bump version to 0.2.0 (Y: B1 — commit message indicates breaking change)"
@@ -110,6 +110,52 @@ def test_run_bump_syncs_readme_current_version(tmp_path: Path, capsys):
     assert "- `flag` added since v0.1.0." in text
     assert "- Older: v0.0.9, not a prefix match: v0.1.01 and 0.1.0.5 and `0.1.00`." in text
     assert "README_VERSION_SYNCED: 0.1.0 -> 0.1.1 (3)" in capsys.readouterr().out
+
+
+_STATUS_README = """# pkg
+
+| Current release | **v0.1.0** (`pyproject.toml` `version = "0.1.0"`) |
+"""
+
+
+def test_run_bump_syncs_readme_quoted_pyproject_version(tmp_path: Path):
+    """#7245 — quoted pyproject version in README Status table syncs on bump."""
+    repo = _init_repo(tmp_path)
+    _commit(repo, "README.md", _STATUS_README, "docs: readme")
+    _point_origin_main_at_head(repo)
+    _commit(repo, "src/pkg/mod.py", "def api():\n    return 3\n", "fix: tweak internals")
+
+    assert run_bump(repo, "origin/main") == 0
+
+    files = _git(repo, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD").split()
+    assert sorted(files) == ["README.md", "pyproject.toml"]
+    row = (
+        repo / "README.md"
+    ).read_text(encoding="utf-8").splitlines()[2]
+    assert (
+        row
+        == '| Current release | **v0.1.1** (`pyproject.toml` `version = "0.1.1"`) |'
+    )
+
+
+def test_sync_readme_version_keeps_other_quoted_versions():
+    """#7245 — only version = "…" with matching semver is replaced."""
+    text = (
+        'version = "0.1.00"\n'
+        'version = "10.1.0"\n'
+        '- note since v0.1.0 version = "0.1.0"\n'
+        'release "0.1.0" tag\n'
+        'version = "0.1.0"\n'
+    )
+    out, count = sync_readme_version(text, "0.1.0", "0.1.1")
+    assert count == 1
+    assert out.splitlines() == [
+        'version = "0.1.00"',
+        'version = "10.1.0"',
+        '- note since v0.1.0 version = "0.1.0"',
+        'release "0.1.0" tag',
+        'version = "0.1.1"',
+    ]
 
 
 def test_run_bump_readme_without_old_version_is_untouched(tmp_path: Path, capsys):
