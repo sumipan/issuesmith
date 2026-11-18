@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Added
+
+- `derive_doc_allow_paths`: when a newly failing test names a repository `.md` in source, repair may edit that doc via `derived_allow_paths` (#7125).
+
 ## 0.194.4 - 2026-11-19
 
 ### Added
