@@ -76,7 +76,7 @@ _VERSION_EXACT_ASSERT = re.compile(r'version["\]\s]*\s*==\s*["\'][0-9]+\.[0-9]+'
 _GIT_PIN_EXACT = re.compile(r"git\+https://[^\"']*@v[0-9]+\.[0-9]")
 _COUNT_EQ_ONE = re.compile(r"count\s*\(.*\)\s*==\s*1")
 _VERSIONED_TEST_DEF = re.compile(r"^\s*def\s+test_\w+_v\d+_\d+(?:_\d+)?\s*\(")
-_SEMVER_QUOTED = re.compile(r'^["\'](\d{1,4}\.\d{1,4}(?:\.\d{1,4})?)["\']\s*$')
+_SEMVER_QUOTED = re.compile(r'^["\'](\d{1,4}\.\d{1,4}\.\d{1,4})["\']\s*$')
 _TEST_VERSION_ASSERT_HINT = (
     "check versions / pins with a lower bound (`>=`) or do not test them;"
     " publish bumps them deterministically"
@@ -103,7 +103,7 @@ def _code_outside_strings(content: str) -> str:
 
 
 def _rhs_pins_exact_version(content: str) -> bool:
-    """True when ``==`` RHS is a quoted semver or a list/tuple of quoted semvers (#6203)."""
+    """True when ``==`` RHS is a quoted three-part version or list/tuple of them (#6203)."""
     try:
         tokens = list(tokenize.generate_tokens(io.StringIO(content.lstrip()).readline))
     except (IndentationError, tokenize.TokenError):
@@ -187,7 +187,7 @@ def check_test_version_exact_assert(diff: str) -> list[Violation]:
     Pattern a: ``version == "X.Y.Z"`` / ``project["version"] == "..."``
     Pattern b: ``git+https://...@vX.Y.Z`` checked with ``==`` / ``count(...) == 1``
     Pattern c: ``def test_*_v<major>_<minor>[_<patch>]`` under tests/
-    Pattern d: ``==`` RHS is a semver string or list/tuple of semver strings (#6203)
+    Pattern d: ``==`` RHS is a three-part version string or list/tuple of them (#6203)
 
     Only added lines of ``.py`` files under tests/ are evaluated; unchanged context
     lines and fixture data files (``.diff`` etc.) never contribute (#6242).

@@ -85,6 +85,24 @@ def test_slack_ts_scalar_rhs_passes():
     ) == []
 
 
+def test_two_part_string_rhs_is_not_a_version_pin():
+    """Issue #7052: two-part quoted strings on RHS are not exact version pins."""
+    for plus_line in (
+        '    assert entry.thread_ts == "1.0"',
+        '    assert ratio == ["1.2", "3.4"]',
+    ):
+        assert check_test_version_exact_assert(_tests_hunk(plus_line)) == []
+
+
+def test_two_part_string_with_version_lhs_still_violates():
+    """Issue #7052: version LHS still flags two-part exact asserts."""
+    _assert_violation(
+        check_test_version_exact_assert(
+            _tests_hunk('    assert project["version"] == "1.0"')
+        )
+    )
+
+
 def test_fixture_version_literal_passes():
     """Issue #6203: fixture write_text with @v pin is not an assert comparison."""
     vs = check_test_version_exact_assert(
