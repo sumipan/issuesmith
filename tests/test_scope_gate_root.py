@@ -21,6 +21,7 @@ from issuesmith.scope_gate import resolve_scope_root
 def _cfg(tmp_path, external_dir=None):
     cfg = MagicMock()
     cfg.repo = "owner-a/repo-a"
+    cfg.host_is_repo_checkout = True
     cfg.root = tmp_path / "nexus"
     cfg.paths.external_dir = external_dir or (tmp_path / "nexus" / ".claude" / "external")
     return cfg
@@ -35,6 +36,22 @@ def test_target_repo_equal_to_config_repo_resolves_to_root(tmp_path):
     """Refs #7156."""
     cfg = _cfg(tmp_path)
     assert resolve_scope_root({"target_repo": "owner-a/repo-a"}, cfg) == cfg.root
+
+
+@pytest.mark.parametrize("meta", [{}, {"target_repo": "owner-a/repo-a"}])
+def test_config_repo_resolves_to_clone_when_host_is_not_its_checkout(tmp_path, meta):
+    """With host_is_repo_checkout false, the config repo is measured in its clone, not the host root."""
+    cfg = _cfg(tmp_path)
+    cfg.host_is_repo_checkout = False
+    (cfg.paths.external_dir / "repo-a" / ".git").mkdir(parents=True)
+    assert resolve_scope_root(meta, cfg) == cfg.paths.external_dir / "repo-a"
+
+
+def test_config_repo_returns_none_without_clone_when_host_is_not_its_checkout(tmp_path):
+    """No clone yet: fail closed instead of measuring the host root."""
+    cfg = _cfg(tmp_path)
+    cfg.host_is_repo_checkout = False
+    assert resolve_scope_root({}, cfg) is None
 
 
 def test_cross_repo_resolves_to_external_dir_repo_when_clone_present(tmp_path):

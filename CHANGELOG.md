@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Fixed
+
+- With `host_is_repo_checkout: false`, gates that measure the target tree (`scope_breadth`, `gate-preflight`, the pre-dispatch deletion-reference check, P0) now use the clone of the config `repo` instead of the host root. They used to scan the host's own files for Issues that target the config `repo`.
+
 ## 0.195.0 - 2026-11-19
 
 ### Added
