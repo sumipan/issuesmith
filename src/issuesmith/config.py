@@ -286,6 +286,7 @@ class TestsConfig:
     """Pytest gate options (``issuesmith.yaml`` ``tests:`` section)."""
 
     flaky_reruns: int = 2
+    python_command: tuple[str, ...] = ("python",)
 
 
 @dataclass(frozen=True)
@@ -1147,19 +1148,36 @@ def _build_metrics(raw: Mapping[str, Any] | None) -> MetricsConfig:
     )
 
 
-def _build_tests(raw: Mapping[str, Any] | None) -> TestsConfig:
+def _parse_tests_python_command(raw: Any, root: Path) -> tuple[str, ...]:
+    if not isinstance(raw, list) or not raw:
+        raise ConfigError("tests.python_command must be a non-empty list of strings")
+    out: list[str] = []
+    for item in raw:
+        if not isinstance(item, str) or not item:
+            raise ConfigError("tests.python_command must be a non-empty list of strings")
+        out.append(item)
+    head = out[0]
+    if "/" in head and not Path(head).is_absolute():
+        out[0] = str(_abs(root, head))
+    return tuple(out)
+
+
+def _build_tests(raw: Mapping[str, Any] | None, root: Path) -> TestsConfig:
     defaults = TestsConfig()
     if not raw:
         return defaults
-    unknown = sorted(str(k) for k in raw if k != "flaky_reruns")
+    unknown = sorted(str(k) for k in raw if k not in ("flaky_reruns", "python_command"))
     if unknown:
         raise ConfigError(
-            f"tests supports only 'flaky_reruns'; unknown keys: {unknown}"
+            f"tests supports only 'flaky_reruns', 'python_command'; unknown keys: {unknown}"
         )
     reruns_raw = raw.get("flaky_reruns", defaults.flaky_reruns)
     if isinstance(reruns_raw, bool) or not isinstance(reruns_raw, int) or reruns_raw < 0:
         raise ConfigError("tests.flaky_reruns must be an integer >= 0")
-    return TestsConfig(flaky_reruns=reruns_raw)
+    python_command = defaults.python_command
+    if "python_command" in raw:
+        python_command = _parse_tests_python_command(raw["python_command"], root)
+    return TestsConfig(flaky_reruns=reruns_raw, python_command=python_command)
 
 
 def _build_derived_allow(raw: Mapping[str, Any] | None) -> DerivedAllowConfig:
@@ -1441,7 +1459,7 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         scope_gate=_build_scope_gate(scope_gate_raw),
         scope_coupling=_build_scope_coupling(scope_coupling_raw),
         scope_size=_build_scope_size(scope_size_raw, language),
-        tests=_build_tests(tests_raw),
+        tests=_build_tests(tests_raw, root.resolve()),
         metrics=_build_metrics(metrics_raw),
         derived_allow=_build_derived_allow(derived_allow_raw),
         external_leak=_build_external_leak(external_leak_raw),
