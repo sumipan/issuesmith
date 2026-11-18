@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.194.0 - 2026-11-18
+
 ### Added
 
 - `publish_diff` worktree gate: same pyproject version-line and exact version-assert checks as publish, on the branch diff including uncommitted and untracked changes (#7031).
