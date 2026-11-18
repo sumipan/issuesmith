@@ -9,7 +9,12 @@ import pytest
 
 from issuesmith.gates import GATE_REGISTRY, GateBuildContext
 
-_ASSERT_LINE = '    assert project["version"] == "0.26.0"'
+# The sample lives in a fixture data file: an inline copy would trip the publish gate on this test file.
+_ASSERT_LINE = (
+    (Path(__file__).resolve().parent / "fixtures" / "version_exact_assert" / "version_assert_line.txt")
+    .read_text(encoding="utf-8")
+    .rstrip("\n")
+)
 _RULE_ID = "design_lint.test_version_exact_assert"
 
 

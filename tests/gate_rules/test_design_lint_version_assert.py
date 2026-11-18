@@ -168,7 +168,8 @@ def test_count_eq_one_inside_string_is_not_code():
 
 def test_violation_names_file_and_line_content():
     """Issue #7031: the first matching file and added line appear on the violation."""
-    diff = """\
+    sample = (_FIXTURES / "version_assert_line.txt").read_text(encoding="utf-8").rstrip("\n")
+    diff = f"""\
 diff --git a/tests/test_a.py b/tests/test_a.py
 index 1111111..2222222 100644
 --- a/tests/test_a.py
@@ -180,9 +181,9 @@ index 1111111..2222222 100644
 --- a/tests/test_b.py
 +++ b/tests/test_b.py
 @@ -1 +1,2 @@
-+    assert project["version"] == "0.26.0"
++{sample}
 """
     vs = check_test_version_exact_assert(diff)
     assert len(vs) == 1
     assert vs[0].location == "tests/test_b.py"
-    assert 'assert project["version"] == "0.26.0"' in vs[0].message
+    assert sample.strip() in vs[0].message
