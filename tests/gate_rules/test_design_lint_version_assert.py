@@ -164,3 +164,26 @@ def test_count_eq_one_inside_string_is_not_code():
     """Issue #6242: count(...) == 1 inside a docstring or string literal is prose, not a check."""
     diff = (_FIXTURES / "count_eq_one_in_string.diff").read_text(encoding="utf-8")
     assert check_test_version_exact_assert(diff) == []
+
+
+def test_violation_names_file_and_line_content():
+    """Issue #7031: the first matching file and added line appear on the violation."""
+    sample = (_FIXTURES / "version_assert_line.txt").read_text(encoding="utf-8").rstrip("\n")
+    diff = f"""\
+diff --git a/tests/test_a.py b/tests/test_a.py
+index 1111111..2222222 100644
+--- a/tests/test_a.py
++++ b/tests/test_a.py
+@@ -1 +1,2 @@
++def test_a():
+diff --git a/tests/test_b.py b/tests/test_b.py
+index 1111111..2222222 100644
+--- a/tests/test_b.py
++++ b/tests/test_b.py
+@@ -1 +1,2 @@
++{sample}
+"""
+    vs = check_test_version_exact_assert(diff)
+    assert len(vs) == 1
+    assert vs[0].location == "tests/test_b.py"
+    assert sample.strip() in vs[0].message
