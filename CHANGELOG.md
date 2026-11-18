@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.194.4 - 2026-11-19
+
 ### Added
 
 - `tests.python_command` lets the `tests` gate launch pytest through a configured command (also used for baseline runs and flaky reruns).
