@@ -685,12 +685,16 @@ def main(argv: list[str]) -> int:
     return result.exit_code
 
 
+# Cross-module rebump calls use the public alias; tests may still import ``_ensure_rebased``.
+ensure_rebased = _ensure_rebased
+
 # The bump helpers are shared with the M1 version_behind_base gate.
 __all__ = [
     "PublishResult",
     "_bump_versions_in_range",
     "_run_version_bump",
     "continue_rebase_past_changelog",
+    "ensure_rebased",
     "main",
     "publish",
     "run_version_bump",

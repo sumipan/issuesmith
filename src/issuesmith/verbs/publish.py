@@ -185,9 +185,9 @@ def rebump_onto_base(worktree: Path, base_branch: str, branch: str) -> RebumpRes
     ).stdout.strip()
     fingerprint_before = _non_bump_diff_fingerprint(worktree, base_branch, bumps)
 
-    from issuesmith.ops.publish import _ensure_rebased
+    from issuesmith.ops.publish import ensure_rebased
 
-    rebase_result = _ensure_rebased(worktree, base_branch, [])
+    rebase_result = ensure_rebased(worktree, base_branch, [])
     if rebase_result is not None:
         _reset_hard(worktree, head_before)
         return RebumpResult(
