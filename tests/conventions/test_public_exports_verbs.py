@@ -92,9 +92,9 @@ def _module_all(modpath: str) -> frozenset[str]:
 
 def _parse_readme_public_api_table(readme_text: str) -> dict[str, frozenset[str]]:
     start = readme_text.find("## Public API")
-    end = readme_text.find("## Public API Stability")
+    end = readme_text.find("### Public API Stability")
     if start < 0 or end < 0 or end <= start:
-        msg = "README missing ## Public API or ## Public API Stability"
+        msg = "README missing ## Public API or ### Public API Stability"
         raise AssertionError(msg)
     section = readme_text[start:end]
     table: dict[str, frozenset[str]] = {}

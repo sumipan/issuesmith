@@ -12,7 +12,6 @@ _REQUIRED_HEADINGS = (
     "## CLI Reference",
     "## Output contract",
     "## Public API",
-    "## Public API Stability",
     "## Architecture",
     "## Gates",
     "## Configuration",
