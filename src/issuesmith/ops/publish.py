@@ -17,6 +17,7 @@ from ghdag.forge import get_forge
 from issuesmith.bump_commits import (
     BumpCommitsError,
     bump_versions_in_range,
+    drop_bump_commits_before_rebase,
 )
 from issuesmith.bump_commits import (
     strip_bump_version_lines as _strip_bump_version_lines,
@@ -315,6 +316,34 @@ _CHANGELOG = "CHANGELOG.md"
 _CONFLICT_MARKER_PREFIXES = ("<<<<<<< ", ">>>>>>> ")
 
 
+def continue_rebase_past_changelog(
+    worktree: Path,
+    rebase: subprocess.CompletedProcess[str],
+) -> list[str]:
+    """Resolve CHANGELOG-only conflicts and continue rebase until done or stuck.
+
+    Returns remaining conflict file paths (empty when rebase completed).
+    Does not abort an in-progress rebase on failure.
+    """
+    while rebase.returncode != 0:
+        unmerged = _run_git(
+            worktree, "diff", "--name-only", "--diff-filter=U", check=False
+        ).stdout
+        conflict_files = [p for p in unmerged.splitlines() if p.strip()]
+        if conflict_files != [_CHANGELOG] or not _resolve_changelog_conflicts(
+            worktree / _CHANGELOG
+        ):
+            return conflict_files
+        _run_git(worktree, "add", "--", _CHANGELOG)
+        rebase = subprocess.run(
+            ["git", "-C", str(worktree), "rebase", "--continue"],
+            env={**os.environ, "GIT_EDITOR": "true"},
+            capture_output=True,
+            text=True,
+        )
+    return []
+
+
 def _resolve_changelog_conflicts(changelog_path: Path) -> bool:
     """Drop conflict marker lines, keeping every entry from both sides (#3587).
 
@@ -411,27 +440,19 @@ def _ensure_rebased(
             exit_code=1,
         )
 
-    rebase = _run_git(worktree, "rebase", f"origin/{base_branch}", check=False)
-    while True:
-        if rebase.returncode == 0:
-            return None
-        unmerged = _run_git(
-            worktree, "diff", "--name-only", "--diff-filter=U", check=False
-        ).stdout
-        conflict_files = [p for p in unmerged.splitlines() if p.strip()]
-        # CHANGELOG.md is appended by every parallel Issue; keep both sides (#3587).
-        # Any other conflicting path aborts the whole rebase (no partial resolve).
-        if conflict_files != [_CHANGELOG] or not _resolve_changelog_conflicts(
-            worktree / _CHANGELOG
-        ):
-            break
-        _run_git(worktree, "add", "--", _CHANGELOG)
-        rebase = subprocess.run(
-            ["git", "-C", str(worktree), "rebase", "--continue"],
-            env={**os.environ, "GIT_EDITOR": "true"},
-            capture_output=True,
-            text=True,
+    try:
+        drop_bump_commits_before_rebase(worktree, base_branch)
+    except BumpCommitsError as exc:
+        return PublishResult(
+            status="REBASE_CONFLICT",
+            stderr=str(exc),
+            exit_code=1,
         )
+
+    rebase = _run_git(worktree, "rebase", f"origin/{base_branch}", check=False)
+    conflict_files = continue_rebase_past_changelog(worktree, rebase)
+    if not conflict_files:
+        return None
 
     _run_git(worktree, "rebase", "--abort", check=False)
     conflict_msg = "\n".join(conflict_files) if conflict_files else (rebase.stderr or "").strip()
@@ -669,6 +690,7 @@ __all__ = [
     "PublishResult",
     "_bump_versions_in_range",
     "_run_version_bump",
+    "continue_rebase_past_changelog",
     "main",
     "publish",
     "run_version_bump",

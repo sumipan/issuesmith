@@ -514,3 +514,100 @@ def test_assert_jobs_clean_passes_when_clean(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _git_init_with_main(repo)
     wt.assert_jobs_clean(repo, "jobs/")
+
+
+_BASE_CL = "# Changelog\n\n## 0.1.0 - 2026-01-01\n- seed\n"
+
+
+def test_ensure_base_included_resolves_changelog_only_conflict(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """refs #7398: P0 rebase keeps both CHANGELOG entries when only that file conflicts."""
+    origin = _init_repo(tmp_path / "origin")
+    clone = _clone(origin, tmp_path / "clone")
+    subprocess.run(
+        ["git", "-C", str(clone), "checkout", "-b", "feat/changelog"],
+        check=True,
+        capture_output=True,
+    )
+    cl_feat = _BASE_CL.replace("- seed\n", "- seed\n- feat line\n")
+    (clone / "CHANGELOG.md").write_text(cl_feat, encoding="utf-8")
+    _git(clone, "add", "CHANGELOG.md")
+    _git(clone, "commit", "-q", "-m", "feat changelog")
+
+    cl_main = _BASE_CL.replace("- seed\n", "- seed\n- main line\n")
+    (origin / "CHANGELOG.md").write_text(cl_main, encoding="utf-8")
+    _git(origin, "add", "CHANGELOG.md")
+    _git(origin, "commit", "-q", "-m", "main changelog")
+    _git(clone, "fetch", "origin", "main")
+
+    client = MagicMock()
+    result = wt.ensure_base_included(
+        clone,
+        "main",
+        client,
+        7398,
+        stale_base_comment_template=_STALE_BASE_COMMENT_TEMPLATE,
+    )
+    assert result is None
+    changelog = (clone / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "<<<<<<<" not in changelog
+    assert "- feat line" in changelog
+    assert "- main line" in changelog
+    ancestor = subprocess.run(
+        ["git", "-C", str(clone), "merge-base", "--is-ancestor", "origin/main", "HEAD"],
+        capture_output=True,
+        check=False,
+    )
+    assert ancestor.returncode == 0
+    assert "P0_REBASE: auto-synced" in capsys.readouterr().err
+
+
+def test_ensure_base_included_changelog_plus_source_conflict_still_andons(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """refs #7398: real conflicts still andon without leaving rebase state."""
+    origin = _init_repo(tmp_path / "origin")
+    clone = _clone(origin, tmp_path / "clone")
+    subprocess.run(
+        ["git", "-C", str(clone), "checkout", "-b", "feat/mixed"],
+        check=True,
+        capture_output=True,
+    )
+    (clone / "CHANGELOG.md").write_text(
+        _BASE_CL.replace("- seed\n", "- seed\n- ours cl\n"),
+        encoding="utf-8",
+    )
+    (clone / "src" / "x.py").parent.mkdir(parents=True, exist_ok=True)
+    (clone / "src" / "x.py").write_text("ours\n", encoding="utf-8")
+    _git(clone, "add", "CHANGELOG.md", "src/x.py")
+    _git(clone, "commit", "-q", "-m", "feat")
+    monkeypatch.setattr("issuesmith.worktree._branch_on_remote", lambda *_a, **_k: True)
+
+    (origin / "CHANGELOG.md").write_text(
+        _BASE_CL.replace("- seed\n", "- seed\n- theirs cl\n"),
+        encoding="utf-8",
+    )
+    (origin / "src" / "x.py").parent.mkdir(parents=True, exist_ok=True)
+    (origin / "src" / "x.py").write_text("theirs\n", encoding="utf-8")
+    _git(origin, "add", "CHANGELOG.md", "src/x.py")
+    _git(origin, "commit", "-q", "-m", "main")
+    _git(clone, "fetch", "origin", "main")
+
+    client = MagicMock()
+    result = wt.ensure_base_included(
+        clone,
+        "main",
+        client,
+        7398,
+        stale_base_comment_template=_STALE_BASE_COMMENT_TEMPLATE,
+    )
+    assert result is not None
+    assert result.status == "andon"
+    assert result.andon is not None
+    assert result.andon.kind == "decision"
+    assert not (clone / ".git" / "rebase-merge").exists()
+    assert not (clone / ".git" / "rebase-apply").exists()
+    capsys.readouterr()

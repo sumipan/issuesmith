@@ -31,7 +31,7 @@ from issuesmith.verbs.children import (
 )
 from issuesmith.verbs.finalize import cleanup_branches, cleanup_worktrees, close_issue
 from issuesmith.verbs.merge import find_pr, merge_pr, merge_state
-from issuesmith.verbs.publish import publish_branch
+from issuesmith.verbs.publish import RebumpResult, publish_branch, rebump_onto_base
 from issuesmith.verbs.worktree import (
     WorktreeError,
     block_design_only_issue,
@@ -64,7 +64,9 @@ __all__ = [
     "merge_state",
     "plan_children",
     "prepare_worktree",
+    "RebumpResult",
     "publish_branch",
+    "rebump_onto_base",
     "resolve",
     "resolve_base_ref",
     "route",
