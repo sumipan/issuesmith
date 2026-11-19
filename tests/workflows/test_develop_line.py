@@ -140,6 +140,18 @@ _FAKE_AGENT = textwrap.dedent(
         git add src/feature.py tests/test_feature.py
         git commit -m "fake engine change" || true
         ;;
+      autofix_tracked)
+        printf 'VALUE = 2\\n' >"$TARGET"
+        printf '%s\\n' \\
+          'from src import feature' \\
+          '' \\
+          'def test_value() -> None:' \\
+          '    assert feature.VALUE == 2' \\
+          >tests/test_feature.py
+        git add src/feature.py tests/test_feature.py
+        git commit -m "fake engine change" || true
+        printf 'VALUE = 2\\n' >"$TARGET"
+        ;;
       out_of_scope)
         printf 'VALUE = 2\\n' >"$TARGET"
         printf '%s\\n' \
@@ -1084,6 +1096,22 @@ def test_no_pr_target_rebase_conflict_stops_with_andon(no_pr_target_env) -> None
     assert "VALUE = 3" in show.stdout
     state = client.issue_get(number, fields=["state"])["state"]
     assert state != "CLOSED"
+
+
+def test_no_pr_merge_commits_gate_autofix_on_bare_main(no_pr_target_env) -> None:
+    """refs sumipan/nexus#7391 — merge commits verify lint autofixes before no-PR push."""
+    host, client, env, target_slug, origin, _external_dir, _bare_path = no_pr_target_env
+    mode = "autofix_lint" if shutil.which("ruff") else "autofix_tracked"
+    _set_fake_engine_mode(host, mode)
+    number = client.issue_create("no pr autofix", _cross_repo_issue_body(target_slug))
+    client.issue_update(number, labels_add=["issuesmith:develop-ready"])
+    outcome = _run_until(client, number, env, host, expect_done=True, max_rounds=60)
+    assert outcome == "done"
+    feature = _git(origin, "show", "main:src/feature.py")
+    assert feature.returncode == 0, feature.stderr
+    assert feature.stdout == "VALUE = 2\n"
+    subjects = _git(origin, "log", "--format=%s", "main").stdout.splitlines()
+    assert "Apply gate auto-fixes" in subjects
 
 
 def test_milestone_parent_stops_at_prepare(host_env) -> None:

@@ -51,6 +51,40 @@ def _target_clone(ctx: StepContext) -> Path:
 
 _BLOCKED_MERGEABLE = frozenset({"false", "conflicting", "dirty"})
 _PUSH_REJECT_MARKERS = ("non-fast-forward", "fetch first", "rejected")
+_AUTO_FIX_COMMIT_MESSAGE = "Apply gate auto-fixes"
+
+
+def _commit_gate_autofixes(worktree: Path) -> str:
+    """Commit tracked gate auto-fixes; return git stderr on failure, else \"\"."""
+    wt = str(worktree)
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=no"],
+        cwd=wt,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if not (status.stdout or "").strip():
+        return ""
+    add = subprocess.run(
+        ["git", "add", "-u"],
+        cwd=wt,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if add.returncode != 0:
+        return add.stderr.strip() or f"git add failed (exit {add.returncode})"
+    commit = subprocess.run(
+        ["git", "commit", "-m", _AUTO_FIX_COMMIT_MESSAGE],
+        cwd=wt,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if commit.returncode != 0:
+        return commit.stderr.strip() or f"git commit failed (exit {commit.returncode})"
+    return ""
 
 
 class _RebaseConflict(Exception):
@@ -103,6 +137,9 @@ def _merge_without_pr(worktree: Path, base: str, *, attempts: int = 3) -> tuple[
                 if line.strip()
             ]
             _git(worktree, "rebase", "--abort")
+            if not files:
+                detail = (rebase.stderr or rebase.stdout or "").strip()
+                raise RuntimeError(detail or "git rebase failed")
             raise _RebaseConflict(files)
 
         push = _git(worktree, "push", "origin", f"HEAD:refs/heads/{base}")
@@ -269,6 +306,15 @@ def run(ctx: StepContext, step: StepConfig) -> StepResult:
     pr_repo = ctx.target_repo.strip() if cross else issue_repo
     issue = int(ctx.issue_number)
     issue_client = get_forge(repo=issue_repo)
+    err = _commit_gate_autofixes(worktree)
+    if err:
+        return StepResult(
+            status="andon",
+            andon=Andon(
+                kind="broken",
+                summary=f"merge: could not commit gate auto-fixes: {err}",
+            ),
+        )
     target_repo = ctx.target_repo.strip()
     if get_config().merges_without_pr(target_repo):
         return _merge_without_pr_flow(
