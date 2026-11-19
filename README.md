@@ -564,9 +564,9 @@ When the host environment that runs the pipeline differs from the target reposit
 | `andon_when` | `[]` (`p1`: `external_leak.target_unknown`) | Violation ids that raise an andon instead of a repair |
 | `repair.max` | `3` | Repair attempts for blocking violations (`0` disables repair) |
 | `repair.push` | `false` | Push the branch after a repair |
-| `tier` | (unset) | Tier selection for `issuesmith tier <id>`: `kind: design_doc` (issue body) or `pr_diff` (`light_max_diff_lines`, default `200`) |
+| `tier` | (unset) | Tier selection for `issuesmith tier <id>`: `kind: design_doc` (issue body) or `pr_diff` (`light_max_diff_lines`, default `200`). For the `review` gate, `pr_diff` selects the engine tier from PR diff lines and unchecked AC count; otherwise the gate falls back to `steps.<id>.review.tier` |
 | `verify` | (unset) | When set to `design_doc`, `issuesmith verify <id>` runs the design-doc gate bundle (`VERIFY_RECOVERY:` markers) |
-| `review` | (unset) | Required when `requires` or `accepts` lists `review`: `role`, `template`, `success_status`, `failure_status` (required), `tier`, `problems_heading` (`Problems:`) |
+| `review` | (unset) | Required when `requires` or `accepts` lists `review`: `role`, `template`, `success_status`, `failure_status` (required), `tier` (engine tier when step `tier` is unset or not `pr_diff`; step `tier: pr_diff` takes priority), `problems_heading` (`Problems:`) |
 
 #### `paths` keys
 

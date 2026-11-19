@@ -1636,6 +1636,50 @@ def test_review_returns_broken_andon_when_branch_check_fails(
     assert result.markers != ["REVIEW_READY"]
 
 
+@pytest.mark.parametrize(
+    "git_side_effect",
+    [
+        pytest.param("invalid_remote_sha", id="invalid_remote_sha"),
+        pytest.param("wrong_remote_ref", id="wrong_remote_ref"),
+        pytest.param("invalid_local_sha", id="invalid_local_sha"),
+    ],
+)
+def test_review_branch_check_invalid_refs_not_branch_moved(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    git_side_effect: str,
+) -> None:
+    """Refs sumipan/nexus#7400 — malformed ls-remote output is branch_check_failed."""
+    from issuesmith.lines.develop import review as develop_review
+
+    repo = tmp_path / "repo"
+    _init_feature_seed(repo)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "init")
+    _git(repo, "checkout", "-b", "feat/x")
+    ctx = _review_step_context(repo)
+
+    def _runner(wt: Path, args: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        if args[:1] == ["rev-parse"]:
+            sha = "ghij" if git_side_effect == "invalid_local_sha" else "abc1234"
+            return subprocess.CompletedProcess(args, 0, sha, "")
+        if git_side_effect == "invalid_remote_sha":
+            return subprocess.CompletedProcess(
+                args, 0, "not-a-sha\trefs/heads/feat/x", ""
+            )
+        if git_side_effect == "wrong_remote_ref":
+            return subprocess.CompletedProcess(
+                args, 0, "def5678\trefs/heads/other", ""
+            )
+        raise AssertionError(f"unexpected git args: {args}")
+
+    monkeypatch.setattr(develop_review, "_git_in_worktree", _runner)
+    result = develop_review.run(ctx, StepConfig())
+    assert result.andon is not None
+    assert result.andon.rule_id == "review.branch_check_failed"
+    assert result.andon.rule_id != "review.branch_moved"
+
+
 def test_cli_dispatch_raises_broken_andon_when_commit_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

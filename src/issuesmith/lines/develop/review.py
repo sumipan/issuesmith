@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -28,7 +29,22 @@ def _parse_context(args: list[str]) -> dict[str, str]:
 
 _AUTO_FIX_COMMIT_MESSAGE = "Apply gate auto-fixes"
 _BRANCH_CHECK_TIMEOUT_SEC = 30
+_OBJECT_ID_RE = re.compile(r"^[0-9a-f]{4,40}$")
 _LANG_EN = Path(__file__).resolve().parents[2] / "lang" / "en.yaml"
+
+
+def _is_object_id(value: str) -> bool:
+    return bool(_OBJECT_ID_RE.fullmatch(value))
+
+
+def _branch_name_valid(branch: str) -> bool:
+    proc = subprocess.run(
+        ["git", "check-ref-format", "--branch", branch],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return proc.returncode == 0
 
 
 @functools.lru_cache
@@ -107,6 +123,8 @@ def _branch_moved_andon(branch: str) -> StepResult:
 
 def _check_remote_branch_matches_head(worktree: Path, branch: str) -> StepResult | None:
     """Return a StepResult when the review must stop; None when check passes or is skipped."""
+    if not _branch_name_valid(branch):
+        return _branch_check_failed(f"invalid branch name: {branch}")
     try:
         head_proc = _git_in_worktree(worktree, ["rev-parse", "HEAD"])
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -116,6 +134,8 @@ def _check_remote_branch_matches_head(worktree: Path, branch: str) -> StepResult
     local_sha = head_proc.stdout.strip()
     if not local_sha:
         return _branch_check_failed("rev-parse returned empty HEAD")
+    if not _is_object_id(local_sha):
+        return _branch_check_failed("rev-parse returned invalid object id")
 
     ref = f"refs/heads/{branch}"
     try:
@@ -137,6 +157,11 @@ def _check_remote_branch_matches_head(worktree: Path, branch: str) -> StepResult
     if len(parts) != 2 or not parts[0].strip():
         return _branch_check_failed("unexpected ls-remote output")
     remote_sha = parts[0].strip()
+    remote_ref = parts[1].strip()
+    if remote_ref != ref:
+        return _branch_check_failed("unexpected ls-remote output")
+    if not _is_object_id(remote_sha):
+        return _branch_check_failed("unexpected ls-remote output")
     if remote_sha == local_sha:
         return None
     return _branch_moved_andon(branch)

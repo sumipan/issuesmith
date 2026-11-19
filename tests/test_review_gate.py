@@ -454,5 +454,10 @@ def test_readme_documents_step_tier_selects_review_engine() -> None:
     section = readme.read_text(encoding="utf-8")
     anchor = section.index("#### `steps.<id>` fields")
     table = section[anchor : section.index("#### `paths` keys", anchor)]
-    assert "`tier`" in table and "pr_diff" in table
-    assert "`review`" in table
+    tier_row = next(line for line in table.splitlines() if "| `tier` |" in line)
+    review_row = next(line for line in table.splitlines() if "| `review` |" in line)
+    assert "pr_diff" in tier_row
+    assert "review.tier" in tier_row
+    assert "falls back" in tier_row
+    assert "pr_diff" in review_row
+    assert "takes priority" in review_row
