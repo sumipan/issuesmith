@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Added
+
+- Reference develop line `prepare` blocks Issues labeled `scope:milestone` with a `decision` andon (`prepare.milestone_parent`) before creating a worktree.
+
+### Changed
+
+- Reference develop line documentation: base reconciliation is via the `verify` `base_freshness` gate only (not `ensure_base_included` on `prepare`).
+
 ## 0.197.0 - 2026-11-19
 
 ### Changed

@@ -111,7 +111,7 @@ Each step’s `requires` gates are listed in the extracted `issuesmith.yaml`. Ga
 | `verify` | `base_freshness`, `lint`, `tests`, `pr_scope`, `ac_contract` |
 | `review` | `review` (bound gate; see [Gates](#gates)) |
 
-**When the line stops:** Violations from issue-shaped gates on `prepare` (`design_lint`, `ac_format`, `scope_breadth`, and similar) are not auto-repaired. Dispatch raises an andon of kind `decision`; the summary looks like `non-repairable gate violation in step prepare: <message>`. Fix the Issue body, then `python3 -m issuesmith andon answer <id> resume` to continue from `prepare` (the worktree is kept). On `verify`, repairable gate failures run the repair step up to twice; if they persist, an andon `decision` opens (`pr_scope` adds `widen:<files>` to the options list).
+**When the line stops:** Issues labeled `scope:milestone` (split parents) stop at `prepare` with a `decision` andon before any worktree is created. Violations from issue-shaped gates on `prepare` (`design_lint`, `ac_format`, `scope_breadth`, and similar) are not auto-repaired. Dispatch raises an andon of kind `decision`; the summary looks like `non-repairable gate violation in step prepare: <message>`. Fix the Issue body, then `python3 -m issuesmith andon answer <id> resume` to continue from `prepare` (the worktree is kept). On `verify`, repairable gate failures run the repair step up to twice; if they persist, an andon `decision` opens (`pr_scope` adds `widen:<files>` to the options list). The line does not call `ensure_base_included` on `prepare`; catching up to the base branch is handled by the `base_freshness` gate on `verify` (including resume from `implement`).
 
 Check the resolved config:
 

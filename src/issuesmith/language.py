@@ -129,6 +129,12 @@ _EN_MESSAGES: dict[str, str] = {
         "step {step} has no module; run it via engine run-guarded --requires-step {step}"
     ),
     "dispatch.repair_reentered": "repair step re-entered itself (ISSUESMITH_REPAIR_ACTIVE is set)",
+    # lines/develop/prepare
+    "prepare.milestone_parent": (
+        "This Issue has the scope:milestone label (a split parent). "
+        "The reference develop line does not run implementation on milestone parents; "
+        "use the SUB phase and child Issues instead."
+    ),
     # ops/repair_step
     "repair_step.reentered": "repair step re-entered itself (ISSUESMITH_REPAIR_ACTIVE is set)",
     "repair_step.no_violations": "repair launched without violations",
