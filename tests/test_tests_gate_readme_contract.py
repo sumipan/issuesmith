@@ -114,19 +114,29 @@ def test_marked_failure_only_passes_gate(
 def test_unmarked_failure_blocks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Refs #7415 AC2 — unmarked new failure stays blocking."""
+    """Refs #7415 AC2 — unmarked failure blocks alongside a marked warning."""
     _write_host_config(tmp_path, monkeypatch, {})
     clone = _setup_repo(tmp_path, {
         "pyproject.toml": _PYTEST_MARKERS,
         "tests/test_plain.py": "def test_plain():\n    assert True\n",
+        "tests/test_readme.py": (
+            "import pytest\n\n"
+            "@pytest.mark.readme_contract\n"
+            "def test_doc():\n"
+            "    assert True\n"
+        ),
     })
-    _commit(clone, {"tests/test_plain.py": _plain_fail_test()})
+    _commit(clone, {
+        "tests/test_plain.py": _plain_fail_test(),
+        "tests/test_readme.py": _marked_fail_test(),
+    })
 
     violations = TestsGate(clone, base_branch="main").check("", [])
 
-    assert len(violations) == 1
-    assert violations[0].rule_id == "tests.pytest_failure"
-    assert violations[0].severity == "fail"
+    assert {(v.rule_id, v.severity) for v in violations} == {
+        ("tests.readme_contract", "warn"),
+        ("tests.pytest_failure", "fail"),
+    }
 
 
 def test_readme_in_allow_paths_blocks_marked_failure(
