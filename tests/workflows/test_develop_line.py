@@ -13,13 +13,14 @@ import sys
 import textwrap
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
 from ghdag.forge import get_forge
 
 from issuesmith.andon import list_open
-from issuesmith.config import StepConfig, reset_config_cache
+from issuesmith.config import RepairConfig, ReviewConfig, StepConfig, reset_config_cache
 from issuesmith.contract import StepContext
 from issuesmith.language import EN
 from issuesmith.lines import LINES, extract_line
@@ -1391,6 +1392,297 @@ def test_commit_tracked_changes_commits_tracked_edits_only(tmp_path: Path) -> No
     assert _git(repo, "log", "-1", "--format=%s").stdout.strip() == "Apply gate auto-fixes"
     files = _git(repo, "show", "--name-only", "--format=", "HEAD").stdout.split()
     assert files == ["src/feature.py"]
+
+
+def _review_step_context(worktree: Path, *, branch: str = "feat/x") -> StepContext:
+    return StepContext(
+        issue_number="1",
+        base_branch="main",
+        handler_name="develop",
+        is_cross_repo="false",
+        target_clone_path="",
+        source="test",
+        workflow_name="issuesmith",
+        m1_result_filename="",
+        m1r_result_filename="",
+        worktree_path=str(worktree),
+        branch=branch,
+    )
+
+
+def _dispatch_context(worktree: Path, *, branch: str = "feat/x") -> dict[str, str]:
+    return {
+        "issue_number": "1",
+        "base_branch": "main",
+        "worktree_path": str(worktree),
+        "branch": branch,
+        "workflow_name": "issuesmith",
+    }
+
+
+def _bare_origin_with_worktree(
+    tmp_path: Path, *, branch: str = "feat/x"
+) -> tuple[Path, Path]:
+    seed = tmp_path / "seed"
+    origin = tmp_path / "origin.git"
+    _init_feature_seed(seed)
+    _git(seed, "add", "-A")
+    _git(seed, "commit", "-m", "init")
+    subprocess.run(
+        ["git", "clone", "--bare", str(seed), str(origin)],
+        check=True,
+        capture_output=True,
+    )
+    worktree = tmp_path / "worktree"
+    subprocess.run(
+        ["git", "clone", str(origin), str(worktree)],
+        check=True,
+        capture_output=True,
+    )
+    _git(worktree, "config", "user.email", "t@example.com")
+    _git(worktree, "config", "user.name", "T")
+    _git(worktree, "checkout", "-b", branch)
+    return origin, worktree
+
+
+def test_review_blocks_before_gate_when_remote_branch_moved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refs sumipan/nexus#7400 AC3 — moved remote branch blocks before review gate."""
+    from issuesmith.lines.develop import review as develop_review
+    from issuesmith.ops.dispatch import map_step_result
+
+    _origin, worktree = _bare_origin_with_worktree(tmp_path)
+    (worktree / "src" / "feature.py").write_text("VALUE = 2\n", encoding="utf-8")
+    _git(worktree, "add", "-A")
+    _git(worktree, "commit", "-m", "impl")
+    _git(worktree, "push", "-u", "origin", "feat/x")
+
+    mover = tmp_path / "mover"
+    subprocess.run(
+        ["git", "clone", str(_origin), str(mover)],
+        check=True,
+        capture_output=True,
+    )
+    _git(mover, "config", "user.email", "t@example.com")
+    _git(mover, "config", "user.name", "T")
+    _git(mover, "checkout", "feat/x")
+    (mover / "remote-only.txt").write_text("x\n", encoding="utf-8")
+    _git(mover, "add", "remote-only.txt")
+    _git(mover, "commit", "-m", "advance remote")
+    _git(mover, "push", "origin", "feat/x")
+
+    gate_calls: list[int] = []
+    monkeypatch.setattr(
+        "issuesmith.ops.dispatch.run_requires_loop",
+        lambda *args, **kwargs: gate_calls.append(1) or 1,
+    )
+    monkeypatch.setattr(
+        "issuesmith.ops.dispatch.get_forge",
+        lambda: MagicMock(),
+    )
+    ctx = _review_step_context(worktree)
+    result = develop_review.run(ctx, StepConfig())
+    assert result.andon is not None
+    assert result.andon.rule_id == "review.branch_moved"
+    assert result.andon.kind == "blocked"
+    assert map_step_result(
+        result, step_id="review", context=_dispatch_context(worktree)
+    ) == 1
+    assert gate_calls == []
+
+    fresh = tmp_path / "fresh"
+    subprocess.run(
+        ["git", "clone", str(_origin), str(fresh)],
+        check=True,
+        capture_output=True,
+    )
+    _git(fresh, "config", "user.email", "t@example.com")
+    _git(fresh, "config", "user.name", "T")
+    _git(fresh, "checkout", "-b", "feat/unpushed")
+    unpushed = develop_review.run(
+        _review_step_context(fresh, branch="feat/unpushed"),
+        StepConfig(),
+    )
+    assert unpushed.status == "done"
+    assert unpushed.markers == ["REVIEW_READY"]
+
+
+def test_review_repair_rechecks_gate_without_rerunning_branch_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refs sumipan/nexus#7400 AC4 — repair re-runs review gate only, not branch check."""
+    from issuesmith.gate_registry import Violation
+    from issuesmith.lines.develop import review as develop_review
+    from issuesmith.ops.dispatch import map_step_result
+    from issuesmith.repair import RequiresResult
+
+    _origin, worktree = _bare_origin_with_worktree(tmp_path)
+    (worktree / "src" / "feature.py").write_text("VALUE = 2\n", encoding="utf-8")
+    _git(worktree, "add", "-A")
+    _git(worktree, "commit", "-m", "impl")
+    _git(worktree, "push", "-u", "origin", "feat/x")
+
+    ls_remote_calls: list[int] = []
+    real_git = develop_review._git_in_worktree
+
+    def _counting_git(
+        wt: Path, args: list[str], *, timeout: int = develop_review._BRANCH_CHECK_TIMEOUT_SEC
+    ):
+        if "ls-remote" in args:
+            ls_remote_calls.append(1)
+        return real_git(wt, args, timeout=timeout)
+
+    monkeypatch.setattr(develop_review, "_git_in_worktree", _counting_git)
+
+    blocking = Violation(
+        rule_id="review.review",
+        severity="fail",
+        message="needs fix",
+        location=None,
+        auto_fixable=False,
+        fix_hint=None,
+    )
+    eval_calls: list[int] = []
+
+    def _eval_side_effect(*_args, **_kwargs):
+        eval_calls.append(1)
+        if len(eval_calls) == 1:
+            return RequiresResult(blocking=[blocking])
+        return RequiresResult(blocking=[])
+
+    step_cfg = StepConfig(
+        requires=("review",),
+        review=ReviewConfig(
+            role="review",
+            template="review.md",
+            success_status="REVIEW_PASS",
+            failure_status="REVIEW_FAIL",
+        ),
+        repair=RepairConfig(max=1),
+    )
+
+    with (
+        patch(
+            "issuesmith.ops.dispatch._build_requires_gates",
+            return_value={"review": MagicMock()},
+        ),
+        patch("issuesmith.ops.dispatch._fetch_fresh_issue_body", return_value=""),
+        patch("issuesmith.ops.dispatch._get_issue_labels", return_value=[]),
+        patch("issuesmith.repair.evaluate_requires", side_effect=_eval_side_effect),
+        patch("issuesmith.ops.dispatch._run_repair_step", return_value=None),
+        patch("issuesmith.ops.dispatch.get_forge", return_value=MagicMock()),
+    ):
+        ctx = _review_step_context(worktree)
+        ready = develop_review.run(ctx, step_cfg)
+        assert ready.markers == ["REVIEW_READY"]
+        assert (
+            map_step_result(
+                ready,
+                step_id="review",
+                context=_dispatch_context(worktree),
+                step_cfg=step_cfg,
+            )
+            == 0
+        )
+
+    assert len(ls_remote_calls) == 1
+    assert len(eval_calls) == 2
+
+
+@pytest.mark.parametrize(
+    "git_side_effect",
+    [
+        pytest.param("rev_parse_fail", id="rev_parse_fail"),
+        pytest.param("ls_remote_fail", id="ls_remote_fail"),
+        pytest.param("timeout", id="timeout"),
+        pytest.param("invalid_output", id="invalid_output"),
+    ],
+)
+def test_review_returns_broken_andon_when_branch_check_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    git_side_effect: str,
+) -> None:
+    """Refs sumipan/nexus#7400 AC5 — branch check failures become broken andon."""
+    from issuesmith.lines.develop import review as develop_review
+
+    repo = tmp_path / "repo"
+    _init_feature_seed(repo)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "init")
+    _git(repo, "checkout", "-b", "feat/x")
+    ctx = _review_step_context(repo)
+
+    def _runner(wt: Path, args: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        if git_side_effect == "rev_parse_fail":
+            return subprocess.CompletedProcess(args, 1, "", "git failed")
+        if git_side_effect == "ls_remote_fail":
+            if args[:1] == ["rev-parse"]:
+                return subprocess.CompletedProcess(args, 0, "a" * 40, "")
+            return subprocess.CompletedProcess(args, 1, "", "remote failed")
+        if git_side_effect == "timeout":
+            if args[:1] == ["rev-parse"]:
+                return subprocess.CompletedProcess(args, 0, "a" * 40, "")
+            raise subprocess.TimeoutExpired("git", develop_review._BRANCH_CHECK_TIMEOUT_SEC)
+        if args[:1] == ["rev-parse"]:
+            return subprocess.CompletedProcess(args, 0, "a" * 40, "")
+        return subprocess.CompletedProcess(args, 0, "not-a-remote-line", "")
+
+    monkeypatch.setattr(develop_review, "_git_in_worktree", _runner)
+    result = develop_review.run(ctx, StepConfig())
+    assert result.andon is not None
+    assert result.andon.rule_id == "review.branch_check_failed"
+    assert result.markers != ["REVIEW_READY"]
+
+
+@pytest.mark.parametrize(
+    "git_side_effect",
+    [
+        pytest.param("invalid_remote_sha", id="invalid_remote_sha"),
+        pytest.param("short_remote_sha", id="short_remote_sha"),
+        pytest.param("wrong_remote_ref", id="wrong_remote_ref"),
+        pytest.param("invalid_local_sha", id="invalid_local_sha"),
+    ],
+)
+def test_review_branch_check_invalid_refs_not_branch_moved(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    git_side_effect: str,
+) -> None:
+    """Refs sumipan/nexus#7400 — malformed ls-remote output is branch_check_failed."""
+    from issuesmith.lines.develop import review as develop_review
+
+    repo = tmp_path / "repo"
+    _init_feature_seed(repo)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "init")
+    _git(repo, "checkout", "-b", "feat/x")
+    ctx = _review_step_context(repo)
+
+    def _runner(wt: Path, args: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        if args[:1] == ["rev-parse"]:
+            sha = "ghij" if git_side_effect == "invalid_local_sha" else "a" * 40
+            return subprocess.CompletedProcess(args, 0, sha, "")
+        if git_side_effect == "invalid_remote_sha":
+            return subprocess.CompletedProcess(
+                args, 0, "not-a-sha\trefs/heads/feat/x", ""
+            )
+        if git_side_effect == "short_remote_sha":
+            return subprocess.CompletedProcess(
+                args, 0, "def5678\trefs/heads/feat/x", ""
+            )
+        if git_side_effect == "wrong_remote_ref":
+            return subprocess.CompletedProcess(
+                args, 0, f"{'b' * 40}\trefs/heads/other", ""
+            )
+        raise AssertionError(f"unexpected git args: {args}")
+
+    monkeypatch.setattr(develop_review, "_git_in_worktree", _runner)
+    result = develop_review.run(ctx, StepConfig())
+    assert result.andon is not None
+    assert result.andon.rule_id == "review.branch_check_failed"
+    assert result.andon.rule_id != "review.branch_moved"
 
 
 def test_cli_dispatch_raises_broken_andon_when_commit_fails(

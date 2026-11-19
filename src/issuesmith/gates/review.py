@@ -1,14 +1,24 @@
-"""LLM review gate for requires evaluation (#4986)."""
+"""LLM review gate for requires evaluation (#4986).
+
+When ``steps.<id>.tier`` is ``pr_diff``, diff lines and unchecked AC count select
+the review engine tier; otherwise ``steps.<id>.review.tier`` is passed through.
+"""
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 from typing import Mapping
 
-from issuesmith.config import ReviewConfig, get_config
+from issuesmith.config import ReviewConfig, TierConfig, get_config
 from issuesmith.gate_registry import Violation
+from issuesmith.gate_rules.ac_complete_rules import get_unchecked_count
 from issuesmith.gates import GateBuildContext, GateBuildError
+from issuesmith.pr_scope import DIFF_LINES_FALLBACK
+from issuesmith.step_tier import pr_diff_tier
+
+_DIFF_TIMEOUT_SEC = 30
 
 
 class ReviewGate:
@@ -20,11 +30,16 @@ class ReviewGate:
         step_id: str,
         worktree_path: Path,
         variables: Mapping[str, str],
+        *,
+        tier_cfg: TierConfig | None = None,
+        base_branch: str = "main",
     ) -> None:
         self._review_cfg = review_cfg
         self._step_id = step_id
         self._worktree_path = worktree_path
         self._variables = variables
+        self._tier_cfg = tier_cfg
+        self._base_branch = base_branch
 
     def check(self, body: str, labels: list[str]) -> list[Violation]:
         from issuesmith.engine import run_guarded_output
@@ -44,6 +59,7 @@ class ReviewGate:
                 file=sys.stderr,
             )
         variables = [f"{k}={v}" for k, v in merged.items()]
+        engine_tier = self._resolve_tier(body)
         rc, stdout = run_guarded_output(
             self._review_cfg.role,
             str(template_dir / self._review_cfg.template),
@@ -51,13 +67,70 @@ class ReviewGate:
             [self._review_cfg.success_status],
             self._review_cfg.failure_status,
             cwd=str(self._worktree_path),
-            tier=self._review_cfg.tier,
+            tier=engine_tier,
         )
         if rc == 0:
             return []
         if _stdout_is_review_result(stdout, self._review_cfg):
             return _violations_from_stdout(stdout, self._review_cfg, self._step_id)
         return [_engine_error_violation(rc, stdout, self._step_id)]
+
+    def _resolve_tier(self, body: str) -> str | None:
+        if self._tier_cfg is None or self._tier_cfg.kind != "pr_diff":
+            return self._review_cfg.tier
+        diff_lines, fallback = _worktree_diff_lines(
+            self._worktree_path, self._base_branch
+        )
+        unchecked = get_unchecked_count(body)
+        tier = pr_diff_tier(
+            diff_lines,
+            unchecked,
+            True,
+            light_max_diff_lines=self._tier_cfg.light_max_diff_lines,
+        )
+        msg = (
+            f"[issuesmith-review] step={self._step_id} tier={tier} "
+            f"diff_lines={diff_lines} unchecked_ac={unchecked}"
+        )
+        if fallback:
+            msg = f"{msg} diff_fallback={fallback}"
+        print(msg, file=sys.stderr)
+        return tier
+
+
+def _worktree_diff_lines(
+    worktree: Path, base_branch: str
+) -> tuple[int, str | None]:
+    ref = f"origin/{base_branch}...HEAD"
+    try:
+        proc = subprocess.run(
+            ["git", "diff", "--numstat", ref],
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=_DIFF_TIMEOUT_SEC,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return DIFF_LINES_FALLBACK, "diff_command_failed"
+    if proc.returncode != 0:
+        return DIFF_LINES_FALLBACK, "diff_failed"
+    total = 0
+    for line in proc.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 3:
+            return DIFF_LINES_FALLBACK, "invalid_numstat"
+        for count in parts[:2]:
+            if count == "-":
+                continue
+            try:
+                value = int(count)
+            except ValueError:
+                return DIFF_LINES_FALLBACK, "invalid_numstat"
+            if value < 0:
+                return DIFF_LINES_FALLBACK, "invalid_numstat"
+            total += value
+    return total, None
 
 
 def _stdout_is_review_result(stdout: str, review_cfg: ReviewConfig) -> bool:
@@ -142,4 +215,11 @@ def build_review_gate(ctx: GateBuildContext) -> ReviewGate:
         raise GateBuildError(
             f"steps.{ctx.step_id}.review is not configured"
         )
-    return ReviewGate(step.review, ctx.step_id, ctx.worktree_path, ctx.variables)
+    return ReviewGate(
+        step.review,
+        ctx.step_id,
+        ctx.worktree_path,
+        ctx.variables,
+        tier_cfg=step.tier,
+        base_branch=ctx.base_branch,
+    )
