@@ -227,7 +227,11 @@ During `queue tick`, dispatch respects configured `concurrency`, lane `in_flight
 | `lanes check [--apply] [--json]` | Plan slots, candidates, enqueues and escalations per lane; `--apply` enqueues the plan (skipped while the GitHub API budget is low) |
 | `lanes report [--json]` | Patrol report: the lane plan plus `andon.auto_answer` escalations and merged Issues since `report_since`; state is kept in `<ledger>.state.json` |
 
-Ledger keys: `lanes` (lane name to Issue numbers), `hold`, `backlog`, `auto_lanes.enabled` (`false`), `queued_stale_minutes` (`30`), `api_min_remaining` (`api_brake.min_remaining`), `report_every_minutes` (`120`), `report_since` (ISO timestamp or `daily`).
+Ledger keys: `lanes` (lane name to Issue numbers), `hold`, `backlog`, `high`, `high_labels`, `auto_lanes.enabled` (`false`), `queued_stale_minutes` (`30`), `api_min_remaining` (`api_brake.min_remaining`), `report_every_minutes` (`120`), `report_since` (ISO timestamp or `daily`).
+
+`lanes check --json` top-level keys: `slots`, `candidates`, `enqueue`, `escalations`, `waits`, `halt`. Each `candidates` row includes `lane`, `issue`, `phase`, `depth`, `priority`. Each `enqueue` row includes `lane`, `issue`, `phase`, `engine`, `priority`.
+
+`lanes report --json` adds `merge_done_since`, `report_due`, `quiet`, and `auto_answers` to that shape (same `slots`, `candidates`, `enqueue`, `escalations`, `waits`, `halt` fields as check).
 
 ### `milestone` subcommands
 
@@ -271,7 +275,7 @@ Commands implemented in `issuesmith.cli` and the module-level parsers for `queue
 | `config show` | resolved configuration object (always JSON on stdout) |
 | `doctor --json` | `list` of `{"name", "ok", "detail"}` checks |
 | `labels reconcile --json` | report object |
-| `lanes check --json` / `lanes report --json` | lane plan objects |
+| `lanes check --json` / `lanes report --json` | keys listed under [lanes subcommands](#lanes-subcommands) |
 | `metrics rework --json` | rework report object |
 | `milestone status <parent> --json` | `parent`, `state`, `stage`, `children`, `next`, … |
 | `observe --json` | `list` of observe events |
@@ -289,7 +293,7 @@ Supported Python imports are limited to seven modules (`issuesmith.__all__` is e
 | `issuesmith.contract` | `StepContext`, `StepResult`, `StepConfig`, `Andon`, `RetrySignal`, `RetryReason`, `parse_issue_metadata`, `validate_issue_metadata`, `MetadataViolation` |
 | `issuesmith.verbs` | `AcceptanceError`, `AcceptanceVerdict`, `ReviewFacts`, `ChildPlan`, `ChildPlanEntry`, `ChildPlanError`, `WorktreeError`, `block_design_only_issue`, `check_acceptance`, `check_contract`, `cleanup_branches`, `cleanup_worktrees`, `close_issue`, `create_child`, `ensure_base_included`, `exec_file`, `extract_contract`, `find_pr`, `map_step_result`, `merge_pr`, `merge_state`, `plan_children`, `prepare_worktree`, `publish_branch`, `resolve`, `resolve_base_ref`, `route`, `review_tier`, `run_guarded`, `run_verified`, `unchecked_acceptance_count`, `validate_children`, `widen_allow_paths` |
 | `issuesmith.gates` | `Verdict`, `GateBuildContext`, `GateBuildError`, `GateEntry`, `RequiresGate`, `GATE_REGISTRY`, `NON_REPAIRABLE_RULE_IDS`, `is_non_repairable_rule_id`, `resolve_gate`, `validate_step_requires`, `check_scope`, `check_pr_scope`, `check_ac_complete`, `check_deps`, `Violation`, `Gate`, `PreconditionContext`, `normalize_allow_path`, `external_target_state` |
-| `issuesmith.config` | `get_config`, `load_config`, `IssuesmithConfig`, `LanguagePack` |
+| `issuesmith.config` | `get_config`, `load_config`, `IssuesmithConfig`, `LanguagePack` (phase → role via `IssuesmithConfig.phase(name).role`) |
 | `issuesmith.andon` | `Andon`, `AndonSink`, `AutoAnswerPlan`, `raise_andon`, `list_open`, `list_open_records`, `answer`, `from_comment`, `to_comment`, `plan_auto_answers`, `apply_auto_answers` |
 | `issuesmith.queue` | `QueueStore`, `DispatchResult`, `dispatch_one` |
 | `issuesmith.forge` | `ForgePort`, `GitHubApiError`, `GitHubClient`, `LocalForge`, `get_forge` |

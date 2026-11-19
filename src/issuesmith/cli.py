@@ -740,10 +740,12 @@ def _cmd_lanes(argv: list[str]) -> int:
         load_ledger,
         load_report_state,
         plan,
+        plan_to_dict,
         report,
         resolve_report_since,
         save_report_state,
     )
+    from issuesmith.queue import plan as queue_plan_fn
     from issuesmith.queue_store import QueueStore
     from issuesmith.quota_gate import is_github_api_low, read_github_api_state
 
@@ -830,6 +832,10 @@ def _cmd_lanes(argv: list[str]) -> int:
             if num not in issues:
                 issues[num] = _issue_view(num, raw)
 
+    queue_plan = None
+    if not api_low:
+        queue_plan = queue_plan_fn(QueueStore(), client, now=now)
+
     lane_plan = plan(
         ledger,
         snapshot,
@@ -838,23 +844,14 @@ def _cmd_lanes(argv: list[str]) -> int:
         now,
         api_low,
         role_engine_map=_lanes_role_engine_map(cfg),
+        queue_plan=queue_plan,
     )
 
     if args.subcmd == "check":
         if apply_enqueue and not api_low:
             apply(lane_plan, QueueStore())
         if as_json:
-            print(
-                json.dumps(
-                    {
-                        "slots": lane_plan.slots,
-                        "candidates": lane_plan.candidates,
-                        "enqueue": lane_plan.enqueue,
-                        "escalations": lane_plan.escalations,
-                    },
-                    ensure_ascii=False,
-                )
-            )
+            print(json.dumps(plan_to_dict(lane_plan), ensure_ascii=False))
             return 0
         for entry in lane_plan.enqueue:
             print(f"enqueue #{entry['issue']} phase={entry['phase']} lane={entry.get('lane')}")
@@ -863,7 +860,21 @@ def _cmd_lanes(argv: list[str]) -> int:
         return 0
 
     if args.subcmd == "report":
-        auto_plan = plan_auto_answers(client, cfg.andon.auto_answer)
+        from issuesmith.observe.dag_state import load_dag_states
+
+        dag_states = load_dag_states(
+            cfg.paths.exec_jsonl,
+            cfg.paths.done_dir,
+            cfg.paths.done_dir.parent / "running",
+        )
+        active_issues = {
+            issue
+            for issue, dag in dag_states.items()
+            if dag.status in ("running", "pending")
+        }
+        auto_plan = plan_auto_answers(
+            client, cfg.andon.auto_answer, active_issues=active_issues
+        )
         since = resolve_report_since(ledger.report_since, now, cfg.timezone)
         merged = count_merge_done_since(client, since, cfg) if since.strip() else None
         state_path = ledger_state_path(ledger_path)

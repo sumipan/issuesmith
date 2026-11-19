@@ -137,6 +137,26 @@ def test_resume_from_p1_calls_force(mock_resume):
     mock_resume.assert_called_once_with(42, from_step="p1", force=True)
 
 
+def test_active_issues_excluded_from_auto_answers():
+    """Issue #7326: andons on DAG-active issues are skipped for auto-answer."""
+    andon = Andon(
+        id="wf:99:cp2:0",
+        kind="decision",
+        issue=99,
+        step="cp2",
+        summary="needs human",
+    )
+    rules = (_rule(),)
+    client = _client_with_andons([andon])
+    plan = plan_auto_answers(client, rules, active_issues={99})
+    assert plan.answers == []
+    assert plan.escalations == []
+
+    plan_open = plan_auto_answers(client, rules)
+    assert len(plan_open.answers) == 1
+    assert plan_open.answers[0]["issue"] == 99
+
+
 def test_config_auto_answer_validation(tmp_path, monkeypatch):
     path = tmp_path / "issuesmith.yaml"
     path.write_text(
