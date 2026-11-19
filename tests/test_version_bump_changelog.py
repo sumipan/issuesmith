@@ -154,7 +154,7 @@ def _init_repo(
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "chore: init")
     _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
-    for subject in extra_commits or ["fix: tweak"]:
+    for subject in ["fix: tweak"] if extra_commits is None else extra_commits:
         (repo / "notes.txt").write_text(f"{subject}\n", encoding="utf-8")
         _git(repo, "add", "notes.txt")
         _git(repo, "commit", "-q", "-m", subject)
@@ -207,10 +207,13 @@ def test_run_bump_excludes_bump_and_merge_commits(tmp_path: Path):
         "# Changelog\n\n## Unreleased\n\n## 0.71.0\n",
         extra_commits=[],
     )
+    _git(repo, "checkout", "-q", "-b", "side")
     _git(repo, "commit", "--allow-empty", "-q", "-m", "fix: side fix")
-    _git(repo, "branch", "side")
     _git(repo, "checkout", "-q", "main")
     _git(repo, "merge", "--no-ff", "-q", "side", "-m", "Merge branch 'side'")
+    assert _git(repo, "log", "--merges", "--format=%s", "origin/main..HEAD").strip() == (
+        "Merge branch 'side'"
+    )
     _git(
         repo,
         "commit",
