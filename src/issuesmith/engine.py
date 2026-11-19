@@ -24,7 +24,8 @@ import sys
 import tempfile
 import time
 import uuid
-from collections.abc import Collection
+from collections.abc import Collection, Iterable, Iterator
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -90,7 +91,28 @@ METRICS_FILE = _cfg.paths.metrics
 METRICS_ENV_VAR = "METRICS_JSONL_PATH"
 QUOTA_STATE_PATH = _cfg.paths.quota_state
 
+_LLM_GITHUB_ENV_DENY = (
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+    "GITHUB_REPOSITORIES",
+    "GITHUB_REPOSITORY",
+)
+
 _ENGINE_TRANSIENT_PAUSE_SEC = 600
+
+
+@contextmanager
+def _without_env(names: Iterable[str]) -> Iterator[None]:
+    """Temporarily remove env vars; restore only those that were present on entry."""
+    saved: dict[str, str] = {}
+    for name in names:
+        if name in os.environ:
+            saved[name] = os.environ.pop(name)
+    try:
+        yield
+    finally:
+        for name, value in saved.items():
+            os.environ[name] = value
 
 
 class _EngineProcess(subprocess.CompletedProcess[str]):
@@ -924,19 +946,26 @@ def _execute(
     }
 
     started_at = time.time()
+
+    def _llm_child_env():
+        if role == "implementation":
+            return _without_env(_LLM_GITHUB_ENV_DENY)
+        return nullcontext()
+
     try:
         try:
-            result = call(
-                content,
-                route=llm_route,
-                timeout=int(timeout_sec),
-                cwd=working_directory,
-                permission=_ISSUESMITH_PERMISSION,
-                permission_overrides=_PERMISSION_OVERRIDES,
-                additional_tags=additional_tags,
-                quota_gate=quota_gate,
-                isolation=isolation,
-            )
+            with _llm_child_env():
+                result = call(
+                    content,
+                    route=llm_route,
+                    timeout=int(timeout_sec),
+                    cwd=working_directory,
+                    permission=_ISSUESMITH_PERMISSION,
+                    permission_overrides=_PERMISSION_OVERRIDES,
+                    additional_tags=additional_tags,
+                    quota_gate=quota_gate,
+                    isolation=isolation,
+                )
         except subprocess.TimeoutExpired as exc:
             finished_at = time.time()
             timeout_detail = f"TimeoutExpired after {int(exc.timeout)}s"
@@ -994,17 +1023,18 @@ def _execute(
                 role, selection, tier, frozenset(paused_after)
             )
             if retry_route:
-                result = call(
-                    content,
-                    route=retry_route,
-                    timeout=int(timeout_sec),
-                    cwd=working_directory,
-                    permission=_ISSUESMITH_PERMISSION,
-                    permission_overrides=_PERMISSION_OVERRIDES,
-                    additional_tags=additional_tags,
-                    quota_gate=quota_gate,
-                    isolation=isolation,
-                )
+                with _llm_child_env():
+                    result = call(
+                        content,
+                        route=retry_route,
+                        timeout=int(timeout_sec),
+                        cwd=working_directory,
+                        permission=_ISSUESMITH_PERMISSION,
+                        permission_overrides=_PERMISSION_OVERRIDES,
+                        additional_tags=additional_tags,
+                        quota_gate=quota_gate,
+                        isolation=isolation,
+                    )
             else:
                 raise RetrySignal(reason=RetryReason.RATE_LIMITED, after=resume_at)
 
@@ -1264,13 +1294,56 @@ def _run_guarded_order(
     Success: exit 0 and exactly one standalone status line with an allowed value.
     """
     sink = out if out is not None else sys.stdout
-    proc = _execute(
-        role,
-        _render_template(template_path, variables),
-        cwd=cwd,
-        template=Path(template_path).name,
-        tier=tier,
-    )
+    variables_for_render = list(variables)
+    issue_body_path: str | None = None
+    template_file = Path(template_path)
+    try:
+        if template_file.is_file():
+            template = string.Template(
+                template_file.read_text(encoding="utf-8")
+            )
+            parsed = _parse_variables(variables)
+            needed = set(template_identifiers(template))
+        else:
+            parsed = _parse_variables(variables)
+            needed = set()
+        if (
+            "issue_body_file" in needed
+            and "issue_body_file" not in parsed
+            and parsed.get("issue_number")
+        ):
+            from issuesmith.ops.dispatch import fetch_issue_inputs
+
+            body, _labels = fetch_issue_inputs(parsed)
+            if not body.strip():
+                print(f"PIPELINE_STATUS: {failure_status}", file=sink)
+                issue_num = parsed["issue_number"]
+                print(
+                    f"REASON: issue body fetch failed for #{issue_num}",
+                    file=sink,
+                )
+                return 1, ""
+            fd, issue_body_path = tempfile.mkstemp(
+                prefix="issuesmith-issue-", suffix=".md"
+            )
+            os.close(fd)
+            Path(issue_body_path).write_text(body, encoding="utf-8")
+            variables_for_render = [
+                *variables,
+                f"issue_body_file={issue_body_path}",
+            ]
+        proc = _execute(
+            role,
+            _render_template(template_path, variables_for_render),
+            cwd=cwd,
+            template=Path(template_path).name,
+            tier=tier,
+        )
+    finally:
+        if issue_body_path is not None:
+            path = Path(issue_body_path)
+            if path.is_file():
+                path.unlink()
     sink.write(proc.stdout)
     sys.stderr.write(proc.stderr)
     statuses = _extract_status_values(proc.stdout)
