@@ -24,6 +24,29 @@ def _repo_slug(ctx: StepContext) -> str:
     return (ctx.issue_repo.strip() or get_config().repo).strip()
 
 
+def _abs_under_config(path: Path) -> Path:
+    if path.is_absolute():
+        return path
+    return get_config().root / path
+
+
+def _cross_repo(ctx: StepContext) -> bool:
+    if get_config().host_is_repo_checkout:
+        return ctx.is_cross_repo == "true"
+    return True
+
+
+def _target_clone(ctx: StepContext) -> Path:
+    if ctx.target_clone_path.strip():
+        return _abs_under_config(Path(ctx.target_clone_path))
+    target = ctx.target_repo.strip()
+    repo_tail = target.split("/")[-1] if target else ""
+    if not repo_tail:
+        raise RuntimeError("target_clone_path is missing for cross-repo merge cleanup")
+    external = get_config().paths.external_dir
+    return _abs_under_config(Path(external) / repo_tail)
+
+
 _BLOCKED_MERGEABLE = frozenset({"false", "conflicting", "dirty"})
 
 
@@ -35,11 +58,18 @@ def _pr_number_from_url(url: str) -> int | None:
 
 
 def _locate_pr(
-    client, repo: str, branch: str, issue: int, *, create_url: str = ""
+    client,
+    repo: str,
+    branch: str,
+    issue: int,
+    *,
+    create_url: str = "",
+    match_issue_in_title: bool = True,
 ) -> int | None:
-    pr = find_pr(client, repo, branch, issue)
-    if pr is not None:
-        return pr
+    if match_issue_in_title:
+        pr = find_pr(client, repo, branch, issue)
+        if pr is not None:
+            return pr
     parsed = _pr_number_from_url(create_url)
     if parsed is not None:
         return parsed
@@ -51,7 +81,7 @@ def _locate_pr(
             continue
         if head == branch:
             return number
-        if re.search(rf"(?<!\d)#{issue}(?!\d)", title):
+        if match_issue_in_title and re.search(rf"(?<!\d)#{issue}(?!\d)", title):
             return number
     return None
 
@@ -71,10 +101,17 @@ def _git_toplevel(worktree: Path) -> Path:
 def run(ctx: StepContext, step: StepConfig) -> StepResult:
     _ = step
     worktree = Path(ctx.worktree_path)
-    repo = _repo_slug(ctx)
+    if not worktree.is_absolute():
+        worktree = get_config().root / worktree
+    issue_repo = _repo_slug(ctx)
+    cross = _cross_repo(ctx)
+    pr_repo = ctx.target_repo.strip() if cross else issue_repo
     issue = int(ctx.issue_number)
-    client = get_forge(repo=repo)
+    pr_client = get_forge(repo=pr_repo)
+    issue_client = get_forge(repo=issue_repo)
     branch = ctx.branch.strip()
+    repos_differ = pr_repo != issue_repo
+    match_title = not repos_differ
 
     try:
         publish_branch(worktree, branch)
@@ -85,18 +122,24 @@ def run(ctx: StepContext, step: StepConfig) -> StepResult:
         )
 
     create_url = ""
-    pr = _locate_pr(client, repo, branch, issue)
+    pr = _locate_pr(
+        pr_client, pr_repo, branch, issue, match_issue_in_title=match_title
+    )
     if pr is None:
-        title = f"Implement #{issue}"
-        body = f"Closes #{issue}"
+        if repos_differ:
+            title = f"Implement {issue_repo}#{issue}"
+            body = f"Closes {issue_repo}#{issue}"
+        else:
+            title = f"Implement #{issue}"
+            body = f"Closes #{issue}"
         try:
             create_url = str(
-                client.pr_create(
+                pr_client.pr_create(
                     base=ctx.base_branch,
                     head=branch,
                     title=title,
                     body=body,
-                    repo=repo,
+                    repo=pr_repo,
                 )
             )
         except Exception as exc:  # noqa: BLE001
@@ -104,14 +147,21 @@ def run(ctx: StepContext, step: StepConfig) -> StepResult:
                 status="andon",
                 andon=Andon(kind="broken", summary=f"pr_create failed: {exc}"),
             )
-        pr = _locate_pr(client, repo, branch, issue, create_url=create_url)
+        pr = _locate_pr(
+            pr_client,
+            pr_repo,
+            branch,
+            issue,
+            create_url=create_url,
+            match_issue_in_title=match_title,
+        )
         if pr is None:
             return StepResult(
                 status="andon",
                 andon=Andon(kind="broken", summary="PR not found after create"),
             )
 
-    state = merge_state(client, repo, pr)
+    state = merge_state(pr_client, pr_repo, pr)
     mergeable = str(state.get("mergeable") or "").lower()
     if mergeable in _BLOCKED_MERGEABLE:
         return StepResult(
@@ -123,15 +173,24 @@ def run(ctx: StepContext, step: StepConfig) -> StepResult:
         )
 
     try:
-        merge_pr(client, repo, pr)
+        merge_pr(pr_client, pr_repo, pr)
     except Exception as exc:  # noqa: BLE001
         return StepResult(
             status="andon",
             andon=Andon(kind="broken", summary=f"merge failed: {exc}"),
         )
 
-    repo_root = _git_toplevel(worktree)
-    cleanup_worktrees(repo_root, ctx.issue_number)
-    cleanup_branches(repo_root, ctx.issue_number)
-    close_issue(client, issue)
+    if cross:
+        clone = _target_clone(ctx)
+        cleanup_worktrees(
+            get_config().root,
+            ctx.issue_number,
+            is_cross_repo=True,
+            target_clone_path=clone,
+        )
+    else:
+        repo_root = _git_toplevel(worktree)
+        cleanup_worktrees(repo_root, ctx.issue_number)
+        cleanup_branches(repo_root, ctx.issue_number)
+    close_issue(issue_client, issue)
     return StepResult(status="done", markers=["MERGE_DONE"], irreversible=True)

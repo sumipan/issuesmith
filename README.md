@@ -44,6 +44,8 @@ See [TESTING.md](./TESTING.md) for what tests should and should not pin.
 
 The package bundles one minimal develop phase. Step modules live at `issuesmith.lines.develop.*`; wiring files live under `issuesmith.lines.develop.files` inside the wheel and are written to your host with `config extract-line`.
 
+The host repository root does not have to be a checkout of the repository you change. Set `host_is_repo_checkout: false`, list every repository you target in `supported_repos`, and keep `paths.external_dir` pointing at where clones live (default `.claude/external`). Pipeline work then runs in a clone at `paths.external_dir/<repo-name>` and its `worktrees/` subtree; pull requests are opened on `target_repo`, while Issues on the configured `repo` are closed after merge.
+
 | Piece | Role |
 |---|---|
 | `issuesmith.lines.develop.prepare` … `merge` | Step modules referenced from `steps.<id>.module` |
