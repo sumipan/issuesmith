@@ -118,15 +118,18 @@ def _worktree_diff_lines(
     total = 0
     for line in proc.stdout.splitlines():
         parts = line.split("\t")
-        if len(parts) < 2:
+        if len(parts) < 3:
             return DIFF_LINES_FALLBACK, "invalid_numstat"
         for count in parts[:2]:
             if count == "-":
                 continue
             try:
-                total += int(count)
+                value = int(count)
             except ValueError:
                 return DIFF_LINES_FALLBACK, "invalid_numstat"
+            if value < 0:
+                return DIFF_LINES_FALLBACK, "invalid_numstat"
+            total += value
     return total, None
 
 

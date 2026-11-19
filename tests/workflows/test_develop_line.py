@@ -1619,14 +1619,14 @@ def test_review_returns_broken_andon_when_branch_check_fails(
             return subprocess.CompletedProcess(args, 1, "", "git failed")
         if git_side_effect == "ls_remote_fail":
             if args[:1] == ["rev-parse"]:
-                return subprocess.CompletedProcess(args, 0, "abc123", "")
+                return subprocess.CompletedProcess(args, 0, "a" * 40, "")
             return subprocess.CompletedProcess(args, 1, "", "remote failed")
         if git_side_effect == "timeout":
             if args[:1] == ["rev-parse"]:
-                return subprocess.CompletedProcess(args, 0, "abc123", "")
+                return subprocess.CompletedProcess(args, 0, "a" * 40, "")
             raise subprocess.TimeoutExpired("git", develop_review._BRANCH_CHECK_TIMEOUT_SEC)
         if args[:1] == ["rev-parse"]:
-            return subprocess.CompletedProcess(args, 0, "abc123", "")
+            return subprocess.CompletedProcess(args, 0, "a" * 40, "")
         return subprocess.CompletedProcess(args, 0, "not-a-remote-line", "")
 
     monkeypatch.setattr(develop_review, "_git_in_worktree", _runner)
@@ -1640,6 +1640,7 @@ def test_review_returns_broken_andon_when_branch_check_fails(
     "git_side_effect",
     [
         pytest.param("invalid_remote_sha", id="invalid_remote_sha"),
+        pytest.param("short_remote_sha", id="short_remote_sha"),
         pytest.param("wrong_remote_ref", id="wrong_remote_ref"),
         pytest.param("invalid_local_sha", id="invalid_local_sha"),
     ],
@@ -1661,15 +1662,19 @@ def test_review_branch_check_invalid_refs_not_branch_moved(
 
     def _runner(wt: Path, args: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
         if args[:1] == ["rev-parse"]:
-            sha = "ghij" if git_side_effect == "invalid_local_sha" else "abc1234"
+            sha = "ghij" if git_side_effect == "invalid_local_sha" else "a" * 40
             return subprocess.CompletedProcess(args, 0, sha, "")
         if git_side_effect == "invalid_remote_sha":
             return subprocess.CompletedProcess(
                 args, 0, "not-a-sha\trefs/heads/feat/x", ""
             )
+        if git_side_effect == "short_remote_sha":
+            return subprocess.CompletedProcess(
+                args, 0, "def5678\trefs/heads/feat/x", ""
+            )
         if git_side_effect == "wrong_remote_ref":
             return subprocess.CompletedProcess(
-                args, 0, "def5678\trefs/heads/other", ""
+                args, 0, f"{'b' * 40}\trefs/heads/other", ""
             )
         raise AssertionError(f"unexpected git args: {args}")
 

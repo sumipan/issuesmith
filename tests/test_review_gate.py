@@ -17,7 +17,12 @@ from issuesmith.engine import (
     _EngineProcess,
 )
 from issuesmith.gates import GateBuildContext, GateBuildError
-from issuesmith.gates.review import ReviewGate, _violations_from_stdout, build_review_gate
+from issuesmith.gates.review import (
+    ReviewGate,
+    _violations_from_stdout,
+    _worktree_diff_lines,
+    build_review_gate,
+)
 from issuesmith.pr_scope import DIFF_LINES_FALLBACK
 from issuesmith.repair import evaluate_requires
 
@@ -414,6 +419,25 @@ def test_check_pr_diff_tier_uses_diff_boundary_and_ac_state(
         ) as mock_run:
             assert gate.check(body, []) == []
     assert mock_run.call_args.kwargs["tier"] == expected_tier
+
+
+@pytest.mark.parametrize(
+    ("numstat", "expected"),
+    [
+        ("1\t2\tsrc/a.py\n-\t-\tasset.bin\n", (3, None)),
+        ("1\t2\n", (DIFF_LINES_FALLBACK, "invalid_numstat")),
+        ("-1\t2\tsrc/a.py\n", (DIFF_LINES_FALLBACK, "invalid_numstat")),
+        ("x\t2\tsrc/a.py\n", (DIFF_LINES_FALLBACK, "invalid_numstat")),
+    ],
+)
+def test_worktree_diff_lines_rejects_malformed_numstat(
+    tmp_path: Path,
+    numstat: str,
+    expected: tuple[int, str | None],
+) -> None:
+    proc = MagicMock(returncode=0, stdout=numstat)
+    with patch("issuesmith.gates.review.subprocess.run", return_value=proc):
+        assert _worktree_diff_lines(tmp_path, "main") == expected
 
 
 @pytest.mark.parametrize(

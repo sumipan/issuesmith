@@ -29,7 +29,7 @@ def _parse_context(args: list[str]) -> dict[str, str]:
 
 _AUTO_FIX_COMMIT_MESSAGE = "Apply gate auto-fixes"
 _BRANCH_CHECK_TIMEOUT_SEC = 30
-_OBJECT_ID_RE = re.compile(r"^[0-9a-f]{4,40}$")
+_OBJECT_ID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _LANG_EN = Path(__file__).resolve().parents[2] / "lang" / "en.yaml"
 
 
