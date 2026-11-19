@@ -7,7 +7,10 @@ from pathlib import Path
 
 from issuesmith.config import get_config
 from issuesmith.contract import Andon, StepConfig, StepContext, StepResult
+from issuesmith.forge import get_forge
 from issuesmith.verbs import WorktreeError, prepare_worktree
+
+_MILESTONE_LABEL = "scope:milestone"
 
 
 def _repo_root() -> Path:
@@ -45,9 +48,44 @@ def _target_clone(ctx: StepContext) -> Path:
     return _abs_under_config(Path(external) / repo_tail)
 
 
+def _issue_labels(issue_number: str) -> list[str]:
+    raw = get_forge().issue_get(int(issue_number), fields=["labels"])["labels"]
+    out: list[str] = []
+    for item in raw:
+        if isinstance(item, dict) and item.get("name"):
+            out.append(str(item["name"]))
+        elif isinstance(item, str):
+            out.append(item)
+    return out
+
+
+def _milestone_parent_block() -> StepResult:
+    summary = get_config().language.message("prepare.milestone_parent")
+    return StepResult(
+        status="andon",
+        andon=Andon(
+            kind="decision",
+            rule_id="prepare.milestone_parent",
+            summary=summary,
+        ),
+    )
+
+
 def run(ctx: StepContext, step: StepConfig) -> StepResult:
     """Create or verify the worktree at ``ctx.worktree_path``."""
     _ = step
+    try:
+        labels = _issue_labels(ctx.issue_number)
+    except Exception as exc:
+        return StepResult(
+            status="andon",
+            andon=Andon(
+                kind="broken",
+                summary=f"failed to fetch issue labels: {exc}",
+            ),
+        )
+    if _MILESTONE_LABEL in labels:
+        return _milestone_parent_block()
     try:
         if _cross_repo(ctx):
             clone = _target_clone(ctx)

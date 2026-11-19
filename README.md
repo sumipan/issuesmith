@@ -9,23 +9,23 @@ The suite includes design and merge gates, a request queue with triage, lane pla
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.197.0-blue)
+![version](https://img.shields.io/badge/version-v0.197.1-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.197.0** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.197.1** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.197.0"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.197.1"
 ```
 
 The gates, forge access, `observe`, `andon`, `lanes` and `metrics` import ghdag, so install the `ghdag` extra unless another package already provides ghdag. The base package alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.197.0"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.197.1"
 ```
 
 | Item | Value |
@@ -111,7 +111,7 @@ Each step’s `requires` gates are listed in the extracted `issuesmith.yaml`. Ga
 | `verify` | `base_freshness`, `lint`, `tests`, `pr_scope`, `ac_contract` |
 | `review` | `review` (bound gate; see [Gates](#gates)) |
 
-**When the line stops:** Violations from issue-shaped gates on `prepare` (`design_lint`, `ac_format`, `scope_breadth`, and similar) are not auto-repaired. Dispatch raises an andon of kind `decision`; the summary looks like `non-repairable gate violation in step prepare: <message>`. Fix the Issue body, then `python3 -m issuesmith andon answer <id> resume` to continue from `prepare` (the worktree is kept). On `verify`, repairable gate failures run the repair step up to twice; if they persist, an andon `decision` opens (`pr_scope` adds `widen:<files>` to the options list).
+**When the line stops:** Issues labeled `scope:milestone` (split parents) stop at `prepare` with a `decision` andon before any worktree is created. Violations from issue-shaped gates on `prepare` (`design_lint`, `ac_format`, `scope_breadth`, and similar) are not auto-repaired. Dispatch raises an andon of kind `decision`; the summary looks like `non-repairable gate violation in step prepare: <message>`. Fix the Issue body, then `python3 -m issuesmith andon answer <id> resume` to continue from `prepare` (the worktree is kept). On `verify`, repairable gate failures run the repair step up to twice; if they persist, an andon `decision` opens (`pr_scope` adds `widen:<files>` to the options list). The line does not call `ensure_base_included` on `prepare`; catching up to the base branch is handled by the `base_freshness` gate on `verify` (including resume from `implement`).
 
 Check the resolved config:
 

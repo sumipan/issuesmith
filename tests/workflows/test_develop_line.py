@@ -18,8 +18,11 @@ import yaml
 from ghdag.forge import get_forge
 
 from issuesmith.andon import list_open
-from issuesmith.config import reset_config_cache
+from issuesmith.config import StepConfig, reset_config_cache
+from issuesmith.contract import StepContext
+from issuesmith.language import EN
 from issuesmith.lines import LINES, extract_line
+from issuesmith.lines.develop import prepare as develop_prepare
 from issuesmith.lines.develop.hooks import DevelopLineHooks
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -911,6 +914,86 @@ def test_failing_verify_raises_andon_and_resume_continues_from_verify(
     assert outcome == "done"
 
 
+def test_milestone_parent_stops_at_prepare(host_env) -> None:
+    """refs #7357: scope:milestone parents stop at prepare before a worktree exists."""
+    host, client, env, _slug = host_env
+    number = client.issue_create("milestone parent", _issue_body())
+    client.issue_update(
+        number,
+        labels_add=["issuesmith:develop-ready", "scope:milestone"],
+    )
+    outcome = _run_until(client, number, env, host, expect_done=False, max_rounds=40)
+    assert outcome == "andon"
+    open_andons = list_open(client)
+    assert open_andons
+    andon = open_andons[0]
+    assert andon.kind == "decision"
+    assert andon.step == "prepare"
+    assert andon.rule_id == "prepare.milestone_parent"
+    assert andon.summary == EN.messages["prepare.milestone_parent"]
+    labels = _labels(client, number)
+    assert "issuesmith:develop-done" not in labels
+    host_wt = _git(host, "worktree", "list", "--porcelain")
+    assert host_wt.returncode == 0, host_wt.stderr
+    host_wt_paths = [
+        line[9:] for line in host_wt.stdout.splitlines() if line.startswith("worktree ")
+    ]
+    assert len(host_wt_paths) == 1
+    assert not _git(host, "branch", "--list", f"feat/issue-{number}-*").stdout.strip()
+
+
+def test_milestone_parent_stops_at_prepare_when_host_is_detached(
+    cross_repo_same_target_env,
+) -> None:
+    """refs #7357: milestone blocking uses Issue labels only on a detached host."""
+    host, client, env, host_slug, target_slug, target_checkout, external_dir = (
+        cross_repo_same_target_env
+    )
+    number = client.issue_create(
+        "milestone parent detached",
+        _cross_repo_issue_body(host_slug),
+    )
+    client.issue_update(
+        number,
+        labels_add=["issuesmith:develop-ready", "scope:milestone"],
+    )
+    outcome = _run_until(client, number, env, host, expect_done=False, max_rounds=40)
+    assert outcome == "andon"
+    open_andons = list_open(client)
+    assert open_andons
+    andon = open_andons[0]
+    assert andon.step == "prepare"
+    assert andon.rule_id == "prepare.milestone_parent"
+    clone_dir = external_dir / target_slug.split("/")[-1]
+    clone_wt = _git(clone_dir, "worktree", "list")
+    assert f"issue-{number}-" not in clone_wt.stdout
+    assert not _git(target_checkout, "branch", "--list", f"feat/issue-{number}-*").stdout.strip()
+
+
+def test_prepare_label_fetch_failure_returns_broken_andon(monkeypatch) -> None:
+    """refs #7357: forge failures stop prepare as a broken andon."""
+    def fail(_issue_number: str) -> list[str]:
+        raise RuntimeError("forge unavailable")
+
+    monkeypatch.setattr(develop_prepare, "_issue_labels", fail)
+    ctx = StepContext(
+        issue_number="7357",
+        base_branch="main",
+        handler_name="develop",
+        is_cross_repo="false",
+        target_clone_path="",
+        source="",
+        workflow_name="issuesmith",
+        m1_result_filename="",
+        m1r_result_filename="",
+    )
+    result = develop_prepare.run(ctx, StepConfig())
+    assert result.status == "andon"
+    assert result.andon is not None
+    assert result.andon.kind == "broken"
+    assert result.andon.summary == "failed to fetch issue labels: forge unavailable"
+
+
 def test_broken_acceptance_yaml_stops_at_prepare(host_env) -> None:
     """refs #7258 AC2: invalid Acceptance Criteria YAML blocks prepare (non-repairable)."""
     host, client, env, _slug = host_env
@@ -988,6 +1071,12 @@ def test_readme_mentions_host_not_target_checkout() -> None:
     section = readme[start : readme.find("\n### ", start + 1)]
     assert "host_is_repo_checkout" in section
     assert "external_dir" in section
+    stop = readme.find("**When the line stops:**", start)
+    assert stop >= 0
+    stop_section = readme[stop : readme.find("\n\n", stop + 1)]
+    assert "scope:milestone" in stop_section
+    assert "ensure_base_included" in stop_section
+    assert "base_freshness" in stop_section
 
 
 def test_readme_lists_reference_line_gates_per_step() -> None:
