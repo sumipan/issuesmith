@@ -620,6 +620,16 @@ def ensure_base_included(
         )
         return None
 
+    from issuesmith.ops.publish import continue_rebase_past_changelog
+
+    changelog_remaining = continue_rebase_past_changelog(worktree_dir, rebase)
+    if not changelog_remaining:
+        print(
+            f"P0_REBASE: auto-synced with origin/{base_branch}",
+            file=sys.stderr,
+        )
+        return None
+
     on_remote = _branch_on_remote(worktree_dir, current_branch)
     if on_remote is False:
         subprocess.run(

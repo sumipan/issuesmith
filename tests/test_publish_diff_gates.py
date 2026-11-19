@@ -61,9 +61,17 @@ def test_ensure_rebased_returns_conflict():
             return unmerged
         if args == ("rebase", "--abort"):
             return abort
+        if args[:2] == ("log", "--oneline"):
+            return MagicMock(returncode=1, stdout="", stderr="")
         raise AssertionError(f"unexpected git args: {args}")
 
-    with patch("issuesmith.ops.publish._run_git", side_effect=_run):
+    with (
+        patch("issuesmith.ops.publish._run_git", side_effect=_run),
+        patch(
+            "issuesmith.ops.publish.drop_bump_commits_before_rebase",
+            return_value=(),
+        ),
+    ):
         result = _ensure_rebased(worktree, "main")
     assert result is not None
     assert result.status == "REBASE_CONFLICT"
