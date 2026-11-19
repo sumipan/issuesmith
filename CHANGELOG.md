@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.195.4 - 2026-11-19
+
 ### Changed
 
 - **`implementation` LLM env**: strip `GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_REPOSITORIES`, and `GITHUB_REPOSITORY` from the child process environment while `ghdag.llm.call()` runs (#7320). **Breaking:** implementation orders can no longer call `issuesmith gh` or authenticated forge APIs from the LLM shell.
