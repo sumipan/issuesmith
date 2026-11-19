@@ -475,3 +475,48 @@ def test_tests_python_bin_command_relative_resolves_against_root(
     reset_config_cache()
     cfg = load_config(cfg_path)
     assert cfg.tests.python_bin_command[0] == str((tmp_path / "scripts/bin-of").resolve())
+
+
+def test_target_remotes_rejects_unsupported_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Refs sumipan/nexus#7391 AC5 — target_remotes keys must be in supported_repos."""
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({
+            "repo": "example/host",
+            "supported_repos": ["a/b"],
+            "target_remotes": {"c/d": "/tmp/x.git"},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    with pytest.raises(ConfigError, match="supported_repos"):
+        load_config(cfg_path)
+
+
+def test_clone_url_resolves_target_remotes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Refs sumipan/nexus#7391 AC6 — clone_url resolves paths and keeps SSH URLs."""
+    rel_bare = tmp_path.parent / "b.git"
+    rel_bare.mkdir()
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({
+            "repo": "example/host",
+            "supported_repos": ["a/b", "a/c", "a/d"],
+            "target_remotes": {
+                "a/b": "../b.git",
+                "a/c": "ssh://git@example.com/c.git",
+            },
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    cfg = load_config(cfg_path)
+    assert cfg.clone_url("a/b") == str(rel_bare.resolve())
+    assert cfg.clone_url("a/c") == "ssh://git@example.com/c.git"
+    assert cfg.clone_url("a/d") == "https://github.com/a/d.git"

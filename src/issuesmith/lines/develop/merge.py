@@ -50,6 +50,75 @@ def _target_clone(ctx: StepContext) -> Path:
 
 
 _BLOCKED_MERGEABLE = frozenset({"false", "conflicting", "dirty"})
+_PUSH_REJECT_MARKERS = ("non-fast-forward", "fetch first", "rejected")
+
+
+class _RebaseConflict(Exception):
+    def __init__(self, files: list[str]) -> None:
+        self.files = files
+        super().__init__()
+
+
+class _PushRejected(Exception):
+    def __init__(self, detail: str) -> None:
+        self.detail = detail
+        super().__init__()
+
+
+def _git(worktree: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-C", str(worktree), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _push_rejected(stderr: str) -> bool:
+    lower = stderr.lower()
+    return any(marker in lower for marker in _PUSH_REJECT_MARKERS)
+
+
+def _merge_without_pr(worktree: Path, base: str, *, attempts: int = 3) -> tuple[str, str]:
+    """Rebase onto origin/<base> and fast-forward push to origin/<base>."""
+    last_stderr = ""
+    for _ in range(attempts):
+        fetch = _git(worktree, "fetch", "origin", base)
+        if fetch.returncode != 0:
+            detail = (fetch.stderr or fetch.stdout or "").strip()
+            raise RuntimeError(detail or f"git fetch origin {base} failed")
+
+        old_proc = _git(worktree, "rev-parse", f"origin/{base}")
+        if old_proc.returncode != 0:
+            detail = (old_proc.stderr or old_proc.stdout or "").strip()
+            raise RuntimeError(detail or f"git rev-parse origin/{base} failed")
+        old_sha = old_proc.stdout.strip()
+
+        rebase = _git(worktree, "rebase", f"origin/{base}")
+        if rebase.returncode != 0:
+            conflict_proc = _git(worktree, "diff", "--name-only", "--diff-filter=U")
+            files = [
+                line.strip()
+                for line in (conflict_proc.stdout or "").splitlines()
+                if line.strip()
+            ]
+            _git(worktree, "rebase", "--abort")
+            raise _RebaseConflict(files)
+
+        push = _git(worktree, "push", "origin", f"HEAD:refs/heads/{base}")
+        if push.returncode == 0:
+            head_proc = _git(worktree, "rev-parse", "HEAD")
+            if head_proc.returncode != 0:
+                detail = (head_proc.stderr or head_proc.stdout or "").strip()
+                raise RuntimeError(detail or "git rev-parse HEAD failed")
+            return old_sha, head_proc.stdout.strip()
+
+        last_stderr = (push.stderr or push.stdout or "").strip()
+        if _push_rejected(last_stderr):
+            continue
+        raise RuntimeError(last_stderr or "git push failed")
+
+    raise _PushRejected(last_stderr)
 
 
 def _pr_number_from_url(url: str) -> int | None:
@@ -119,6 +188,77 @@ def _git_toplevel(worktree: Path) -> Path:
     return Path(proc.stdout.strip())
 
 
+def _merge_without_pr_flow(
+    ctx: StepContext,
+    worktree: Path,
+    *,
+    issue_repo: str,
+    issue_client,
+    issue: int,
+    cross: bool,
+) -> StepResult:
+    base = ctx.base_branch.strip() or "main"
+    target_repo = ctx.target_repo.strip()
+    try:
+        old_sha, new_sha = _merge_without_pr(worktree, base)
+    except _RebaseConflict as exc:
+        files = ", ".join(exc.files) if exc.files else "(unknown)"
+        return StepResult(
+            status="andon",
+            andon=Andon(
+                kind="blocked",
+                rule_id="merge.rebase_conflict",
+                summary=f"rebase onto origin/{base} conflicts: {files}",
+            ),
+        )
+    except _PushRejected as exc:
+        return StepResult(
+            status="andon",
+            andon=Andon(
+                kind="blocked",
+                rule_id="merge.push_rejected",
+                summary=(
+                    f"push to origin/{base} was rejected 3 times: {exc.detail}"
+                ),
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001
+        return StepResult(
+            status="andon",
+            andon=Andon(kind="broken", summary=f"merge failed: {exc}"),
+        )
+
+    stat_proc = _git(worktree, "diff", "--stat", f"{old_sha}..{new_sha}")
+    stat_block = (stat_proc.stdout or "").strip() or "(no changes)"
+    comment_body = (
+        f"Merged into `{base}` of `{target_repo}` without a pull request: "
+        f"`{new_sha}`\n\n"
+        f"```\n{stat_block}\n```\n"
+    )
+    try:
+        issue_client.issue_comment(issue, comment_body)
+    except Exception as exc:  # noqa: BLE001
+        return StepResult(
+            status="andon",
+            andon=Andon(kind="broken", summary=f"merge failed: {exc}"),
+        )
+
+    if cross:
+        clone = _target_clone(ctx)
+        cleanup_worktrees(
+            get_config().root,
+            ctx.issue_number,
+            is_cross_repo=True,
+            target_clone_path=clone,
+        )
+    else:
+        repo_root = _git_toplevel(worktree)
+        cleanup_worktrees(repo_root, ctx.issue_number)
+        cleanup_branches(repo_root, ctx.issue_number)
+    close_issue(issue_client, issue)
+    return StepResult(status="done", markers=["MERGE_DONE"], irreversible=True)
+
+
 def run(ctx: StepContext, step: StepConfig) -> StepResult:
     _ = step
     worktree = Path(ctx.worktree_path)
@@ -128,8 +268,19 @@ def run(ctx: StepContext, step: StepConfig) -> StepResult:
     cross = _cross_repo(ctx)
     pr_repo = ctx.target_repo.strip() if cross else issue_repo
     issue = int(ctx.issue_number)
-    pr_client = get_forge(repo=pr_repo)
     issue_client = get_forge(repo=issue_repo)
+    target_repo = ctx.target_repo.strip()
+    if get_config().merges_without_pr(target_repo):
+        return _merge_without_pr_flow(
+            ctx,
+            worktree,
+            issue_repo=issue_repo,
+            issue_client=issue_client,
+            issue=issue,
+            cross=cross,
+        )
+
+    pr_client = get_forge(repo=pr_repo)
     branch = ctx.branch.strip()
     repos_differ = pr_repo != issue_repo
     match_title = not repos_differ

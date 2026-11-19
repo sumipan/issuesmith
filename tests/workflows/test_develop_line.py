@@ -79,6 +79,35 @@ _FAKE_AGENT = textwrap.dedent(
       MODE="$(cat "$MODE_FILE")"
     fi
     if [[ "$PROMPT" == *"Review order"* ]] || [[ "$PROMPT" == *"REVIEW_PASS"* ]]; then
+      case "$MODE" in
+        review_advance_clean)
+          ORIGIN="$(git remote get-url origin)"
+          PUSH_DIR="$(mktemp -d)"
+          if git clone "$ORIGIN" "$PUSH_DIR" 2>/dev/null; then
+            git -C "$PUSH_DIR" config user.email "t@example.com"
+            git -C "$PUSH_DIR" config user.name "T"
+            mkdir -p "$PUSH_DIR/src"
+            printf 'OTHER = 1\\n' >"$PUSH_DIR/src/other.py"
+            git -C "$PUSH_DIR" add src/other.py
+            git -C "$PUSH_DIR" commit -m "advance main cleanly" || true
+            git -C "$PUSH_DIR" push origin main || true
+            rm -rf "$PUSH_DIR"
+          fi
+          ;;
+        review_advance_conflict)
+          ORIGIN="$(git remote get-url origin)"
+          PUSH_DIR="$(mktemp -d)"
+          if git clone "$ORIGIN" "$PUSH_DIR" 2>/dev/null; then
+            git -C "$PUSH_DIR" config user.email "t@example.com"
+            git -C "$PUSH_DIR" config user.name "T"
+            printf 'VALUE = 3\\n' >"$PUSH_DIR/src/feature.py"
+            git -C "$PUSH_DIR" add src/feature.py
+            git -C "$PUSH_DIR" commit -m "advance main with conflict" || true
+            git -C "$PUSH_DIR" push origin main || true
+            rm -rf "$PUSH_DIR"
+          fi
+          ;;
+      esac
       printf '%s\\n' 'PIPELINE_STATUS: REVIEW_PASS'
       exit 0
     fi
@@ -89,7 +118,7 @@ _FAKE_AGENT = textwrap.dedent(
         git add src/feature.py
         git commit -m "fake engine change" || true
         ;;
-      good)
+      good|review_advance_clean|review_advance_conflict)
         printf 'VALUE = 2\\n' >"$TARGET"
         printf '%s\\n' \
           'from src import feature' \
@@ -574,6 +603,53 @@ def cross_repo_other_target_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     reset_config_cache()
 
 
+@pytest.fixture
+def no_pr_target_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, runner_procs):
+    """Detached host with target_remotes pointing at a bare repo (no pre-clone)."""
+    target_slug = "example/reference-host"
+    _forge_root, origin = _make_target_forge_root(tmp_path)
+    bare_path = str(origin.resolve())
+    external_dir = (tmp_path / "external").resolve()
+    host = _make_detached_develop_host(
+        tmp_path,
+        host_slug=target_slug,
+        supported_repos=[target_slug],
+    )
+    cfg_path = host / "issuesmith.yaml"
+    data = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    data.setdefault("paths", {})["external_dir"] = str(external_dir)
+    data["target_remotes"] = {target_slug: bare_path}
+    cfg_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    (tmp_path / "queue").mkdir()
+    bin_dir = host / "bin"
+    env = {
+        **os.environ,
+        "ISSUESMITH_CONFIG": str(host / "issuesmith.yaml"),
+        "PYTHONPATH": f"{_REPO_ROOT / 'src'}{os.pathsep}{os.environ.get('PYTHONPATH', '')}",
+        "GHDAG_FORGE": "local",
+        "GHDAG_FORGE_ROOT": str(origin),
+        "ISSUESMITH_QUEUE_DIR": str(tmp_path / "queue"),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        "GHDAG_TASK_ENV_ALLOW": "*",
+    }
+    for key in ("GITHUB_TOKEN", "GH_TOKEN", "GITHUB_REPOSITORIES", "GITHUB_REPOSITORY"):
+        env.pop(key, None)
+        monkeypatch.delenv(key, raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.chdir(host)
+    reset_config_cache()
+    client = get_forge()
+    yield host, client, env, target_slug, origin, external_dir, bare_path
+    reset_config_cache()
+
+
+def _issue_comments(client, number: int) -> list[str]:
+    comments = client.get_issue_comments(number)
+    return [str(c.get("body") or "") for c in comments if isinstance(c, dict)]
+
+
 def _set_fake_engine_mode(host: Path, mode: str) -> None:
     (host / "bin" / "fake-engine-mode").write_text(mode, encoding="utf-8")
 
@@ -926,6 +1002,88 @@ def test_failing_verify_raises_andon_and_resume_continues_from_verify(
     assert proc.returncode == 0, proc.stderr
     outcome = _run_until(client, number, env, host, expect_done=True, max_rounds=60)
     assert outcome == "done"
+
+
+def test_no_pr_target_clones_from_configured_remote(no_pr_target_env) -> None:
+    """refs sumipan/nexus#7391 AC1 — prepare clones from target_remotes bare path."""
+    host, client, env, target_slug, origin, external_dir, bare_path = no_pr_target_env
+    clone_dir = external_dir / target_slug.split("/")[-1]
+    assert not clone_dir.exists()
+    number = client.issue_create("no pr clone", _cross_repo_issue_body(target_slug))
+    client.issue_update(number, labels_add=["issuesmith:develop-ready"])
+    for _ in range(40):
+        if clone_dir.is_dir():
+            break
+        _watch_once(env, host)
+        _run_dag_once(env, host)
+    assert clone_dir.is_dir(), "prepare did not create external clone"
+    remote = _git(clone_dir, "remote", "get-url", "origin")
+    assert remote.returncode == 0, remote.stderr
+    assert Path(remote.stdout.strip()).resolve() == Path(bare_path).resolve()
+
+
+def test_no_pr_target_merges_by_fast_forward(no_pr_target_env) -> None:
+    """refs sumipan/nexus#7391 AC2 — merge fast-forwards base without opening a PR."""
+    host, client, env, target_slug, origin, _external_dir, _bare_path = no_pr_target_env
+    main_before = _git(origin, "rev-parse", "main").stdout.strip()
+    number = client.issue_create("no pr merge", _cross_repo_issue_body(target_slug))
+    client.issue_update(number, labels_add=["issuesmith:develop-ready"])
+    outcome = _run_until(client, number, env, host, expect_done=True)
+    assert outcome == "done"
+    labels = _labels(client, number)
+    assert "issuesmith:develop-done" in labels
+    state = client.issue_get(number, fields=["state"])["state"]
+    assert state == "CLOSED"
+    main_after = _git(origin, "rev-parse", "main").stdout.strip()
+    assert _git(
+        origin, "merge-base", "--is-ancestor", main_before, main_after
+    ).returncode == 0
+    show = _git(origin, "show", "main:src/feature.py")
+    assert show.returncode == 0, show.stderr
+    assert "VALUE = 2" in show.stdout
+    comments = _issue_comments(client, number)
+    assert any("without a pull request" in body for body in comments)
+    assert any(main_after in body for body in comments)
+    pulls = client.pr_list(state="all", repo=target_slug)
+    assert not pulls
+
+
+def test_no_pr_target_rebases_when_base_advanced(no_pr_target_env) -> None:
+    """refs sumipan/nexus#7391 AC3 — merge rebases cleanly when base moves during review."""
+    host, client, env, target_slug, origin, _external_dir, _bare_path = no_pr_target_env
+    _set_fake_engine_mode(host, "review_advance_clean")
+    main_before = _git(origin, "rev-parse", "main").stdout.strip()
+    number = client.issue_create("no pr rebase", _cross_repo_issue_body(target_slug))
+    client.issue_update(number, labels_add=["issuesmith:develop-ready"])
+    outcome = _run_until(client, number, env, host, expect_done=True)
+    assert outcome == "done"
+    merges = _git(origin, "rev-list", "--merges", f"{main_before}..main")
+    assert merges.returncode == 0, merges.stderr
+    assert not merges.stdout.strip()
+    feature = _git(origin, "show", "main:src/feature.py")
+    assert "VALUE = 2" in feature.stdout
+    other = _git(origin, "show", "main:src/other.py")
+    assert other.returncode == 0, other.stderr
+    assert "OTHER = 1" in other.stdout
+
+
+def test_no_pr_target_rebase_conflict_stops_with_andon(no_pr_target_env) -> None:
+    """refs sumipan/nexus#7391 AC4 — rebase conflict on merge opens blocked andon."""
+    host, client, env, target_slug, origin, _external_dir, _bare_path = no_pr_target_env
+    _set_fake_engine_mode(host, "review_advance_conflict")
+    number = client.issue_create("no pr conflict", _cross_repo_issue_body(target_slug))
+    client.issue_update(number, labels_add=["issuesmith:develop-ready"])
+    outcome = _run_until(client, number, env, host, expect_done=False, max_rounds=60)
+    assert outcome == "andon"
+    open_andons = list_open(client)
+    assert open_andons
+    andon = next(a for a in open_andons if a.rule_id == "merge.rebase_conflict")
+    assert andon.kind == "blocked"
+    show = _git(origin, "show", "main:src/feature.py")
+    assert show.returncode == 0, show.stderr
+    assert "VALUE = 3" in show.stdout
+    state = client.issue_get(number, fields=["state"])["state"]
+    assert state != "CLOSED"
 
 
 def test_milestone_parent_stops_at_prepare(host_env) -> None:
