@@ -74,7 +74,17 @@ def _milestone_parent_block() -> StepResult:
 def run(ctx: StepContext, step: StepConfig) -> StepResult:
     """Create or verify the worktree at ``ctx.worktree_path``."""
     _ = step
-    if _MILESTONE_LABEL in _issue_labels(ctx.issue_number):
+    try:
+        labels = _issue_labels(ctx.issue_number)
+    except Exception as exc:
+        return StepResult(
+            status="andon",
+            andon=Andon(
+                kind="broken",
+                summary=f"failed to fetch issue labels: {exc}",
+            ),
+        )
+    if _MILESTONE_LABEL in labels:
         return _milestone_parent_block()
     try:
         if _cross_repo(ctx):

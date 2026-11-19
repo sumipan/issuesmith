@@ -18,9 +18,11 @@ import yaml
 from ghdag.forge import get_forge
 
 from issuesmith.andon import list_open
-from issuesmith.config import reset_config_cache
+from issuesmith.config import StepConfig, reset_config_cache
+from issuesmith.contract import StepContext
 from issuesmith.language import EN
 from issuesmith.lines import LINES, extract_line
+from issuesmith.lines.develop import prepare as develop_prepare
 from issuesmith.lines.develop.hooks import DevelopLineHooks
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -966,6 +968,30 @@ def test_milestone_parent_stops_at_prepare_when_host_is_detached(
     clone_wt = _git(clone_dir, "worktree", "list")
     assert f"issue-{number}-" not in clone_wt.stdout
     assert not _git(target_checkout, "branch", "--list", f"feat/issue-{number}-*").stdout.strip()
+
+
+def test_prepare_label_fetch_failure_returns_broken_andon(monkeypatch) -> None:
+    """refs #7357: forge failures stop prepare as a broken andon."""
+    def fail(_issue_number: str) -> list[str]:
+        raise RuntimeError("forge unavailable")
+
+    monkeypatch.setattr(develop_prepare, "_issue_labels", fail)
+    ctx = StepContext(
+        issue_number="7357",
+        base_branch="main",
+        handler_name="develop",
+        is_cross_repo="false",
+        target_clone_path="",
+        source="",
+        workflow_name="issuesmith",
+        m1_result_filename="",
+        m1r_result_filename="",
+    )
+    result = develop_prepare.run(ctx, StepConfig())
+    assert result.status == "andon"
+    assert result.andon is not None
+    assert result.andon.kind == "broken"
+    assert result.andon.summary == "failed to fetch issue labels: forge unavailable"
 
 
 def test_broken_acceptance_yaml_stops_at_prepare(host_env) -> None:
