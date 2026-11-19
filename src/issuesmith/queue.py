@@ -1819,9 +1819,6 @@ def _plan_with_window(
     if global_reason is not None:
         return _global_wait_plan(store, snap, global_reason, global_detail)
 
-    open_issues = _list_open_issues(client)
-    if not open_issues:
-        open_issues = []
     conflict_inputs, open_pr_occupancy = _allow_paths_conflict_inputs(client, snap)
     virtual_conflict = list(conflict_inputs)
 

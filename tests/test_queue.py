@@ -269,7 +269,7 @@ class TestDeterministicDecision:
             {
                 "state": "OPEN",
                 "number": 10,
-                "title": "nexus: bump mltgnt to v0.22.7",
+                "title": "app: bump dep to v0.1.0",
                 "body": _VALID_BODY,
                 "labels": [],
             },
