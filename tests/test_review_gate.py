@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -11,9 +12,9 @@ import pytest
 from issuesmith.config import ReviewConfig
 from issuesmith.contract import RetryReason, RetrySignal
 from issuesmith.engine import (
+    _ENGINE_TRANSIENT_PAUSE_SEC,
     _GUARDED_TRANSIENT_MAX,
     _EngineProcess,
-    _increment_guarded_transient_count,
 )
 from issuesmith.gates import GateBuildContext, GateBuildError
 from issuesmith.gates.review import ReviewGate, _violations_from_stdout, build_review_gate
@@ -121,7 +122,11 @@ def test_check_empty_output_raises_engine_transient(
     with pytest.raises(RetrySignal) as exc_info:
         gate.check("", [])
     assert exc_info.value.reason is RetryReason.ENGINE_TRANSIENT
-    assert quota_gate.report.call_args.kwargs["reason"] == "engine_transient: empty_output"
+    assert exc_info.value.after == _T0 + timedelta(seconds=_ENGINE_TRANSIENT_PAUSE_SEC)
+    report_kwargs = quota_gate.report.call_args.kwargs
+    assert report_kwargs["engine"] == "codex"
+    assert report_kwargs["status"] == "paused"
+    assert report_kwargs["reason"] == "engine_transient: empty_output"
 
 
 def test_check_unclassified_failure_raises_engine_transient(
@@ -169,8 +174,8 @@ def test_check_transient_over_limit_returns_engine_error(
     monkeypatch.setattr("issuesmith.engine._GUARDED_TRANSIENT_STATE_FILE", state_path)
     task_uuid = "review-over-limit"
     monkeypatch.setenv("GHDAG_TASK_UUID", task_uuid)
-    for _ in range(_GUARDED_TRANSIENT_MAX):
-        _increment_guarded_transient_count(task_uuid, "cp2.md")
+    monkeypatch.setattr("issuesmith.engine.datetime", _FixedDatetime)
+    monkeypatch.setattr("issuesmith.engine.QuotaGate", lambda state_path: MagicMock())
     monkeypatch.setattr(
         "issuesmith.engine._execute",
         lambda *args, **kwargs: _EngineProcess(
@@ -186,10 +191,15 @@ def test_check_transient_over_limit_returns_engine_error(
         "issuesmith.engine._render_template", lambda *args, **kwargs: "order"
     )
     gate = ReviewGate(_review_cfg(), "cp2", tmp_path, {})
+    for _ in range(_GUARDED_TRANSIENT_MAX):
+        with pytest.raises(RetrySignal):
+            gate.check("", [])
     vs = gate.check("", [])
     assert len(vs) == 1
     assert vs[0].rule_id == "review.cp2.engine_error"
     assert vs[0].message == "review failed without output"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert f"{task_uuid}:cp2.md" not in state
 
 
 def test_check_failure_marker_still_returns_review_violation(
@@ -202,7 +212,7 @@ def test_check_failure_marker_still_returns_review_violation(
         "issuesmith.engine._execute",
         lambda *args, **kwargs: _EngineProcess(
             args=[],
-            returncode=1,
+            returncode=0,
             stdout=stdout,
             stderr="",
             failure_class=None,

@@ -184,11 +184,15 @@ def test_transient_exhausted_returns_guarded_failure(monkeypatch, tmp_path) -> N
     assert "ENGINE_FAILURE: none" in stdout
 
 
-def test_run_guarded_order_without_task_uuid_does_not_retry(monkeypatch) -> None:
+def test_run_guarded_order_without_task_uuid_does_not_retry(
+    monkeypatch, tmp_path
+) -> None:
     """Refs #7397 — runs without GHDAG_TASK_UUID fall through to guarded failure."""
+    state = tmp_path / "engine-transient-retries.json"
+    monkeypatch.setattr("issuesmith.engine._GUARDED_TRANSIENT_STATE_FILE", state)
     monkeypatch.delenv("GHDAG_TASK_UUID", raising=False)
     with (
-        patch("issuesmith.engine._execute", return_value=_empty_failure()),
+        patch("issuesmith.engine._execute", return_value=_empty_success()),
         patch("issuesmith.engine._render_template", return_value="order"),
     ):
         rc, stdout = run_guarded_output(
@@ -200,7 +204,7 @@ def test_run_guarded_order_without_task_uuid_does_not_retry(monkeypatch) -> None
         )
 
     assert rc == 1
-    assert "ENGINE_FAILURE: none" in stdout
+    assert not state.exists()
 
 
 def test_execute_engine_error_reason_unchanged(monkeypatch) -> None:
