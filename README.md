@@ -9,23 +9,23 @@ The suite includes design and merge gates, a request queue with triage, lane pla
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.201.0-blue)
+![version](https://img.shields.io/badge/version-v0.201.1-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.201.0** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.201.1** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.201.0"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.201.1"
 ```
 
 The gates, forge access, `observe`, `andon`, `lanes` and `metrics` import ghdag, so install the `ghdag` extra unless another package already provides ghdag. The base package alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.201.0"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.201.1"
 ```
 
 | Item | Value |
@@ -293,7 +293,7 @@ Supported Python imports are limited to seven modules (`issuesmith.__all__` is e
 | Module | Symbols |
 |---|---|
 | `issuesmith.contract` | `StepContext`, `StepResult`, `StepConfig`, `Andon`, `RetrySignal`, `RetryReason`, `parse_issue_metadata`, `validate_issue_metadata`, `MetadataViolation` |
-| `issuesmith.verbs` | `AcceptanceError`, `AcceptanceVerdict`, `ReviewFacts`, `ChildPlan`, `ChildPlanEntry`, `ChildPlanError`, `WorktreeError`, `block_design_only_issue`, `check_acceptance`, `check_contract`, `cleanup_branches`, `cleanup_worktrees`, `close_issue`, `create_child`, `ensure_base_included`, `exec_file`, `extract_contract`, `find_pr`, `map_step_result`, `merge_pr`, `merge_state`, `plan_children`, `prepare_worktree`, `publish_branch`, `resolve`, `resolve_base_ref`, `route`, `review_tier`, `run_guarded`, `run_verified`, `unchecked_acceptance_count`, `validate_children`, `widen_allow_paths` |
+| `issuesmith.verbs` | `AcceptanceError`, `AcceptanceVerdict`, `ChildPlan`, `ChildPlanEntry`, `ChildPlanError`, `OrderRun`, `RebumpResult`, `ReviewFacts`, `WorktreeError`, `block_design_only_issue`, `check_acceptance`, `check_contract`, `cleanup_branches`, `cleanup_worktrees`, `close_issue`, `create_child`, `ensure_base_included`, `exec_file`, `extract_contract`, `find_pr`, `map_step_result`, `merge_pr`, `merge_state`, `plan_children`, `pre_llm_violations`, `prepare_worktree`, `publish_branch`, `rebump_onto_base`, `resolve`, `resolve_base_ref`, `route`, `review_tier`, `run_guarded`, `run_order`, `run_verified`, `unchecked_acceptance_count`, `validate_children`, `widen_allow_paths` |
 | `issuesmith.gates` | `Verdict`, `GateBuildContext`, `GateBuildError`, `GateEntry`, `RequiresGate`, `GATE_REGISTRY`, `NON_REPAIRABLE_RULE_IDS`, `is_non_repairable_rule_id`, `resolve_gate`, `validate_step_requires`, `check_scope`, `check_pr_scope`, `check_ac_complete`, `check_deps`, `Violation`, `Gate`, `PreconditionContext`, `normalize_allow_path`, `external_target_state` |
 | `issuesmith.config` | `get_config`, `load_config`, `IssuesmithConfig`, `LanguagePack` (phase → role via IssuesmithConfig.phase(name).role) |
 | `issuesmith.andon` | `Andon`, `AndonSink`, `AutoAnswerPlan`, `raise_andon`, `list_open`, `list_open_records`, `answer`, `from_comment`, `to_comment`, `plan_auto_answers`, `apply_auto_answers` |
