@@ -218,6 +218,8 @@ Global options: `--queue-path`, `--state-path`, `--lock-path`.
 
 During `queue tick`, dispatch respects configured `concurrency`, lane `in_flight` caps, and `pipeline_not_idle`; it does not block the next dispatch until a prior Issue reaches a terminal label.
 
+The night-queue seed file (`paths.seed`, default `configs/night-queue.yaml`) may set `window.start`, `window.end`, and `window.extra_sources`. Automation requests whose `source` is `night-queue`, `night-queue-seed`, or listed in `extra_sources` dispatch only inside that window; other automation sources are not window-gated unless listed there.
+
 ### `lanes` subcommands
 
 `lanes` reads the ledger at `paths.lanes` and exits 2 when that key is not set or the ledger is invalid.

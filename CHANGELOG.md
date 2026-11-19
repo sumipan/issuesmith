@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Changed
+
+- Queue dispatch no longer closes or labels Issues as superseded from title similarity (bump/README SemVer heuristics removed; **`normalize_similar_title` removed**). Hosts must close stale bump Issues themselves.
+- Night-window gating for automation `source` values: only built-in `night-queue` / `night-queue-seed` and names listed under `window.extra_sources` in the night-queue seed file are restricted to the configured window (e.g. list `release-watcher` there on the host).
+- Milestone child cross-repo note wording no longer names `release-watcher`; it refers to the external release and the pin bump.
+
 ## 0.196.0 - 2026-11-19
 
 ### Changed

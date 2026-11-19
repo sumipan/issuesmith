@@ -57,6 +57,7 @@ from issuesmith.queue_triage import (
     label_names,
     load_seed_entries,
     parse_frontmatter_fields,
+    seed_extra_sources,
     seed_window,
     triage,
 )
@@ -1178,12 +1179,22 @@ def _all_engines_paused(quota_path: Path | None = None) -> bool:
     return bool(_required_engines_paused(quota_path))
 
 
-def _source_in_window(source: str, actor_kind: str, now: datetime, start: str, end: str) -> bool:
+_NIGHT_BUILTIN_SOURCES = frozenset({"night-queue-seed", "night-queue"})
+
+
+def _source_in_window(
+    source: str,
+    actor_kind: str,
+    now: datetime,
+    start: str,
+    end: str,
+    extra_sources: frozenset[str] | None = None,
+) -> bool:
     if actor_kind == "human":
         return True
-    if source in ("release-watcher", "night-queue-seed", "night-queue"):
+    extra = extra_sources if extra_sources is not None else frozenset()
+    if source in _NIGHT_BUILTIN_SOURCES or source in extra:
         return _in_window(now, start, end)
-    # Other automation: allow always unless configured otherwise.
     return True
 
 
@@ -1691,15 +1702,6 @@ def _apply_terminal(
             )
         except Exception as exc:
             print(f"warning: failed to add rejected label: {exc}", file=sys.stderr)
-    if decision_kind == "superseded":
-        try:
-            client.issue_update(
-                issue_number,
-                labels_add=[f"{cfg.label_namespace}:superseded"],
-                labels_remove=[],
-            )
-        except Exception as exc:
-            print(f"warning: failed to add superseded label: {exc}", file=sys.stderr)
     if close_issue:
         try:
             client.issue_close(issue_number)
@@ -1802,6 +1804,7 @@ def _plan_with_window(
     *,
     now: datetime,
     window: tuple[str, str, int],
+    extra_sources: frozenset[str] | None = None,
 ) -> QueuePlan:
     snap = store.snapshot()
     start, end, idle_minutes = window
@@ -1860,7 +1863,9 @@ def _plan_with_window(
             entries.append(_plan_wait_entry(req, strict_stop, strict_detail, engine))
             continue
 
-        if not _source_in_window(req.source, req.actor_kind, now, start, end):
+        if not _source_in_window(
+            req.source, req.actor_kind, now, start, end, extra_sources
+        ):
             entries.append(_plan_wait_entry(req, "window", "outside source window", engine))
             continue
 
@@ -1905,7 +1910,6 @@ def _plan_with_window(
         decision = deterministic_decision(
             req,
             issue,
-            open_issues=open_issues,
             force=store.is_force(snap, rid),
         )
         if decision.kind == "repair" or decision.kind != "keep":
@@ -2012,7 +2016,13 @@ def plan(
     *,
     now: datetime,
 ) -> QueuePlan:
-    return _plan_with_window(store, client, now=now, window=seed_window(None))
+    return _plan_with_window(
+        store,
+        client,
+        now=now,
+        window=seed_window(None),
+        extra_sources=seed_extra_sources(None),
+    )
 
 
 def _apply_plan_dispatch(
@@ -2155,6 +2165,7 @@ def dispatch_one(
     # One tick = one read per Issue / one open-issue list (#3759).
     client = _TickCachedForge(client or get_forge(repo=REPO))
     start, end, idle_minutes = seed_window(seed_path)
+    extra_sources = seed_extra_sources(seed_path)
 
     if not skip_seed:
         ensure_seeds_enqueued(store, seed_path=seed_path, now=now)
@@ -2194,7 +2205,6 @@ def dispatch_one(
                 print(f"warning: issue_get #{req.issue} failed: {exc}", file=sys.stderr)
                 continue
 
-    # Supersede must scan ALL open Issues in the repo, not only those in the queue.
     open_issues = _list_open_issues(client)
     if not open_issues:
         open_issues = [
@@ -2221,7 +2231,6 @@ def dispatch_one(
         decision = deterministic_decision(
             req,
             issue,
-            open_issues=open_issues,
             force=store.is_force(snap, rid),
         )
         if decision.kind == "keep":
@@ -2386,6 +2395,7 @@ def dispatch_one(
             client,
             now=now,
             window=(start, end, idle_minutes),
+            extra_sources=extra_sources,
         )
         _sync_deletion_refs_comments(store, client, queue_plan)
         started = apply(store, client, queue_plan)

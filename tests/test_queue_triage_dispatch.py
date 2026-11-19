@@ -248,6 +248,12 @@ class TestDispatch:
 
         from issuesmith import queue as qmod
 
+        seed_path = tmp_path / "night-queue.yaml"
+        seed_path.write_text(
+            "window:\n  start: '01:00'\n  end: '07:00'\n  extra_sources:\n    - release-watcher\n",
+            encoding="utf-8",
+        )
+
         store = _store(tmp_path)
         store.enqueue(
             issue=50, phase="draft", source="release-watcher", actor_kind="automation",
@@ -281,6 +287,7 @@ class TestDispatch:
             now=now,
             client=Client(),
             store=store,
+            seed_path=seed_path,
             skip_seed=True,
             call_llm=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")),
         )
