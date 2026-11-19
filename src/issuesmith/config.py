@@ -289,6 +289,7 @@ class TestsConfig:
     flaky_reruns: int = 2
     python_command: tuple[str, ...] = ("python",)
     python_bin_command: tuple[str, ...] = ()
+    readme_contract_marker: str = "readme_contract"
 
 
 @dataclass(frozen=True)
@@ -1232,7 +1233,7 @@ def _build_tests(raw: Mapping[str, Any] | None, root: Path) -> TestsConfig:
     defaults = TestsConfig()
     if not raw:
         return defaults
-    known = ("flaky_reruns", "python_command", "python_bin_command")
+    known = ("flaky_reruns", "python_command", "python_bin_command", "readme_contract_marker")
     unknown = sorted(str(k) for k in raw if k not in known)
     if unknown:
         raise ConfigError(
@@ -1251,10 +1252,17 @@ def _build_tests(raw: Mapping[str, Any] | None, root: Path) -> TestsConfig:
     python_bin_command = defaults.python_bin_command
     if "python_bin_command" in raw:
         python_bin_command = _parse_tests_python_bin_command(raw["python_bin_command"], root)
+    marker = defaults.readme_contract_marker
+    if "readme_contract_marker" in raw:
+        marker_raw = raw["readme_contract_marker"]
+        if not isinstance(marker_raw, str):
+            raise ConfigError("tests.readme_contract_marker must be a string")
+        marker = marker_raw
     return TestsConfig(
         flaky_reruns=reruns_raw,
         python_command=python_command,
         python_bin_command=python_bin_command,
+        readme_contract_marker=marker,
     )
 
 
