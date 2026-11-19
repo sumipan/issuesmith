@@ -6,6 +6,7 @@ import ast
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -1113,6 +1114,123 @@ def test_step_modules_import_only_public_issuesmith_modules() -> None:
                     assert _ok(mod), f"{path.name}: {mod}"
                 if mod.startswith("ghdag"):
                     pytest.fail(f"{path.name} must not import ghdag ({mod})")
+
+
+def _init_lint_autofix_seed(repo: Path) -> None:
+    _init_feature_seed(repo)
+    (repo / "pyproject.toml").write_text(
+        "[project]\nname = 'ref-host'\nversion = '0.0.0'\n\n"
+        "[tool.pytest.ini_options]\ntestpaths = ['tests']\n\n"
+        "[tool.ruff]\nline-length = 100\n\n"
+        "[tool.ruff.lint]\nselect = [\"W291\"]\n",
+        encoding="utf-8",
+    )
+
+
+def _ruff_autofix(repo: Path, *targets: str) -> None:
+    ruff = shutil.which("ruff")
+    assert ruff, "ruff must be on PATH for develop-line gate autofix tests"
+    proc = subprocess.run(
+        [ruff, "check", "--fix", "--unfixable", "I001", *targets],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode in (0, 1), proc.stderr + proc.stdout
+
+
+def _commit_count(repo: Path) -> int:
+    proc = _git(repo, "rev-list", "--count", "HEAD")
+    assert proc.returncode == 0, proc.stderr
+    return int(proc.stdout.strip())
+
+
+def test_review_dispatch_commits_gate_autofix_into_branch_diff(tmp_path: Path) -> None:
+    """refs #7408: auto-fixed tracked edits land on the feature branch versus origin."""
+    repo = tmp_path / "repo"
+    _init_lint_autofix_seed(repo)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "init")
+    bare = tmp_path / "origin.git"
+    subprocess.run(
+        ["git", "clone", "--bare", str(repo), str(bare)],
+        capture_output=True,
+        check=True,
+    )
+    _git(repo, "remote", "add", "origin", str(bare))
+    _git(repo, "push", "-u", "origin", "main")
+    _git(repo, "checkout", "-b", "feat/work")
+    (repo / "src" / "feature.py").write_text("VALUE = 2  \n", encoding="utf-8")
+    _ruff_autofix(repo, "src/feature.py")
+    from issuesmith.lines.develop.review import _commit_tracked_changes
+
+    assert _commit_tracked_changes(str(repo)) == ""
+    diff = _git(repo, "diff", "origin/main...HEAD")
+    assert diff.returncode == 0, diff.stderr
+    head = _git(repo, "show", "HEAD:src/feature.py")
+    assert head.returncode == 0, head.stderr
+    assert head.stdout == "VALUE = 2\n"
+    subject = _git(repo, "log", "-1", "--format=%s")
+    assert subject.stdout.strip() == "Apply gate auto-fixes"
+
+
+def test_review_dispatch_leaves_history_unchanged_when_clean(tmp_path: Path) -> None:
+    """refs #7408: a clean worktree does not get an auto-fix commit."""
+    repo = tmp_path / "repo"
+    _init_lint_autofix_seed(repo)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "init")
+    before = _commit_count(repo)
+    from issuesmith.lines.develop.review import _commit_tracked_changes
+
+    assert _commit_tracked_changes(str(repo)) == ""
+    assert _commit_count(repo) == before
+
+
+def test_review_dispatch_surfaces_git_stderr_on_commit_failure(
+    tmp_path: Path,
+    develop_hooks_forge,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """refs #7408: git commit failure during review dispatch becomes a broken andon."""
+    _ = develop_hooks_forge
+    repo = tmp_path / "repo"
+    _init_lint_autofix_seed(repo)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "init")
+    (repo / "src" / "feature.py").write_text("VALUE = 2  \n", encoding="utf-8")
+    _ruff_autofix(repo, "src/feature.py")
+    hooks = repo / ".githooks"
+    hooks.mkdir()
+    hook = hooks / "pre-commit"
+    hook.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    hook.chmod(0o755)
+    _git(repo, "config", "core.hooksPath", str(hooks))
+    from issuesmith.lines.develop import review as develop_review
+
+    err = develop_review._commit_tracked_changes(str(repo))
+    assert err, "pre-commit hook should make git commit fail"
+    monkeypatch.setattr(
+        "issuesmith.ops.dispatch._raise_andon",
+        lambda *_a, **_k: None,
+    )
+    monkeypatch.setattr(develop_review.os, "execv", lambda *_a, **_k: None)
+    argv = [
+        develop_review.__name__,
+        "dispatch",
+        "issue_number=1",
+        f"worktree_path={repo}",
+        "base_branch=main",
+        "branch=feat/x",
+        "allow_paths=src/**",
+        "workflow_name=develop",
+        "handler_name=develop",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    assert develop_review._cli_dispatch() == 1
+    status = _git(repo, "status", "--porcelain")
+    assert status.stdout.strip(), "lint auto-fix should remain uncommitted after failure"
 
 
 def test_reference_config_passes_config_show() -> None:
