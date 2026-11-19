@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from issuesmith.config import ReviewConfig
-from issuesmith.engine import RetryReason, RetrySignal
+from issuesmith.contract import RetryReason, RetrySignal
+from issuesmith.engine import (
+    _GUARDED_TRANSIENT_MAX,
+    _EngineProcess,
+    _increment_guarded_transient_count,
+)
 from issuesmith.gates import GateBuildContext, GateBuildError
 from issuesmith.gates.review import ReviewGate, _violations_from_stdout, build_review_gate
 from issuesmith.repair import evaluate_requires
@@ -66,6 +72,173 @@ def test_check_propagates_engine_transient_retry_signal(tmp_path: Path) -> None:
         with pytest.raises(RetrySignal) as exc_info:
             gate.check("", [])
     assert exc_info.value.reason is RetryReason.ENGINE_TRANSIENT
+
+
+_T0 = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+
+
+class _FixedDatetime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return _T0 if tz is None else _T0.astimezone(tz)
+
+
+def _patch_review_template_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    (tmp_path / "cp2.md").write_text("order", encoding="utf-8")
+    cfg = MagicMock()
+    cfg.paths.template_dir = tmp_path
+    monkeypatch.setattr("issuesmith.gates.review.get_config", lambda: cfg)
+
+
+def test_check_empty_output_raises_engine_transient(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refs #7397 AC1 — exit 0 with empty stdout schedules ENGINE_TRANSIENT via review."""
+    _patch_review_template_dir(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        "issuesmith.engine._GUARDED_TRANSIENT_STATE_FILE",
+        tmp_path / "engine-transient-retries.json",
+    )
+    monkeypatch.setenv("GHDAG_TASK_UUID", "review-empty-out")
+    monkeypatch.setattr("issuesmith.engine.datetime", _FixedDatetime)
+    quota_gate = MagicMock()
+    monkeypatch.setattr("issuesmith.engine.QuotaGate", lambda state_path: quota_gate)
+    monkeypatch.setattr(
+        "issuesmith.engine._execute",
+        lambda *args, **kwargs: _EngineProcess(
+            args=[],
+            returncode=0,
+            stdout="",
+            stderr="",
+            failure_class=None,
+            engine_used="codex",
+        ),
+    )
+    monkeypatch.setattr(
+        "issuesmith.engine._render_template", lambda *args, **kwargs: "order"
+    )
+    gate = ReviewGate(_review_cfg(), "cp2", tmp_path, {})
+    with pytest.raises(RetrySignal) as exc_info:
+        gate.check("", [])
+    assert exc_info.value.reason is RetryReason.ENGINE_TRANSIENT
+    assert quota_gate.report.call_args.kwargs["reason"] == "engine_transient: empty_output"
+
+
+def test_check_unclassified_failure_raises_engine_transient(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refs #7397 AC2 — unclassified non-zero exit schedules ENGINE_TRANSIENT."""
+    _patch_review_template_dir(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        "issuesmith.engine._GUARDED_TRANSIENT_STATE_FILE",
+        tmp_path / "engine-transient-retries.json",
+    )
+    monkeypatch.setenv("GHDAG_TASK_UUID", "review-unclassified")
+    monkeypatch.setattr("issuesmith.engine.datetime", _FixedDatetime)
+    quota_gate = MagicMock()
+    monkeypatch.setattr("issuesmith.engine.QuotaGate", lambda state_path: quota_gate)
+    monkeypatch.setattr(
+        "issuesmith.engine._execute",
+        lambda *args, **kwargs: _EngineProcess(
+            args=[],
+            returncode=1,
+            stdout="",
+            stderr="",
+            failure_class=None,
+            engine_used="codex",
+        ),
+    )
+    monkeypatch.setattr(
+        "issuesmith.engine._render_template", lambda *args, **kwargs: "order"
+    )
+    gate = ReviewGate(_review_cfg(), "cp2", tmp_path, {})
+    with pytest.raises(RetrySignal):
+        gate.check("", [])
+    assert (
+        quota_gate.report.call_args.kwargs["reason"]
+        == "engine_transient: unclassified_failure"
+    )
+
+
+def test_check_transient_over_limit_returns_engine_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refs #7397 AC3 — after retry cap, review maps empty output to engine_error."""
+    _patch_review_template_dir(monkeypatch, tmp_path)
+    state_path = tmp_path / "engine-transient-retries.json"
+    monkeypatch.setattr("issuesmith.engine._GUARDED_TRANSIENT_STATE_FILE", state_path)
+    task_uuid = "review-over-limit"
+    monkeypatch.setenv("GHDAG_TASK_UUID", task_uuid)
+    for _ in range(_GUARDED_TRANSIENT_MAX):
+        _increment_guarded_transient_count(task_uuid, "cp2.md")
+    monkeypatch.setattr(
+        "issuesmith.engine._execute",
+        lambda *args, **kwargs: _EngineProcess(
+            args=[],
+            returncode=0,
+            stdout="",
+            stderr="",
+            failure_class=None,
+            engine_used="codex",
+        ),
+    )
+    monkeypatch.setattr(
+        "issuesmith.engine._render_template", lambda *args, **kwargs: "order"
+    )
+    gate = ReviewGate(_review_cfg(), "cp2", tmp_path, {})
+    vs = gate.check("", [])
+    assert len(vs) == 1
+    assert vs[0].rule_id == "review.cp2.engine_error"
+    assert vs[0].message == "review failed without output"
+
+
+def test_check_failure_marker_still_returns_review_violation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refs #7397 AC4 — structured CP2_FAIL output stays review.cp2, not engine_error."""
+    _patch_review_template_dir(monkeypatch, tmp_path)
+    stdout = "Problems:\n- bad thing\nPIPELINE_STATUS: CP2_FAIL\n"
+    monkeypatch.setattr(
+        "issuesmith.engine._execute",
+        lambda *args, **kwargs: _EngineProcess(
+            args=[],
+            returncode=1,
+            stdout=stdout,
+            stderr="",
+            failure_class=None,
+            engine_used="codex",
+        ),
+    )
+    monkeypatch.setattr(
+        "issuesmith.engine._render_template", lambda *args, **kwargs: "order"
+    )
+    gate = ReviewGate(_review_cfg(), "cp2", tmp_path, {})
+    vs = gate.check("", [])
+    assert len(vs) == 1
+    assert vs[0].rule_id == "review.cp2"
+    assert vs[0].message == "bad thing"
+
+
+def test_check_issue_body_fetch_failure_still_returns_engine_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refs #7397 AC5 — issue body fetch failure is engine_error, not transient retry."""
+    template = tmp_path / "cp2.md"
+    template.write_text("$issue_body_file\n", encoding="utf-8")
+    cfg = MagicMock()
+    cfg.paths.template_dir = tmp_path
+    monkeypatch.setattr("issuesmith.gates.review.get_config", lambda: cfg)
+    monkeypatch.setattr(
+        "issuesmith.ops.dispatch.fetch_issue_inputs",
+        lambda parsed: ("", []),
+    )
+    execute = MagicMock()
+    monkeypatch.setattr("issuesmith.engine._execute", execute)
+    gate = ReviewGate(_review_cfg(), "cp2", tmp_path, {"issue_number": "99"})
+    vs = gate.check("", [])
+    execute.assert_not_called()
+    assert len(vs) == 1
+    assert vs[0].rule_id == "review.cp2.engine_error"
 
 
 def test_evaluate_requires_propagates_retry_signal() -> None:

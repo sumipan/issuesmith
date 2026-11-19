@@ -6,15 +6,19 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
+from ghdag.llm import LLMResult
+from ghdag.metrics import FailureClass
+from ghdag.quota import EngineQuotaState, QuotaSnapshot
 
 from issuesmith.contract import RetryReason, RetrySignal
 from issuesmith.engine import (
     _ENGINE_TRANSIENT_PAUSE_SEC,
     _GUARDED_TRANSIENT_MAX,
+    RoleSelection,
     _EngineProcess,
+    _execute,
     _guarded_transient_count,
     _increment_guarded_transient_count,
-    _maybe_raise_guarded_transient,
     run_guarded_output,
 )
 
@@ -69,6 +73,7 @@ def test_run_guarded_output_empty_unclassified_raises_retry_signal(
     monkeypatch.setattr(
         "issuesmith.engine.QuotaGate", lambda state_path: quota_gate
     )
+    monkeypatch.setenv("GHDAG_TASK_UUID", "empty-unclassified-task")
 
     with pytest.raises(RetrySignal) as exc_info:
         run_guarded_output(
@@ -91,6 +96,7 @@ def test_run_guarded_output_empty_success_raises_retry_signal(
         "issuesmith.engine._GUARDED_TRANSIENT_STATE_FILE",
         tmp_path / "guarded-transient-retry.json",
     )
+    monkeypatch.setenv("GHDAG_TASK_UUID", "empty-success-task")
     monkeypatch.setattr(
         "issuesmith.engine._execute",
         lambda *args, **kwargs: _empty_success(),
@@ -178,19 +184,75 @@ def test_transient_exhausted_returns_guarded_failure(monkeypatch, tmp_path) -> N
     assert "ENGINE_FAILURE: none" in stdout
 
 
-def test_transient_without_task_uuid_still_raises_retry(monkeypatch) -> None:
-    """Refs #7397 — manual runs without GHDAG_TASK_UUID keep retrying (no counter)."""
+def test_run_guarded_order_without_task_uuid_does_not_retry(monkeypatch) -> None:
+    """Refs #7397 — runs without GHDAG_TASK_UUID fall through to guarded failure."""
     monkeypatch.delenv("GHDAG_TASK_UUID", raising=False)
-    monkeypatch.setattr("issuesmith.engine.datetime", _FixedDatetime)
-    monkeypatch.setattr(
-        "issuesmith.engine.QuotaGate", lambda state_path: MagicMock()
-    )
-
-    proc = _empty_failure()
-    with pytest.raises(RetrySignal):
-        _maybe_raise_guarded_transient(
-            proc, role="review", tier=None, template_path="/tmp/cp2.md"
+    with (
+        patch("issuesmith.engine._execute", return_value=_empty_failure()),
+        patch("issuesmith.engine._render_template", return_value="order"),
+    ):
+        rc, stdout = run_guarded_output(
+            "review",
+            "/tmp/cp2.md",
+            [],
+            ["CP2_PASS"],
+            "CP2_FAIL",
         )
+
+    assert rc == 1
+    assert "ENGINE_FAILURE: none" in stdout
+
+
+def test_execute_engine_error_reason_unchanged(monkeypatch) -> None:
+    """Refs #7397 — _execute ENGINE_ERROR still reports engine_transient: ENGINE_ERROR."""
+    quota_gate = MagicMock()
+    quota_gate.snapshot.return_value = QuotaSnapshot(
+        engines={
+            "claude": EngineQuotaState(
+                status="available", observed_at=_T0, resume_at=None, reason=None
+            ),
+            "codex": EngineQuotaState(
+                status="available", observed_at=_T0, resume_at=None, reason=None
+            ),
+            "cursor": EngineQuotaState(
+                status="available", observed_at=_T0, resume_at=None, reason=None
+            ),
+        },
+        draining_engines={},
+        running_tasks={},
+        limits={},
+    )
+    monkeypatch.setattr("issuesmith.engine.QuotaGate", lambda state_path: quota_gate)
+    monkeypatch.setattr("issuesmith.engine._record_task_metrics", lambda **kwargs: None)
+    monkeypatch.setattr("issuesmith.engine._resolve_timeout_sec", lambda role: 600.0)
+    monkeypatch.setattr(
+        "issuesmith.engine.HEAVY_ROUTES",
+        {"review": (("codex", "gpt"),)},
+    )
+    monkeypatch.setattr("issuesmith.engine.LIGHT_ROUTES", {"review": None})
+    monkeypatch.setattr("issuesmith.engine.ROLE_ENGINES", {"review": ("codex",)})
+    monkeypatch.setattr(
+        "issuesmith.engine.resolve",
+        lambda role, tier=None: RoleSelection(engine="codex", model="gpt"),
+    )
+    monkeypatch.setattr(
+        "issuesmith.engine.call",
+        lambda *_a, **_k: LLMResult(
+            body="",
+            stdout="",
+            stderr="",
+            returncode=1,
+            failure_class=FailureClass.ENGINE_ERROR,
+            engine_used="codex",
+            model_used="m",
+        ),
+    )
+    monkeypatch.setattr("issuesmith.engine.datetime", _FixedDatetime)
+    with pytest.raises(RetrySignal):
+        _execute("review", "prompt")
+
+    kwargs = quota_gate.report.call_args.kwargs
+    assert kwargs["reason"] == "engine_transient: ENGINE_ERROR"
 
 
 def test_raise_engine_transient_uses_configured_pause(monkeypatch) -> None:
@@ -203,7 +265,10 @@ def test_raise_engine_transient_uses_configured_pause(monkeypatch) -> None:
         from issuesmith.engine import _raise_engine_transient
 
         _raise_engine_transient(
-            engine="codex", role="review", quota_gate=quota_gate
+            engine="codex",
+            role="review",
+            quota_gate=quota_gate,
+            reason="engine_transient: empty_output",
         )
 
     assert exc_info.value.after == expected_after
