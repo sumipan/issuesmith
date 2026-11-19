@@ -339,7 +339,7 @@ class TestQueueChainEnqueue:
         assert {e["issue"] for e in snap.in_flight} == {42}
 
 class TestTerminalLabelsUseNamespace:
-    def test_rejected_and_superseded_use_label_namespace(
+    def test_rejected_uses_label_namespace(
         self, tmp_path, monkeypatch, issuesmith_config
     ):
         from issuesmith import queue as qmod
@@ -376,13 +376,12 @@ class TestTerminalLabelsUseNamespace:
             client,
             req.request_id,
             7,
-            "superseded",
-            "newer semver",
+            "rejected",
+            "missing label",
             add_rejected_label=True,
             comment=False,
         )
         assert "acme:rejected" in (client.updates[0][1] or [])
-        assert "acme:superseded" in (client.updates[1][1] or [])
         reset_config_cache()
 
 

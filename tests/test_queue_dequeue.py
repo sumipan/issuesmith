@@ -52,6 +52,18 @@ def test_dequeue_skips_comment_on_404(tmp_path, monkeypatch, capsys):
     assert "404" in err or "not found" in err.lower() or "skip" in err.lower()
 
 
+def test_seed_extra_sources_from_window_yaml(tmp_path):
+    """Refs #7329."""
+    from issuesmith.queue_triage import seed_extra_sources
+
+    seed_path = tmp_path / "night-queue.yaml"
+    seed_path.write_text(
+        "window:\n  extra_sources:\n    - watcher\n    - custom\n",
+        encoding="utf-8",
+    )
+    assert seed_extra_sources(seed_path) == frozenset({"watcher", "custom"})
+
+
 def test_dequeue_unknown_request_id_fails(tmp_path, monkeypatch, capsys):
     from issuesmith import queue as qmod
 

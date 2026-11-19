@@ -174,7 +174,6 @@ _EN_MESSAGES: dict[str, str] = {
     "queue_triage.already_present": "{label} already present",
     "queue_triage.phase_requires_label": "{phase} phase requires {label} label",
     "queue_triage.phase_excludes_label": "{phase} phase rejects issues with {label} label",
-    "queue_triage.superseded": "superseded by #{issue} (v{version})",
     "queue_triage.missing_yaml": "missing YAML fields: {fields}",
     # gate_rules/scope_breadth (CP1 autofix note)
     "scope_breadth.autofix_note": (
@@ -260,7 +259,7 @@ _EN_MESSAGES: dict[str, str] = {
     "milestone.child_from_parent_ac": "- [ ] (from parent)",
     "milestone.child_cross_repo_note": (
         "> Enqueue this child after the external repository release and the"
-        " release-watcher bump Issue reach merge-done"
+        " dependency update that pins that version reach merge-done"
     ),
     "milestone.child_dependency_row": "| {index} | #{issue} ({title}) | {state} |",
 }

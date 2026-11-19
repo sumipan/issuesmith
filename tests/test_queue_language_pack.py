@@ -150,15 +150,14 @@ def test_dequeue_comment_uses_pack(tmp_path, monkeypatch, custom_pack):
     )
 
 
-# --- triage decision reasons ----------------------------------------------------
+# --- milestone child cross-repo note wording (#7329) -----------------------------
 
 
-def test_readme_rewrite_titles_normalize_in_any_wording():
-    from issuesmith.queue_triage import normalize_similar_title
+def test_child_cross_repo_note_describes_pin_not_release_watcher():
+    """Refs #7329."""
+    from issuesmith.language import EN
 
-    english = normalize_similar_title("sumipan/app: v1.2.0 rewrite README.md")
-    other = normalize_similar_title("sumipan/app: v1.3.0 align README.md please")
-    assert english is not None and other is not None
-    assert english[0] == other[0] == "readme|sumipan/app"
-    assert str(other[1]) == "1.3.0"
-    assert normalize_similar_title("sumipan/app: v1.2.0 rewrite CHANGELOG.md") is None
+    note = EN.messages["milestone.child_cross_repo_note"]
+    assert "release-watcher" not in note
+    assert "dependency update" in note
+    assert "external repository release" in note

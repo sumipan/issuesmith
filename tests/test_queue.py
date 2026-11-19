@@ -255,7 +255,8 @@ class TestDeterministicDecision:
         assert d.kind == "already_processed"
 
 
-    def test_same_semver_not_superseded(self):
+    def test_newer_bump_title_does_not_close_request(self):
+        """Refs #7329."""
         from issuesmith.queue_store import QueueRequest
         from issuesmith.queue_triage import deterministic_decision
 
@@ -268,19 +269,38 @@ class TestDeterministicDecision:
             {
                 "state": "OPEN",
                 "number": 10,
-                "title": "nexus: bump mltgnt to v0.23.0",
+                "title": "app: bump dep to v0.1.0",
                 "body": _VALID_BODY,
                 "labels": [],
             },
-            open_issues=[
-                {
-                    "state": "OPEN",
-                    "number": 11,
-                    "title": "nexus: bump mltgnt to v0.23.0",
-                }
-            ],
         )
         assert d.kind == "keep"
+        assert d.close_issue is False
+
+
+class TestNightSourceWindow:
+    def test_extra_sources_gate_automation_only_in_window(self):
+        """Refs #7329."""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from issuesmith import queue as qmod
+
+        now_in = datetime(2026, 9, 3, 3, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+        now_out = datetime(2026, 9, 3, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+        extra = frozenset({"watcher"})
+        assert qmod._source_in_window(
+            "watcher", "automation", now_in, "01:00", "07:00", extra
+        )
+        assert not qmod._source_in_window(
+            "watcher", "automation", now_out, "01:00", "07:00", extra
+        )
+        assert qmod._source_in_window(
+            "watcher", "automation", now_out, "01:00", "07:00", frozenset()
+        )
+        assert qmod._source_in_window(
+            "skill", "human", now_out, "01:00", "07:00", extra
+        )
 
 
 # ---------------------------------------------------------------------------

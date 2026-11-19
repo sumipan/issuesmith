@@ -1,4 +1,4 @@
-"""Queue CP2 dispatch: merge PR detection, supersede, relative order, develop dispatch and terminal predecessors."""
+"""Queue CP2 dispatch: merge PR detection, relative order, develop dispatch and terminal predecessors."""
 
 from __future__ import annotations
 
@@ -94,24 +94,25 @@ class TestCp2MergePrDetection:
         assert any(u[0] == 2773 and "issuesmith:merge-ready" in (u[1] or []) for u in client.updates)
 
 
-class TestCp2SupersedeRepoWide:
-    def test_supersede_scans_open_issues_outside_queue(self, tmp_path, monkeypatch):
-        """A new same-kind SemVer Issue not yet in the queue is still superseded."""
+class TestCp2NoTitleSupersede:
+    def test_newer_same_shape_title_does_not_close(
+        self, tmp_path, monkeypatch
+    ):
+        """Refs #7329."""
         from zoneinfo import ZoneInfo
 
         from issuesmith import queue as qmod
 
         store = _store(tmp_path)
-        store.enqueue(
-            issue=10, phase="draft", source="release-watcher", actor_kind="automation",
-            priority="low", requested_by=["release-watcher"], requested_at=_NOW,
+        enqueued = store.enqueue(
+            issue=10, phase="draft", source="skill", actor_kind="human",
+            priority="normal", requested_by=["alice"], requested_at=_NOW,
         )
-        # Newer same-kind issue #11 is NOT in the queue
         client = _ProdShapeClient(
             issues={
                 10: {
                     "state": "OPEN",
-                    "title": "nexus: bump mltgnt to v0.22.7",
+                    "title": "app: bump dep to v0.1.0",
                     "body": _VALID_BODY,
                     "labels": [],
                 }
@@ -119,24 +120,23 @@ class TestCp2SupersedeRepoWide:
             open_issue_rows=[
                 {
                     "number": 10,
-                    "title": "nexus: bump mltgnt to v0.22.7",
+                    "title": "app: bump dep to v0.1.0",
                     "state": "open",
                     "body": _VALID_BODY,
                     "labels": [],
                 },
                 {
                     "number": 11,
-                    "title": "nexus: bump mltgnt to v0.23.0",
+                    "title": "app: bump dep to v0.2.0",
                     "state": "open",
                     "body": _VALID_BODY,
                     "labels": [],
                 },
             ],
         )
-        monkeypatch.setattr(qmod, "_pipeline_idle_enough", lambda idle, now: True)
+        monkeypatch.setattr(qmod, "_dispatch_pipeline_ready", lambda *a, **k: False)
         monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
-        # Inside release-watcher window
-        now = datetime(2026, 9, 3, 3, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+        now = datetime(2026, 9, 3, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
         result = qmod.dispatch_one(
             now=now,
             client=client,
@@ -145,11 +145,9 @@ class TestCp2SupersedeRepoWide:
             call_llm=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")),
         )
         assert result.dispatched is False
-        assert 10 in client.closes
-        assert any("issues?" in p for p in client.api_request_calls)
+        assert 10 not in client.closes
         snap = store.snapshot()
-        assert snap.active_order == []
-        assert len(snap.completed_request_ids) == 1
+        assert enqueued.request_id not in snap.completed_request_ids
 
 
 class TestCp2DevelopDispatch:

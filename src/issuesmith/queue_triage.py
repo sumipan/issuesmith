@@ -13,7 +13,6 @@ from typing import Any, Callable, Literal
 
 import yaml
 from ghdag.llm import call
-from packaging.version import InvalidVersion, Version
 
 # parse_frontmatter_fields moved to contract.py (#4238). Re-export for existing callers.
 # noqa F401 keeps ruff --fix from stripping the re-export (upstream #4259).
@@ -31,7 +30,6 @@ DecisionKind = Literal[
     "keep",
     "closed",
     "already_processed",
-    "superseded",
     "rejected",
     "duplicate",
     "repair",
@@ -112,16 +110,6 @@ def get_terminal_without_merge() -> frozenset[str]:
     return frozenset(result)
 
 
-_BUMP_RE = re.compile(
-    r"^(?P<prefix>.+?):\s*bump\s+(?P<dep>\S+)\s+to\s+v?(?P<ver>\d+\.\d+\.\d+)\s*$",
-    re.IGNORECASE,
-)
-_README_RE = re.compile(
-    # Wording around the version and README.md is free: hosts title these in their language.
-    r"^(?P<repo>\S+):\s*v?(?P<ver>\d+\.\d+\.\d+)\s+.*\bREADME\.md\b.*$",
-)
-_SEMVER_RE = re.compile(r"v?(\d+\.\d+\.\d+)")
-
 COMMENT_MARKER = "<!-- ISSUESMITH_QUEUE_REQUEST:{request_id}:{outcome} -->"
 
 # LLM reject reasons that mean "waiting for deps" — keep, do not reject (AC-12).
@@ -196,31 +184,6 @@ def label_names(issue: dict[str, Any]) -> set[str]:
     return names
 
 
-def normalize_similar_title(title: str) -> tuple[str, Version] | None:
-    """Normalize bump / README rewrite titles for same-kind comparison.
-
-    Returns (kind_key, version) or None if title does not match known forms.
-    """
-    title = title.strip()
-    m = _BUMP_RE.match(title)
-    if m:
-        try:
-            ver = Version(m.group("ver"))
-        except InvalidVersion:
-            return None
-        kind = f"bump|{m.group('prefix').strip().lower()}|{m.group('dep').strip().lower()}"
-        return kind, ver
-    m = _README_RE.match(title)
-    if m:
-        try:
-            ver = Version(m.group("ver"))
-        except InvalidVersion:
-            return None
-        kind = f"readme|{m.group('repo').strip().lower()}"
-        return kind, ver
-    return None
-
-
 def comment_marker(request_id: str, outcome: str) -> str:
     return COMMENT_MARKER.format(request_id=request_id, outcome=outcome)
 
@@ -238,7 +201,6 @@ def deterministic_decision(
     request: QueueRequest,
     issue: dict[str, Any],
     *,
-    open_issues: list[dict[str, Any]] | None = None,
     force: bool = False,
 ) -> Decision:
     state = str(issue.get("state", "")).upper()
@@ -307,35 +269,6 @@ def deterministic_decision(
     # whose phase was sent back to *-done by a CP2 FAIL etc. (regression found 2026-09-04).
     # ready (already enqueued) is not bypassed even with force, since that would
     # contradict the double-enqueue race fix of #2813.
-
-    # Same-kind newer SemVer supersedes.
-    title = str(issue.get("title") or "")
-    self_norm = normalize_similar_title(title)
-    if self_norm and open_issues:
-        kind, self_ver = self_norm
-        newer: list[tuple[int, Version]] = []
-        for other in open_issues:
-            other_num = other.get("number")
-            if not isinstance(other_num, int) or other_num == request.issue:
-                continue
-            other_state = str(other.get("state", "")).upper()
-            if other_state not in ("OPEN", ""):
-                continue
-            other_norm = normalize_similar_title(str(other.get("title") or ""))
-            if not other_norm:
-                continue
-            other_kind, other_ver = other_norm
-            if other_kind == kind and other_ver > self_ver:
-                newer.append((other_num, other_ver))
-        if newer:
-            newer.sort(key=lambda x: x[1], reverse=True)
-            top_num, top_ver = newer[0]
-            return Decision(
-                kind="superseded",
-                reason=_msg("superseded", issue=top_num, version=top_ver),
-                close_issue=True,
-                comment=True,
-            )
 
     design = get_config().design_phase()
     if design is not None and phase != design.name:
@@ -906,3 +839,21 @@ def seed_window(path: Path | None = None) -> tuple[str, str, int]:
     end = str(window.get("end", end))
     idle = int(data.get("idle_minutes", idle))
     return start, end, idle
+
+
+def seed_extra_sources(path: Path | None = None) -> frozenset[str]:
+    """Queue ``source`` values that dispatch only inside the seed night window."""
+    seed_path = path or DEFAULT_SEED_PATH
+    if not seed_path.exists():
+        return frozenset()
+    data = yaml.safe_load(seed_path.read_text(encoding="utf-8")) or {}
+    if not isinstance(data, dict):
+        return frozenset()
+    raw_window = data.get("window")
+    window: dict[str, Any] = raw_window if isinstance(raw_window, dict) else {}
+    raw_extra = window.get("extra_sources")
+    if not isinstance(raw_extra, list):
+        return frozenset()
+    return frozenset(
+        str(item) for item in raw_extra if isinstance(item, str) and item.strip()
+    )

@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.197.0 - 2026-11-19
+
+### Changed
+
+- Queue dispatch no longer closes or labels Issues as superseded from title similarity (bump/README SemVer heuristics removed; **`normalize_similar_title` removed**). `deterministic_decision` no longer takes `open_issues`. Hosts that want older-version Issues closed must close them where they are filed.
+- Night-window gating for automation `source` values: only built-in `night-queue` / `night-queue-seed` and names listed under `window.extra_sources` in the night-queue seed file are restricted to the configured window. Hosts that relied on another automation source being window-gated must list it under `window.extra_sources`.
+- Milestone child cross-repo note wording now refers to the external repository release and the dependency update that pins that version.
+
 ## 0.196.0 - 2026-11-19
 
 ### Changed

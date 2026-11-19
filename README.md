@@ -9,23 +9,23 @@ The suite includes design and merge gates, a request queue with triage, lane pla
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.196.0-blue)
+![version](https://img.shields.io/badge/version-v0.197.0-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.196.0** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.197.0** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.196.0"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.197.0"
 ```
 
 The gates, forge access, `observe`, `andon`, `lanes` and `metrics` import ghdag, so install the `ghdag` extra unless another package already provides ghdag. The base package alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.196.0"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.197.0"
 ```
 
 | Item | Value |
@@ -217,6 +217,8 @@ Global options: `--queue-path`, `--state-path`, `--lock-path`.
 | `queue release --issue N [--json]` | Remove an in-flight entry of any role when its DAG is not running (recovery only). Running labels may remain; the next tick will not re-register the issue until its DAG is running again. |
 
 During `queue tick`, dispatch respects configured `concurrency`, lane `in_flight` caps, and `pipeline_not_idle`; it does not block the next dispatch until a prior Issue reaches a terminal label.
+
+The night-queue seed file (`paths.seed`, default `configs/night-queue.yaml`) may set `window.start`, `window.end`, and `window.extra_sources`. Automation requests whose `source` is `night-queue`, `night-queue-seed`, or listed in `extra_sources` dispatch only inside that window; other automation sources are not window-gated unless listed there.
 
 ### `lanes` subcommands
 
