@@ -19,10 +19,12 @@ import json
 import os
 import re
 import shutil
+import signal
 import string
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from collections.abc import Collection, Iterable, Iterator
@@ -43,7 +45,9 @@ from issuesmith.andon import raise_andon as _raise_andon
 from issuesmith.config import get_config
 from issuesmith.contract import RetryReason, RetrySignal
 from issuesmith.engine_route import build_route
+from issuesmith.gates.worktree import count_commits_excluding_wip
 from issuesmith.template_ids import template_identifiers
+from issuesmith.worktree_python import WorktreePythonError, python_bin_for
 
 
 def _active_config_path() -> Path | None:
@@ -118,6 +122,163 @@ def _without_env(names: Iterable[str]) -> Iterator[None]:
     finally:
         for name, value in saved.items():
             os.environ[name] = value
+
+
+class _EngineSignaled(Exception):
+    def __init__(self, signum: int) -> None:
+        self.signum = signum
+        try:
+            self.signame = signal.Signals(signum).name
+        except (ValueError, AttributeError):
+            self.signame = str(signum)
+
+
+_RUNTIME_STATE_PATH_KEYS = (
+    "queue",
+    "queue_state",
+    "queue_lock",
+    "triage_log",
+    "night_state",
+    "exec_jsonl",
+    "done_dir",
+    "quota_state",
+    "metrics",
+    "engine_state",
+)
+
+_PATH_ENV = "".join(("P", "ATH"))
+
+
+def _wip_exclude_dirs() -> tuple[str, ...]:
+    cfg = get_config()
+    root = cfg.root.resolve()
+    tops: set[str] = set()
+    for key in _RUNTIME_STATE_PATH_KEYS:
+        rel_path: Path = getattr(cfg.paths, key)
+        try:
+            rel = rel_path.resolve().relative_to(root)
+        except ValueError:
+            continue
+        if rel.parts:
+            tops.add(rel.parts[0])
+    return tuple(sorted(tops))
+
+
+def _try_wip_commit(worktree: Path, reason: str) -> None:
+    """Best-effort WIP commit in ``worktree`` after an interrupted implementation."""
+    status = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if status.returncode != 0:
+        print(
+            "[issuesmith-engine] wip commit skipped: not a git worktree",
+            file=sys.stderr,
+        )
+        return
+    if not (status.stdout or "").strip():
+        return
+    add_cmd = ["git", "add", "-A", "--", "."]
+    for directory in _wip_exclude_dirs():
+        add_cmd.append(f":(exclude){directory}")
+    subprocess.run(add_cmd, cwd=worktree, capture_output=True, text=True, check=False)
+    staged = subprocess.run(
+        ["git", "diff", "--cached", "--quiet"],
+        cwd=worktree,
+        check=False,
+    )
+    if staged.returncode == 0:
+        return
+    body = (
+        f"wip: preserved from interrupted implementation ({reason})\n\n"
+        "Issuesmith-Wip: true\n"
+    )
+    commit = subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=issuesmith",
+            "-c",
+            "user.email=issuesmith@localhost",
+            "commit",
+            "--no-verify",
+            "-m",
+            body,
+        ],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if commit.returncode != 0:
+        tail = (commit.stderr or commit.stdout or "").strip()[-500:]
+        print(f"[issuesmith-engine] wip commit failed: {tail}", file=sys.stderr)
+        return
+    sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if sha.returncode == 0:
+        print(
+            f"[issuesmith-engine] wip commit {sha.stdout.strip()} ({reason})",
+            file=sys.stderr,
+        )
+
+
+def _wip_reason_retry(reason: RetryReason) -> str:
+    return f"retry {reason.value.lower()}"
+
+
+@contextmanager
+def _engine_signal_guard() -> Iterator[None]:
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def _handler(signum: int, _frame: object) -> None:
+        raise _EngineSignaled(signum)
+
+    old_term = signal.signal(signal.SIGTERM, _handler)
+    old_int = signal.signal(signal.SIGINT, _handler)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, old_term)
+        signal.signal(signal.SIGINT, old_int)
+
+
+@contextmanager
+def _engine_child_env(role: str, working_directory: Path | None) -> Iterator[None]:
+    saved: dict[str, str | None] = {}
+    config_path = _active_config_path()
+    if config_path is not None:
+        saved["ISSUESMITH_CONFIG"] = os.environ.get("ISSUESMITH_CONFIG")
+        os.environ["ISSUESMITH_CONFIG"] = str(config_path.resolve())
+    if working_directory is not None:
+        bin_dir = python_bin_for(working_directory)
+        if bin_dir is not None:
+            saved[_PATH_ENV] = os.environ.get(_PATH_ENV)
+            os.environ[_PATH_ENV] = (
+                str(bin_dir) + os.pathsep + os.environ.get(_PATH_ENV, "")
+            )
+    github_ctx = (
+        _without_env(_LLM_GITHUB_ENV_DENY) if role == "implementation" else nullcontext()
+    )
+    try:
+        with github_ctx:
+            yield
+    finally:
+        for key, prior in saved.items():
+            if prior is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = prior
 
 
 class _EngineProcess(subprocess.CompletedProcess[str]):
@@ -1070,6 +1231,18 @@ def _execute(
             selection = RoleSelection(engine=engine, model=heavy)
 
     working_directory = _working_directory(cwd)
+    if working_directory is not None:
+        try:
+            python_bin_for(working_directory)
+        except WorktreePythonError as exc:
+            return _EngineProcess(
+                args=[],
+                returncode=1,
+                stdout="",
+                stderr=str(exc),
+                failure_class=None,
+                engine_used=selection.engine,
+            )
     timeout_sec = _resolve_timeout_sec(role)
     started_mono = time.monotonic()
     total_deadline = started_mono + float(timeout_sec)
@@ -1108,26 +1281,37 @@ def _execute(
 
     started_at = time.time()
 
-    def _llm_child_env():
-        if role == "implementation":
-            return _without_env(_LLM_GITHUB_ENV_DENY)
-        return nullcontext()
+    engine_invoked = False
+    wip_worktree = (
+        working_directory if role == "implementation" and working_directory else None
+    )
+    call_guard = _engine_signal_guard if wip_worktree is not None else nullcontext
+
+    def _maybe_wip(reason: str) -> None:
+        if engine_invoked and wip_worktree is not None:
+            _try_wip_commit(wip_worktree, reason)
 
     try:
         try:
-            with _llm_child_env():
-                result = call(
-                    content,
-                    route=llm_route,
-                    timeout=int(timeout_sec),
-                    cwd=working_directory,
-                    permission=_ISSUESMITH_PERMISSION,
-                    permission_overrides=_PERMISSION_OVERRIDES,
-                    additional_tags=additional_tags,
-                    quota_gate=quota_gate,
-                    isolation=isolation,
-                )
+            with call_guard():
+                with _engine_child_env(role, working_directory):
+                    engine_invoked = True
+                    result = call(
+                        content,
+                        route=llm_route,
+                        timeout=int(timeout_sec),
+                        cwd=working_directory,
+                        permission=_ISSUESMITH_PERMISSION,
+                        permission_overrides=_PERMISSION_OVERRIDES,
+                        additional_tags=additional_tags,
+                        quota_gate=quota_gate,
+                        isolation=isolation,
+                    )
+        except _EngineSignaled as sig:
+            _maybe_wip(f"signal {sig.signame}")
+            raise SystemExit(128 + sig.signum) from None
         except subprocess.TimeoutExpired as exc:
+            _maybe_wip("timeout")
             finished_at = time.time()
             timeout_detail = f"TimeoutExpired after {int(exc.timeout)}s"
             _record_task_metrics(
@@ -1185,22 +1369,26 @@ def _execute(
                 role, selection, tier, frozenset(paused_after)
             )
             if retry_route:
-                with _llm_child_env():
-                    result = call(
-                        content,
-                        route=retry_route,
-                        timeout=int(timeout_sec),
-                        cwd=working_directory,
-                        permission=_ISSUESMITH_PERMISSION,
-                        permission_overrides=_PERMISSION_OVERRIDES,
-                        additional_tags=additional_tags,
-                        quota_gate=quota_gate,
-                        isolation=isolation,
-                    )
+                with call_guard():
+                    with _engine_child_env(role, working_directory):
+                        engine_invoked = True
+                        result = call(
+                            content,
+                            route=retry_route,
+                            timeout=int(timeout_sec),
+                            cwd=working_directory,
+                            permission=_ISSUESMITH_PERMISSION,
+                            permission_overrides=_PERMISSION_OVERRIDES,
+                            additional_tags=additional_tags,
+                            quota_gate=quota_gate,
+                            isolation=isolation,
+                        )
             else:
+                _maybe_wip(_wip_reason_retry(RetryReason.RATE_LIMITED))
                 raise RetrySignal(reason=RetryReason.RATE_LIMITED, after=resume_at)
 
         if result.failure_class is FailureClass.ENGINE_ENVIRONMENT_ERROR:
+            _maybe_wip(_wip_reason_retry(RetryReason.ENGINE_ENVIRONMENT_ERROR))
             raise RetrySignal(
                 reason=RetryReason.ENGINE_ENVIRONMENT_ERROR, after=None
             )
@@ -1238,6 +1426,7 @@ def _execute(
         result.returncode != 0
         and result.failure_class is FailureClass.QUOTA_EXHAUSTED
     ):
+        _maybe_wip(_wip_reason_retry(RetryReason.QUOTA_PAUSED))
         post_quota_snap = quota_gate.snapshot()
         after = _earliest_paused_resume_at(list(ROLE_ENGINES[role]), post_quota_snap)
         raise RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=after, role=role)
@@ -1245,12 +1434,21 @@ def _execute(
         result.returncode != 0
         and result.failure_class is FailureClass.ENGINE_ERROR
     ):
+        _maybe_wip(_wip_reason_retry(RetryReason.ENGINE_TRANSIENT))
         _raise_engine_transient(
             engine=result.engine_used,
             role=role,
             quota_gate=quota_gate,
             reason="engine_transient: ENGINE_ERROR",
         )
+    if result.returncode != 0:
+        if (
+            result.failure_class is FailureClass.TIMEOUT
+            or result.returncode == 124
+        ):
+            _maybe_wip("timeout")
+        else:
+            _maybe_wip(f"exit {result.returncode}")
     return _EngineProcess(
         args=[],
         returncode=result.returncode,
@@ -1780,23 +1978,9 @@ def _worktree_head_ahead(context: dict[str, str]) -> bool:
         return False
     base_branch = context.get("base_branch", "main")
     try:
-        proc = subprocess.run(
-            [
-                "git",
-                "-C",
-                worktree_path,
-                "rev-list",
-                "--count",
-                f"{base_branch}..HEAD",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-        if proc.returncode != 0:
-            return False
-        return int(proc.stdout.strip()) > 0
+        return count_commits_excluding_wip(
+            Path(worktree_path), f"{base_branch}..HEAD"
+        ) > 0
     except Exception:
         return False
 
