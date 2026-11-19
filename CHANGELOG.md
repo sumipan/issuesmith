@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.195.6 - 2026-11-19
+
 ### Added
 
 - Reference develop line `prepare` / `merge` support hosts with `host_is_repo_checkout: false` (work in an external clone under `paths.external_dir`).
