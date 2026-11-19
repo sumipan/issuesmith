@@ -7,6 +7,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.196.0 - 2026-11-19
+
+### Changed
+
+- `lanes.plan`: scan each lane through blocked and busy issues instead of stopping at the first blocker; enqueue order uses ledger priority (`high` / `high_labels`), candidate `depth`, and lane order.
+- `lanes.apply`: pass each planned entry's `priority` to `QueueStore.enqueue` (was always `normal`).
+
+### Added
+
+- Lanes ledger keys `high` and `high_labels`; lane plan JSON fields `waits`, `halt`, `quiet`, and report payload `auto_answers`.
+- `lanes check --json` via `plan_to_dict`; `lanes report` skips periodic `report_due` while queue is halted or an engine is paused (`quiet`).
+- `andon.plan_auto_answers(..., active_issues=)` to skip andons for Issues whose DAG is still running or pending (used by `lanes report`).
+
 ## 0.195.6 - 2026-11-19
 
 ### Added

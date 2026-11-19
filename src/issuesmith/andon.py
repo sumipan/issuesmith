@@ -9,7 +9,7 @@ import logging
 import re
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import Any, Callable, Iterator, Protocol, runtime_checkable
+from typing import Any, Callable, Collection, Iterator, Protocol, runtime_checkable
 
 import yaml
 
@@ -604,10 +604,18 @@ def _andon_matches_rule(andon: Andon, rule: Any) -> bool:
     return True
 
 
-def plan_auto_answers(client: Any, rules: tuple[Any, ...]) -> AutoAnswerPlan:
+def plan_auto_answers(
+    client: Any,
+    rules: tuple[Any, ...],
+    *,
+    active_issues: Collection[int] = (),
+) -> AutoAnswerPlan:
     """Plan automatic andon answers from declarative rules."""
+    active = set(active_issues)
     plan = AutoAnswerPlan()
     for andon in list_open(client):
+        if andon.issue in active:
+            continue
         matched_rule = None
         for rule in rules:
             if _andon_matches_rule(andon, rule):

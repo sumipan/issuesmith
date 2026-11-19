@@ -8,10 +8,13 @@ import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import TYPE_CHECKING, Any, Iterable, Mapping
 from zoneinfo import ZoneInfo
 
 import yaml
+
+if TYPE_CHECKING:
+    from issuesmith.queue import QueuePlan
 
 from issuesmith.config import ConfigError, IssuesmithConfig
 from issuesmith.projection import state_from_labels
@@ -28,6 +31,8 @@ class Ledger:
     api_min_remaining: int = 800
     report_every_minutes: int = 120
     report_since: str = ""
+    high: set[int] = field(default_factory=set)
+    high_labels: tuple[str, ...] = ()
 
 
 @dataclass
@@ -36,6 +41,8 @@ class LanePlan:
     candidates: list[dict[str, Any]] = field(default_factory=list)
     enqueue: list[dict[str, Any]] = field(default_factory=list)
     escalations: list[dict[str, Any]] = field(default_factory=list)
+    waits: list[dict[str, Any]] = field(default_factory=list)
+    halt: bool = False
 
 
 @dataclass(frozen=True)
@@ -69,6 +76,8 @@ def load_ledger(path: Path, *, default_api_min: int = 800) -> Ledger:
         api_min_remaining=int(raw.get("api_min_remaining", default_api_min)),
         report_every_minutes=int(raw.get("report_every_minutes", 120)),
         report_since=str(raw.get("report_since") or ""),
+        high={int(x) for x in (raw.get("high") or [])},
+        high_labels=tuple(str(x) for x in (raw.get("high_labels") or [])),
     )
 
 
@@ -197,6 +206,53 @@ def _queued_by_issue(snapshot: QueueSnapshot) -> dict[int, tuple[str, str]]:
     return out
 
 
+def _issue_priority(number: int, labels: Iterable[str], ledger: Ledger) -> str:
+    if number in ledger.high:
+        return "high"
+    label_set = set(labels)
+    if ledger.high_labels and label_set.intersection(ledger.high_labels):
+        return "high"
+    return "normal"
+
+
+def _queue_waits_and_escalations(
+    queue_plan: QueuePlan | None,
+) -> tuple[list[dict[str, Any]], bool, list[dict[str, Any]]]:
+    if queue_plan is None:
+        return [], False, []
+    waits = [
+        {
+            "issue": entry.issue,
+            "phase": entry.phase,
+            "engine": entry.engine,
+            "reason": entry.reason,
+            "detail": entry.detail,
+        }
+        for entry in queue_plan.entries
+        if entry.decision == "wait"
+    ]
+    escalations: list[dict[str, Any]] = []
+    if queue_plan.halt:
+        halt_detail = ""
+        for entry in queue_plan.entries:
+            if entry.reason == "halt":
+                halt_detail = entry.detail
+                break
+        escalations.append({"kind": "queue_halt", "summary": halt_detail})
+    seen_paused: set[str] = set()
+    for entry in queue_plan.entries:
+        if entry.decision != "wait" or entry.reason != "engine_paused":
+            continue
+        engine = str(entry.engine or "")
+        if engine in seen_paused:
+            continue
+        seen_paused.add(engine)
+        escalations.append(
+            {"kind": "engine_paused", "engine": engine, "summary": entry.detail}
+        )
+    return waits, queue_plan.halt, escalations
+
+
 def _expand_lanes(
     ledger: Ledger,
     issues: Mapping[int, IssueView],
@@ -227,6 +283,7 @@ def plan(
     api_low: bool,
     *,
     role_engine_map: Mapping[str, str],
+    queue_plan: QueuePlan | None = None,
 ) -> LanePlan:
     concurrency = config.concurrency
     in_flight_counts = in_flight_by_engine(snapshot.in_flight, role_engine_map=dict(role_engine_map))
@@ -264,8 +321,21 @@ def plan(
         }
 
     lane_plan = LanePlan(slots=slots, escalations=list(stale_escalations))
+    waits, halt, queue_escalations = _queue_waits_and_escalations(queue_plan)
+    lane_plan.waits = waits
+    lane_plan.halt = halt
+    lane_plan.escalations.extend(queue_escalations)
+    wait_reason_by_issue = {w["issue"]: w["reason"] for w in waits}
+    for esc in lane_plan.escalations:
+        if esc.get("kind") != "stale_queued":
+            continue
+        issue_num = esc.get("issue")
+        if issue_num in wait_reason_by_issue:
+            esc["reason"] = wait_reason_by_issue[issue_num]
+
     if api_low:
         lane_plan.escalations.append({"kind": "api_low", "summary": "GitHub API budget low"})
+        lane_plan.slots = slots
         return lane_plan
 
     known = {n for lane in ledger.lanes.values() for n in lane} | ledger.hold | set(ledger.backlog)
@@ -273,13 +343,16 @@ def plan(
     in_flight_issues = {int(e.get("issue", 0)) for e in snapshot.in_flight}
     occupied = in_flight_issues | set(queued_map)
 
-    round_robin: list[tuple[str, int, str, str]] = []
+    enqueue_order: list[tuple[int, int, int, str, int, str, str, str]] = []
 
     def _issue_view(number: int) -> IssueView | None:
         return issues.get(number)
 
-    for lane_name, lane_issues in lanes.items():
-        blocked_lane = False
+    lane_items = list(lanes.items())
+    backlog_lane_index = len(lane_items)
+
+    for lane_index, (lane_name, lane_issues) in enumerate(lane_items):
+        depth = 0
         for number in lane_issues:
             if number in ledger.hold:
                 continue
@@ -300,27 +373,26 @@ def plan(
                         "summary": "blocked",
                     }
                 )
-                blocked_lane = True
-                break
-            if status == "busy":
-                break
+                continue
+            if status == "busy" or number in occupied:
+                continue
             if status == "candidate" and issue_phase is not None:
-                if number in occupied:
-                    break
+                priority = _issue_priority(number, info.labels, ledger)
+                prio_ord = 0 if priority == "high" else 1
+                engine = _engine_for_phase(issue_phase, config, role_engine_map)
                 lane_plan.candidates.append(
-                    {"lane": lane_name, "issue": number, "phase": issue_phase}
+                    {
+                        "lane": lane_name,
+                        "issue": number,
+                        "phase": issue_phase,
+                        "depth": depth,
+                        "priority": priority,
+                    }
                 )
-                round_robin.append(
-                    (
-                        lane_name,
-                        number,
-                        issue_phase,
-                        _engine_for_phase(issue_phase, config, role_engine_map),
-                    )
+                enqueue_order.append(
+                    (prio_ord, depth, lane_index, lane_name, number, issue_phase, engine, priority)
                 )
-                break
-        if blocked_lane:
-            continue
+                depth += 1
 
     for number in ledger.backlog:
         if number in ledger.hold or number in occupied:
@@ -332,16 +404,39 @@ def plan(
             info.labels, config, closed=info.state.lower() == "closed"
         )
         if status == "candidate" and issue_phase is not None:
+            priority = _issue_priority(number, info.labels, ledger)
+            prio_ord = 0 if priority == "high" else 1
             eng = _engine_for_phase(issue_phase, config, role_engine_map)
-            round_robin.append(("backlog", number, issue_phase, eng))
+            lane_plan.candidates.append(
+                {
+                    "lane": "backlog",
+                    "issue": number,
+                    "phase": issue_phase,
+                    "depth": 0,
+                    "priority": priority,
+                }
+            )
+            enqueue_order.append(
+                (prio_ord, 0, backlog_lane_index, "backlog", number, issue_phase, eng, priority)
+            )
+
+    enqueue_order.sort(key=lambda row: (row[0], row[1], row[2]))
 
     free_total = sum(s["free"] for s in slots.values())
-    for lane_name, number, phase, engine in round_robin:
+    for _, _, _, lane_name, number, phase, engine, priority in enqueue_order:
         if len(lane_plan.enqueue) >= free_total:
             break
         if slots.get(engine, {}).get("free", 0) <= 0:
             continue
-        lane_plan.enqueue.append({"issue": number, "phase": phase, "engine": engine, "lane": lane_name})
+        lane_plan.enqueue.append(
+            {
+                "issue": number,
+                "phase": phase,
+                "engine": engine,
+                "lane": lane_name,
+                "priority": priority,
+            }
+        )
         slots[engine]["free"] -= 1
         slots[engine]["queued_fresh"] += 1
 
@@ -356,10 +451,21 @@ def apply(plan: LanePlan, store: Any) -> LanePlan:
             phase=str(entry["phase"]),
             source="lanes",
             actor_kind="automation",
-            priority="normal",
+            priority=str(entry.get("priority", "normal")),
             requested_by=["lanes"],
         )
     return plan
+
+
+def plan_to_dict(plan: LanePlan) -> dict[str, Any]:
+    return {
+        "slots": plan.slots,
+        "candidates": plan.candidates,
+        "enqueue": plan.enqueue,
+        "escalations": plan.escalations,
+        "waits": plan.waits,
+        "halt": plan.halt,
+    }
 
 
 def report(
@@ -377,15 +483,17 @@ def report(
     prev_escalations = state.get("escalations")
     changed = prev_enqueue != plan.enqueue or prev_escalations != escalations
 
+    quiet = plan.halt or any(w.get("reason") == "engine_paused" for w in plan.waits)
+
     report_due = changed
     last_raw = state.get("last_report_at")
     if not report_due and last_raw:
         try:
             last = datetime.fromisoformat(str(last_raw))
             if now - last >= timedelta(minutes=ledger.report_every_minutes):
-                report_due = True
+                report_due = not quiet
         except ValueError:
-            report_due = True
+            report_due = not quiet
 
     merge_done_since = merged_count if ledger.report_since.strip() else None
 
@@ -404,6 +512,8 @@ def report(
         )
     )
 
+    auto_answers = getattr(auto_answer_plan, "answers", None) or []
+
     payload: dict[str, Any] = {
         "slots": plan.slots,
         "escalations": escalations,
@@ -411,5 +521,9 @@ def report(
         "report_due": report_due,
         "enqueue": plan.enqueue,
         "candidates": plan.candidates,
+        "waits": plan.waits,
+        "halt": plan.halt,
+        "quiet": quiet,
+        "auto_answers": auto_answers,
     }
     return payload, summary
