@@ -128,6 +128,9 @@ def test_verbs_public_exports():
     assert issuesmith_verbs.ChildPlanError is children_mod.ChildPlanError
 
 
+_README_PENDING_VERBS = frozenset({"RebumpResult", "rebump_onto_base"})
+
+
 def test_readme_public_modules_match_all():
     """README Public API table lists seven modules and each row matches that module __all__."""
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
@@ -137,7 +140,10 @@ def test_readme_public_modules_match_all():
         module_all = _module_all(modpath)
         if modpath == "issuesmith.verbs":
             assert module_all == VERBS_PUBLIC_NAMES
+            # README Public API table is refreshed by a separate README Issue;
+            # only the names added in #7398 may be missing from it meanwhile.
             assert table[modpath] <= VERBS_PUBLIC_NAMES
+            assert VERBS_PUBLIC_NAMES - table[modpath] <= _README_PENDING_VERBS
             continue
         assert table[modpath] == module_all, modpath
 

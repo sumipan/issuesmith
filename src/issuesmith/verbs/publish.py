@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import subprocess
 from collections import Counter
 from dataclasses import dataclass
@@ -100,21 +99,19 @@ def _merge_tree_conflicts(worktree: Path, base_branch: str) -> list[str] | None:
         f"origin/{base_branch}",
         "HEAD",
     )
-    combined = f"{proc.stdout or ''}\n{proc.stderr or ''}"
-    if "CONFLICT" not in combined and proc.returncode == 0:
+    # Exit 0: clean merge. Exit 1: conflicts; stdout is the tree OID, then the
+    # conflicted paths (one per line, --name-only), then a blank line and messages.
+    # Any other exit code is a merge-tree failure.
+    if proc.returncode == 0:
         return []
-    if "error:" in combined and "CONFLICT" not in combined:
+    if proc.returncode != 1:
         return None
-    _path_like = re.compile(r"^[^\s/][^\s]*$")
-    _hex_oid = re.compile(r"^[0-9a-f]{7,40}$")
-    paths = []
-    for ln in combined.splitlines():
-        line = ln.strip()
-        if not line or line.startswith("Auto-merging") or line.startswith("CONFLICT"):
-            continue
-        if _hex_oid.match(line):
-            continue
-        if _path_like.match(line) and ("/" in line or "." in line):
+    lines = (proc.stdout or "").splitlines()
+    paths: list[str] = []
+    for line in lines[1:]:
+        if not line.strip():
+            break
+        if line not in paths:
             paths.append(line)
     return paths
 

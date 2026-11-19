@@ -213,7 +213,7 @@ def run(ctx: StepContext, step: StepConfig) -> StepResult:
         merge_pr(pr_client, pr_repo, pr)
     except Exception as exc:  # noqa: BLE001
         msg = str(exc)
-        if ("405" in msg or "Base branch was modified") and not rebump_attempted:
+        if ("405" in msg or "Base branch was modified" in msg) and not rebump_attempted:
             rebump = _attempt_rebump()
             if rebump is not None and rebump.status == "rebumped":
                 state = merge_state(pr_client, pr_repo, pr)

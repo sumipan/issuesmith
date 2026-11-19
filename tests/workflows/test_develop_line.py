@@ -1598,3 +1598,48 @@ def test_merge_step_andons_when_rebump_not_bump_only(tmp_path: Path, monkeypatch
     assert result.andon is not None
     assert result.andon.kind == "blocked"
     assert "src/x.py" in result.andon.summary
+
+
+def test_merge_step_generic_merge_error_stays_broken(tmp_path: Path, monkeypatch) -> None:
+    """refs #7398: only 405 / base-modified merge errors trigger a rebump."""
+    from unittest.mock import MagicMock
+
+    from issuesmith.lines.develop import merge as develop_merge
+
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    monkeypatch.setattr(
+        develop_merge, "merge_state", lambda *_a, **_k: {"mergeable": "MERGEABLE"}
+    )
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("403 Forbidden")
+
+    rebump_calls: list[object] = []
+    monkeypatch.setattr(develop_merge, "merge_pr", _boom)
+    monkeypatch.setattr(develop_merge, "publish_branch", lambda *_a, **_k: None)
+    monkeypatch.setattr(develop_merge, "_locate_pr", lambda *_a, **_k: 7)
+    monkeypatch.setattr(develop_merge, "get_forge", lambda **_k: MagicMock())
+    monkeypatch.setattr(
+        develop_merge, "rebump_onto_base", lambda *a, **_k: rebump_calls.append(a)
+    )
+
+    ctx = StepContext(
+        issue_number="7398",
+        base_branch="main",
+        handler_name="develop",
+        is_cross_repo="false",
+        target_clone_path="",
+        source="",
+        workflow_name="issuesmith",
+        m1_result_filename="",
+        m1r_result_filename="",
+        worktree_path=str(worktree),
+        branch="feat/issue-7398-test",
+    )
+    result = develop_merge.run(ctx, StepConfig())
+    assert result.status == "andon"
+    assert result.andon is not None
+    assert result.andon.kind == "broken"
+    assert "403 Forbidden" in result.andon.summary
+    assert rebump_calls == []
