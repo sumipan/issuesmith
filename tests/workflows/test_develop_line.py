@@ -6,6 +6,7 @@ import ast
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -99,6 +100,17 @@ _FAKE_AGENT = textwrap.dedent(
         git add src/feature.py tests/test_feature.py
         git commit -m "fake engine change" || true
         ;;
+      autofix_lint)
+        printf 'VALUE = 2   \\n' >"$TARGET"
+        printf '%s\\n' \\
+          'from src import feature' \\
+          '' \\
+          'def test_value() -> None:' \\
+          '    assert feature.VALUE == 2' \\
+          >tests/test_feature.py
+        git add src/feature.py tests/test_feature.py
+        git commit -m "fake engine change" || true
+        ;;
       out_of_scope)
         printf 'VALUE = 2\\n' >"$TARGET"
         printf '%s\\n' \
@@ -176,7 +188,8 @@ def _make_host_repo(tmp_path: Path, slug: str) -> Path:
     (seed / "pyproject.toml").write_text(
         "[project]\nname = 'ref-host'\nversion = '0.0.0'\n\n"
         "[tool.pytest.ini_options]\ntestpaths = ['tests']\n\n"
-        "[tool.ruff]\nline-length = 100\n",
+        "[tool.ruff]\nline-length = 100\n\n"
+        '[tool.ruff.lint]\nextend-select = ["W291"]\n',
         encoding="utf-8",
     )
     (seed / ".gitignore").write_text("__pycache__/\n*.py[cod]\n", encoding="utf-8")
@@ -235,7 +248,8 @@ def _init_feature_seed(repo: Path) -> None:
     (repo / "pyproject.toml").write_text(
         "[project]\nname = 'ref-host'\nversion = '0.0.0'\n\n"
         "[tool.pytest.ini_options]\ntestpaths = ['tests']\n\n"
-        "[tool.ruff]\nline-length = 100\n",
+        "[tool.ruff]\nline-length = 100\n\n"
+        '[tool.ruff.lint]\nextend-select = ["W291"]\n',
         encoding="utf-8",
     )
     (repo / ".gitignore").write_text("__pycache__/\n*.py[cod]\n", encoding="utf-8")
@@ -1113,6 +1127,131 @@ def test_step_modules_import_only_public_issuesmith_modules() -> None:
                     assert _ok(mod), f"{path.name}: {mod}"
                 if mod.startswith("ghdag"):
                     pytest.fail(f"{path.name} must not import ghdag ({mod})")
+
+
+def test_gate_autofix_is_committed_and_merged(host_env, tmp_path: Path) -> None:
+    """refs #7408 AC1: an auto-fixed lint violation reaches the merged base."""
+    if shutil.which("ruff") is None:
+        pytest.skip("ruff is not on PATH; lint auto-fix does not run")
+    host, client, env, _slug = host_env
+    _set_fake_engine_mode(host, "autofix_lint")
+    number = client.issue_create("autofix line", _issue_body())
+    client.issue_update(number, labels_add=["issuesmith:develop-ready"])
+    outcome = _run_until(client, number, env, host, expect_done=True, max_rounds=60)
+    assert outcome == "done"
+    # The local forge records the PR merge without materialising base, so the
+    # merged content is the PR head branch that merge pushed to origin.
+    origin = tmp_path / "origin.git"
+    refs = subprocess.run(
+        [
+            "git",
+            "--git-dir",
+            str(origin),
+            "for-each-ref",
+            "--format=%(refname)",
+            f"refs/heads/feat/issue-{number}-*",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.split()
+    assert len(refs) == 1, refs
+    merged = subprocess.run(
+        ["git", "--git-dir", str(origin), "show", f"{refs[0]}:src/feature.py"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert merged.returncode == 0, merged.stderr
+    assert merged.stdout == "VALUE = 2\n"
+    subjects = subprocess.run(
+        ["git", "--git-dir", str(origin), "log", "--format=%s", f"main..{refs[0]}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.splitlines()
+    assert "Apply gate auto-fixes" in subjects
+
+
+def test_commit_tracked_changes_is_noop_on_clean_tree(tmp_path: Path) -> None:
+    """refs #7408 AC2: no tracked changes -> no commit, untracked files stay untracked."""
+    repo = tmp_path / "repo"
+    _init_feature_seed(repo)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "init")
+    before = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    (repo / "untracked.txt").write_text("scratch\n", encoding="utf-8")
+    from issuesmith.lines.develop.review import _commit_tracked_changes
+
+    assert _commit_tracked_changes(str(repo)) == ""
+    assert _git(repo, "rev-parse", "HEAD").stdout.strip() == before
+    status = _git(repo, "status", "--porcelain").stdout
+    assert "?? untracked.txt" in status
+
+
+def test_commit_tracked_changes_commits_tracked_edits_only(tmp_path: Path) -> None:
+    """refs #7408: tracked edits are committed as one fixed-subject commit."""
+    repo = tmp_path / "repo"
+    _init_feature_seed(repo)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "init")
+    (repo / "src" / "feature.py").write_text("VALUE = 2\n", encoding="utf-8")
+    (repo / "untracked.txt").write_text("scratch\n", encoding="utf-8")
+    from issuesmith.lines.develop.review import _commit_tracked_changes
+
+    assert _commit_tracked_changes(str(repo)) == ""
+    assert _git(repo, "show", "HEAD:src/feature.py").stdout == "VALUE = 2\n"
+    assert _git(repo, "log", "-1", "--format=%s").stdout.strip() == "Apply gate auto-fixes"
+    files = _git(repo, "show", "--name-only", "--format=", "HEAD").stdout.split()
+    assert files == ["src/feature.py"]
+
+
+def test_cli_dispatch_raises_broken_andon_when_commit_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """refs #7408 AC3: commit failure -> broken andon with git stderr, no execv."""
+    repo = tmp_path / "repo"
+    _init_feature_seed(repo)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "init")
+    (repo / "src" / "feature.py").write_text("VALUE = 2\n", encoding="utf-8")
+    hook = repo / ".git" / "hooks" / "pre-commit"
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_text("#!/bin/sh\necho hook-refused >&2\nexit 1\n", encoding="utf-8")
+    hook.chmod(0o755)
+    from issuesmith.lines.develop import review as develop_review
+
+    captured: list = []
+    execv_calls: list = []
+
+    def _fake_map(result, *, step_id, context):
+        captured.append((result, step_id, context))
+        return 1
+
+    monkeypatch.setattr(develop_review, "map_step_result", _fake_map)
+    monkeypatch.setattr(develop_review.os, "execv", lambda *a, **k: execv_calls.append(a))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "review",
+            "dispatch",
+            "issue_number=1",
+            f"worktree_path={repo}",
+            "base_branch=main",
+            "branch=feat/x",
+        ],
+    )
+    assert develop_review._cli_dispatch() == 1
+    assert execv_calls == []
+    assert len(captured) == 1
+    result, step_id, _context = captured[0]
+    assert step_id == "review"
+    assert result.status == "andon"
+    assert result.andon is not None
+    assert result.andon.kind == "broken"
+    assert "hook-refused" in result.andon.summary
 
 
 def test_reference_config_passes_config_show() -> None:
