@@ -94,8 +94,8 @@ class TestCp2MergePrDetection:
         assert any(u[0] == 2773 and "issuesmith:merge-ready" in (u[1] or []) for u in client.updates)
 
 
-class TestCp2BumpTitleNoAutoClose:
-    def test_newer_open_bump_issue_does_not_supersede_queue_request(
+class TestCp2NoTitleSupersede:
+    def test_newer_same_shape_title_does_not_close(
         self, tmp_path, monkeypatch
     ):
         """Refs #7329."""
@@ -104,7 +104,7 @@ class TestCp2BumpTitleNoAutoClose:
         from issuesmith import queue as qmod
 
         store = _store(tmp_path)
-        store.enqueue(
+        enqueued = store.enqueue(
             issue=10, phase="draft", source="skill", actor_kind="human",
             priority="normal", requested_by=["alice"], requested_at=_NOW,
         )
@@ -112,7 +112,7 @@ class TestCp2BumpTitleNoAutoClose:
             issues={
                 10: {
                     "state": "OPEN",
-                    "title": "nexus: bump mltgnt to v0.22.7",
+                    "title": "app: bump dep to v0.1.0",
                     "body": _VALID_BODY,
                     "labels": [],
                 }
@@ -120,21 +120,21 @@ class TestCp2BumpTitleNoAutoClose:
             open_issue_rows=[
                 {
                     "number": 10,
-                    "title": "nexus: bump mltgnt to v0.22.7",
+                    "title": "app: bump dep to v0.1.0",
                     "state": "open",
                     "body": _VALID_BODY,
                     "labels": [],
                 },
                 {
                     "number": 11,
-                    "title": "nexus: bump mltgnt to v0.23.0",
+                    "title": "app: bump dep to v0.2.0",
                     "state": "open",
                     "body": _VALID_BODY,
                     "labels": [],
                 },
             ],
         )
-        monkeypatch.setattr(qmod, "_pipeline_idle_enough", lambda idle, now: True)
+        monkeypatch.setattr(qmod, "_dispatch_pipeline_ready", lambda *a, **k: False)
         monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
         now = datetime(2026, 9, 3, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
         result = qmod.dispatch_one(
@@ -144,8 +144,10 @@ class TestCp2BumpTitleNoAutoClose:
             skip_seed=True,
             call_llm=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")),
         )
-        assert result.dispatched is True
+        assert result.dispatched is False
         assert 10 not in client.closes
+        snap = store.snapshot()
+        assert enqueued.request_id not in snap.completed_request_ids
 
 
 class TestCp2DevelopDispatch:

@@ -58,10 +58,10 @@ def test_seed_extra_sources_from_window_yaml(tmp_path):
 
     seed_path = tmp_path / "night-queue.yaml"
     seed_path.write_text(
-        "window:\n  extra_sources:\n    - release-watcher\n    - custom\n",
+        "window:\n  extra_sources:\n    - watcher\n    - custom\n",
         encoding="utf-8",
     )
-    assert seed_extra_sources(seed_path) == frozenset({"release-watcher", "custom"})
+    assert seed_extra_sources(seed_path) == frozenset({"watcher", "custom"})
 
 
 def test_dequeue_unknown_request_id_fails(tmp_path, monkeypatch, capsys):

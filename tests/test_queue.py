@@ -288,15 +288,15 @@ class TestNightSourceWindow:
 
         now_in = datetime(2026, 9, 3, 3, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
         now_out = datetime(2026, 9, 3, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
-        extra = frozenset({"release-watcher"})
+        extra = frozenset({"watcher"})
         assert qmod._source_in_window(
-            "release-watcher", "automation", now_in, "01:00", "07:00", extra
+            "watcher", "automation", now_in, "01:00", "07:00", extra
         )
         assert not qmod._source_in_window(
-            "release-watcher", "automation", now_out, "01:00", "07:00", extra
+            "watcher", "automation", now_out, "01:00", "07:00", extra
         )
         assert qmod._source_in_window(
-            "release-watcher", "automation", now_out, "01:00", "07:00", frozenset()
+            "watcher", "automation", now_out, "01:00", "07:00", frozenset()
         )
         assert qmod._source_in_window(
             "skill", "human", now_out, "01:00", "07:00", extra

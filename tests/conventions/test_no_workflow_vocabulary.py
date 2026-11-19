@@ -156,6 +156,29 @@ def test_diary_hits_reports_path_and_line(tmp_path: Path):
     assert _diary_hits(pkg) == ["src/issuesmith/data.yaml:1", "src/issuesmith/mod.py:2"]
 
 
+_RELEASE_WATCHER = re.compile(r"release-watcher", re.IGNORECASE)
+
+
+def _release_watcher_hits(root: Path) -> list[str]:
+    hits: list[str] = []
+    for path in sorted(p for p in root.rglob("*") if p.is_file()):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            if _RELEASE_WATCHER.search(line):
+                hits.append(f"{path.relative_to(root.parent.parent)}:{lineno}")
+    return hits
+
+
+def test_src_has_no_release_watcher_name():
+    hits = _release_watcher_hits(REPO_ROOT / "src/issuesmith")
+    assert not hits, (
+        "src/issuesmith must not mention 'release-watcher':\n" + "\n".join(hits)
+    )
+
+
 # #6077: the compatibility shims and legacy aliases were removed; nothing may
 # reference them again.
 _LEGACY_REFERENCE = re.compile(

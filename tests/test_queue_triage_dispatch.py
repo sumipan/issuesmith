@@ -250,14 +250,14 @@ class TestDispatch:
 
         seed_path = tmp_path / "night-queue.yaml"
         seed_path.write_text(
-            "window:\n  start: '01:00'\n  end: '07:00'\n  extra_sources:\n    - release-watcher\n",
+            "window:\n  start: '01:00'\n  end: '07:00'\n  extra_sources:\n    - watcher\n",
             encoding="utf-8",
         )
 
         store = _store(tmp_path)
         store.enqueue(
-            issue=50, phase="draft", source="release-watcher", actor_kind="automation",
-            priority="low", requested_by=["release-watcher"], requested_at=_NOW,
+            issue=50, phase="draft", source="watcher", actor_kind="automation",
+            priority="low", requested_by=["watcher"], requested_at=_NOW,
         )
 
         class Client:
@@ -294,5 +294,115 @@ class TestDispatch:
         assert result.dispatched is False
         assert "no dispatchable" in result.reason
         assert store.snapshot().active_order  # request retained
+
+
+def test_extra_source_waits_outside_window(tmp_path, monkeypatch):
+    """Refs #7329."""
+    from zoneinfo import ZoneInfo
+
+    from issuesmith import queue as qmod
+    from issuesmith.queue_triage import seed_extra_sources, seed_window
+
+    seed_path = tmp_path / "night-queue.yaml"
+    seed_path.write_text(
+        "window:\n  start: '01:00'\n  end: '07:00'\n  extra_sources:\n    - watcher\n",
+        encoding="utf-8",
+    )
+    store = _store(tmp_path)
+    enqueued = store.enqueue(
+        issue=50,
+        phase="draft",
+        source="watcher",
+        actor_kind="automation",
+        priority="low",
+        requested_by=["watcher"],
+        requested_at=_NOW,
+    )
+    client = _ProdShapeClient(
+        issues={
+            50: {
+                "state": "OPEN",
+                "title": "t",
+                "body": _VALID_BODY,
+                "labels": [],
+            }
+        },
+        open_issue_rows=[
+            {
+                "number": 50,
+                "title": "t",
+                "state": "open",
+                "body": _VALID_BODY,
+                "labels": [],
+            }
+        ],
+    )
+    monkeypatch.setattr(qmod, "_dispatch_pipeline_ready", lambda *a, **k: True)
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
+    now = datetime(2026, 9, 3, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+    queue_plan = qmod._plan_with_window(
+        store,
+        client,
+        now=now,
+        window=seed_window(seed_path),
+        extra_sources=seed_extra_sources(seed_path),
+    )
+    by_id = {e.request_id: e for e in queue_plan.entries}
+    assert by_id[enqueued.request_id].reason == "window"
+
+
+def test_undeclared_source_does_not_wait_outside_window(tmp_path, monkeypatch):
+    """Refs #7329."""
+    from zoneinfo import ZoneInfo
+
+    from issuesmith import queue as qmod
+    from issuesmith.queue_triage import seed_extra_sources, seed_window
+
+    seed_path = tmp_path / "night-queue.yaml"
+    seed_path.write_text(
+        "window:\n  start: '01:00'\n  end: '07:00'\n  extra_sources:\n    - watcher\n",
+        encoding="utf-8",
+    )
+    store = _store(tmp_path)
+    enqueued = store.enqueue(
+        issue=50,
+        phase="draft",
+        source="other-bot",
+        actor_kind="automation",
+        priority="low",
+        requested_by=["other-bot"],
+        requested_at=_NOW,
+    )
+    client = _ProdShapeClient(
+        issues={
+            50: {
+                "state": "OPEN",
+                "title": "t",
+                "body": _VALID_BODY,
+                "labels": [],
+            }
+        },
+        open_issue_rows=[
+            {
+                "number": 50,
+                "title": "t",
+                "state": "open",
+                "body": _VALID_BODY,
+                "labels": [],
+            }
+        ],
+    )
+    monkeypatch.setattr(qmod, "_dispatch_pipeline_ready", lambda *a, **k: True)
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
+    now = datetime(2026, 9, 3, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+    queue_plan = qmod._plan_with_window(
+        store,
+        client,
+        now=now,
+        window=seed_window(seed_path),
+        extra_sources=seed_extra_sources(seed_path),
+    )
+    by_id = {e.request_id: e for e in queue_plan.entries}
+    assert by_id[enqueued.request_id].reason != "window"
 
 
