@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Fixed
+
+- Guarded orders (`run_guarded_output` / review gates): empty stdout or unclassified failures (no stderr, no `failure_class`) pause the engine and return `RetrySignal(ENGINE_TRANSIENT)` up to three times per `GHDAG_TASK_UUID` and template; further attempts surface `review.<step>.engine_error` as before (#7397).
+
 ## 0.197.1 - 2026-11-19
 
 ### Added

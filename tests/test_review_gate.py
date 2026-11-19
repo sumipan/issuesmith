@@ -58,6 +58,16 @@ def test_check_propagates_retry_signal(tmp_path: Path) -> None:
             gate.check("", [])
 
 
+def test_check_propagates_engine_transient_retry_signal(tmp_path: Path) -> None:
+    """Refs #7397 — review gate forwards guarded-order ENGINE_TRANSIENT retries."""
+    gate = ReviewGate(_review_cfg(), "x", tmp_path, {})
+    sig = RetrySignal(reason=RetryReason.ENGINE_TRANSIENT)
+    with patch("issuesmith.engine.run_guarded_output", side_effect=sig):
+        with pytest.raises(RetrySignal) as exc_info:
+            gate.check("", [])
+    assert exc_info.value.reason is RetryReason.ENGINE_TRANSIENT
+
+
 def test_evaluate_requires_propagates_retry_signal() -> None:
     gate = MagicMock()
     gate.check.side_effect = RetrySignal(reason=RetryReason.QUOTA_PAUSED)
