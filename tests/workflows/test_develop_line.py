@@ -214,6 +214,127 @@ def _make_host_repo(tmp_path: Path, slug: str) -> Path:
     return host
 
 
+def _init_feature_seed(repo: Path) -> None:
+    subprocess.run(
+        ["git", "init", "-b", "main", str(repo)],
+        capture_output=True,
+        check=True,
+    )
+    _git(repo, "config", "user.email", "t@example.com")
+    _git(repo, "config", "user.name", "T")
+    (repo / "src").mkdir()
+    (repo / "src" / "feature.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_feature.py").write_text(
+        "from src import feature\n\n\ndef test_value():\n    assert feature.VALUE == 1\n",
+        encoding="utf-8",
+    )
+    (repo / "pyproject.toml").write_text(
+        "[project]\nname = 'ref-host'\nversion = '0.0.0'\n\n"
+        "[tool.pytest.ini_options]\ntestpaths = ['tests']\n\n"
+        "[tool.ruff]\nline-length = 100\n",
+        encoding="utf-8",
+    )
+    (repo / ".gitignore").write_text("__pycache__/\n*.py[cod]\n", encoding="utf-8")
+    (repo / "jobs").mkdir()
+    (repo / "logs").mkdir()
+
+
+def _make_target_forge_root(tmp_path: Path) -> tuple[Path, Path]:
+    """Target checkout at forge_root plus a bare origin for clone/push."""
+    seed = tmp_path / "target_seed"
+    origin = tmp_path / "target.git"
+    forge_root = tmp_path / "target_forge"
+    _init_feature_seed(seed)
+    _git(seed, "add", "-A")
+    _git(seed, "commit", "-m", "init")
+    subprocess.run(
+        ["git", "clone", "--bare", str(seed), str(origin)],
+        capture_output=True,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "clone", str(origin), str(forge_root)],
+        capture_output=True,
+        check=True,
+    )
+    _git(forge_root, "config", "user.email", "t@example.com")
+    _git(forge_root, "config", "user.name", "T")
+    return forge_root, origin
+
+
+def _make_detached_develop_host(
+    tmp_path: Path,
+    *,
+    host_slug: str,
+    supported_repos: list[str],
+) -> Path:
+    host = tmp_path / "host_detached"
+    subprocess.run(
+        ["git", "init", "-b", "main", str(host)],
+        capture_output=True,
+        check=True,
+    )
+    _git(host, "config", "user.email", "t@example.com")
+    _git(host, "config", "user.name", "T")
+    (host / "host-readme.md").write_text("detached host\n", encoding="utf-8")
+    _git(host, "add", "host-readme.md")
+    _git(host, "commit", "-m", "host init")
+    extract_line("develop", host)
+    cfg_path = host / "issuesmith.yaml"
+    data = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    data["repo"] = host_slug
+    data["supported_repos"] = list(supported_repos)
+    data["host_is_repo_checkout"] = False
+    for role in ("implementation", "review"):
+        eng = data.get("engines", {}).get(role)
+        if isinstance(eng, dict):
+            eng.pop("allowed", None)
+            eng["heavy"] = [["cursor", "auto"]]
+    cfg_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    _git(host, "add", "issuesmith.yaml")
+    _git(host, "commit", "-m", "wiring")
+    (host / "bin").mkdir(exist_ok=True)
+    fake_cli = host / "bin" / "cursor-agent"
+    fake_cli.write_text(_FAKE_AGENT, encoding="utf-8")
+    fake_cli.chmod(0o755)
+    (host / "jobs").mkdir(exist_ok=True)
+    (host / "logs").mkdir(exist_ok=True)
+    (host / ".pipeline-state").mkdir(exist_ok=True)
+    return host
+
+
+def _clone_target(external_dir: Path, target_slug: str, origin: Path) -> Path:
+    repo_name = target_slug.split("/")[-1]
+    clone_dir = external_dir / repo_name
+    external_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["git", "clone", str(origin), str(clone_dir)],
+        capture_output=True,
+        check=True,
+    )
+    _git(clone_dir, "config", "user.email", "t@example.com")
+    _git(clone_dir, "config", "user.name", "T")
+    return clone_dir
+
+
+def _cross_repo_issue_body(target_slug: str) -> str:
+    return textwrap.dedent(
+        f"""\
+        ```yaml
+        target_repo: {target_slug}
+        base_branch: main
+        allow_paths:
+          - src/**
+          - tests/**
+        ```
+
+        ## Task
+        Bump VALUE in src/feature.py.
+        """
+    )
+
+
 def _issue_body(*, acceptance_yaml: str | None = None) -> str:
     base = textwrap.dedent(
         """\
@@ -341,6 +462,98 @@ def host_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, runner_procs):
     reset_config_cache()
     client = get_forge()
     yield host, client, env, slug
+    reset_config_cache()
+
+
+def _cross_repo_env(
+    tmp_path: Path,
+    *,
+    host_slug: str,
+    supported_repos: list[str],
+    clone_slugs: list[str],
+    origin: Path,
+    forge_root: Path,
+) -> tuple[Path, Path, dict[str, str], str]:
+    external_dir = (tmp_path / "external").resolve()
+    host = _make_detached_develop_host(
+        tmp_path,
+        host_slug=host_slug,
+        supported_repos=supported_repos,
+    )
+    cfg_path = host / "issuesmith.yaml"
+    data = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    data.setdefault("paths", {})["external_dir"] = str(external_dir)
+    cfg_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    for slug in clone_slugs:
+        _clone_target(external_dir, slug, origin)
+    (tmp_path / "queue").mkdir()
+    bin_dir = host / "bin"
+    env = {
+        **os.environ,
+        "ISSUESMITH_CONFIG": str(host / "issuesmith.yaml"),
+        "PYTHONPATH": f"{_REPO_ROOT / 'src'}{os.pathsep}{os.environ.get('PYTHONPATH', '')}",
+        "GHDAG_FORGE": "local",
+        "GHDAG_FORGE_ROOT": str(forge_root),
+        "ISSUESMITH_QUEUE_DIR": str(tmp_path / "queue"),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        "GHDAG_TASK_ENV_ALLOW": "*",
+    }
+    for key in ("GITHUB_TOKEN", "GH_TOKEN", "GITHUB_REPOSITORIES", "GITHUB_REPOSITORY"):
+        env.pop(key, None)
+    return host, external_dir, env, host_slug
+
+
+@pytest.fixture
+def cross_repo_same_target_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, runner_procs):
+    """Host is detached; Issues and target work share one supported repo slug."""
+    target_slug = "example/reference-host"
+    forge_root, origin = _make_target_forge_root(tmp_path)
+    host, external_dir, env, host_slug = _cross_repo_env(
+        tmp_path,
+        host_slug=target_slug,
+        supported_repos=[target_slug],
+        clone_slugs=[target_slug],
+        origin=origin,
+        forge_root=forge_root,
+    )
+    clone_dir = external_dir / target_slug.split("/")[-1]
+    env["GHDAG_FORGE_ROOT"] = str(clone_dir)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    for key in ("GITHUB_TOKEN", "GH_TOKEN", "GITHUB_REPOSITORIES", "GITHUB_REPOSITORY"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.chdir(host)
+    reset_config_cache()
+    client = get_forge()
+    yield host, client, env, host_slug, target_slug, clone_dir, external_dir
+    reset_config_cache()
+
+
+@pytest.fixture
+def cross_repo_other_target_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, runner_procs):
+    """Issues on one slug; implementation targets another supported repo."""
+    host_slug = "example/issuesmith-host"
+    target_slug = "example/reference-host"
+    forge_root, origin = _make_target_forge_root(tmp_path)
+    host, external_dir, env, _ = _cross_repo_env(
+        tmp_path,
+        host_slug=host_slug,
+        supported_repos=[host_slug, target_slug],
+        clone_slugs=[target_slug],
+        origin=origin,
+        forge_root=forge_root,
+    )
+    clone_dir = external_dir / target_slug.split("/")[-1]
+    env["GHDAG_FORGE_ROOT"] = str(clone_dir)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    for key in ("GITHUB_TOKEN", "GH_TOKEN", "GITHUB_REPOSITORIES", "GITHUB_REPOSITORY"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.chdir(host)
+    reset_config_cache()
+    client = get_forge()
+    yield host, client, env, host_slug, target_slug, clone_dir, external_dir
     reset_config_cache()
 
 
@@ -575,6 +788,72 @@ def test_run_dag_once_stops_runner_that_never_finishes(tmp_path: Path, runner_pr
         os.kill(pid, 0)
 
 
+def test_issue_flows_when_host_is_not_target_checkout(cross_repo_same_target_env) -> None:
+    host, client, env, host_slug, target_slug, target_checkout, external_dir = (
+        cross_repo_same_target_env
+    )
+    number = client.issue_create(
+        "cross same target",
+        _cross_repo_issue_body(host_slug),
+    )
+    client.issue_update(number, labels_add=["issuesmith:develop-ready"])
+    outcome = _run_until(client, number, env, host, expect_done=True)
+    assert outcome == "done"
+    labels = _labels(client, number)
+    assert "issuesmith:develop-done" in labels
+    state = client.issue_get(number, fields=["state"])["state"]
+    assert state == "CLOSED"
+    show = _git(target_checkout, "show", "main:src/feature.py")
+    assert show.returncode == 0, show.stderr
+    assert "VALUE = 2" in show.stdout
+    host_wt = _git(host, "worktree", "list", "--porcelain")
+    assert host_wt.returncode == 0, host_wt.stderr
+    host_wt_paths = [
+        line[9:] for line in host_wt.stdout.splitlines() if line.startswith("worktree ")
+    ]
+    assert len(host_wt_paths) == 1
+    assert host_wt_paths[0] == str(host.resolve())
+    host_branches = _git(host, "branch", "--list", "feat/*")
+    assert not host_branches.stdout.strip()
+    clone_dir = external_dir / target_slug.split("/")[-1]
+    clone_wt = _git(clone_dir, "worktree", "list")
+    assert f"issue-{number}-" not in clone_wt.stdout
+    clone_branches = _git(clone_dir, "branch", "--list", f"feat/issue-{number}-*")
+    assert not clone_branches.stdout.strip()
+
+
+def test_issue_flows_to_other_target_repo_when_host_is_not_target_checkout(
+    cross_repo_other_target_env,
+) -> None:
+    host, client, env, host_slug, target_slug, target_checkout, _external_dir = (
+        cross_repo_other_target_env
+    )
+    number = client.issue_create(
+        "cross other target",
+        _cross_repo_issue_body(target_slug),
+    )
+    client.issue_update(number, labels_add=["issuesmith:develop-ready"])
+    outcome = _run_until(client, number, env, host, expect_done=True)
+    assert outcome == "done"
+    show = _git(target_checkout, "show", "main:src/feature.py")
+    assert show.returncode == 0, show.stderr
+    assert "VALUE = 2" in show.stdout
+    state = client.issue_get(number, fields=["state"])["state"]
+    assert state == "CLOSED"
+    pulls = client.pr_list(state="all", repo=target_slug)
+    head_prefix = f"feat/issue-{number}-"
+    merged = [
+        p
+        for p in pulls
+        if str(p.get("headRefName") or "").startswith(head_prefix)
+        and str(p.get("state") or "").upper() == "CLOSED"
+    ]
+    assert merged, f"expected merged PR on {target_slug}, got {pulls!r}"
+    pr = client.pr_get(int(merged[0]["number"]), repo=target_slug)
+    body = str(pr.get("body") or "")
+    assert f"Closes {host_slug}#{number}" in body
+
+
 def test_issue_flows_from_ready_to_done_on_local_forge(host_env) -> None:
     host, client, env, _slug = host_env
     number = client.issue_create("develop line", _issue_body())
@@ -699,6 +978,16 @@ def test_base_conflict_stops_at_verify(host_env) -> None:
     assert "VALUE = 3" in show.stdout
     labels = _labels(client, number)
     assert "issuesmith:develop-done" not in labels
+
+
+def test_readme_mentions_host_not_target_checkout() -> None:
+    """refs #7311 AC6: README documents host_is_repo_checkout false for the reference line."""
+    readme = (_REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    start = readme.find("### Reference develop line (packaged)")
+    assert start >= 0
+    section = readme[start : readme.find("\n### ", start + 1)]
+    assert "host_is_repo_checkout" in section
+    assert "external_dir" in section
 
 
 def test_readme_lists_reference_line_gates_per_step() -> None:

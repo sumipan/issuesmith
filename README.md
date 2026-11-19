@@ -9,23 +9,23 @@ The suite includes design and merge gates, a request queue with triage, lane pla
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.195.5-blue)
+![version](https://img.shields.io/badge/version-v0.195.6-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.195.5** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.195.6** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.195.5"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.195.6"
 ```
 
 The gates, forge access, `observe`, `andon`, `lanes` and `metrics` import ghdag, so install the `ghdag` extra unless another package already provides ghdag. The base package alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.195.5"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.195.6"
 ```
 
 | Item | Value |
@@ -43,6 +43,8 @@ See [TESTING.md](./TESTING.md) for what tests should and should not pin.
 ### Reference develop line (packaged)
 
 The package bundles one minimal develop phase. Step modules live at `issuesmith.lines.develop.*`; wiring files live under `issuesmith.lines.develop.files` inside the wheel and are written to your host with `config extract-line`.
+
+The host repository root does not have to be a checkout of the repository you change. Set `host_is_repo_checkout: false`, list every repository you target in `supported_repos`, and keep `paths.external_dir` pointing at where clones live (default `.claude/external`). Pipeline work then runs in a clone at `paths.external_dir/<repo-name>` and its `worktrees/` subtree; pull requests are opened on `target_repo`, while Issues on the configured `repo` are closed after merge.
 
 | Piece | Role |
 |---|---|
