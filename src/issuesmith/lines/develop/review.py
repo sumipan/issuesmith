@@ -7,8 +7,9 @@ import subprocess
 import sys
 
 from issuesmith.config import StepConfig
-from issuesmith.contract import StepContext, StepResult
+from issuesmith.contract import Andon, StepContext, StepResult
 from issuesmith.forge import get_forge
+from issuesmith.verbs import map_step_result
 
 
 def _parse_context(args: list[str]) -> dict[str, str]:
@@ -19,6 +20,41 @@ def _parse_context(args: list[str]) -> dict[str, str]:
         key, value = arg.split("=", 1)
         context[key] = value
     return context
+
+
+_AUTO_FIX_COMMIT_MESSAGE = "Apply gate auto-fixes"
+
+
+def _commit_tracked_changes(worktree: str) -> str:
+    """Commit tracked gate auto-fixes; return git stderr on failure, else \"\"."""
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=no"],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if not (status.stdout or "").strip():
+        return ""
+    add = subprocess.run(
+        ["git", "add", "-u"],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if add.returncode != 0:
+        return add.stderr.strip() or f"git add failed (exit {add.returncode})"
+    commit = subprocess.run(
+        ["git", "commit", "-m", _AUTO_FIX_COMMIT_MESSAGE],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if commit.returncode != 0:
+        return commit.stderr.strip() or f"git commit failed (exit {commit.returncode})"
+    return ""
 
 
 def _git_diff(worktree: str, base_branch: str) -> str:
@@ -58,7 +94,25 @@ def _cli_dispatch() -> int:
             file=sys.stderr,
         )
         return 2
-    context = _enrich_review_context(_parse_context(sys.argv[2:]))
+    raw = _parse_context(sys.argv[2:])
+    worktree = raw.get("worktree_path", "")
+    if not worktree:
+        print("worktree_path is required for review dispatch", file=sys.stderr)
+        return 2
+    err = _commit_tracked_changes(worktree)
+    if err:
+        return map_step_result(
+            StepResult(
+                status="andon",
+                andon=Andon(
+                    kind="broken",
+                    summary=f"review: could not commit gate auto-fixes: {err}",
+                ),
+            ),
+            step_id="review",
+            context=raw,
+        )
+    context = _enrich_review_context(raw)
     cmd = [sys.executable, "-m", "issuesmith", "dispatch", "review"]
     for key, value in context.items():
         cmd.append(f"{key}={value}")
