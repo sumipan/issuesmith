@@ -459,6 +459,27 @@ def test_run_guarded_head_not_advanced_exits_on_llm_failure(fresh_repo: Path):
     assert rc == 1
 
 
+def test_run_guarded_wip_only_head_does_not_proceed_to_requires(fresh_repo: Path):
+    """Refs #7402 AC6 — WIP-only HEAD advance does not open the requires loop."""
+    _git(fresh_repo, "checkout", "-b", "feat/impl")
+    (fresh_repo / "wip.txt").write_text("w\n", encoding="utf-8")
+    _git(fresh_repo, "add", "wip.txt")
+    _git(
+        fresh_repo,
+        "-c",
+        "user.name=issuesmith",
+        "-c",
+        "user.email=issuesmith@localhost",
+        "commit",
+        "-m",
+        "wip preserved\n\nIssuesmith-Wip: true\n",
+    )
+    loop_called: list[bool] = []
+    rc = _run_guarded_with_llm_rc(fresh_repo, 1, loop_called)
+    assert not loop_called
+    assert rc == 1
+
+
 # ---------------------------------------------------------------------------
 # #4530: explicit failure report is not overridden by HEAD-ahead
 # ---------------------------------------------------------------------------

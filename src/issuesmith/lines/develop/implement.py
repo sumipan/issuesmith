@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
 import tempfile
 from pathlib import Path
 from string import Template
@@ -10,23 +9,12 @@ from string import Template
 from issuesmith.config import StepConfig, get_config
 from issuesmith.contract import Andon, StepContext, StepResult
 from issuesmith.forge import get_forge
+from issuesmith.gates.worktree import count_commits_excluding_wip
 from issuesmith.verbs import exec_file
 
 
 def _commits_since_base(worktree: Path, base_branch: str) -> int:
-    proc = subprocess.run(
-        ["git", "rev-list", "--count", f"origin/{base_branch}..HEAD"],
-        cwd=worktree,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        return 0
-    try:
-        return int(proc.stdout.strip() or "0")
-    except ValueError:
-        return 0
+    return count_commits_excluding_wip(worktree, f"origin/{base_branch}..HEAD")
 
 
 def _render_order(ctx: StepContext, step: StepConfig, body: str) -> str:

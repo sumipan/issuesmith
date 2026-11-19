@@ -296,6 +296,31 @@ _PYTEST_TIMEOUT_ENV = "ISSUESMITH_PYTEST_TIMEOUT_SEC"
 _PYTEST_TIMEOUT_DEFAULT_SEC = 1500.0
 
 
+def count_commits_excluding_wip(worktree: Path, rev_range: str) -> int:
+    """Count commits in ``rev_range``, excluding wip preservation commits."""
+    proc = subprocess.run(
+        [
+            "git",
+            "rev-list",
+            "--count",
+            "--invert-grep",
+            "--grep=^Issuesmith-Wip: true$",
+            rev_range,
+        ],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return 0
+    try:
+        return int(proc.stdout.strip() or "0")
+    except ValueError:
+        return 0
+
+
 def _pytest_timeout_sec() -> float:
     raw = (os.environ.get(_PYTEST_TIMEOUT_ENV) or "").strip()
     try:
@@ -304,7 +329,13 @@ def _pytest_timeout_sec() -> float:
         return _PYTEST_TIMEOUT_DEFAULT_SEC
 
 
-def _run_pytest_impl(root: Path, args: list[str], *, timeout: float | None = None) -> tuple[int, str]:
+def _run_pytest_impl(
+    root: Path,
+    args: list[str],
+    *,
+    timeout: float | None = None,
+    python_root: Path | None = None,
+) -> tuple[int, str]:
     """Run pytest with `-q -rfE --tb=no` in `root`; prepend `root/src` to PYTHONPATH if present.
 
     A run that exceeds ``timeout`` (default ``ISSUESMITH_PYTEST_TIMEOUT_SEC`` or 1500 s)
@@ -318,8 +349,20 @@ def _run_pytest_impl(root: Path, args: list[str], *, timeout: float | None = Non
         existing = env.get("PYTHONPATH", "")
         env["PYTHONPATH"] = (str(src) + ":" + existing) if existing else str(src)
     from issuesmith.config import get_config
+    from issuesmith.worktree_python import WorktreePythonError, python_bin_for
 
-    python_command = get_config().tests.python_command
+    resolve_root = python_root if python_root is not None else root
+    try:
+        python_bin = python_bin_for(resolve_root)
+    except WorktreePythonError as exc:
+        cmd_hint = " ".join(get_config().tests.python_bin_command)
+        return 127, f"{cmd_hint or 'python_bin_command'}: {exc}"
+    if python_bin is not None:
+        python_command = (str(python_bin / "python"),)
+        prefix = str(python_bin)
+        env["PATH"] = prefix + os.pathsep + env.get("PATH", "")
+    else:
+        python_command = get_config().tests.python_command
     cmd = [
         *python_command,
         "-m",
@@ -350,13 +393,24 @@ def _run_pytest_impl(root: Path, args: list[str], *, timeout: float | None = Non
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
 
-def _run_pytest(root: Path, args: list[str], *, timeout: float | None = None) -> tuple[int, str]:
-    return _run_pytest_impl(root, args, timeout=timeout)
+def _run_pytest(
+    root: Path,
+    args: list[str],
+    *,
+    timeout: float | None = None,
+    python_root: Path | None = None,
+) -> tuple[int, str]:
+    return _run_pytest_impl(root, args, timeout=timeout, python_root=python_root)
 
 
-def _run_pytest_rerun(root: Path, args: list[str]) -> tuple[int, str]:
+def _run_pytest_rerun(
+    root: Path,
+    args: list[str],
+    *,
+    python_root: Path | None = None,
+) -> tuple[int, str]:
     """Re-run a subset of tests for flaky detection (bypasses ``_run_pytest`` spies)."""
-    return _run_pytest_impl(root, args)
+    return _run_pytest_impl(root, args, python_root=python_root)
 
 
 def _parse_failed_ids(output: str) -> list[str]:
@@ -423,7 +477,9 @@ def _baseline_failed_func_ids(
         if not baseline_func_ids:
             return set()
 
-        rc, output = _run_pytest(Path(tmp), baseline_func_ids)
+        rc, output = _run_pytest_impl(
+            Path(tmp), baseline_func_ids, python_root=root
+        )
         if rc >= 2:
             return None
 

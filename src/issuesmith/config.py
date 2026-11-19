@@ -287,6 +287,7 @@ class TestsConfig:
 
     flaky_reruns: int = 2
     python_command: tuple[str, ...] = ("python",)
+    python_bin_command: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1162,14 +1163,33 @@ def _parse_tests_python_command(raw: Any, root: Path) -> tuple[str, ...]:
     return tuple(out)
 
 
+def _parse_tests_python_bin_command(raw: Any, root: Path) -> tuple[str, ...]:
+    if not isinstance(raw, list) or not raw:
+        raise ConfigError("tests.python_bin_command must be a non-empty list of strings")
+    out: list[str] = []
+    for item in raw:
+        if not isinstance(item, str) or not item:
+            raise ConfigError("tests.python_bin_command must be a non-empty list of strings")
+        out.append(item)
+    head = out[0]
+    if "/" in head and not Path(head).is_absolute():
+        out[0] = str(_abs(root, head))
+    return tuple(out)
+
+
 def _build_tests(raw: Mapping[str, Any] | None, root: Path) -> TestsConfig:
     defaults = TestsConfig()
     if not raw:
         return defaults
-    unknown = sorted(str(k) for k in raw if k not in ("flaky_reruns", "python_command"))
+    known = ("flaky_reruns", "python_command", "python_bin_command")
+    unknown = sorted(str(k) for k in raw if k not in known)
     if unknown:
         raise ConfigError(
-            f"tests supports only 'flaky_reruns', 'python_command'; unknown keys: {unknown}"
+            f"tests supports only {', '.join(repr(k) for k in known)}; unknown keys: {unknown}"
+        )
+    if "python_command" in raw and "python_bin_command" in raw:
+        raise ConfigError(
+            "tests.python_command and tests.python_bin_command are mutually exclusive"
         )
     reruns_raw = raw.get("flaky_reruns", defaults.flaky_reruns)
     if isinstance(reruns_raw, bool) or not isinstance(reruns_raw, int) or reruns_raw < 0:
@@ -1177,7 +1197,14 @@ def _build_tests(raw: Mapping[str, Any] | None, root: Path) -> TestsConfig:
     python_command = defaults.python_command
     if "python_command" in raw:
         python_command = _parse_tests_python_command(raw["python_command"], root)
-    return TestsConfig(flaky_reruns=reruns_raw, python_command=python_command)
+    python_bin_command = defaults.python_bin_command
+    if "python_bin_command" in raw:
+        python_bin_command = _parse_tests_python_bin_command(raw["python_bin_command"], root)
+    return TestsConfig(
+        flaky_reruns=reruns_raw,
+        python_command=python_command,
+        python_bin_command=python_bin_command,
+    )
 
 
 def _build_derived_allow(raw: Mapping[str, Any] | None) -> DerivedAllowConfig:

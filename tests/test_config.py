@@ -433,3 +433,45 @@ def test_tests_python_command_relative_head_resolves_against_config_root(
     reset_config_cache()
     cfg = load_config(cfg_path)
     assert cfg.tests.python_command == ("python3",)
+
+
+def test_tests_python_command_and_bin_command_mutually_exclusive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Refs #7402 AC15 — both launcher keys cannot appear together."""
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({
+            "repo": "example/repo",
+            "tests": {
+                "python_command": ["python3"],
+                "python_bin_command": ["scripts/bin"],
+            },
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    with pytest.raises(ConfigError, match="mutually exclusive"):
+        load_config()
+
+
+def test_tests_python_bin_command_relative_resolves_against_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Refs #7402 AC16 — relative python_bin_command paths resolve from config root."""
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "bin-of").write_text("#!/bin/sh\n", encoding="utf-8")
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({
+            "repo": "example/repo",
+            "tests": {"python_bin_command": ["scripts/bin-of"]},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    cfg = load_config(cfg_path)
+    assert cfg.tests.python_bin_command[0] == str((tmp_path / "scripts/bin-of").resolve())

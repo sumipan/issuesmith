@@ -9,23 +9,23 @@ The suite includes design and merge gates, a request queue with triage, lane pla
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.197.4-blue)
+![version](https://img.shields.io/badge/version-v0.198.0-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.197.4** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.198.0** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.197.4"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.198.0"
 ```
 
 The gates, forge access, `observe`, `andon`, `lanes` and `metrics` import ghdag, so install the `ghdag` extra unless another package already provides ghdag. The base package alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.197.4"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.198.0"
 ```
 
 | Item | Value |
@@ -424,6 +424,7 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/verbs/publish.py` | `publish_branch` |
 | `issuesmith/verbs/worktree.py` | `prepare_worktree`, `ensure_base_included`, `block_design_only_issue` |
 | `issuesmith/worktree.py` | Worktree creation and base-branch fetch |
+| `issuesmith/worktree_python.py` | Resolve a worktree-specific Python `bin` directory via `tests.python_bin_command` |
 
 ## Gates
 
@@ -626,6 +627,7 @@ Logs, exception messages, CLI help and violation text stay English and are not p
 | `QueueValidationError` | `issuesmith.queue_store` | `ValueError` | Invalid queue request input (CLI exits 2) |
 | `RetrySignal` | `issuesmith.contract` | `RuntimeError` | Rate limit or quota pause: dispatch prints `PIPELINE_STATUS: WAIT_QUOTA` and ghdag keeps the task pending; not a step failure |
 | `WorktreeError` | `issuesmith.worktree` | `Exception` | Worktree preparation failed |
+| `WorktreePythonError` | `issuesmith.worktree_python` | `RuntimeError` | `python_bin_command` failed or returned an unusable path |
 
 Some shape errors raise plain `ValueError` instead of `ConfigError`: a missing `repo`, a non-mapping config file, an empty or malformed `phases` list, a non-positive or non-integer `engines.<role>.pause_ttl_sec`, a non-list `forbidden_pr_paths`, `forbidden_pr_paths_except`, `terminal_labels` or `terminal_without_merge`, and an incomplete `observe.main_health`. `TemplateVariableError` (`ghdag.pipeline.order`) can propagate from `issuesmith.engine` when a template variable is missing.
 
