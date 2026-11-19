@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.200.2 - 2026-11-20
+
+### Added
+
+- review: apply pr_diff tier and pre-gate branch check
+
 ## 0.200.1 - 2026-11-19
 
 ### Added
