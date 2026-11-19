@@ -424,6 +424,7 @@ ghdag's `WorkflowDispatcher` owns orchestration: polling, DAG construction, labe
 | `issuesmith/verbs/publish.py` | `publish_branch` |
 | `issuesmith/verbs/worktree.py` | `prepare_worktree`, `ensure_base_included`, `block_design_only_issue` |
 | `issuesmith/worktree.py` | Worktree creation and base-branch fetch |
+| `issuesmith/worktree_python.py` | Resolve a worktree-specific Python `bin` directory via `tests.python_bin_command` |
 
 ## Gates
 
@@ -626,6 +627,7 @@ Logs, exception messages, CLI help and violation text stay English and are not p
 | `QueueValidationError` | `issuesmith.queue_store` | `ValueError` | Invalid queue request input (CLI exits 2) |
 | `RetrySignal` | `issuesmith.contract` | `RuntimeError` | Rate limit or quota pause: dispatch prints `PIPELINE_STATUS: WAIT_QUOTA` and ghdag keeps the task pending; not a step failure |
 | `WorktreeError` | `issuesmith.worktree` | `Exception` | Worktree preparation failed |
+| `WorktreePythonError` | `issuesmith.worktree_python` | `RuntimeError` | `python_bin_command` failed or returned an unusable path |
 
 Some shape errors raise plain `ValueError` instead of `ConfigError`: a missing `repo`, a non-mapping config file, an empty or malformed `phases` list, a non-positive or non-integer `engines.<role>.pause_ttl_sec`, a non-list `forbidden_pr_paths`, `forbidden_pr_paths_except`, `terminal_labels` or `terminal_without_merge`, and an incomplete `observe.main_health`. `TemplateVariableError` (`ghdag.pipeline.order`) can propagate from `issuesmith.engine` when a template variable is missing.
 
