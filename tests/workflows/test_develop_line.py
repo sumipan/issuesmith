@@ -141,7 +141,7 @@ _FAKE_AGENT = textwrap.dedent(
         git commit -m "fake engine change" || true
         ;;
       autofix_tracked)
-        printf 'VALUE = 2\\n' >"$TARGET"
+        printf 'VALUE = 2   \\n' >"$TARGET"
         printf '%s\\n' \\
           'from src import feature' \\
           '' \\
@@ -1101,8 +1101,9 @@ def test_no_pr_target_rebase_conflict_stops_with_andon(no_pr_target_env) -> None
 def test_no_pr_merge_commits_gate_autofix_on_bare_main(no_pr_target_env) -> None:
     """refs sumipan/nexus#7391 — merge commits verify lint autofixes before no-PR push."""
     host, client, env, target_slug, origin, _external_dir, _bare_path = no_pr_target_env
-    mode = "autofix_lint" if shutil.which("ruff") else "autofix_tracked"
-    _set_fake_engine_mode(host, mode)
+    # Leaves a tracked, uncommitted fix in the worktree whether or not ruff
+    # is on PATH, so the result does not depend on the lint gate's autofix.
+    _set_fake_engine_mode(host, "autofix_tracked")
     number = client.issue_create("no pr autofix", _cross_repo_issue_body(target_slug))
     client.issue_update(number, labels_add=["issuesmith:develop-ready"])
     outcome = _run_until(client, number, env, host, expect_done=True, max_rounds=60)
