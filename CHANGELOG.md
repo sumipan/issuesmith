@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.201.1 - 2026-11-20
+
+### Changed
+
+- readme: complete verbs Public API row and tighten conventions
+
 ## 0.201.0 - 2026-11-20
 
 ### Added
