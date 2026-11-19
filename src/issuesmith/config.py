@@ -7,6 +7,7 @@ config file so the package can be reused outside this repository.
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import warnings
 from dataclasses import dataclass, field
@@ -394,6 +395,16 @@ class IssuesmithConfig:
     andon: AndonConfig = field(default_factory=AndonConfig)
     path_env_prefixes: tuple[str, ...] = ()
     host_is_repo_checkout: bool = True
+    target_remotes: Mapping[str, str] = field(default_factory=dict)
+
+    def clone_url(self, target_repo: str) -> str:
+        key = target_repo.strip()
+        if key in self.target_remotes:
+            return self.target_remotes[key]
+        return f"https://github.com/{key}.git"
+
+    def merges_without_pr(self, target_repo: str) -> bool:
+        return target_repo.strip() in self.target_remotes
 
     def phase(self, name: str) -> PhaseConfig:
         for ph in self.phases:
@@ -754,6 +765,46 @@ def _build_host_is_repo_checkout(raw: object) -> bool:
     if isinstance(raw, bool):
         return raw
     raise ConfigError(f"host_is_repo_checkout must be true or false, got {raw!r}")
+
+
+_SSH_REMOTE_RE = re.compile(r"^[^/]+@[^/:]+:")
+
+
+def _target_remote_is_url(value: str) -> bool:
+    if "://" in value:
+        return True
+    return _SSH_REMOTE_RE.match(value) is not None
+
+
+def _build_target_remotes(
+    raw: object,
+    *,
+    supported: frozenset[str],
+    root: Path,
+) -> dict[str, str]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, Mapping):
+        raise ConfigError("target_remotes must be a mapping")
+    out: dict[str, str] = {}
+    for key, val in raw.items():
+        repo_key = str(key).strip()
+        if repo_key not in supported:
+            raise ConfigError(
+                f"target_remotes key {repo_key!r} is not in supported_repos"
+            )
+        if not isinstance(val, str) or not val.strip():
+            raise ConfigError(f"target_remotes[{repo_key!r}] must be a non-empty string")
+        raw_value = val.strip()
+        if _target_remote_is_url(raw_value):
+            resolved = raw_value
+        else:
+            path = Path(raw_value)
+            if not path.is_absolute():
+                path = root / path
+            resolved = str(path.resolve())
+        out[repo_key] = resolved
+    return out
 
 
 _LEGACY_SCOPE_SIZE_VOCAB: tuple[str, ...] = (
@@ -1506,6 +1557,11 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         path_env_prefixes=_build_path_env_prefixes(data.get("path_env_prefixes")),
         host_is_repo_checkout=_build_host_is_repo_checkout(
             data.get("host_is_repo_checkout")
+        ),
+        target_remotes=_build_target_remotes(
+            data.get("target_remotes"),
+            supported=supported,
+            root=root.resolve(),
         ),
     )
 

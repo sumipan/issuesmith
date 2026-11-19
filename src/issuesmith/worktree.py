@@ -16,6 +16,7 @@ from pathlib import Path
 
 from ghdag.forge import ForgePort, get_forge
 
+from issuesmith.config import get_config
 from issuesmith.contract import Andon, StepResult
 
 _TRANSIENT_FETCH_MARKERS = ("cannot lock ref", "unable to update local ref")
@@ -364,6 +365,7 @@ def clone_if_missing(clone_path: Path, target_repo: str, base_branch: str) -> No
         return
 
     clone_path.parent.mkdir(parents=True, exist_ok=True)
+    clone_url = get_config().clone_url(target_repo)
     clone = subprocess.run(
         [
             "git",
@@ -372,7 +374,7 @@ def clone_if_missing(clone_path: Path, target_repo: str, base_branch: str) -> No
             "1",
             "--branch",
             base_branch,
-            f"https://github.com/{target_repo}.git",
+            clone_url,
             str(clone_path),
         ],
         capture_output=True,
