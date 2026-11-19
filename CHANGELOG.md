@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.196.0 - 2026-11-19
+
 ### Changed
 
 - `lanes.plan`: scan each lane through blocked and busy issues instead of stopping at the first blocker; enqueue order uses ledger priority (`high` / `high_labels`), candidate `depth`, and lane order.
