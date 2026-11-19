@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.197.0 - 2026-11-19
+
 ### Changed
 
 - Queue dispatch no longer closes or labels Issues as superseded from title similarity (bump/README SemVer heuristics removed; **`normalize_similar_title` removed**). Hosts must close stale bump Issues themselves.
