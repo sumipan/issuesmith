@@ -254,19 +254,17 @@ def _engine_signal_guard() -> Iterator[None]:
 
 
 @contextmanager
-def _engine_child_env(role: str, working_directory: Path | None) -> Iterator[None]:
+def _engine_child_env(role: str, bin_dir: Path | None) -> Iterator[None]:
     saved: dict[str, str | None] = {}
     config_path = _active_config_path()
     if config_path is not None:
         saved["ISSUESMITH_CONFIG"] = os.environ.get("ISSUESMITH_CONFIG")
         os.environ["ISSUESMITH_CONFIG"] = str(config_path.resolve())
-    if working_directory is not None:
-        bin_dir = python_bin_for(working_directory)
-        if bin_dir is not None:
-            saved[_PATH_ENV] = os.environ.get(_PATH_ENV)
-            os.environ[_PATH_ENV] = (
-                str(bin_dir) + os.pathsep + os.environ.get(_PATH_ENV, "")
-            )
+    if bin_dir is not None:
+        saved[_PATH_ENV] = os.environ.get(_PATH_ENV)
+        os.environ[_PATH_ENV] = (
+            str(bin_dir) + os.pathsep + os.environ.get(_PATH_ENV, "")
+        )
     github_ctx = (
         _without_env(_LLM_GITHUB_ENV_DENY) if role == "implementation" else nullcontext()
     )
@@ -1231,9 +1229,10 @@ def _execute(
             selection = RoleSelection(engine=engine, model=heavy)
 
     working_directory = _working_directory(cwd)
+    engine_bin_dir: Path | None = None
     if working_directory is not None:
         try:
-            python_bin_for(working_directory)
+            engine_bin_dir = python_bin_for(working_directory)
         except WorktreePythonError as exc:
             return _EngineProcess(
                 args=[],
@@ -1294,7 +1293,7 @@ def _execute(
     try:
         try:
             with call_guard():
-                with _engine_child_env(role, working_directory):
+                with _engine_child_env(role, engine_bin_dir):
                     engine_invoked = True
                     result = call(
                         content,
@@ -1307,9 +1306,6 @@ def _execute(
                         quota_gate=quota_gate,
                         isolation=isolation,
                     )
-        except _EngineSignaled as sig:
-            _maybe_wip(f"signal {sig.signame}")
-            raise SystemExit(128 + sig.signum) from None
         except subprocess.TimeoutExpired as exc:
             _maybe_wip("timeout")
             finished_at = time.time()
@@ -1370,7 +1366,7 @@ def _execute(
             )
             if retry_route:
                 with call_guard():
-                    with _engine_child_env(role, working_directory):
+                    with _engine_child_env(role, engine_bin_dir):
                         engine_invoked = True
                         result = call(
                             content,
@@ -1392,6 +1388,10 @@ def _execute(
             raise RetrySignal(
                 reason=RetryReason.ENGINE_ENVIRONMENT_ERROR, after=None
             )
+    except _EngineSignaled as sig:
+        # Covers both the first call and the rate-limit retry call.
+        _maybe_wip(f"signal {sig.signame}")
+        raise SystemExit(128 + sig.signum) from None
     finally:
         _declare_finish(quota_gate, task_uuid)
 

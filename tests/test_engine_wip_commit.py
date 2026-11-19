@@ -202,3 +202,36 @@ def test_count_commits_excluding_wip_skips_trailer_commits(impl_repo: Path) -> N
         "wip\n\nIssuesmith-Wip: true\n",
     )
     assert count_commits_excluding_wip(impl_repo, "main..HEAD") == 1
+
+
+def test_wip_commit_on_sigterm_during_rate_limit_retry(
+    impl_repo: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Refs #7402 AC2 — SIGTERM during the rate-limit retry call is handled the same way."""
+    _exe_mocks(monkeypatch)
+    prior = signal.getsignal(signal.SIGTERM)
+    monkeypatch.setattr(
+        "issuesmith.engine._rate_limit_evidence",
+        lambda text: "rate limit detected" if text else None,
+    )
+    calls: list[int] = []
+
+    def _fake_call(*_a, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            result = _llm_result(rc=1)
+            result.stderr = "limited"
+            return result
+        (Path(kwargs["cwd"]) / "retry.txt").write_text("r\n", encoding="utf-8")
+        os.kill(os.getpid(), signal.SIGTERM)
+        return _llm_result(rc=0)
+
+    monkeypatch.setattr("issuesmith.engine.call", MagicMock(side_effect=_fake_call))
+
+    with pytest.raises(SystemExit) as exc:
+        _execute("implementation", "go", cwd=str(impl_repo))
+    assert len(calls) == 2
+    assert exc.value.code == 128 + signal.SIGTERM
+    assert signal.getsignal(signal.SIGTERM) is prior
+    log = _git(impl_repo, "log", "-1", "--format=%B").stdout
+    assert "signal SIGTERM" in log.splitlines()[0]
