@@ -27,7 +27,7 @@ import tempfile
 import threading
 import time
 import uuid
-from collections.abc import Collection, Iterable, Iterator
+from collections.abc import Collection, Iterable, Iterator, Mapping
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -45,6 +45,7 @@ from issuesmith.andon import raise_andon as _raise_andon
 from issuesmith.config import get_config
 from issuesmith.contract import RetryReason, RetrySignal
 from issuesmith.engine_route import build_route
+from issuesmith.gate_registry import Violation
 from issuesmith.gates.worktree import count_commits_excluding_wip
 from issuesmith.template_ids import template_identifiers
 from issuesmith.worktree_python import WorktreePythonError, python_bin_for
@@ -1778,23 +1779,21 @@ def _run_emit_order(
     Success is exit 0 only. A standalone PIPELINE_STATUS line from the order is a
     failure signal (the caller issues the success marker).
     """
-    proc = _execute(
+    run = run_order(
         role,
         _render_template(template_path, variables),
         cwd=cwd,
         template=Path(template_path).name,
         tier=tier,
     )
-    sys.stdout.write(proc.stdout)
-    sys.stderr.write(proc.stderr)
-    statuses = _extract_status_values(proc.stdout)
-    if proc.returncode == 0 and not statuses:
-        return 0, proc.stdout
-    if proc.stdout and not proc.stdout.endswith("\n"):
+    statuses = list(run.reported)
+    if run.returncode == 0 and not statuses:
+        return 0, run.stdout
+    if run.stdout and not run.stdout.endswith("\n"):
         print()  # keep the failure status a standalone line (#4530)
     print(f"PIPELINE_STATUS: {failure_status}")
-    if proc.returncode != 0:
-        reason = f"role process exited with code {proc.returncode}"
+    if run.returncode != 0:
+        reason = f"role process exited with code {run.returncode}"
     else:
         # In emit mode a standalone status line from the LLM is a failure signal
         # (the engine issues the success marker, so an order status line is either an
@@ -1805,8 +1804,84 @@ def _run_emit_order(
         )
     print(f"REASON: {reason}")
     print(f"REASON: {reason}", file=sys.stderr)
-    _mirror_stdout_tail("engine-emit", proc.stdout)
-    return 1, proc.stdout
+    _mirror_stdout_tail("engine-emit", run.stdout)
+    return 1, run.stdout
+
+
+@dataclass(frozen=True)
+class OrderRun:
+    """Result of running a rendered LLM order (engine-emit semantics)."""
+
+    returncode: int
+    stdout: str
+    reported: tuple[str, ...]
+
+
+def run_order(
+    role: str,
+    order: str,
+    *,
+    cwd: str | None,
+    template: str,
+    tier: str | None = None,
+) -> OrderRun:
+    """Run a rendered order through the engine without emitting failure markers."""
+    proc = _execute(role, order, cwd=cwd, template=template, tier=tier)
+    sys.stdout.write(proc.stdout)
+    sys.stderr.write(proc.stderr)
+    return OrderRun(
+        returncode=proc.returncode,
+        stdout=proc.stdout,
+        reported=tuple(_extract_status_values(proc.stdout)),
+    )
+
+
+def pre_llm_violations(
+    step_cfg: "Any",
+    context: Mapping[str, str],
+) -> list[Violation]:
+    """Return non-repairable blocking violations from pre-LLM gates, else []."""
+    from issuesmith.config import ConfigError
+    from issuesmith.gates import resolve_gate
+    from issuesmith.gates.base import ContractInput
+    from issuesmith.repair import apply_auto_fixes, evaluate_requires
+
+    pre_gates = _build_pre_gates(step_cfg, dict(context))
+    if not pre_gates:
+        return []
+
+    from issuesmith.ops.dispatch import fetch_issue_inputs
+
+    body, labels = fetch_issue_inputs(dict(context))
+    inp = ContractInput(body=body, labels=labels)
+    result = evaluate_requires(pre_gates, body, labels)
+
+    if result.gate_error is not None:
+        return []
+
+    if not result.blocking:
+        return []
+
+    has_auto_fixable = any(v.auto_fixable for v in result.blocking)
+    if has_auto_fixable:
+        result, inp = apply_auto_fixes(result, pre_gates, inp)
+
+    if not result.blocking:
+        return []
+
+    def _repairable_for_rule(rule_id: str) -> bool:
+        gid = next(
+            (g for g in pre_gates if rule_id == g or rule_id.startswith(g + ".")),
+            "",
+        )
+        if not gid:
+            return True
+        try:
+            return resolve_gate(gid).repairable
+        except ConfigError:
+            return True
+
+    return [v for v in result.blocking if not _repairable_for_rule(v.rule_id)]
 
 
 def _build_pre_gates(
@@ -1861,76 +1936,29 @@ def _run_pre_gate_phase(
 
     Returns None to proceed to LLM, or exit code to stop.
     """
-    from issuesmith.config import ConfigError
-    from issuesmith.gates import resolve_gate
-    from issuesmith.gates.base import ContractInput
-    from issuesmith.repair import apply_auto_fixes, evaluate_requires
-
-    pre_gates = _build_pre_gates(step_cfg, context)
-    if not pre_gates:
+    non_repairable = pre_llm_violations(step_cfg, context)
+    if not non_repairable:
         return None
 
-    # run-guarded callers (p1-role-dispatch) pass issue_number but not issue_body;
-    # fetch from forge so issue gates such as scope_breadth see the real body.
-    from issuesmith.ops.dispatch import fetch_issue_inputs
-
-    body, labels = fetch_issue_inputs(context)
-    inp = ContractInput(body=body, labels=labels)
-
-    result = evaluate_requires(pre_gates, body, labels)
-
-    if result.gate_error is not None:
-        return None
-
-    if not result.blocking:
-        return None
-
-    # Apply auto-fixes for auto_fixable pre-gate violations
-    has_auto_fixable = any(v.auto_fixable for v in result.blocking)
-    if has_auto_fixable:
-        result, inp = apply_auto_fixes(result, pre_gates, inp)
-
-    if not result.blocking:
-        return None
-
-    # Non-repairable violations → andon(decision), stop before LLM
-    def _repairable_for_rule(rule_id: str) -> bool:
-        gid = next(
-            (g for g in pre_gates if rule_id == g or rule_id.startswith(g + ".")),
-            "",
-        )
-        if not gid:
-            return True
-        try:
-            return resolve_gate(gid).repairable
-        except ConfigError:
-            return True
-
-    non_repairable = [
-        v for v in result.blocking if not _repairable_for_rule(v.rule_id)
-    ]
-    if non_repairable:
-        issue_num = int(context.get("issue_number") or "0")
-        workflow = context.get("workflow_name", "unknown")
-        summary = get_config().language.message(
-            "engine.pre_llm_gate_violation",
-            step=step_id,
-            messages="; ".join(v.message for v in non_repairable),
-        )
-        full_andon = _AndonModel(
-            id=f"{workflow}:{issue_num}:{step_id}:0",
-            kind="decision",
-            issue=issue_num,
-            step=step_id,
-            summary=summary,
-            options=["split", "reject"],
-        )
-        _raise_andon(get_forge(), full_andon)
-        print(summary)
-        print(f"PIPELINE_STATUS: {failure_status}")
-        return 1
-
-    return None
+    issue_num = int(context.get("issue_number") or "0")
+    workflow = context.get("workflow_name", "unknown")
+    summary = get_config().language.message(
+        "engine.pre_llm_gate_violation",
+        step=step_id,
+        messages="; ".join(v.message for v in non_repairable),
+    )
+    full_andon = _AndonModel(
+        id=f"{workflow}:{issue_num}:{step_id}:0",
+        kind="decision",
+        issue=issue_num,
+        step=step_id,
+        summary=summary,
+        options=["split", "reject"],
+    )
+    _raise_andon(get_forge(), full_andon)
+    print(summary)
+    print(f"PIPELINE_STATUS: {failure_status}")
+    return 1
 
 
 def run_guarded(
@@ -2057,14 +2085,9 @@ def _run_guarded_with_requires(
 
     print()  # guarantee line boundary after LLM/repair stdout (#4159)
     if post_rc is None:
-        derived = [
-            p.strip() for p in context.get("derived_allow_paths", "").splitlines() if p.strip()
-        ]
-        if derived:
-            # P1 result record read by CP2 (#3756); must precede the status line.
-            print("derived_allow_paths:")
-            for path in derived:
-                print(f"  - {path}")
+        from issuesmith.ops.dispatch import print_derived_allow_paths
+
+        print_derived_allow_paths(context)
         if emit_status:
             print(f"PIPELINE_STATUS: {emit_status}")
         return 0

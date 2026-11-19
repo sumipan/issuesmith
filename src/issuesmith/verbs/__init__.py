@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from issuesmith.engine import (
+    OrderRun,
     exec_file,
+    pre_llm_violations,
     resolve,
     route,
     run_guarded,
+    run_order,
     run_verified,
 )
 from issuesmith.ops.dispatch import map_step_result
@@ -62,7 +65,9 @@ __all__ = [
     "map_step_result",
     "merge_pr",
     "merge_state",
+    "OrderRun",
     "plan_children",
+    "pre_llm_violations",
     "prepare_worktree",
     "RebumpResult",
     "publish_branch",
@@ -72,6 +77,7 @@ __all__ = [
     "route",
     "review_tier",
     "run_guarded",
+    "run_order",
     "run_verified",
     "unchecked_acceptance_count",
     "validate_children",

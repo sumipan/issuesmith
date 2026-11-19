@@ -51,7 +51,9 @@ VERBS_PUBLIC_NAMES = frozenset(
         "map_step_result",
         "merge_pr",
         "merge_state",
+        "OrderRun",
         "plan_children",
+        "pre_llm_violations",
         "prepare_worktree",
         "RebumpResult",
         "publish_branch",
@@ -61,6 +63,7 @@ VERBS_PUBLIC_NAMES = frozenset(
         "route",
         "review_tier",
         "run_guarded",
+        "run_order",
         "run_verified",
         "unchecked_acceptance_count",
         "validate_children",
@@ -128,7 +131,15 @@ def test_verbs_public_exports():
     assert issuesmith_verbs.ChildPlanError is children_mod.ChildPlanError
 
 
-_README_PENDING_VERBS = frozenset({"RebumpResult", "rebump_onto_base"})
+_README_PENDING_VERBS = frozenset(
+    {
+        "RebumpResult",
+        "rebump_onto_base",
+        "OrderRun",
+        "pre_llm_violations",
+        "run_order",
+    }
+)
 
 
 def test_readme_public_modules_match_all():
