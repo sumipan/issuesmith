@@ -14,6 +14,7 @@ tracked workflow definition.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import re
@@ -99,6 +100,10 @@ _LLM_GITHUB_ENV_DENY = (
 )
 
 _ENGINE_TRANSIENT_PAUSE_SEC = 600
+_GUARDED_TRANSIENT_MAX = 3
+_GUARDED_TRANSIENT_STATE_FILE = QUOTA_STATE_PATH.with_name(
+    "engine-transient-retries.json"
+)
 
 
 @contextmanager
@@ -122,10 +127,12 @@ class _EngineProcess(subprocess.CompletedProcess[str]):
         self,
         *,
         failure_class: str | None,
+        engine_used: str | None = None,
         **kwargs: object,
     ) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self.failure_class = failure_class
+        self.engine_used = engine_used
 
 
 # Permission for the claude attempt. codex / cursor do not take stream output, so
@@ -876,6 +883,160 @@ def _declare_begin(
         )
 
 
+def _raise_engine_transient(
+    *,
+    engine: str,
+    role: str,
+    reason: str,
+    quota_gate: QuotaGate | None = None,
+) -> None:
+    """Pause the engine briefly and schedule a quota-gated retry (#6604, #7397)."""
+    gate = quota_gate if quota_gate is not None else QuotaGate(state_path=QUOTA_STATE_PATH)
+    now = datetime.now(timezone.utc)
+    resume_at = now + timedelta(seconds=_ENGINE_TRANSIENT_PAUSE_SEC)
+    gate.report(
+        engine=engine,
+        status="paused",
+        observed_at=now,
+        resume_at=resume_at,
+        reason=reason,
+    )
+    raise RetrySignal(
+        reason=RetryReason.ENGINE_TRANSIENT, after=resume_at, role=role
+    )
+
+
+def _guarded_transient_key(task_uuid: str, template: str) -> str:
+    return f"{task_uuid}:{template}"
+
+
+def _load_guarded_transient_state() -> dict[str, int]:
+    path = _GUARDED_TRANSIENT_STATE_FILE
+    if not path.is_file():
+        return {}
+    try:
+        return _parse_guarded_transient_file(path.read_text(encoding="utf-8"))
+    except OSError:
+        return {}
+
+
+def _guarded_transient_count(task_uuid: str, template: str) -> int:
+    return _load_guarded_transient_state().get(
+        _guarded_transient_key(task_uuid, template), 0
+    )
+
+
+def _parse_guarded_transient_file(raw: str) -> dict[str, int]:
+    if not raw.strip():
+        return {}
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    counts: dict[str, int] = {}
+    for key, value in data.items():
+        if isinstance(value, int):
+            counts[str(key)] = value
+    return counts
+
+
+def _write_guarded_transient_state_unlocked(
+    path: Path, data: dict[str, int]
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", dir=path.parent
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        payload = json.dumps(data, indent=2) + "\n"
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path.exists():
+            temporary_path.unlink()
+
+
+def _increment_guarded_transient_count(task_uuid: str, template: str) -> int:
+    path = _GUARDED_TRANSIENT_STATE_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    key = _guarded_transient_key(task_uuid, template)
+    with path.open("a+", encoding="utf-8") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            fh.seek(0)
+            data = _parse_guarded_transient_file(fh.read())
+            data[key] = int(data.get(key, 0)) + 1
+            updated = int(data[key])
+            _write_guarded_transient_state_unlocked(path, data)
+            return updated
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
+def _clear_transient_count(key: str) -> None:
+    path = _GUARDED_TRANSIENT_STATE_FILE
+    if not path.is_file():
+        return
+    with path.open("a+", encoding="utf-8") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            fh.seek(0)
+            data = _parse_guarded_transient_file(fh.read())
+            data.pop(key, None)
+            _write_guarded_transient_state_unlocked(path, data)
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
+def _transient_kind(proc: _EngineProcess) -> str | None:
+    if (proc.stdout or "").strip():
+        return None
+    if proc.returncode == 0:
+        return "empty_output"
+    stderr = (proc.stderr or "").strip()
+    if not stderr and not proc.failure_class:
+        return "unclassified_failure"
+    return None
+
+
+def _maybe_raise_guarded_transient(
+    proc: _EngineProcess,
+    *,
+    role: str,
+    tier: str | None,
+    template_path: str,
+) -> None:
+    kind = _transient_kind(proc)
+    if kind is None:
+        return
+    task_uuid = os.environ.get("GHDAG_TASK_UUID", "").strip()
+    if not task_uuid:
+        return
+    template_name = Path(template_path).name
+    key = _guarded_transient_key(task_uuid, template_name)
+    count = _increment_guarded_transient_count(task_uuid, template_name)
+    if count > _GUARDED_TRANSIENT_MAX:
+        _clear_transient_count(key)
+        return
+    engine = proc.engine_used or resolve(role, tier).engine
+    print(
+        f"[issuesmith-engine] transient {kind} role={role} engine={engine} "
+        f"count={count}/{_GUARDED_TRANSIENT_MAX}",
+        file=sys.stderr,
+    )
+    _raise_engine_transient(
+        engine=engine,
+        role=role,
+        reason=f"engine_transient: {kind}",
+    )
+
+
 def _declare_finish(quota_gate: QuotaGate, task_uuid: str) -> None:
     """Remove the task's running row declared by _declare_begin."""
     if not task_uuid:
@@ -987,6 +1148,7 @@ def _execute(
                 stdout="",
                 stderr=f"[issuesmith-engine] {timeout_detail}",
                 failure_class=FailureClass.TIMEOUT.value,
+                engine_used=selection.engine,
             )
 
         # F2: host-side workaround until ghdag classifies RATE_LIMIT.
@@ -1083,17 +1245,11 @@ def _execute(
         result.returncode != 0
         and result.failure_class is FailureClass.ENGINE_ERROR
     ):
-        now = datetime.now(timezone.utc)
-        resume_at = now + timedelta(seconds=_ENGINE_TRANSIENT_PAUSE_SEC)
-        quota_gate.report(
+        _raise_engine_transient(
             engine=result.engine_used,
-            status="paused",
-            observed_at=now,
-            resume_at=resume_at,
+            role=role,
+            quota_gate=quota_gate,
             reason="engine_transient: ENGINE_ERROR",
-        )
-        raise RetrySignal(
-            reason=RetryReason.ENGINE_TRANSIENT, after=resume_at, role=role
         )
     return _EngineProcess(
         args=[],
@@ -1101,6 +1257,7 @@ def _execute(
         stdout=result.body,
         stderr=diagnostic_stderr,
         failure_class=failure_class_value,
+        engine_used=result.engine_used,
     )
 
 
@@ -1338,6 +1495,9 @@ def _run_guarded_order(
             cwd=cwd,
             template=Path(template_path).name,
             tier=tier,
+        )
+        _maybe_raise_guarded_transient(
+            proc, role=role, tier=tier, template_path=template_path
         )
     finally:
         if issue_body_path is not None:
