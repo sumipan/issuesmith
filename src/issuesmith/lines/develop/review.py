@@ -28,7 +28,7 @@ _AUTO_FIX_COMMIT_MESSAGE = "Apply gate auto-fixes"
 def _commit_tracked_changes(worktree: str) -> str:
     """Commit tracked gate auto-fixes; return git stderr on failure, else \"\"."""
     status = subprocess.run(
-        ["git", "status", "--porcelain"],
+        ["git", "status", "--porcelain", "--untracked-files=no"],
         cwd=worktree,
         capture_output=True,
         text=True,
@@ -44,7 +44,7 @@ def _commit_tracked_changes(worktree: str) -> str:
         check=False,
     )
     if add.returncode != 0:
-        return add.stderr.strip() or "git add failed"
+        return add.stderr.strip() or f"git add failed (exit {add.returncode})"
     commit = subprocess.run(
         ["git", "commit", "-m", _AUTO_FIX_COMMIT_MESSAGE],
         cwd=worktree,
@@ -53,7 +53,7 @@ def _commit_tracked_changes(worktree: str) -> str:
         check=False,
     )
     if commit.returncode != 0:
-        return commit.stderr.strip() or "git commit failed"
+        return commit.stderr.strip() or f"git commit failed (exit {commit.returncode})"
     return ""
 
 
@@ -102,7 +102,13 @@ def _cli_dispatch() -> int:
     err = _commit_tracked_changes(worktree)
     if err:
         return map_step_result(
-            StepResult(status="andon", andon=Andon(kind="broken", summary=err)),
+            StepResult(
+                status="andon",
+                andon=Andon(
+                    kind="broken",
+                    summary=f"review: could not commit gate auto-fixes: {err}",
+                ),
+            ),
             step_id="review",
             context=raw,
         )
