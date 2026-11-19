@@ -2290,6 +2290,48 @@ def test_implement_order_receives_step_context_variables(
     assert "target=example/other" in captured[0]
 
 
+def test_implement_order_receives_issue_body_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The optional issue_body_file variable contains the body and is cleaned up."""
+    from issuesmith.engine import OrderRun
+    from issuesmith.lines.develop import implement as develop_implement
+
+    repo = tmp_path / "repo"
+    _init_implement_repo(repo, tmp_path)
+    tmpl_dir = tmp_path / "templates"
+    tmpl_dir.mkdir()
+    (tmpl_dir / "implement.md").write_text(
+        "body=${issue_body_file}\n",
+        encoding="utf-8",
+    )
+    _patch_implement_template_dir(monkeypatch, tmpl_dir)
+    monkeypatch.setattr(develop_implement.tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setattr(develop_implement, "pre_llm_violations", lambda *_a, **_k: [])
+    captured_path: list[Path] = []
+
+    def _capture_order(_role, order, **_kwargs):
+        path = Path(order.removeprefix("body=").strip())
+        assert path.read_text(encoding="utf-8") == "design body"
+        captured_path.append(path)
+        return OrderRun(1, "", ())
+
+    monkeypatch.setattr(develop_implement, "run_order", _capture_order)
+    monkeypatch.setattr(
+        develop_implement,
+        "get_forge",
+        lambda: MagicMock(
+            issue_get=lambda *_a, **_k: {"body": "design body"}
+        ),
+    )
+    develop_implement.run(
+        _implement_ctx(repo),
+        StepConfig(module="", template="implement.md"),
+    )
+    assert captured_path
+    assert not captured_path[0].exists()
+
+
 def test_implement_undefined_template_variable_is_broken(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -45,7 +45,7 @@ def _render_order(
     variables = {key: str(value) for key, value in asdict(ctx).items()}
     variables["issue_body"] = body
     needed = set(_template_identifiers(template))
-    missing = sorted(needed - set(variables))
+    missing = sorted(needed - set(variables) - {"issue_body_file"})
     if missing:
         return None, None, (
             "implementation template uses undefined variables: "
@@ -90,6 +90,8 @@ def run(ctx: StepContext, step: StepConfig) -> StepResult:
     worktree = Path(ctx.worktree_path)
     order, issue_body_path, render_err = _render_order(ctx, step, body)
     if render_err is not None:
+        if issue_body_path is not None:
+            Path(issue_body_path).unlink(missing_ok=True)
         return StepResult(
             status="andon",
             andon=Andon(kind="broken", summary=render_err),
