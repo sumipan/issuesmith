@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Changed
+
+- **`implementation` LLM env**: strip `GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_REPOSITORIES`, and `GITHUB_REPOSITORY` from the child process environment while `ghdag.llm.call()` runs (#7320). **Breaking:** implementation orders can no longer call `issuesmith gh` or authenticated forge APIs from the LLM shell.
+
+### Added
+
+- **`${issue_body_file}`**: when a guarded-order template references this variable and `issue_number` is set, the engine fetches the issue body before the LLM run and passes a temporary file path (#7320).
+
 ## 0.195.2 - 2026-11-19
 
 ### Fixed

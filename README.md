@@ -194,6 +194,8 @@ Run a command as `python3 -m issuesmith <command>` or through the `issuesmith` c
 
 `--tier` takes `light` or `heavy`. A step without a `module` runs as `engine run-guarded --requires-step <step_id>`.
 
+The `implementation` role does not pass `GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_REPOSITORIES`, or `GITHUB_REPOSITORY` into the LLM child process. Order templates may read the issue design from a file via `${issue_body_file}` when the engine supplies that variable.
+
 ### `queue` subcommands
 
 Global options: `--queue-path`, `--state-path`, `--lock-path`.
