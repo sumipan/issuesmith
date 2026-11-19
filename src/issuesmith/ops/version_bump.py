@@ -30,6 +30,11 @@ _ENTRY_KEY = re.compile(r"^([+-])\s*([A-Za-z0-9_.-]+)\s*=")
 _VERSION_RE = re.compile(r'^version\s*=\s*"([^"]+)"', re.MULTILINE)
 _UNRELEASED_HEADING = re.compile(r"^## \[?Unreleased\]?\s*$")
 _RELEASE_HEADING = re.compile(r"^## (v?)\d+\.\d+\.\d+( - \d{4}-\d{2}-\d{2})?\s*$")
+_CC_SUBJECT = re.compile(
+    r"^(?P<type>[A-Za-z]+)(?:\((?P<scope>[^)]*)\))?(?P<bang>!)?:\s*(?P<desc>.+)$"
+)
+_SKIP_CHANGELOG_TYPES = frozenset({"test", "ci", "style", "wip"})
+_CHANGELOG_SECTION_ORDER = ("Added", "Changed", "Fixed")
 
 
 @dataclass(frozen=True)
@@ -305,7 +310,118 @@ def apply_bump(content: str, bump_type: str) -> tuple[str, str, str] | None:
     return new_content, old_ver, new_ver
 
 
-def fold_unreleased(text: str, version: str, today: date) -> str | None:
+def collect_commit_subjects(worktree: Path, base: str) -> list[str]:
+    """Return commit subjects in ``base..HEAD``, oldest first (#7433)."""
+    proc = _run_git(worktree, "log", "--no-merges", "--reverse", "--format=%s", f"{base}..HEAD")
+    if proc.returncode != 0:
+        return []
+    out: list[str] = []
+    for subject in proc.stdout.splitlines():
+        if subject.startswith(_BUMP_COMMIT_PREFIX):
+            continue
+        out.append(subject)
+    return out
+
+
+def changelog_entries(subjects: list[str]) -> dict[str, list[str]]:
+    """Map Conventional Commit subjects to Keep-a-Changelog sections (#7433)."""
+    buckets: dict[str, list[str]] = {name: [] for name in _CHANGELOG_SECTION_ORDER}
+    seen: set[str] = set()
+    for subject in subjects:
+        body: str
+        section: str
+        m = _CC_SUBJECT.match(subject)
+        if m:
+            kind = m.group("type").lower()
+            if kind in _SKIP_CHANGELOG_TYPES:
+                continue
+            desc = m.group("desc")
+            if m.group("scope"):
+                desc = f"{m.group('scope')}: {desc}"
+            if m.group("bang"):
+                desc = f"**Breaking:** {desc}"
+            if kind == "feat":
+                section = "Added"
+            elif kind == "fix":
+                section = "Fixed"
+            else:
+                section = "Changed"
+            body = desc
+        else:
+            section = "Changed"
+            body = subject
+        if body in seen:
+            continue
+        seen.add(body)
+        buckets[section].append(body)
+    return {key: buckets[key] for key in _CHANGELOG_SECTION_ORDER if buckets[key]}
+
+
+def _normalize_changelog_fragment(text: str) -> str:
+    return re.sub(r"\s+", " ", text).casefold().strip()
+
+
+def _dedupe_changelog_entries(
+    entries: dict[str, list[str]], unreleased_text: str
+) -> dict[str, list[str]]:
+    norm_body = _normalize_changelog_fragment(unreleased_text)
+    out: dict[str, list[str]] = {}
+    for section in _CHANGELOG_SECTION_ORDER:
+        items = entries.get(section)
+        if not items:
+            continue
+        kept: list[str] = []
+        for item in items:
+            norm_item = _normalize_changelog_fragment(item)
+            if norm_item and norm_item in norm_body:
+                continue
+            kept.append(item)
+        if kept:
+            out[section] = kept
+    return out
+
+
+def _merge_entries_into_middle(
+    middle: list[str], entries: dict[str, list[str]]
+) -> list[str]:
+    lines = list(middle)
+    for section in _CHANGELOG_SECTION_ORDER:
+        items = entries.get(section)
+        if not items:
+            continue
+        heading = f"### {section}"
+        idx = next((i for i, line in enumerate(lines) if line.strip() == heading), None)
+        if idx is not None:
+            end = len(lines)
+            for j in range(idx + 1, len(lines)):
+                if lines[j].startswith("### ") or lines[j].startswith("## "):
+                    end = j
+                    break
+            insert_at = end
+            while insert_at > idx + 1 and not lines[insert_at - 1].strip():
+                insert_at -= 1
+            for item in items:
+                lines.insert(insert_at, f"- {item}\n")
+                insert_at += 1
+        else:
+            if lines and lines[-1].strip():
+                lines.append("\n")
+            lines.append(f"### {section}\n")
+            lines.append("\n")
+            for item in items:
+                lines.append(f"- {item}\n")
+    if lines and lines[-1].strip():
+        lines.append("\n")
+    return lines
+
+
+def fold_unreleased(
+    text: str,
+    version: str,
+    today: date,
+    *,
+    entries: dict[str, list[str]] | None = None,
+) -> str | None:
     """Insert a release heading right under the Unreleased heading (#5042).
 
     The Unreleased body ends up under the new release heading. Only two lines are
@@ -322,8 +438,18 @@ def fold_unreleased(text: str, version: str, today: date) -> str | None:
         (i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")),
         len(lines),
     )
-    if not any(line.strip() for line in lines[start + 1 : end]):
+    middle = lines[start + 1 : end]
+    original_has_body = any(line.strip() for line in middle)
+    if entries:
+        filtered = _dedupe_changelog_entries(entries, "".join(middle))
+        if not filtered and not original_has_body:
+            return None
+        if filtered:
+            middle = _merge_entries_into_middle(middle, filtered)
+    elif not original_has_body:
         return None
+
+    lines[start + 1 : end] = middle
 
     release = next(
         (m for line in lines[start + 1 :] if (m := _RELEASE_HEADING.match(line))), None
@@ -397,8 +523,13 @@ def run_bump(worktree: Path, base: str) -> int:
     folded = None
     changelog = worktree / "CHANGELOG.md"
     if changelog.is_file():
+        subjects = collect_commit_subjects(worktree, base)
+        changelog_map = changelog_entries(subjects)
         folded = fold_unreleased(
-            changelog.read_text(encoding="utf-8"), new_ver, date.today()
+            changelog.read_text(encoding="utf-8"),
+            new_ver,
+            date.today(),
+            entries=changelog_map or None,
         )
         if folded is not None:
             changelog.write_text(folded, encoding="utf-8")
