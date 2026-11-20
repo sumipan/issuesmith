@@ -123,6 +123,19 @@ def test_repair_propagates_retry_signal() -> None:
             with pytest.raises(RetrySignal):
                 run(ctx, _step())
 
+def test_repair_failed_reply_block_triggers_decision_andon(tmp_path) -> None:
+    """Refs #7553 AC7 — failed reply block code REPAIR maps to REPAIR_FAILED."""
+    stdout = "```ghdag\nstatus: failed\ncode: REPAIR\n```\n"
+    ctx = _ctx(repair_step_origin="p1")
+    with patch("issuesmith.ops.repair_step.run_guarded_output", return_value=(1, stdout)):
+        with patch("issuesmith.ops.repair_step.get_config") as mock_cfg:
+            _configure_mock_get_config(mock_cfg)
+            result = run(ctx, _step())
+    assert result.status == "andon"
+    assert result.andon is not None
+    assert result.andon.kind == "decision"
+
+
 def test_repair_failed_returns_decision_andon_with_widen_options(tmp_path) -> None:
     pub = tmp_path / 'tools' / 'newspaper' / 'publish.py'
     test_pub = tmp_path / 'tests' / 'tools' / 'newspaper' / 'test_publish.py'
@@ -130,7 +143,13 @@ def test_repair_failed_returns_decision_andon_with_widen_options(tmp_path) -> No
     test_pub.parent.mkdir(parents=True)
     pub.write_text('# x\n', encoding='utf-8')
     test_pub.write_text('# t\n', encoding='utf-8')
-    stdout = 'reason: need changes in tests/tools/newspaper/test_publish.py and tools/newspaper/publish.py\nPIPELINE_STATUS: REPAIR_FAILED\n'
+    stdout = (
+        "reason: need changes in tests/tools/newspaper/test_publish.py and tools/newspaper/publish.py\n"
+        "```ghdag\n"
+        "status: failed\n"
+        "code: REPAIR\n"
+        "```\n"
+    )
     ctx = _ctx(worktree_path=str(tmp_path), repair_step_origin='p1', allow_paths='- src/**\n', derived_allow_paths='', repair_violation_summary='- pr_scope.out_of_allow: outside allow_paths', repair_widen_candidates='')
     with patch('issuesmith.ops.repair_step.run_guarded_output', return_value=(1, stdout)):
         with patch('issuesmith.ops.repair_step.get_config') as mock_cfg:

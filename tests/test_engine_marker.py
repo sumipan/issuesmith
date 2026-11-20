@@ -61,6 +61,23 @@ def test_clean_standalone_line_emits_no_trailing_diagnostic(capsys):
     assert capsys.readouterr().err == ""
 
 
+def test_reply_block_supersedes_legacy_pipeline_status():
+    """Refs #7553 AC1 — last reply block wins over legacy status lines."""
+    stdout = (
+        "PIPELINE_STATUS: IMPL_FAILED\n"
+        "```ghdag\n"
+        "status: ok\n"
+        "code: IMPL_DONE\n"
+        "```\n"
+    )
+    assert _extract_status_values(stdout) == ["IMPL_DONE"]
+
+
+def test_decorated_legacy_marker_without_reply_block():
+    """Refs #7553 AC2 — decorated standalone legacy line still parses."""
+    assert _extract_status_values("`PIPELINE_STATUS: IMPL_DONE`\n") == ["IMPL_DONE"]
+
+
 def test_multiple_markers_preserve_order_with_trailing_split(capsys):
     stdout = f"{_CP2_PASS_GLUED_SHORT}\nPIPELINE_STATUS: IMPL_DONE\n"
     assert _extract_status_values(stdout) == ["CP2_PASS", "IMPL_DONE"]

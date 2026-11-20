@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
+from ghdag.core.reply_block import parse_reply_block
 
 from issuesmith.engine import RetryReason, RetrySignal, main
 
@@ -54,11 +55,13 @@ def prompt_path(tmp_path):
 def _assert_wait_quota_stdout(capsys) -> None:
     captured = capsys.readouterr()
     assert "REJECTED:" not in captured.err
-    lines = [ln for ln in captured.out.splitlines() if ln.strip()]
-    wait_status = [ln for ln in lines if ln == "PIPELINE_STATUS: WAIT_QUOTA"]
-    companion = [ln for ln in lines if ln.startswith("WAIT_QUOTA: after=")]
-    assert len(wait_status) == 1
-    assert len(companion) == 1
+    block = parse_reply_block(captured.out)
+    assert block is not None
+    assert block.status == "wait_quota"
+    assert block.engines
+    assert block.after is not None and "+" in block.after
+    assert "PIPELINE_STATUS:" not in captured.out
+    assert not any(ln.startswith("WAIT_QUOTA:") for ln in captured.out.splitlines())
 
 
 class TestEngineMainRetrySignalActions:

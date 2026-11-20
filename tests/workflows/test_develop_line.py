@@ -1558,7 +1558,7 @@ def test_review_repair_rechecks_gate_without_rerunning_branch_check(
             role="review",
             template="review.md",
             success_status="REVIEW_PASS",
-            failure_status="REVIEW_FAIL",
+            failure_status="REVIEW_FAILED",
         ),
         repair=RepairConfig(max=1),
     )

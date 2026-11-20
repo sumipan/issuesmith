@@ -69,6 +69,9 @@ def test_pre_llm_andon_summary_is_english_with_default_pack(capsys):
     andon, out = _run_blocked_pre_gate(capsys)
     assert andon.summary == "pre-LLM gate violation in step p1: scope too large"
     assert andon.summary in out
-    assert "PIPELINE_STATUS: IMPL_FAILED" in out
+    from ghdag.core.reply_block import parse_reply_block
+
+    block = parse_reply_block(out)
+    assert block is not None and block.status == "failed" and block.code == "IMPL"
 
 
