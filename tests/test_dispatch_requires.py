@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import sys
 import types
+import uuid
 from contextlib import contextmanager
 from dataclasses import asdict
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -438,6 +440,78 @@ def test_map_step_result_prints_derived_allow_paths_block(capsys) -> None:
     marker_pos = out.index("```ghdag")
     block = "derived_allow_paths:\n  - tests/a.py\n  - tests/b.py\n"
     assert out[:marker_pos] == block
+
+
+class TestWorktreePathResolution:
+    """Refs sumipan/issuesmith#7640 — GateBuildContext worktree_path is absolute under config root."""
+
+    def test_relative_worktree_path_resolved_against_config_root(
+        self, tmp_path, monkeypatch,
+    ):
+        from issuesmith.config import get_config
+        from issuesmith.gates.worktree import TestsGate
+        from issuesmith.ops.dispatch import _build_requires_gates
+
+        config_root = get_config().root
+        rel = Path(f".pytest-dispatch-wt-{uuid.uuid4().hex[:8]}")
+        wt_abs = (config_root / rel).resolve()
+        wt_abs.mkdir(parents=True)
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        assert elsewhere.resolve() != config_root.resolve()
+        monkeypatch.chdir(elsewhere)
+
+        recorded: list[tuple[Path, list[str]]] = []
+
+        def fake_pytest(root: Path, args: list[str], **_kwargs) -> tuple[int, str]:
+            recorded.append((Path(root), list(args)))
+            return 0, "1 passed\n"
+
+        monkeypatch.setattr("issuesmith.gates.worktree._run_pytest", fake_pytest)
+        try:
+            gates = _build_requires_gates(
+                ("tests",),
+                {
+                    "worktree_path": rel.as_posix(),
+                    "base_branch": "main",
+                    "allow_paths": "",
+                },
+            )
+            gate = gates["tests"]
+            assert isinstance(gate, TestsGate)
+            assert gate._root == wt_abs
+            gate._run("mapped", ["tests"])
+        finally:
+            wt_abs.rmdir()
+
+        assert len(recorded) == 1
+        assert recorded[0][0] == wt_abs
+
+    def test_absolute_worktree_path_passed_through_to_pytest(self, tmp_path, monkeypatch):
+        from issuesmith.gates.worktree import TestsGate
+        from issuesmith.ops.dispatch import _build_requires_gates
+
+        wt_abs = tmp_path.resolve()
+        recorded: list[tuple[Path, list[str]]] = []
+
+        def fake_pytest(root: Path, args: list[str], **_kwargs) -> tuple[int, str]:
+            recorded.append((Path(root), list(args)))
+            return 0, "1 passed\n"
+
+        monkeypatch.setattr("issuesmith.gates.worktree._run_pytest", fake_pytest)
+        gates = _build_requires_gates(
+            ("tests",),
+            {
+                "worktree_path": str(wt_abs),
+                "base_branch": "main",
+                "allow_paths": "",
+            },
+        )
+        gate = gates["tests"]
+        assert isinstance(gate, TestsGate)
+        assert gate._root == wt_abs
+        gate._run("mapped", ["tests"])
+        assert recorded[0][0] == wt_abs
 
 
 class TestReviewEngineErrorAndon:
