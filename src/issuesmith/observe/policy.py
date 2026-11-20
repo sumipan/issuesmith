@@ -76,10 +76,10 @@ class ResumeAction:
 
 @dataclass(frozen=True)
 class RemoveRunningLabelAction:
-    """Remove the -running label without releasing in_flight.
+    """Remove the -running label of a terminated DAG.
 
-    Used by DagTerminatedEvent so that the allow_paths lock is preserved until
-    the DAG recovers (dag recover) or is explicitly reset/abandoned.
+    Used by DagTerminatedEvent. Queue tracking (in_flight and pending requests)
+    is dropped by the accompanying AndonAction via ``raise_andon``.
     """
 
     issue: int
@@ -487,9 +487,7 @@ def execute(
                     logger.exception("andon sink emit failed")
 
         elif isinstance(action, RemoveRunningLabelAction):
-            logger.info(
-                "running label removed (in_flight retained): issue=#%s", action.issue
-            )
+            logger.info("running label removed: issue=#%s", action.issue)
             if client is not None and action.phase:
                 ns = _label_namespace()
                 try:

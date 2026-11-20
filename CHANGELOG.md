@@ -17,7 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - resume: inline worktree discovery for base catch-up
 - repair: align stop-release with design and AC tests (#7464)
-- CP2 レビュー指摘修正 (#7464)
+- address CP2 review findings (#7464)
 
 ## 0.201.5 - 2026-11-20
 
