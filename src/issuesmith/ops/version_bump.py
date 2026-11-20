@@ -39,11 +39,18 @@ _CHANGELOG_SECTION_ORDER = ("Added", "Changed", "Fixed")
 # module can run as a standalone script without importing gates.
 _CJK_RE = re.compile(
     "["
-    + chr(0x3000) + "-" + chr(0x30FF)
-    + chr(0x3400) + "-" + chr(0x9FFF)
-    + chr(0xF900) + "-" + chr(0xFAFF)
-    + chr(0xFF00) + "-" + chr(0xFFEF)
-    + chr(0xAC00) + "-" + chr(0xD7AF)
+    + "".join(
+        bytes.fromhex(start).decode("utf-8")
+        + "-"
+        + bytes.fromhex(end).decode("utf-8")
+        for start, end in (
+            ("e38080", "e383bf"),
+            ("e39080", "e9bfbf"),
+            ("efa480", "efabbf"),
+            ("efbc80", "efbfaf"),
+            ("eab080", "ed9eaf"),
+        )
+    )
     + "]"
 )
 
