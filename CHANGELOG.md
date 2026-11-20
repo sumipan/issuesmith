@@ -9,6 +9,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## 0.201.4 - 2026-11-20
 
+### Changed
+
+- bump ghdag to v0.146.3
+
 ### Fixed
 
 - body_editor: preserve preamble and spacing in upsert_section replace path
