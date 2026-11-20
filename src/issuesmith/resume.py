@@ -7,6 +7,7 @@ resume(issue, *, from_step=None, phase=None) unifies recover/redispatch:
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -31,6 +32,85 @@ _STALE_BASE_COMMENT_TEMPLATE = """\
 ```
 
 PIPELINE_STATUS: STALE_BASE"""
+
+_RESUME_WORKFLOW = "issuesmith"
+_ORDER_PATH_RE = re.compile(r"(?:bash -o pipefail )?(\S+jobs/\S+\.md)")
+_WORKTREE_RE = re.compile(r'worktree_path=([^\s"]+)')
+_TARGET_WORKTREE_RE = re.compile(r'target_worktree_path=([^\s"]+)')
+
+
+def _dispatch_records_for_handler(handler: str, issue: int) -> list[dict]:
+    path = get_config().paths.exec_jsonl
+    if not path.exists():
+        return []
+    prefix = f"{_RESUME_WORKFLOW}:{handler}:{issue}"
+    records: list[dict] = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(rec, dict):
+            continue
+        key = str(rec.get("idempotency_key", ""))
+        if key == prefix or key.startswith(f"{prefix}:"):
+            records.append(rec)
+    return records
+
+
+def _frozen_orders_for_issue(issue: int) -> list[Path]:
+    jobs_dir = get_config().root / "jobs"
+    if not jobs_dir.is_dir():
+        return []
+    marker = f"issue_number={issue}"
+    found: list[Path] = []
+    for path in sorted(jobs_dir.glob("*-shell-order-*.md")):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if marker in text:
+            found.append(path)
+    return found
+
+
+def _worktree_path_for_resume(issue: int, records: list[dict]) -> Path | None:
+    root = get_config().root
+
+    def _path_from_match(raw: str) -> Path:
+        path = Path(raw.strip())
+        if not path.is_absolute():
+            path = root / raw.strip()
+        return path
+
+    for rec in records:
+        command = str(rec.get("command", ""))
+        for pattern in (_WORKTREE_RE, _TARGET_WORKTREE_RE):
+            m = pattern.search(command)
+            if m:
+                return _path_from_match(m.group(1))
+        order_match = _ORDER_PATH_RE.search(command)
+        if order_match:
+            order_path = Path(order_match.group(1))
+            if not order_path.is_absolute():
+                order_path = root / order_path
+            if order_path.exists():
+                text = order_path.read_text(encoding="utf-8")
+                for pattern in (_WORKTREE_RE, _TARGET_WORKTREE_RE):
+                    m = pattern.search(text)
+                    if m:
+                        return _path_from_match(m.group(1))
+    for order in _frozen_orders_for_issue(issue):
+        text = order.read_text(encoding="utf-8")
+        for pattern in (_WORKTREE_RE, _TARGET_WORKTREE_RE):
+            m = pattern.search(text)
+            if m:
+                return _path_from_match(m.group(1))
+    return None
+
 
 if TYPE_CHECKING:
     from ghdag.status import StepStatus
@@ -85,8 +165,7 @@ def _catch_up_base_before_resume(issue: int, *, caller_step: str) -> int:
     """Fetch base and rebase worktree onto it before resuming; fail closed on conflict."""
     from issuesmith.andon import Andon as FullAndon
     from issuesmith.andon import raise_andon
-    from issuesmith.recovery import _handler_records, _worktree_path_for_issue
-    from issuesmith.verbs.worktree import ensure_base_included
+    from issuesmith.worktree import ensure_base_included
 
     cfg = get_config()
     try:
@@ -112,8 +191,8 @@ def _catch_up_base_before_resume(issue: int, *, caller_step: str) -> int:
         if isinstance(handler, str) and handler:
             handlers.add(handler)
     for handler in sorted(handlers):
-        records.extend(_handler_records(handler, issue))
-    worktree = _worktree_path_for_issue(issue, records)
+        records.extend(_dispatch_records_for_handler(handler, issue))
+    worktree = _worktree_path_for_resume(issue, records)
     if worktree is None or not worktree.is_dir():
         return 0
 
