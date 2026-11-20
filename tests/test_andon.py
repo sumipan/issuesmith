@@ -168,6 +168,19 @@ def test_round_trip_options_empty():
     assert parsed.options == []
 
 
+_FENCED_TEXT = "レビュー結果:\n```python\nx = 1\n\ny = 2\n```\n以上"
+
+
+def test_from_comment_round_trips_fenced_summary_and_evidence():
+    """refs #7639 AC-1."""
+    a = _make_andon(summary=_FENCED_TEXT, evidence=_FENCED_TEXT)
+    parsed = from_comment(to_comment(a))
+    assert parsed is not None
+    assert parsed.id == a.id
+    assert parsed.summary == a.summary
+    assert parsed.evidence == a.evidence
+
+
 # ---------------------------------------------------------------------------
 # raise_andon
 # ---------------------------------------------------------------------------
@@ -186,6 +199,20 @@ def test_list_open_returns_empty_when_no_issues():
     with patch("issuesmith.andon._andon_label_kinds", return_value=["decision", "blocked", "broken"]):
         result = list_open(client)
     assert result == []
+
+
+def test_list_open_includes_andon_with_fenced_summary(local_client, tmp_path):
+    """refs #7639 AC-2."""
+    number = local_client.issue_create("andon fenced summary", "body")
+    a = _make_andon(
+        andon_id=f"wf:{number}:cp2:0",
+        issue=number,
+        summary=_FENCED_TEXT,
+        options=["resume", "reject"],
+        default="resume",
+    )
+    raise_andon(local_client, a, metrics_path=tmp_path / "metrics.jsonl")
+    assert a.id in [x.id for x in list_open(local_client)]
 
 
 def test_list_open_skips_comments_without_andon_block():
@@ -314,6 +341,16 @@ def test_andon_label_kinds_come_from_contract():
     from issuesmith.contract import ANDON_KINDS
 
     assert _andon_label_kinds() == list(ANDON_KINDS)
+
+
+def test_parse_note_round_trips_fenced_value():
+    """refs #7639 AC-3."""
+    from issuesmith.andon import _note_comment, _parse_note
+
+    andon_id = "wf:1:cp2:0"
+    body = _note_comment(andon_id, "review", _FENCED_TEXT)
+    parsed = _parse_note(body)
+    assert parsed == (andon_id, "review", _FENCED_TEXT)
 
 
 # ---------------------------------------------------------------------------
