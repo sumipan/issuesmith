@@ -456,7 +456,10 @@ class TestWorktreePathResolution:
         rel = Path(f".pytest-dispatch-wt-{uuid.uuid4().hex[:8]}")
         wt_abs = (config_root / rel).resolve()
         wt_abs.mkdir(parents=True)
-        monkeypatch.chdir(tmp_path)
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        assert elsewhere.resolve() != config_root.resolve()
+        monkeypatch.chdir(elsewhere)
 
         recorded: list[tuple[Path, list[str]]] = []
 
