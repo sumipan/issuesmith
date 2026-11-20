@@ -199,6 +199,7 @@ class QueueSnapshot:
     halt_scope: str = "all"
     halt_event: str | None = None
     blocks: tuple[QueueBlock, ...] = ()
+    stopped: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def active_requests(self) -> list[QueueRequest]:
@@ -303,6 +304,7 @@ def default_state() -> dict[str, Any]:
         "in_flight": [],
         "milestone_chains": {},
         "observe_andons": [],
+        "stopped": [],
     }
 
 
@@ -315,12 +317,9 @@ def in_flight_by_engine(
     When ``role_engine_map`` is provided and an entry has ``role``, count against
     the current engine for that role (so engine switches after dispatch are
     reflected). Otherwise use the stored ``engine`` field (legacy / no map).
-    Held entries (stopped by an andon) do not occupy an engine slot.
     """
     counts: dict[str, int] = {}
     for entry in in_flight:
-        if entry.get("held"):
-            continue
         role = entry.get("role")
         if role_engine_map is not None and isinstance(role, str) and role in role_engine_map:
             eng = str(role_engine_map[role])
@@ -484,6 +483,7 @@ class QueueStore:
             halt_scope=halt_scope,
             halt_event=halt_event,
             blocks=blocks,
+            stopped=list(state.get("stopped") or []),
         )
 
     def enqueue(
@@ -782,42 +782,66 @@ class QueueStore:
             ]
             self._save_state_unlocked(state)
 
-    def hold_in_flight(self, issue: int, by: str) -> bool:
-        """Mark the in_flight entry of ``issue`` as held by andon ``by``.
+    def drop_stopped_issue(self, issue: int, andon_id: str) -> bool:
+        """Remove queue tracking for an issue stopped by an andon.
 
-        Held entries keep their conflict claim but are not counted against
-        engine limits. Returns False (state untouched) when no entry exists.
+        Drops the in_flight entry, removes all pending requests for ``issue``
+        from active_order (recording ``stopped`` outcome in request_meta), and
+        remembers the stop for ``queue status``.
         """
         with self.lock():
             state = self._load_state_unlocked()
-            in_flight = state.get("in_flight") or []
-            entry = next((e for e in in_flight if e.get("issue") == issue), None)
-            if entry is None:
-                return False
-            entry["held"] = {"by": by, "at": datetime.now().astimezone().isoformat()}
-            state["in_flight"] = in_flight
-            self._save_state_unlocked(state)
-            return True
+            requests = self._read_requests_unlocked()
+            changed = False
 
-    def release_hold(self, issue: int, by: str) -> bool:
-        """Remove ``held`` from the in_flight entry when ``held.by`` matches ``by``.
+            in_flight = list(state.get("in_flight") or [])
+            new_in_flight = [e for e in in_flight if e.get("issue") != issue]
+            if len(new_in_flight) != len(in_flight):
+                state["in_flight"] = new_in_flight
+                changed = True
 
-        Other entry fields are unchanged; the entry itself is not removed.
-        Returns False without writing state when there is no match.
-        """
+            stopped_at = datetime.now().astimezone().isoformat()
+            meta = dict(state.get("request_meta") or {})
+            completed = list(state.get("completed_request_ids") or [])
+            active = list(state.get("active_order") or [])
+            new_active: list[str] = []
+            for rid in active:
+                req = requests.get(rid)
+                if req is not None and req.issue == issue:
+                    entry = dict(meta.get(rid) or {})
+                    entry["outcome"] = "stopped"
+                    entry["stopped_by"] = andon_id
+                    entry["stopped_at"] = stopped_at
+                    meta[rid] = entry
+                    if rid not in completed:
+                        completed.append(rid)
+                    changed = True
+                    continue
+                new_active.append(rid)
+            if new_active != active:
+                state["active_order"] = new_active
+                state["request_meta"] = meta
+                state["completed_request_ids"] = completed
+
+            stopped = [s for s in (state.get("stopped") or []) if s.get("issue") != issue]
+            stopped.append({"issue": issue, "andon": andon_id})
+            state["stopped"] = stopped
+            changed = True
+
+            if changed:
+                state["revision"] = int(state.get("revision", 0)) + 1
+                self._save_state_unlocked(state)
+            return changed
+
+    def clear_stopped(self, issue: int) -> None:
+        """Forget a remembered stopped issue (e.g. after resume)."""
         with self.lock():
             state = self._load_state_unlocked()
-            in_flight = state.get("in_flight") or []
-            entry = next((e for e in in_flight if e.get("issue") == issue), None)
-            if entry is None:
-                return False
-            held = entry.get("held")
-            if not isinstance(held, dict) or held.get("by") != by:
-                return False
-            del entry["held"]
-            state["in_flight"] = in_flight
-            self._save_state_unlocked(state)
-            return True
+            stopped = list(state.get("stopped") or [])
+            new_stopped = [s for s in stopped if s.get("issue") != issue]
+            if new_stopped != stopped:
+                state["stopped"] = new_stopped
+                self._save_state_unlocked(state)
 
     def sync_observe_andons(self, active_ids: set[str]) -> tuple[set[str], set[str]]:
         """Remember which observe andons are currently raised; return (new_ids, resolved_ids).

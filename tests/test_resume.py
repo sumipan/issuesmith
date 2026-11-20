@@ -98,11 +98,8 @@ def test_cmd_resume_no_flags_exits_2():
     assert exc_info.value.code == 2
 
 
-# ---------------------------------------------------------------------------
-# held in_flight entries are dropped by resume and not carried over (#4816)
-# ---------------------------------------------------------------------------
-
-def _held_store(tmp_path):
+def test_resume_phase_clears_stopped_before_enqueue(tmp_path):
+    """refs #7464: resume clears stopped state then removes in_flight."""
     from issuesmith.queue_store import QueueStore
 
     store = QueueStore(
@@ -111,14 +108,23 @@ def _held_store(tmp_path):
         lock_path=tmp_path / "lock",
     )
     store.add_in_flight(123, "claude", role="implementation", phase="develop")
-    assert store.hold_in_flight(123, by="wf:123:p1:0") is True
-    return store
+    store.drop_stopped_issue(123, "wf:123:p1:0")
+    client = _make_client_mock(labels=["issuesmith:develop-running"])
 
+    with (
+        patch("issuesmith.resume.QueueStore", return_value=store),
+        patch("issuesmith.resume._catch_up_base_before_resume", return_value=0),
+        patch("issuesmith.resume.get_forge", return_value=client),
+        patch("issuesmith.resume.get_config") as mock_cfg,
+        patch("issuesmith.resume.apply_redispatch_labels"),
+    ):
+        mock_cfg.return_value.repo = "sumipan/issuesmith"
+        from issuesmith.resume import resume
 
-def _assert_redispatch_has_no_held(store):
-    assert store.snapshot().in_flight == []
-    store.add_in_flight(123, "claude", role="implementation", phase="develop")
-    [entry] = store.snapshot().in_flight
-    assert "held" not in entry
+        resume(123, phase="develop")
+
+    snap = store.snapshot()
+    assert snap.stopped == []
+    assert snap.in_flight == []
 
 

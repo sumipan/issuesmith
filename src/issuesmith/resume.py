@@ -7,6 +7,7 @@ resume(issue, *, from_step=None, phase=None) unifies recover/redispatch:
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -14,8 +15,22 @@ from typing import TYPE_CHECKING
 from ghdag.forge import get_forge
 
 from issuesmith.config import get_config
-from issuesmith.queue import apply_redispatch_labels, handler_for_failed_step
+from issuesmith.contract import parse_frontmatter_fields
+from issuesmith.queue import apply_redispatch_labels, handler_for_failed_step, issue_target_meta
 from issuesmith.queue_store import QueueStore
+from issuesmith.worktree import WorktreeError, fetch_base_or_raise
+
+_STALE_BASE_COMMENT_TEMPLATE = """\
+## base_branch sync failed (rebase conflict)
+
+`origin/{base_branch}` rebase conflict. Resolve manually and resume.
+
+**Conflict files:**
+```
+{conflict_files}
+```
+
+PIPELINE_STATUS: STALE_BASE"""
 
 if TYPE_CHECKING:
     from ghdag.status import StepStatus
@@ -48,7 +63,14 @@ def resume(
     if from_step is None and phase is None:
         raise ValueError("resume() requires from_step= or phase=")
 
-    QueueStore().remove_in_flight(issue)
+    caller_step = from_step or phase or "resume"
+    rc = _catch_up_base_before_resume(issue, caller_step=caller_step)
+    if rc != 0:
+        return rc
+
+    store = QueueStore()
+    store.clear_stopped(issue)
+    store.remove_in_flight(issue)
 
     if from_step is not None:
         return _resume_from_step(
@@ -57,6 +79,93 @@ def resume(
 
     assert phase is not None
     return _resume_phase(issue, phase)
+
+
+def _catch_up_base_before_resume(issue: int, *, caller_step: str) -> int:
+    """Fetch base and rebase worktree onto it before resuming; fail closed on conflict."""
+    from issuesmith.andon import Andon as FullAndon
+    from issuesmith.andon import raise_andon
+    from issuesmith.recovery import _handler_records, _worktree_path_for_issue
+    from issuesmith.verbs.worktree import ensure_base_included
+
+    cfg = get_config()
+    try:
+        client = get_forge(repo=cfg.repo)
+    except Exception as exc:
+        print(f"warning: resume base catch-up skipped: {exc}", file=sys.stderr)
+        return 0
+
+    try:
+        issue_data = client.issue_get(issue, fields=["body", "number"])
+    except Exception as exc:
+        print(f"warning: resume base catch-up skipped: {exc}", file=sys.stderr)
+        return 0
+
+    meta = parse_frontmatter_fields(str(issue_data.get("body") or ""))
+    base_branch = str(meta.get("base_branch") or "main").strip() or "main"
+    target_repo, _paths = issue_target_meta(issue_data)
+
+    records: list[dict] = []
+    handlers: set[str] = set()
+    for ph in cfg.phases:
+        handler = getattr(ph, "handler", None)
+        if isinstance(handler, str) and handler:
+            handlers.add(handler)
+    for handler in sorted(handlers):
+        records.extend(_handler_records(handler, issue))
+    worktree = _worktree_path_for_issue(issue, records)
+    if worktree is None or not worktree.is_dir():
+        return 0
+
+    top = subprocess.run(
+        ["git", "-C", str(worktree), "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if top.returncode != 0:
+        print("warning: resume base catch-up skipped: not a git worktree", file=sys.stderr)
+        return 0
+    repo_dir = Path(top.stdout.strip())
+
+    try:
+        if target_repo:
+            fetch_base_or_raise(repo_dir, base_branch, remote=target_repo)
+        else:
+            fetch_base_or_raise(repo_dir, base_branch)
+    except WorktreeError as exc:
+        print(f"error: resume base fetch failed: {exc}", file=sys.stderr)
+        return 1
+
+    step_result = ensure_base_included(
+        worktree,
+        base_branch,
+        client,
+        issue,
+        stale_base_comment_template=_STALE_BASE_COMMENT_TEMPLATE,
+        caller_step=caller_step,
+    )
+    if step_result is None:
+        return 0
+    if getattr(step_result, "status", "done") != "andon" or step_result.andon is None:
+        print("error: resume base catch-up failed", file=sys.stderr)
+        return 1
+
+    spec = step_result.andon
+    workflow = cfg.paths.workflow.stem
+    raise_andon(
+        client,
+        FullAndon(
+            id=f"{workflow}:{issue}:{caller_step}:0",
+            kind=spec.kind,
+            issue=issue,
+            step=caller_step,
+            summary=spec.summary,
+            rule_id=spec.rule_id,
+            options=list(spec.options),
+        ),
+    )
+    return 1
 
 
 def _generation_keys_available() -> bool:

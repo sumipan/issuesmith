@@ -9,7 +9,6 @@ import pytest
 from issuesmith.andon import (
     Andon,
     answer,
-    answer_if_open,
     from_comment,
     list_open,
     raise_andon,
@@ -318,7 +317,7 @@ def test_andon_label_kinds_come_from_contract():
 
 
 # ---------------------------------------------------------------------------
-# raise_andon holds the in_flight entry (#4816)
+# raise_andon drops queue tracking for stopped issues (#7464)
 # ---------------------------------------------------------------------------
 
 def _tmp_store(tmp_path):
@@ -331,7 +330,7 @@ def _tmp_store(tmp_path):
     )
 
 
-@pytest.mark.parametrize("fail_on", ["init", "hold"])
+@pytest.mark.parametrize("fail_on", ["init", "drop"])
 def test_raise_andon_continues_when_queue_store_fails(tmp_path, caplog, fail_on):
     client = _fake_client()
     sink = RecordingSink()
@@ -341,7 +340,7 @@ def test_raise_andon_continues_when_queue_store_fails(tmp_path, caplog, fail_on)
         store_patch = patch("issuesmith.andon.QueueStore", side_effect=OSError("boom"))
     else:
         broken = MagicMock()
-        broken.hold_in_flight.side_effect = OSError("boom")
+        broken.drop_stopped_issue.side_effect = OSError("boom")
         store_patch = patch("issuesmith.andon.QueueStore", return_value=broken)
     with store_patch, caplog.at_level("WARNING", logger="issuesmith.andon"):
         raise_andon(client, a, sinks=[sink], metrics_path=mfile)
@@ -356,43 +355,33 @@ def test_raise_andon_continues_when_queue_store_fails(tmp_path, caplog, fail_on)
     assert json.loads(mfile.read_text().strip())["event"] == "andon_raised"
 
 
-def test_answer_if_open_releases_hold(tmp_path):
+def test_raise_andon_drops_stopped_issue(tmp_path):
+    from issuesmith.andon import raise_andon
+
     store = _tmp_store(tmp_path)
     store.add_in_flight(16, "claude")
-    andon_id = "wf:16:s:0"
-    store.hold_in_flight(16, by=andon_id)
-    a = _make_andon(issue=16, andon_id=andon_id, kind="broken")
-    client = _fake_client(comments=[{"body": to_comment(a), "id": 10}])
+    a = _make_andon(issue=16, kind="broken", step="p1")
+    client = _fake_client()
+    with (
+        patch("issuesmith.andon.QueueStore", return_value=store),
+        patch("issuesmith.andon._write_metrics"),
+    ):
+        raise_andon(client, a, metrics_path=tmp_path / "m.jsonl")
+    snap = store.snapshot()
+    assert snap.in_flight == []
+    assert snap.stopped == [{"issue": 16, "andon": a.id}]
+
+
+def test_answer_clears_stopped_memory(tmp_path):
+    store = _tmp_store(tmp_path)
+    store.drop_stopped_issue(16, "wf:16:p1:0")
+    a = _make_andon(issue=16, andon_id="wf:16:p1:0", kind="blocked", step="p1")
+    client = _fake_client(comments=[{"body": to_comment(a)}])
     with (
         patch("issuesmith.andon.QueueStore", return_value=store),
         patch("issuesmith.andon._iter_open_andon_issues", return_value=iter([{"number": 16}])),
         patch("issuesmith.andon._write_metrics"),
-    ):
-        answer_if_open(client, andon_id, "auto")
-    assert "held" not in store.snapshot().in_flight[0]
-
-
-@pytest.mark.parametrize("fail_on", ["init", "release"])
-def test_answer_continues_when_release_hold_fails(tmp_path, caplog, fail_on):
-    store = _tmp_store(tmp_path)
-    store.add_in_flight(10, "claude")
-    store.hold_in_flight(10, by="wf:10:p1:0")
-    a = _make_andon(issue=10, andon_id="wf:10:p1:0", kind="blocked", step="p1")
-    client = _fake_client(comments=[{"body": to_comment(a)}])
-    if fail_on == "init":
-        store_patch = patch("issuesmith.andon.QueueStore", side_effect=OSError("boom"))
-    else:
-        broken = MagicMock()
-        broken.release_hold.side_effect = OSError("boom")
-        store_patch = patch("issuesmith.andon.QueueStore", return_value=broken)
-    with (
-        store_patch,
-        caplog.at_level("WARNING", logger="issuesmith.andon"),
-        patch("issuesmith.andon._iter_open_andon_issues", return_value=iter([{"number": 10}])),
-        patch("issuesmith.andon._write_metrics"),
         patch("issuesmith.andon._call_resume_hook"),
     ):
-        answer(client, "wf:10:p1:0", "resume")
-    warnings = [r for r in caplog.records if r.name == "issuesmith.andon"]
-    assert len(warnings) == 1
-    assert len(client.issue_comments) == 1
+        answer(client, "wf:16:p1:0", "resume")
+    assert store.snapshot().stopped == []

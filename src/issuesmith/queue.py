@@ -1205,15 +1205,10 @@ def _format_in_flight_status(snap: QueueSnapshot) -> str:
     engines = sorted(set(counts) | set(concurrency.per_engine))
     if not engines:
         engines = sorted(role_map.values())
-    held = in_flight_by_engine(
-        [{k: v for k, v in e.items() if k != "held"} for e in snap.in_flight if e.get("held")],
-        role_engine_map=role_map,
-    )
     parts: list[str] = []
     for engine in engines:
         limit = concurrency.limit(engine)
-        held_part = f" (+{held[engine]} held)" if held.get(engine) else ""
-        parts.append(f"{engine}: {counts.get(engine, 0)}/{limit}{held_part}")
+        parts.append(f"{engine}: {counts.get(engine, 0)}/{limit}")
     return "{" + ", ".join(parts) + "}"
 
 
@@ -2148,6 +2143,43 @@ def _dispatch_result_reason_from_plan(
     return "no dispatchable request"
 
 
+def _cleanup_legacy_held_in_flight(client: ForgePort, store: QueueStore) -> None:
+    """Drop in_flight rows still marked ``held`` when the Issue carries an andon label."""
+    from issuesmith.andon import list_open
+    from issuesmith.contract import ANDON_KINDS
+
+    snap = store.snapshot()
+    legacy = [
+        e
+        for e in snap.in_flight
+        if isinstance(e.get("issue"), int) and e.get("held")
+    ]
+    if not legacy:
+        return
+    ns = get_config().label_namespace
+    andon_labels = {f"{ns}:andon-{kind}" for kind in ANDON_KINDS}
+    try:
+        open_andons = list_open(client)
+    except Exception:
+        open_andons = []
+    andon_by_issue = {a.issue: a.id for a in open_andons}
+    for entry in legacy:
+        issue_num = int(entry["issue"])
+        try:
+            issue = client.issue_get(issue_num, fields=["labels", "state"])
+        except Exception:
+            continue
+        labels = {
+            name
+            for lab in (issue.get("labels") or [])
+            if isinstance(lab, dict) and isinstance(name := lab.get("name"), str)
+        }
+        if not (labels & andon_labels):
+            continue
+        andon_id = andon_by_issue.get(issue_num, "legacy-held")
+        store.drop_stopped_issue(issue_num, andon_id)
+
+
 def dispatch_one(
     now: datetime | None = None,
     client: ForgePort | None = None,
@@ -2161,6 +2193,10 @@ def dispatch_one(
     store = store or QueueStore()
     # One tick = one read per Issue / one open-issue list (#3759).
     client = _TickCachedForge(client or get_forge(repo=REPO))
+    try:
+        _cleanup_legacy_held_in_flight(client, store)
+    except Exception as exc:
+        print(f"warning: legacy held cleanup failed: {exc}", file=sys.stderr)
     start, end, idle_minutes = seed_window(seed_path)
     extra_sources = seed_extra_sources(seed_path)
 
@@ -2491,6 +2527,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
                     "halt_reason": snap.halt_reason,
                     "blocks": [b.to_dict() for b in snap.blocks],
                     "in_flight": list(snap.in_flight),
+                    "stopped": list(snap.stopped),
                     "plan": [_plan_entry_to_dict(e) for e in queue_plan.entries],
                 },
                 ensure_ascii=False,
@@ -2509,9 +2546,12 @@ def _cmd_status(args: argparse.Namespace) -> int:
         engine = entry.get("engine", "")
         role = entry.get("role")
         role_part = f" role={role}" if role else ""
-        held = entry.get("held")
-        held_part = f" held=andon:{held.get('by', '')}" if isinstance(held, dict) and held else ""
-        print(f"  - in_flight issue=#{issue_num} engine={engine}{role_part}{held_part}")
+        print(f"  - in_flight issue=#{issue_num} engine={engine}{role_part}")
+    for stopped in snap.stopped:
+        issue_num = stopped.get("issue")
+        andon_id = stopped.get("andon", "")
+        if isinstance(issue_num, int):
+            print(f"  stopped issue=#{issue_num} andon={andon_id}")
     for block in snap.blocks:
         print(
             f"  block scope={block.scope} kind={block.kind} reason={block.reason!r}"

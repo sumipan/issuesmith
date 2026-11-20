@@ -1,4 +1,4 @@
-"""Queue concurrency: held entries, multi-dispatch per tick and open PR occupancy."""
+"""Queue concurrency: stopped-issue slot release and multi-dispatch per tick."""
 
 from __future__ import annotations
 
@@ -15,47 +15,31 @@ _clear_config_cache = _base._clear_config_cache
 issuesmith_config = _base.issuesmith_config
 
 
-# ---------------------------------------------------------------------------
-# held in_flight entries (#4816)
-# ---------------------------------------------------------------------------
-
-
-def test_in_flight_by_engine_skips_held_entries():
+def test_in_flight_by_engine_counts_all_entries():
     entries = [
         {"issue": 1, "engine": "claude"},
         {"issue": 2, "engine": "codex"},
-        {"issue": 3, "engine": "claude", "held": {"by": "wf:3:p1:0", "at": _NOW}},
+        {"issue": 3, "engine": "claude"},
     ]
-    assert in_flight_by_engine(entries) == {"claude": 1, "codex": 1}
+    assert in_flight_by_engine(entries) == {"claude": 2, "codex": 1}
 
 
-def test_hold_in_flight_missing_issue_returns_false_without_change(tmp_path):
+def test_drop_stopped_issue_missing_in_flight_still_records_stop(tmp_path):
     store = _store(tmp_path)
-    store.add_in_flight(10, "claude")
-    before = store.state_path.read_text(encoding="utf-8")
-    assert store.hold_in_flight(99, by="wf:99:p1:0") is False
-    assert store.state_path.read_text(encoding="utf-8") == before
+    store.enqueue(
+        issue=99,
+        phase="develop",
+        source="skill",
+        actor_kind="human",
+        priority="normal",
+        requested_by=["alice"],
+        requested_at=_NOW,
+    )
+    store.drop_stopped_issue(99, "wf:99:p1:0")
+    assert store.snapshot().stopped == [{"issue": 99, "andon": "wf:99:p1:0"}]
 
 
-def test_release_hold_wrong_owner_leaves_state_unchanged(tmp_path):
-    store = _store(tmp_path)
-    store.add_in_flight(10, "claude")
-    assert store.hold_in_flight(10, by="wf:10:p1:0") is True
-    before = store.state_path.read_text(encoding="utf-8")
-    assert store.release_hold(10, by="wf:10:p1:1") is False
-    assert store.state_path.read_text(encoding="utf-8") == before
-
-
-def test_release_hold_no_entry_or_no_held_mark(tmp_path):
-    store = _store(tmp_path)
-    assert store.release_hold(99, by="wf:99:p1:0") is False
-    store.add_in_flight(10, "claude")
-    before_entry = store.state_path.read_text(encoding="utf-8")
-    assert store.release_hold(10, by="wf:10:p1:0") is False
-    assert store.state_path.read_text(encoding="utf-8") == before_entry
-
-
-def _held_dispatch_setup(tmp_path, monkeypatch, issuesmith_config, candidate_paths: str):
+def _stopped_dispatch_setup(tmp_path, monkeypatch, issuesmith_config, candidate_paths: str):
     payload = yaml.safe_load(issuesmith_config.read_text(encoding="utf-8"))
     payload["concurrency"] = {"default": 1, "per_engine": {"claude": 1}}
     issuesmith_config.write_text(yaml.safe_dump(payload), encoding="utf-8")
@@ -81,7 +65,7 @@ def _held_dispatch_setup(tmp_path, monkeypatch, issuesmith_config, candidate_pat
         allow_paths=("tools/held/**",),
         target_repo="sumipan/nexus",
     )
-    assert store.hold_in_flight(300, by="wf:300:p1:0") is True
+    store.drop_stopped_issue(300, "wf:300:p1:0")
     store.enqueue(
         issue=301,
         phase="develop",
@@ -93,7 +77,6 @@ def _held_dispatch_setup(tmp_path, monkeypatch, issuesmith_config, candidate_pat
     )
     client = _DispatchClient(
         {
-            300: {"state": "OPEN", "labels": [{"name": "issuesmith:andon-blocked"}]},
             301: {
                 "state": "OPEN",
                 "labels": [{"name": "issuesmith:draft-done"}],
@@ -103,6 +86,15 @@ def _held_dispatch_setup(tmp_path, monkeypatch, issuesmith_config, candidate_pat
     )
     monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
     return qmod, store, client
+
+
+def test_stopped_issue_frees_claude_slot_for_dispatch(tmp_path, monkeypatch, issuesmith_config):
+    """refs #7464: a stopped issue no longer occupies an engine concurrency slot."""
+    qmod, store, client = _stopped_dispatch_setup(
+        tmp_path, monkeypatch, issuesmith_config, "tools/next/**"
+    )
+    result = qmod.dispatch_one(now=datetime(2026, 9, 5, 12, 0, tzinfo=_JST), client=client, store=store, skip_seed=True)
+    assert result.dispatched and result.issue == 301
 
 
 def _body(paths: str) -> str:
@@ -191,5 +183,3 @@ class _OpenPrDispatchClient(_DispatchClient):
             if pr.get("number") == number:
                 return pr
         raise RuntimeError(f"pr {number} missing")
-
-
