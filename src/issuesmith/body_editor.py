@@ -86,6 +86,13 @@ def _normalize_content(content: str) -> str:
     return content if content.endswith("\n") else f"{content}\n"
 
 
+def _trailing_newlines(text: str) -> str:
+    end = len(text)
+    while end and text[end - 1] == "\n":
+        end -= 1
+    return text[end:]
+
+
 def upsert_section(body: str, heading: str, content: str) -> str:
     """Replace the section or append it at the end; reject duplicate headings."""
     h2 = f"## {heading}"
@@ -94,14 +101,9 @@ def upsert_section(body: str, heading: str, content: str) -> str:
     new_section = f"{h2}\n{normalized_content}"
 
     if target is not None:
-        sections = split_h2_sections(body)
-        rebuilt: list[str] = []
-        for section_heading, section in sections:
-            if section_heading == h2:
-                rebuilt.append(new_section.rstrip("\n"))
-            else:
-                rebuilt.append(section.rstrip("\n"))
-        return "\n".join(rebuilt)
+        trailing = _trailing_newlines(target)
+        new_inner = f"{h2}\n{normalized_content}".rstrip("\n")
+        return body.replace(target, new_inner + trailing, 1)
 
     trimmed = body.rstrip()
     if not trimmed:
