@@ -368,6 +368,12 @@ def print_derived_allow_paths(context: Mapping[str, str]) -> None:
         print(f"  - {path}")
 
 
+def _abs_under_config(path: Path) -> Path:
+    if path.is_absolute():
+        return path
+    return get_config().root / path
+
+
 def _merge_derived_allow_paths(context: dict[str, str], gates: dict[str, object]) -> None:
     """Union TestsGate.derived_allow_paths into context in place (kept for the generation)."""
     from issuesmith.gates.worktree import TestsGate
@@ -399,7 +405,9 @@ def _build_requires_gates(
         for p in allow_paths_raw.splitlines()
         if p.strip()
     ]
-    worktree_path = Path(worktree_path_str) if worktree_path_str else None
+    worktree_path = (
+        _abs_under_config(Path(worktree_path_str)) if worktree_path_str else None
+    )
     build_ctx = GateBuildContext(
         worktree_path=worktree_path,
         allow_paths=allow_paths,
