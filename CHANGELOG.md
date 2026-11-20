@@ -27,8 +27,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- CP2 レビュー指摘修正
-- CP2 レビュー指摘修正 — publish が上げた README の版を 0.200.2 に戻す (#7415)
+- cp2: address review findings
+- cp2: restore the README version raised by publish back to 0.200.2 (#7415)
 - readme: revert erroneous version bump from CP2 repair (#7415)
 
 ## 0.201.0 - 2026-11-20
