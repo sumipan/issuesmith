@@ -7,6 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.203.1 - 2026-11-21
+
+### Fixed
+
+- andon: parse fenced YAML by line-anchored closing fence
+- repair: use ASCII-only fenced test fixture text (#7639)
+
 ## 0.203.0 - 2026-11-20
 
 ### Added
