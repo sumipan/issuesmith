@@ -427,6 +427,20 @@ def _parse_failed_ids(output: str) -> list[str]:
     return ids
 
 
+def _marked_ids(root: Path, ids: list[str], marker: str) -> set[str]:
+    """Return ``ids`` that carry pytest ``marker`` (collect-only); empty when classify fails."""
+    if not ids or not marker:
+        return set()
+    matched: set[str] = set()
+    for test_id in ids:
+        rc, output = _run_pytest_impl(
+            root, ["--collect-only", "-q", "-m", marker, test_id]
+        )
+        if rc == 0 and output.strip():
+            matched.add(test_id)
+    return matched
+
+
 def _func_id(test_id: str) -> str:
     """Strip trailing `[...]` parameters; baseline comparison is function-level."""
     return re.sub(r"\[.*\]$", "", test_id)
@@ -1155,7 +1169,7 @@ class TestsGate:
             # rc=5: nothing collected (helper-only file, all deselected); the full run decides.
             if rc not in (0, _NO_TESTS_RC):
                 violations = self._judge(rc, output)
-                if violations:
+                if any(v.severity == "fail" for v in violations):
                     return violations
 
         targets = [str(self._root / p) for p in self._test_paths]
@@ -1209,12 +1223,21 @@ class TestsGate:
             else:
                 new_ids.append(test_id)
 
-        if not new_ids:
-            return []
-
         from issuesmith.config import get_config
 
-        reruns = get_config().tests.flaky_reruns
+        cfg = get_config()
+        marker = getattr(cfg.tests, "readme_contract_marker", "")
+        readme_in_scope = "README.md" in self._allow_paths
+        contract_ids: list[str] = []
+        if new_ids and marker and not readme_in_scope:
+            marked = _marked_ids(self._root, new_ids, marker)
+            contract_ids = [i for i in new_ids if i in marked]
+            new_ids = [i for i in new_ids if i not in marked]
+
+        if not new_ids and not contract_ids:
+            return []
+
+        reruns = cfg.tests.flaky_reruns
         flaky_ids: list[str] = []
         if reruns > 0 and new_ids:
             confirmed_failing = set(new_ids)
@@ -1233,7 +1256,7 @@ class TestsGate:
             flaky_ids = [i for i in new_ids if i not in confirmed_failing]
             new_ids = [i for i in new_ids if i in confirmed_failing]
 
-        if not new_ids and not flaky_ids:
+        if not new_ids and not flaky_ids and not contract_ids:
             return []
 
         if not baseline_unavailable and new_ids:
@@ -1248,6 +1271,15 @@ class TestsGate:
             )
 
         violations: list[Violation] = []
+        for test_id in contract_ids:
+            violations.append(Violation(
+                rule_id="tests.readme_contract",
+                severity="warn",
+                message=f"{test_id} (readme_contract: non-blocking)",
+                location=test_id.split("::")[0] if "::" in test_id else None,
+                auto_fixable=False,
+                fix_hint=None,
+            ))
         for test_id in flaky_ids:
             violations.append(Violation(
                 rule_id="tests.flaky",
