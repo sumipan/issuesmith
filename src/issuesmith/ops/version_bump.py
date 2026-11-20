@@ -35,6 +35,22 @@ _CC_SUBJECT = re.compile(
 )
 _SKIP_CHANGELOG_TYPES = frozenset({"test", "ci", "style", "wip"})
 _CHANGELOG_SECTION_ORDER = ("Added", "Changed", "Fixed")
+# Same ranges as issuesmith.gates.worktree._CJK_RANGE_RE; kept local so this
+# module can run as a standalone script without importing gates.
+_CJK_RE = re.compile(
+    "["
+    + chr(0x3000) + "-" + chr(0x30FF)
+    + chr(0x3400) + "-" + chr(0x9FFF)
+    + chr(0xF900) + "-" + chr(0xFAFF)
+    + chr(0xFF00) + "-" + chr(0xFFEF)
+    + chr(0xAC00) + "-" + chr(0xD7AF)
+    + "]"
+)
+
+
+def _has_cjk(text: str) -> bool:
+    """True when ``text`` contains a CJK character (literal only, no escapes)."""
+    return _CJK_RE.search(text) is not None
 
 
 @dataclass(frozen=True)
@@ -521,12 +537,23 @@ def run_bump(worktree: Path, base: str) -> int:
     pyproject.write_text(new_content, encoding="utf-8")
     to_add = ["pyproject.toml"]
     folded = None
+    skipped_subjects: list[str] = []
     changelog = worktree / "CHANGELOG.md"
     if changelog.is_file():
+        changelog_text = changelog.read_text(encoding="utf-8")
         subjects = collect_commit_subjects(worktree, base)
-        changelog_map = changelog_entries(subjects)
+        if _has_cjk(changelog_text):
+            for_subject = subjects
+        else:
+            for_subject = []
+            for subject in subjects:
+                if _has_cjk(subject):
+                    skipped_subjects.append(subject)
+                else:
+                    for_subject.append(subject)
+        changelog_map = changelog_entries(for_subject)
         folded = fold_unreleased(
-            changelog.read_text(encoding="utf-8"),
+            changelog_text,
             new_ver,
             date.today(),
             entries=changelog_map or None,
@@ -554,6 +581,8 @@ def run_bump(worktree: Path, base: str) -> int:
     print(f"pyproject.toml: {decision.bump_type}-bumped {old_ver} → {new_ver}")
     if folded is not None:
         print(f"CHANGELOG_FOLDED: {new_ver}")
+    for subject in skipped_subjects:
+        print(f"CHANGELOG_SKIPPED_SUBJECT: {subject}")
     if synced:
         print(f"README_VERSION_SYNCED: {old_ver} -> {new_ver} ({synced})")
     return 0

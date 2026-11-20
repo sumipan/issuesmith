@@ -8,9 +8,15 @@ from pathlib import Path
 import pytest
 
 from issuesmith.ops.version_bump import (
+    _has_cjk,
     changelog_entries,
     fold_unreleased,
     run_bump,
+)
+
+_CJK_WORD = chr(0x65E5) + chr(0x672C)
+_ASCII_CHANGELOG = (
+    "# Changelog\n\n## Unreleased\n\n## 0.71.0 - 2026-09-24\n\n- old\n"
 )
 
 _TODAY = date(2026, 10, 9)
@@ -263,3 +269,94 @@ def test_run_bump_without_changelog_commits_only_pyproject(
     assert "CHANGELOG_FOLDED:" not in capsys.readouterr().out
     assert _head_files(repo) == ["pyproject.toml"]
     assert not (repo / "CHANGELOG.md").exists()
+
+
+# --- CJK commit subjects (#7471) --------------------------------------------
+
+
+def test_run_bump_drops_cjk_subjects_when_changelog_has_no_cjk(
+    tmp_path: Path,
+):
+    """Refs: #7471 AC1"""
+    repo = _init_repo(
+        tmp_path,
+        _ASCII_CHANGELOG,
+        extra_commits=[
+            "feat: add alpha",
+            f"fix: {_CJK_WORD}",
+        ],
+    )
+
+    assert run_bump(repo, "origin/main") == 0
+
+    text = (repo / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "- add alpha" in text
+    assert _CJK_WORD not in text
+    assert not any(_has_cjk(line) for line in text.splitlines() if line.strip())
+
+
+def test_run_bump_prints_each_skipped_subject(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    """Refs: #7471 AC2"""
+    repo = _init_repo(
+        tmp_path,
+        _ASCII_CHANGELOG,
+        extra_commits=[
+            f"fix: {_CJK_WORD} one",
+            "feat: add alpha",
+            f"fix: {_CJK_WORD} two",
+        ],
+    )
+
+    assert run_bump(repo, "origin/main") == 0
+
+    skipped = [
+        line
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith("CHANGELOG_SKIPPED_SUBJECT:")
+    ]
+    assert skipped == [
+        f"CHANGELOG_SKIPPED_SUBJECT: fix: {_CJK_WORD} one",
+        f"CHANGELOG_SKIPPED_SUBJECT: fix: {_CJK_WORD} two",
+    ]
+
+
+def test_run_bump_all_subjects_skipped_returns_zero(tmp_path: Path):
+    """Refs: #7471 AC3"""
+    repo = _init_repo(
+        tmp_path,
+        _ASCII_CHANGELOG,
+        extra_commits=[f"fix: {_CJK_WORD}"],
+    )
+
+    assert run_bump(repo, "origin/main") == 0
+
+    assert (
+        (repo / "CHANGELOG.md").read_text(encoding="utf-8") == _ASCII_CHANGELOG
+    )
+    assert _head_files(repo) == ["pyproject.toml"]
+    assert not any(_has_cjk(line) for line in _ASCII_CHANGELOG.splitlines())
+
+
+def test_run_bump_keeps_cjk_subjects_when_changelog_has_cjk(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    """Refs: #7471 AC4"""
+    changelog = (
+        "# Changelog\n\n## Unreleased\n\n"
+        f"## 0.71.0 - 2026-09-24\n\n- {_CJK_WORD}\n"
+    )
+    repo = _init_repo(
+        tmp_path,
+        changelog,
+        extra_commits=[f"fix: {_CJK_WORD}"],
+    )
+
+    assert run_bump(repo, "origin/main") == 0
+
+    text = (repo / "CHANGELOG.md").read_text(encoding="utf-8")
+    fixed_blocks = text.split("### Fixed\n", 1)[1].split("## ", 1)[0]
+    assert f"- {_CJK_WORD}" in fixed_blocks
+    out = capsys.readouterr().out
+    assert "CHANGELOG_SKIPPED_SUBJECT:" not in out
