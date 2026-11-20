@@ -291,6 +291,7 @@ def _iter_issuesmith_exec_records() -> list[tuple[str, int | None]]:
     """
     if not EXEC_PATH.exists():
         return []
+    prefix = f"{get_config().label_namespace}:"
     records: list[tuple[str, int | None]] = []
     for raw in EXEC_PATH.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
@@ -304,7 +305,6 @@ def _iter_issuesmith_exec_records() -> list[tuple[str, int | None]]:
             continue
         idempotency_key = str(row.get("idempotency_key", ""))
         uuid = row.get("uuid")
-        prefix = f"{get_config().label_namespace}:"
         if idempotency_key.startswith(prefix) and isinstance(uuid, str) and uuid:
             records.append((uuid, _issue_from_idempotency_key(idempotency_key)))
     return records

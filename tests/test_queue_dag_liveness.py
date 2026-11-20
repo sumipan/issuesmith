@@ -52,10 +52,10 @@ def _use_label_namespace(tmp_path: Path, monkeypatch, namespace: str) -> None:
     reset_config_cache()
 
 
-def test_dispatch_pipeline_ready_ignores_foreign_workflow_pending_exec(
+def test_other_workflow_pending_dag_does_not_block_namespaced_queue(
     tmp_path, monkeypatch
 ):
-    """AC-1: host workflow idle gate ignores another workflow's unfinished exec rows."""
+    """AC-1: a wsl queue ignores another workflow's unfinished, non-running exec rows."""
     from issuesmith import queue as qmod
 
     _use_label_namespace(tmp_path, monkeypatch, "wsl")
@@ -63,44 +63,39 @@ def test_dispatch_pipeline_ready_ignores_foreign_workflow_pending_exec(
     done_dir = tmp_path / "done"
     done_dir.mkdir()
 
-    _write_exec(exec_path, "m-foreign", 103, key="issuesmith:impl:103")
+    _write_exec(exec_path, "m-issuesmith", 7471, key="issuesmith:impl:7471")
     monkeypatch.setattr(qmod, "EXEC_PATH", exec_path)
     monkeypatch.setattr(qmod, "DONE_DIR", done_dir)
 
-    store = _store(tmp_path)
-    snap = store.snapshot()
+    snap = _store(tmp_path).snapshot()
     assert snap.in_flight == []
 
     assert qmod._dispatch_pipeline_ready(snap, 1, _NOW) is True
 
 
-def test_dispatch_pipeline_ready_blocks_own_workflow_pending_orphan(
-    tmp_path, monkeypatch
-):
-    """AC-2: idle gate still blocks on own workflow's unfinished orphan exec rows."""
+def test_own_workflow_pending_dag_blocks_namespaced_queue(tmp_path, monkeypatch):
+    """AC-2: a wsl queue still blocks on its own unfinished, non-running exec rows."""
     from issuesmith import queue as qmod
 
     _use_label_namespace(tmp_path, monkeypatch, "wsl")
     exec_path = tmp_path / "exec.jsonl"
     done_dir = tmp_path / "done"
-    running_dir = tmp_path / "running"
     done_dir.mkdir()
-    running_dir.mkdir()
 
-    _write_exec(exec_path, "m-own", 104, key="wsl:impl:104")
+    _write_exec(exec_path, "m-wsl", 7600, key="wsl:impl:7600")
     monkeypatch.setattr(qmod, "EXEC_PATH", exec_path)
     monkeypatch.setattr(qmod, "DONE_DIR", done_dir)
 
-    store = _store(tmp_path)
-    snap = store.snapshot()
+    snap = _store(tmp_path).snapshot()
+    assert snap.in_flight == []
 
     assert qmod._dispatch_pipeline_ready(snap, 1, _NOW) is False
 
 
-def test_dispatch_pipeline_ready_default_namespace_ignores_foreign_workflow(
+def test_default_namespace_queue_still_blocks_on_issuesmith_pending_dag(
     tmp_path, monkeypatch
 ):
-    """AC-3: default issuesmith namespace ignores unfinished rows from other workflows."""
+    """AC-3: default issuesmith namespace blocks on its own rows and ignores wsl rows."""
     from issuesmith import queue as qmod
 
     _use_label_namespace(tmp_path, monkeypatch, "issuesmith")
@@ -108,14 +103,23 @@ def test_dispatch_pipeline_ready_default_namespace_ignores_foreign_workflow(
     done_dir = tmp_path / "done"
     done_dir.mkdir()
 
-    _write_exec(exec_path, "m-factory", 105, key="factory:impl:105")
+    exec_path.write_text(
+        json.dumps(
+            {"uuid": "m-issuesmith", "idempotency_key": "issuesmith:impl:7471", "depends": []}
+        )
+        + "\n"
+        + json.dumps({"uuid": "m-wsl", "idempotency_key": "wsl:impl:7600", "depends": []})
+        + "\n",
+        encoding="utf-8",
+    )
     monkeypatch.setattr(qmod, "EXEC_PATH", exec_path)
     monkeypatch.setattr(qmod, "DONE_DIR", done_dir)
 
-    store = _store(tmp_path)
-    snap = store.snapshot()
+    snap = _store(tmp_path).snapshot()
+    assert snap.in_flight == []
 
-    assert qmod._dispatch_pipeline_ready(snap, 1, _NOW) is True
+    assert qmod._dispatch_pipeline_ready(snap, 1, _NOW) is False
+    assert qmod._iter_issuesmith_exec_records() == [("m-issuesmith", 7471)]
 
 
 class _ListIssuesClient:
