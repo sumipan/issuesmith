@@ -37,6 +37,7 @@ steps:
   review:
     module: issuesmith.lines.develop.review
     requires: [review]
+    recheck: [lint, tests]
     input_kind: worktree
     repair:
       max: 2

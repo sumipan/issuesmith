@@ -278,7 +278,7 @@ from issuesmith.preconditions import PreconditionContext  # noqa: E402
 
 
 def validate_step_requires(steps: "Mapping[str, Any]") -> None:
-    """Validate ``StepConfig.requires`` and ``accepts`` against GATE_REGISTRY.
+    """Validate ``StepConfig.requires``, ``recheck``, and ``accepts`` against GATE_REGISTRY.
 
     Unknown gate ids and input_kind mismatches are checked for both fields using the
     same rules. Kept out of ``config.load_config`` so loading the config never imports
@@ -290,7 +290,7 @@ def validate_step_requires(steps: "Mapping[str, Any]") -> None:
     known = _known_gate_ids()
     for step_id, step in steps.items():
         input_kind = getattr(step, "input_kind", "issue")
-        for field_name in ("requires", "accepts"):
+        for field_name in ("requires", "recheck", "accepts"):
             gate_ids = tuple(getattr(step, field_name, ()) or ())
             if not gate_ids:
                 continue
