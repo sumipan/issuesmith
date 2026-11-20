@@ -276,7 +276,7 @@ def _issue_from_idempotency_key(key: str) -> int | None:
     and blocked ``_dispatch_pipeline_ready`` as an "orphan" not in in_flight.
     """
     parts = key.split(":")
-    if len(parts) < 3 or parts[0] != WORKFLOW_NAME:
+    if len(parts) < 3 or parts[0] != get_config().label_namespace:
         return None
     issue_part = parts[2]
     return int(issue_part) if issue_part.isdigit() else None
@@ -304,7 +304,7 @@ def _iter_issuesmith_exec_records() -> list[tuple[str, int | None]]:
             continue
         idempotency_key = str(row.get("idempotency_key", ""))
         uuid = row.get("uuid")
-        prefix = f"{WORKFLOW_NAME}:"
+        prefix = f"{get_config().label_namespace}:"
         if idempotency_key.startswith(prefix) and isinstance(uuid, str) and uuid:
             records.append((uuid, _issue_from_idempotency_key(idempotency_key)))
     return records
