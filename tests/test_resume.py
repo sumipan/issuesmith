@@ -98,8 +98,8 @@ def test_cmd_resume_no_flags_exits_2():
     assert exc_info.value.code == 2
 
 
-def test_resume_phase_clears_stopped_before_enqueue(tmp_path):
-    """refs #7464: resume clears stopped state then removes in_flight."""
+def test_resume_phase_clears_in_flight_before_enqueue(tmp_path):
+    """refs #7464: resume removes stale in_flight before phase redispatch."""
     from issuesmith.queue_store import QueueStore
 
     store = QueueStore(
@@ -108,7 +108,7 @@ def test_resume_phase_clears_stopped_before_enqueue(tmp_path):
         lock_path=tmp_path / "lock",
     )
     store.add_in_flight(123, "claude", role="implementation", phase="develop")
-    store.drop_stopped_issue(123, "wf:123:p1:0")
+    store.drop_stopped_issue(123, "stopped: andon wf:123:p1:0")
     client = _make_client_mock(labels=["issuesmith:develop-running"])
 
     with (
@@ -124,7 +124,6 @@ def test_resume_phase_clears_stopped_before_enqueue(tmp_path):
         resume(123, phase="develop")
 
     snap = store.snapshot()
-    assert snap.stopped == []
     assert snap.in_flight == []
 
 

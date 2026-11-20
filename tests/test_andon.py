@@ -369,19 +369,5 @@ def test_raise_andon_drops_stopped_issue(tmp_path):
         raise_andon(client, a, metrics_path=tmp_path / "m.jsonl")
     snap = store.snapshot()
     assert snap.in_flight == []
-    assert snap.stopped == [{"issue": 16, "andon": a.id}]
 
 
-def test_answer_clears_stopped_memory(tmp_path):
-    store = _tmp_store(tmp_path)
-    store.drop_stopped_issue(16, "wf:16:p1:0")
-    a = _make_andon(issue=16, andon_id="wf:16:p1:0", kind="blocked", step="p1")
-    client = _fake_client(comments=[{"body": to_comment(a)}])
-    with (
-        patch("issuesmith.andon.QueueStore", return_value=store),
-        patch("issuesmith.andon._iter_open_andon_issues", return_value=iter([{"number": 16}])),
-        patch("issuesmith.andon._write_metrics"),
-        patch("issuesmith.andon._call_resume_hook"),
-    ):
-        answer(client, "wf:16:p1:0", "resume")
-    assert store.snapshot().stopped == []

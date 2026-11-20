@@ -1052,9 +1052,36 @@ def _recheck_dependents_after_merge(
         print(f"warning: scope_coupling recheck after #{issue_number} failed: {exc}", file=sys.stderr)
 
 
+def _stopped_issues_from_client(client: ForgePort | None) -> list[dict[str, Any]]:
+    if client is None:
+        return []
+    try:
+        from issuesmith.andon import list_open
+
+        return [{"issue": a.issue, "andon": a.id} for a in list_open(client)]
+    except Exception:
+        return []
+
+
 def _release_finished_in_flight(
     store: QueueStore, client: ForgePort, open_issues: list[dict[str, Any]]
 ) -> None:
+    from issuesmith.andon import list_open
+    from issuesmith.contract import ANDON_KINDS
+
+    ns = get_config().label_namespace
+    andon_labels = {f"{ns}:andon-{kind}" for kind in ANDON_KINDS}
+    open_by_issue: dict[int, str] | None = None
+
+    def _open_andon_id(issue_num: int) -> str:
+        nonlocal open_by_issue
+        if open_by_issue is None:
+            try:
+                open_by_issue = {a.issue: a.id for a in list_open(client)}
+            except Exception:
+                open_by_issue = {}
+        return open_by_issue.get(issue_num, "unknown")
+
     for entry in list(store.snapshot().in_flight):
         issue_num = entry.get("issue")
         if not isinstance(issue_num, int):
@@ -1063,6 +1090,11 @@ def _release_finished_in_flight(
             issue = client.issue_get(issue_num, fields=["state", "labels"])
         except Exception:
             # Do not release a design slot until successor enqueue has been decided.
+            continue
+        if label_names(issue) & andon_labels:
+            store.drop_stopped_issue(
+                issue_num, f"stopped: andon {_open_andon_id(issue_num)}"
+            )
             continue
         snap = store.snapshot()
         _try_enqueue_queue_chain(store, entry, snap, issue)
@@ -2143,43 +2175,6 @@ def _dispatch_result_reason_from_plan(
     return "no dispatchable request"
 
 
-def _cleanup_legacy_held_in_flight(client: ForgePort, store: QueueStore) -> None:
-    """Drop in_flight rows still marked ``held`` when the Issue carries an andon label."""
-    from issuesmith.andon import list_open
-    from issuesmith.contract import ANDON_KINDS
-
-    snap = store.snapshot()
-    legacy = [
-        e
-        for e in snap.in_flight
-        if isinstance(e.get("issue"), int) and e.get("held")
-    ]
-    if not legacy:
-        return
-    ns = get_config().label_namespace
-    andon_labels = {f"{ns}:andon-{kind}" for kind in ANDON_KINDS}
-    try:
-        open_andons = list_open(client)
-    except Exception:
-        open_andons = []
-    andon_by_issue = {a.issue: a.id for a in open_andons}
-    for entry in legacy:
-        issue_num = int(entry["issue"])
-        try:
-            issue = client.issue_get(issue_num, fields=["labels", "state"])
-        except Exception:
-            continue
-        labels = {
-            name
-            for lab in (issue.get("labels") or [])
-            if isinstance(lab, dict) and isinstance(name := lab.get("name"), str)
-        }
-        if not (labels & andon_labels):
-            continue
-        andon_id = andon_by_issue.get(issue_num, "legacy-held")
-        store.drop_stopped_issue(issue_num, andon_id)
-
-
 def dispatch_one(
     now: datetime | None = None,
     client: ForgePort | None = None,
@@ -2193,10 +2188,6 @@ def dispatch_one(
     store = store or QueueStore()
     # One tick = one read per Issue / one open-issue list (#3759).
     client = _TickCachedForge(client or get_forge(repo=REPO))
-    try:
-        _cleanup_legacy_held_in_flight(client, store)
-    except Exception as exc:
-        print(f"warning: legacy held cleanup failed: {exc}", file=sys.stderr)
     start, end, idle_minutes = seed_window(seed_path)
     extra_sources = seed_extra_sources(seed_path)
 
@@ -2507,11 +2498,13 @@ def _cmd_status(args: argparse.Namespace) -> int:
         lock_path=Path(args.lock_path) if getattr(args, "lock_path", None) else None,
     )
     snap = store.snapshot()
+    status_client: ForgePort | None = None
+    try:
+        status_client = get_forge(repo=REPO)
+    except Exception:
+        status_client = None
+    stopped_issues = _stopped_issues_from_client(status_client)
     if getattr(args, "json", False):
-        try:
-            status_client: ForgePort | None = get_forge(repo=REPO)
-        except Exception:
-            status_client = None
         if status_client is None:
             queue_plan = QueuePlan(
                 revision=snap.revision, entries=(), halt=_plan_has_global_halt(snap)
@@ -2527,7 +2520,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
                     "halt_reason": snap.halt_reason,
                     "blocks": [b.to_dict() for b in snap.blocks],
                     "in_flight": list(snap.in_flight),
-                    "stopped": list(snap.stopped),
+                    "stopped": stopped_issues,
                     "plan": [_plan_entry_to_dict(e) for e in queue_plan.entries],
                 },
                 ensure_ascii=False,
@@ -2547,7 +2540,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
         role = entry.get("role")
         role_part = f" role={role}" if role else ""
         print(f"  - in_flight issue=#{issue_num} engine={engine}{role_part}")
-    for stopped in snap.stopped:
+    for stopped in stopped_issues:
         issue_num = stopped.get("issue")
         andon_id = stopped.get("andon", "")
         if isinstance(issue_num, int):

@@ -402,6 +402,7 @@ def raise_andon(
     from issuesmith.projection import phase_for_step
 
     client.issue_comment(andon.issue, to_comment(andon))
+    _release_stopped_issue(andon)
     ns = andon_namespace(andon)
     if ns != _ns():
         client.issue_update(andon.issue, labels_add=[f"{ns}:andon-{andon.kind}"])
@@ -421,7 +422,6 @@ def raise_andon(
         return st
 
     project_issue(client, andon.issue, change)
-    _drop_stopped_for_andon(andon)
 
     for sink in sinks or []:
         sink.emit(andon)
@@ -430,10 +430,10 @@ def raise_andon(
     _write_metrics(path, "andon_raised", andon)
 
 
-def _drop_stopped_for_andon(andon: Andon) -> None:
+def _release_stopped_issue(andon: Andon) -> None:
     """Best-effort: remove queue tracking for the stopped issue."""
     try:
-        QueueStore().drop_stopped_issue(andon.issue, andon.id)
+        QueueStore().drop_stopped_issue(andon.issue, f"stopped: andon {andon.id}")
     except Exception:
         logger.warning(
             "failed to drop stopped issue #%s (%s)", andon.issue, andon.id, exc_info=True
@@ -503,10 +503,6 @@ def answer(
         target,
         {"action": action, "answered_by": answered_by},
     )
-    try:
-        QueueStore().clear_stopped(target.issue)
-    except Exception:
-        logger.warning("failed to clear stopped for #%s", target.issue, exc_info=True)
     _call_resume_hook(client, andon_id, action)
 
 
@@ -565,11 +561,6 @@ def answer_if_open(
         target,
         {"action": action, "answered_by": "observe"},
     )
-    try:
-        QueueStore().clear_stopped(target.issue)
-    except Exception:
-        logger.warning("failed to clear stopped for #%s", target.issue, exc_info=True)
-
 
 def _count_auto_answer_notes(client: Any, issue: int, rule_name: str) -> int:
     count = 0

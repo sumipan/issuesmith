@@ -149,7 +149,6 @@ def resume(
         return rc
 
     store = QueueStore()
-    store.clear_stopped(issue)
     store.remove_in_flight(issue)
 
     if from_step is not None:

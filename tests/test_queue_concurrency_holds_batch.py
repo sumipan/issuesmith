@@ -35,8 +35,9 @@ def test_drop_stopped_issue_missing_in_flight_still_records_stop(tmp_path):
         requested_by=["alice"],
         requested_at=_NOW,
     )
-    store.drop_stopped_issue(99, "wf:99:p1:0")
-    assert store.snapshot().stopped == [{"issue": 99, "andon": "wf:99:p1:0"}]
+    rids = store.drop_stopped_issue(99, "stopped: andon wf:99:p1:0")
+    assert len(rids) == 1
+    assert store.snapshot().request_meta[rids[0]]["outcome"] == "dequeued"
 
 
 def _stopped_dispatch_setup(tmp_path, monkeypatch, issuesmith_config, candidate_paths: str):
@@ -65,7 +66,7 @@ def _stopped_dispatch_setup(tmp_path, monkeypatch, issuesmith_config, candidate_
         allow_paths=("tools/held/**",),
         target_repo="sumipan/nexus",
     )
-    store.drop_stopped_issue(300, "wf:300:p1:0")
+    store.drop_stopped_issue(300, "stopped: andon wf:300:p1:0")
     store.enqueue(
         issue=301,
         phase="develop",
