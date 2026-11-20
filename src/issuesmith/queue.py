@@ -2544,7 +2544,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
         issue_num = stopped.get("issue")
         andon_id = stopped.get("andon", "")
         if isinstance(issue_num, int):
-            print(f"  stopped issue=#{issue_num} andon={andon_id}")
+            print(f"  - stopped issue=#{issue_num} andon={andon_id}")
     for block in snap.blocks:
         print(
             f"  block scope={block.scope} kind={block.kind} reason={block.reason!r}"

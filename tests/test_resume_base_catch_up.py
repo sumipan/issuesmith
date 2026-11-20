@@ -15,6 +15,7 @@ from issuesmith.andon import Andon, raise_andon
 from issuesmith.config import reset_config_cache
 from issuesmith.queue_store import QueueStore, in_flight_by_engine
 
+
 def _git(repo: Path, *args: str) -> str:
     proc = subprocess.run(
         ["git", "-C", str(repo), *args],
@@ -93,17 +94,20 @@ def _exec_record(tmp_path: Path, issue: int, worktree: Path) -> Path:
 
 def test_answer_resume_restores_in_flight(tmp_path, monkeypatch):
     """refs #7464 AC-4."""
-    issue_num = 10
-    exec_path = _exec_record(tmp_path, issue_num, tmp_path / "missing")
+    from ghdag.status import StepStatus
+
+    from issuesmith.andon import answer
+
+    exec_path = _exec_record(tmp_path, 0, tmp_path / "missing")
     _resume_cfg(tmp_path, monkeypatch, exec_path=exec_path)
-    store = QueueStore(
-        queue_path=tmp_path / "q.jsonl",
-        state_path=tmp_path / "state.json",
-        lock_path=tmp_path / "lock",
+    client = get_forge()
+    issue_num = client.issue_create(
+        "impl", "```yaml\ntarget_repo: owner/repo\nallow_paths: [\"src/a.py\"]\n```\n"
     )
+    store = QueueStore()
     store.add_in_flight(issue_num, "claude", role="implementation", phase="develop")
     andon = Andon(
-        id="wf:10:p1:0",
+        id=f"wf:{issue_num}:p1:0",
         kind="blocked",
         issue=issue_num,
         step="p1",
@@ -113,29 +117,23 @@ def test_answer_resume_restores_in_flight(tmp_path, monkeypatch):
         default="resume",
         mention="",
     )
-    with (
-        patch("issuesmith.andon.QueueStore", return_value=store),
-        patch("issuesmith.andon._write_metrics"),
-        patch("issuesmith.andon.project_issue"),
-    ):
-        raise_andon(MagicMock(), andon, metrics_path=tmp_path / "m.jsonl")
-    assert store.snapshot().in_flight == []
+    with patch("issuesmith.andon._write_metrics"):
+        raise_andon(client, andon, metrics_path=tmp_path / "m.jsonl")
+    assert QueueStore().snapshot().in_flight == []
 
-    def _restore(number: int, step: str) -> None:
-        store.add_in_flight(number, "claude", role="implementation", phase="develop")
+    steps = [StepStatus("u-p1", "p1", [], "failed", None, None, None)]
+    recover = MagicMock(return_value=0)
+    monkeypatch.setattr(resume_mod, "get_forge", lambda repo=None: client)
+    monkeypatch.setattr(resume_mod, "_generation_keys_available", lambda: True)
+    monkeypatch.setattr(resume_mod, "_load_step_statuses", lambda *a, **k: steps)
+    monkeypatch.setattr(resume_mod, "_run_ghdag_recover", recover)
+    with patch("issuesmith.andon._write_metrics"):
+        answer(client, andon.id, "resume", answered_by="human")
 
-    def _from_step(issue: int, from_step: str, **kwargs: object) -> int:
-        _restore(issue, from_step)
-        return 0
-
-    with (
-        patch("issuesmith.resume.QueueStore", return_value=store),
-        patch("issuesmith.resume._catch_up_base_before_resume", return_value=0),
-        patch("issuesmith.resume._resume_from_step", side_effect=_from_step),
-    ):
-        assert resume_mod.resume(issue_num, from_step="p1") == 0
-    snap = store.snapshot()
-    assert in_flight_by_engine(snap.in_flight)["claude"] == 1
+    recover.assert_called_once()
+    snap = QueueStore().snapshot()
+    assert [e.get("issue") for e in snap.in_flight] == [issue_num]
+    assert in_flight_by_engine(snap.in_flight).get("claude", 0) == 1
 
 
 def test_resume_rebases_worktree_onto_new_base(tmp_path, monkeypatch):
