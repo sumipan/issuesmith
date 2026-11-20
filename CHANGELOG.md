@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.202.11 - 2026-11-20
+
+### Fixed
+
+- queue: scope idle gate to config label_namespace
+
 ## 0.202.10 - 2026-11-20
 
 ### Fixed
