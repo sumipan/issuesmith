@@ -103,16 +103,18 @@ def _resolver_with_all_default_upstream_apis(*, dag: object) -> Callable[[str], 
 
 def test_ghdag_dag_without_wait_quota_companion_re_is_not_missing():
     """refs #7080: doctor list does not require ghdag.dag.WAIT_QUOTA_COMPANION_RE."""
-    ghdag_dag = types.SimpleNamespace(
-        PIPELINE_WAIT_QUOTA="WAIT",
-        plan_recover=lambda: [],
-    )
+    ghdag_dag = types.SimpleNamespace(plan_recover=lambda: [])
     resolver = _resolver_with_all_default_upstream_apis(dag=ghdag_dag)
     assert missing_upstream_apis(resolver=resolver) == []
 
 
+def test_doctor_no_longer_lists_pipeline_wait_quota():
+    """Refs #7553 — quota wait uses reply blocks; PIPELINE_WAIT_QUOTA is not required."""
+    assert ("ghdag.dag", "PIPELINE_WAIT_QUOTA", None) not in REQUIRED_UPSTREAM_APIS
+
+
 def test_default_list_reports_absent_plan_recover():
     """refs #7080: default list still reports a missing runtime API name."""
-    ghdag_dag = types.SimpleNamespace(PIPELINE_WAIT_QUOTA="WAIT")
+    ghdag_dag = types.SimpleNamespace()
     resolver = _resolver_with_all_default_upstream_apis(dag=ghdag_dag)
     assert missing_upstream_apis(resolver=resolver) == ["ghdag.dag.plan_recover"]

@@ -34,6 +34,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, TextIO
 
+from ghdag.core import reply_block, vocabulary
 from ghdag.forge import get_forge
 from ghdag.llm import DANGEROUS_FULL_ACCESS, Permission, call
 from ghdag.metrics import FailureClass, MetricsRecorder, TaskMetrics
@@ -1594,7 +1595,82 @@ def _parse_status_token(raw: str) -> tuple[str | None, str | None]:
     return status, remainder
 
 
-def _extract_status_values(stdout: str) -> list[str]:
+def _failure_code_for_reply_block(failure_status: str) -> str:
+    suffix = "_FAILED"
+    if failure_status.endswith(suffix):
+        return failure_status[: -len(suffix)]
+    return failure_status
+
+
+def _status_value_from_reply_block(block: object) -> str | None:
+    status = block.status  # type: ignore[attr-defined]
+    if status == "ok":
+        return block.code  # type: ignore[attr-defined]
+    if status == "rejected":
+        return None
+    if status == "wait_quota":
+        return vocabulary.PIPELINE_WAIT_QUOTA
+    code = block.code or "REPLY"  # type: ignore[attr-defined]
+    if code.endswith("_FAILED"):
+        return code
+    return f"{code}_FAILED"
+
+
+def write_reply_block(
+    sink: TextIO | None = None,
+    *,
+    outcome: str,
+    code: str | None = None,
+    engines: Iterable[str] | None = None,
+    after: str | None = None,
+) -> None:
+    """Write one top-level ghdag reply block to *sink* (stdout by default)."""
+    out = sink if sink is not None else sys.stdout
+    lines: list[str] = [f"```{vocabulary.REPLY_BLOCK_INFO}"]
+    if outcome == "ok":
+        if not code:
+            raise ValueError("write_reply_block outcome ok requires code")
+        lines.extend(("status: ok", f"code: {code}"))
+    elif outcome == "failed":
+        if not code:
+            raise ValueError("write_reply_block outcome failed requires code")
+        lines.extend(("status: failed", f"code: {code}"))
+    elif outcome == "wait_quota":
+        engine_list = list(engines or ())
+        if not engine_list:
+            raise ValueError("write_reply_block outcome wait_quota requires engines")
+        lines.append("status: wait_quota")
+        if len(engine_list) == 1:
+            lines.append(f"engines: [{engine_list[0]}]")
+        else:
+            lines.append("engines: [" + ", ".join(engine_list) + "]")
+        if after:
+            lines.append(f"after: {after}")
+    else:
+        raise ValueError(f"unknown reply block outcome: {outcome!r}")
+    lines.append("```")
+    out.write("\n".join(lines) + "\n")
+    out.flush()
+
+
+def emit_pipeline_reply(
+    status: str,
+    *,
+    sink: TextIO | None = None,
+    outcome: str | None = None,
+) -> None:
+    """Emit a reply block whose pipeline status value matches *status* when read back."""
+    out = sink if sink is not None else sys.stdout
+    resolved = outcome or ("failed" if status.endswith("_FAILED") else "ok")
+    if resolved == "ok":
+        write_reply_block(out, outcome="ok", code=status)
+    else:
+        write_reply_block(
+            out, outcome="failed", code=_failure_code_for_reply_block(status)
+        )
+
+
+def _extract_legacy_status_values(stdout: str) -> list[str]:
     """Return standalone-line PIPELINE_STATUS marker values in order of appearance."""
     values: list[str] = []
     for line in stdout.splitlines():
@@ -1616,9 +1692,26 @@ def _extract_status_values(stdout: str) -> list[str]:
     return values
 
 
+def extract_status_values(stdout: str) -> list[str]:
+    """Return pipeline status values: reply block first, else legacy standalone lines."""
+    if reply_block.find_reply_block(stdout) is None:
+        return _extract_legacy_status_values(stdout)
+    try:
+        block = reply_block.parse_reply_block(stdout)
+    except reply_block.ReplyBlockError:
+        return [vocabulary.PIPELINE_REPLY_BLOCK_FAILED]
+    if block is None:
+        return _extract_legacy_status_values(stdout)
+    value = _status_value_from_reply_block(block)
+    return [value] if value is not None else []
+
+
+_extract_status_values = extract_status_values
+
+
 def _has_inline_marker(stdout: str, statuses: list[str]) -> bool:
     """Whether a marker string is embedded somewhere other than a standalone line (diagnostics)."""
-    standalone = set(_extract_status_values(stdout))
+    standalone = set(extract_status_values(stdout))
     return any(
         f"PIPELINE_STATUS: {status}" in stdout and status not in standalone
         for status in statuses
@@ -1672,7 +1765,7 @@ def _run_guarded_order(
 
             body, _labels = fetch_issue_inputs(parsed)
             if not body.strip():
-                print(f"PIPELINE_STATUS: {failure_status}", file=sink)
+                emit_pipeline_reply(failure_status, sink=sink)
                 issue_num = parsed["issue_number"]
                 print(
                     f"REASON: issue body fetch failed for #{issue_num}",
@@ -1705,7 +1798,7 @@ def _run_guarded_order(
                 path.unlink()
     sink.write(proc.stdout)
     sys.stderr.write(proc.stderr)
-    statuses = _extract_status_values(proc.stdout)
+    statuses = extract_status_values(proc.stdout)
     if (
         proc.returncode == 0
         and len(statuses) == 1
@@ -1714,7 +1807,7 @@ def _run_guarded_order(
         return 0, proc.stdout
     if proc.stdout and not proc.stdout.endswith("\n"):
         print(file=sink)  # keep the failure status a standalone line (#4530)
-    print(f"PIPELINE_STATUS: {failure_status}", file=sink)
+    emit_pipeline_reply(failure_status, sink=sink)
     if proc.returncode != 0:
         print(f"REASON: role process exited with code {proc.returncode}", file=sink)
     elif len(statuses) != 1:
@@ -1791,7 +1884,7 @@ def _run_emit_order(
         return 0, run.stdout
     if run.stdout and not run.stdout.endswith("\n"):
         print()  # keep the failure status a standalone line (#4530)
-    print(f"PIPELINE_STATUS: {failure_status}")
+    emit_pipeline_reply(failure_status)
     if run.returncode != 0:
         reason = f"role process exited with code {run.returncode}"
     else:
@@ -1832,7 +1925,7 @@ def run_order(
     return OrderRun(
         returncode=proc.returncode,
         stdout=proc.stdout,
-        reported=tuple(_extract_status_values(proc.stdout)),
+        reported=tuple(extract_status_values(proc.stdout)),
     )
 
 
@@ -1957,7 +2050,7 @@ def _run_pre_gate_phase(
     )
     _raise_andon(get_forge(), full_andon)
     print(summary)
-    print(f"PIPELINE_STATUS: {failure_status}")
+    emit_pipeline_reply(failure_status)
     return 1
 
 
@@ -1991,7 +2084,7 @@ def run_guarded(
             role, template_path, variables, failure_status, cwd, tier
         )
         if rc == 0:
-            print(f"PIPELINE_STATUS: {emit_status}")
+            emit_pipeline_reply(emit_status, outcome="ok")
         return rc
     rc, _stdout = _run_guarded_order(
         role, template_path, variables, success_statuses, failure_status, cwd, tier
@@ -2056,7 +2149,7 @@ def _run_guarded_with_requires(
                 role, template_path, variables, success_statuses, failure_status, cwd, tier
             )
         if rc != 0:
-            reported = [s for s in _extract_status_values(_stdout) if s not in success_statuses]
+            reported = [s for s in extract_status_values(_stdout) if s not in success_statuses]
             if reported:
                 print(
                     f"[issuesmith-engine] order reported failure ({', '.join(reported)}); "
@@ -2089,9 +2182,9 @@ def _run_guarded_with_requires(
 
         print_derived_allow_paths(context)
         if emit_status:
-            print(f"PIPELINE_STATUS: {emit_status}")
+            emit_pipeline_reply(emit_status, outcome="ok")
         return 0
-    print(f"PIPELINE_STATUS: {failure_status}")
+    emit_pipeline_reply(failure_status)
     return post_rc
 
 
@@ -2148,7 +2241,7 @@ def run_verified(
         if rc != 0:
             return rc
         for status in skip_verify_statuses or []:
-            if status in _extract_status_values(stdout):
+            if status in extract_status_values(stdout):
                 print(f"VERIFY: SKIPPED (status={status})")
                 return 0
 
@@ -2157,7 +2250,7 @@ def run_verified(
         verify_rc, report = _run_verify_command(verify_cmd)
         if verify_rc == 0:
             if emit_status:
-                print(f"PIPELINE_STATUS: {emit_status}")
+                emit_pipeline_reply(emit_status, outcome="ok")
             print(f"VERIFY: PASS (recovery_attempts={attempts})")
             selection = resolve(role, tier)
             now = time.time()
@@ -2174,7 +2267,7 @@ def run_verified(
             return 0
         sys.stdout.write(report)
         if attempts >= max_loops:
-            print(f"PIPELINE_STATUS: {failure_status}")
+            emit_pipeline_reply(failure_status)
             print(f"REASON: verify still failing after {attempts} recovery attempts")
             print("[run-verified] final verify report (persisted for diagnostics):", file=sys.stderr)
             sys.stderr.write(report)
@@ -2209,7 +2302,7 @@ def run_verified(
         sys.stdout.write(rproc.stdout)
         sys.stderr.write(rproc.stderr)
         if rproc.returncode != 0:
-            print(f"PIPELINE_STATUS: {failure_status}")
+            emit_pipeline_reply(failure_status)
             print(f"REASON: recovery process exited with code {rproc.returncode}")
             return 1
 

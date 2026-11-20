@@ -10,6 +10,16 @@ ${issue_body}
 
 ${diff}
 
-On pass, emit a standalone line: `PIPELINE_STATUS: REVIEW_PASS`
+On pass, emit one top-level reply block:
 
-On fail, emit `PIPELINE_STATUS: REVIEW_FAIL` and list problems under the `Problems:` heading.
+```ghdag
+status: ok
+code: REVIEW_PASS
+```
+
+On fail, list problems under the `Problems:` heading, then emit:
+
+```ghdag
+status: failed
+code: REVIEW
+```

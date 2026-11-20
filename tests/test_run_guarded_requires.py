@@ -10,6 +10,9 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from ghdag.core import reply_block
+
+from issuesmith.engine import extract_status_values
 
 
 def _git(root: Path, *args: str) -> None:
@@ -129,7 +132,10 @@ def test_run_guarded_evaluates_accepts_after_requires_pass(capsys, fresh_repo: P
 
     assert rc == 0
     assert origins == ["requires", "accepts"]
-    assert "PIPELINE_STATUS: IMPL_DONE" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    block = reply_block.parse_reply_block(out)
+    assert block is not None and block.status == "ok" and block.code == "IMPL_DONE"
+    assert "PIPELINE_STATUS:" not in out
 
 
 def test_run_guarded_with_requires_step_post_fail_no_impl_done(capsys, fresh_repo: Path):
@@ -163,8 +169,10 @@ def test_run_guarded_with_requires_step_post_fail_no_impl_done(capsys, fresh_rep
 
     assert rc == 1
     out = capsys.readouterr().out
-    assert "PIPELINE_STATUS: IMPL_DONE" not in out
-    assert "PIPELINE_STATUS: IMPL_FAILED" in out
+    assert "PIPELINE_STATUS:" not in out
+    block = reply_block.parse_reply_block(out)
+    assert block is not None and block.status == "failed" and block.code == "IMPL"
+    assert "IMPL_DONE" not in extract_status_values(out)
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +263,9 @@ def test_scope_breadth_blocks_llm(capsys, fresh_repo: Path):
     captured = capsys.readouterr()
     assert "pre-LLM gate violation in step p1" in captured.out
     assert "scope too large" in captured.out
-    assert "PIPELINE_STATUS: IMPL_FAILED" in captured.out
+    block = reply_block.parse_reply_block(captured.out)
+    assert block is not None and block.status == "failed" and block.code == "IMPL"
+    assert "PIPELINE_STATUS:" not in captured.out
 
 
 # ---------------------------------------------------------------------------
@@ -382,7 +392,7 @@ def test_run_guarded_prints_derived_allow_paths_before_status(capsys, fresh_repo
     out = capsys.readouterr().out
     block = "derived_allow_paths:\n  - tests/test_a.py\n  - tests/test_b.py\n"
     assert block in out
-    assert out.index(block) < out.index("PIPELINE_STATUS: IMPL_DONE")
+    assert out.index(block) < out.index("```ghdag")
 
 
 def test_run_guarded_no_derived_block_when_empty(capsys, fresh_repo: Path):
@@ -391,7 +401,8 @@ def test_run_guarded_no_derived_block_when_empty(capsys, fresh_repo: Path):
     assert rc == 0
     out = capsys.readouterr().out
     assert "derived_allow_paths" not in out
-    assert "PIPELINE_STATUS: IMPL_DONE" in out
+    block = reply_block.parse_reply_block(out)
+    assert block is not None and block.status == "ok" and block.code == "IMPL_DONE"
 
 
 # ---------------------------------------------------------------------------
@@ -447,7 +458,8 @@ def test_run_guarded_head_advanced_proceeds_to_requires_despite_llm_failure(
     assert loop_called, "requires loop should run when HEAD advanced"
     assert rc == 0
     out = capsys.readouterr().out
-    assert "PIPELINE_STATUS: IMPL_DONE" in out
+    block = reply_block.parse_reply_block(out)
+    assert block is not None and block.status == "ok" and block.code == "IMPL_DONE"
 
 
 def test_run_guarded_head_not_advanced_exits_on_llm_failure(fresh_repo: Path):
@@ -503,7 +515,8 @@ def test_run_guarded_explicit_failure_not_overridden_by_head_ahead(
     assert not loop_called, "requires loop must not run on explicit failure"
     assert rc == 1
     captured = capsys.readouterr()
-    assert "PIPELINE_STATUS: IMPL_DONE" not in captured.out
+    assert reply_block.parse_reply_block(captured.out) is None
+    assert "IMPL_DONE" not in extract_status_values(captured.out)
     assert (
         "order reported failure (IMPL_FAILED); not overriding with HEAD-ahead"
         in captured.err
@@ -532,27 +545,31 @@ def _call_order_no_newline(fn_name: str, stdout: str, returncode: int = 1) -> in
 @pytest.mark.parametrize("fn_name", ["_run_emit_order", "_run_guarded_order"])
 def test_failure_status_standalone_when_stdout_lacks_newline(capsys, fn_name: str):
     """failure status is printed on its own line after unterminated LLM stdout."""
-    from issuesmith.engine import _extract_status_values
+    from issuesmith.engine import extract_status_values
 
     rc = _call_order_no_newline(fn_name, "no newline at end")
 
     assert rc == 1
     out = capsys.readouterr().out
-    assert "no newline at end\nPIPELINE_STATUS: IMPL_FAILED\n" in out
-    assert "IMPL_FAILED" in _extract_status_values(out)
+    assert out.startswith("no newline at end\n")
+    assert "```ghdag" in out
+    assert extract_status_values(out) == ["IMPL_FAILED"]
+    assert "PIPELINE_STATUS:" not in out
 
 
 @pytest.mark.parametrize("fn_name", ["_run_emit_order", "_run_guarded_order"])
 def test_failure_status_standalone_when_stdout_ends_with_status(capsys, fn_name: str):
     """Unterminated LLM status line and engine status line stay separate."""
-    from issuesmith.engine import _extract_status_values
+    from issuesmith.engine import extract_status_values
 
     rc = _call_order_no_newline(fn_name, "oops\nPIPELINE_STATUS: IMPL_FAILED", returncode=0)
 
     assert rc == 1
     out = capsys.readouterr().out
-    assert "PIPELINE_STATUS: IMPL_FAILED\nPIPELINE_STATUS: IMPL_FAILED\n" in out
-    assert _extract_status_values(out).count("IMPL_FAILED") == 2
+    assert "oops\nPIPELINE_STATUS: IMPL_FAILED" in out
+    assert extract_status_values(out) == ["IMPL_FAILED"]
+    block = reply_block.parse_reply_block(out)
+    assert block is not None and block.status == "failed" and block.code == "IMPL"
 
 
 @pytest.mark.parametrize("fn_name", ["_run_emit_order", "_run_guarded_order"])
@@ -562,8 +579,49 @@ def test_failure_status_no_blank_line_when_stdout_ends_with_newline(capsys, fn_n
 
     assert rc == 1
     out = capsys.readouterr().out
-    assert "line\nPIPELINE_STATUS: IMPL_FAILED\n" in out
-    assert "line\n\nPIPELINE_STATUS" not in out
+    assert out.startswith("line\n")
+    assert "```ghdag" in out
+    assert extract_status_values(out) == ["IMPL_FAILED"]
+    assert "line\n\n```" not in out
+
+
+def test_run_emit_order_failure_writes_single_failed_block(capsys):
+    """Refs #7553 AC3 — engine-emit validation failure emits one failed reply block."""
+    from issuesmith import engine
+
+    with patch("issuesmith.engine._render_template", return_value=""):
+        with patch(
+            "issuesmith.engine._execute",
+            return_value=_make_proc(returncode=1, stdout="contract breach\n"),
+        ):
+            rc, _ = engine._run_emit_order(
+                "implementation", "fake.md", [], "IMPL_FAILED",
+            )
+    out = capsys.readouterr().out
+    assert rc == 1
+    block = reply_block.parse_reply_block(out)
+    assert block is not None and block.status == "failed" and block.code == "IMPL"
+    assert "PIPELINE_STATUS:" not in out
+
+
+def test_run_guarded_emit_success_writes_single_ok_block(capsys):
+    """Refs #7553 AC3 — engine-emit success emits one ok reply block."""
+    from issuesmith.engine import run_guarded
+
+    with patch("issuesmith.engine._run_emit_order", return_value=(0, "")):
+        rc = run_guarded(
+            "implementation",
+            "fake.md",
+            [],
+            success_statuses=["IMPL_DONE"],
+            failure_status="IMPL_FAILED",
+            emit_status="IMPL_DONE",
+        )
+    out = capsys.readouterr().out
+    assert rc == 0
+    block = reply_block.parse_reply_block(out)
+    assert block is not None and block.status == "ok" and block.code == "IMPL_DONE"
+    assert "PIPELINE_STATUS:" not in out
 
 
 def test_build_pre_gates_includes_external_pre_llm_gate(tmp_path: Path, monkeypatch):

@@ -8,6 +8,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
+from ghdag.core import reply_block
 
 from issuesmith.contract import Andon, StepResult, Verdict
 from issuesmith.engine import RetryReason, RetrySignal
@@ -39,6 +40,20 @@ class TestDoneMapping:
             context=_make_context(),
         )
         assert rc == 0
+
+    def test_merge_done_marker_emits_ok_reply_block(self, capsys):
+        """Refs #7553 AC4 — StepResult marker becomes one ok reply block."""
+        rc = map_step_result(
+            StepResult(status="done", markers=["MERGE_DONE"]),
+            step_id="m2",
+            context=_make_context(),
+        )
+        assert rc == 0
+        out = capsys.readouterr().out
+        block = reply_block.parse_reply_block(out)
+        assert block is not None and block.status == "ok" and block.code == "MERGE_DONE"
+        assert out.count("```ghdag") == 1
+        assert "PIPELINE_STATUS:" not in out
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +128,10 @@ class TestIrreversibleGateMapping:
             )
         assert rc == 0
         out = capsys.readouterr().out
-        assert "PIPELINE_STATUS: MERGE_DONE" in out
+        block = reply_block.parse_reply_block(out)
+        assert block is not None
+        assert block.status == "ok" and block.code == "MERGE_DONE"
+        assert "PIPELINE_STATUS:" not in out
 
 
 # ---------------------------------------------------------------------------

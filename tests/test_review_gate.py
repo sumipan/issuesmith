@@ -57,6 +57,22 @@ def test_check_fail_parses_bullets(tmp_path: Path) -> None:
     assert vs[1].message == "b"
 
 
+def test_fail_reply_block_stops_problems_before_fence(tmp_path: Path) -> None:
+    """Refs #7553 AC6 — Problems bullets end at the reply-block fence."""
+    stdout = (
+        "Problems:\n"
+        "- first issue\n"
+        "- second issue\n"
+        "```ghdag\n"
+        "status: failed\n"
+        "code: CP2\n"
+        "```\n"
+    )
+    vs = _violations_from_stdout(stdout, _review_cfg(), "x")
+    assert [v.message for v in vs] == ["first issue", "second issue"]
+    assert "status:" not in " ".join(v.message for v in vs)
+
+
 def test_violations_without_heading_use_snippet() -> None:
     vs = _violations_from_stdout("short fail", _review_cfg(), "x")
     assert len(vs) == 1

@@ -134,10 +134,14 @@ def _worktree_diff_lines(
 
 
 def _stdout_is_review_result(stdout: str, review_cfg: ReviewConfig) -> bool:
+    from issuesmith.engine import extract_status_values
+
     heading = review_cfg.problems_heading.strip()
     for line in stdout.splitlines():
         if line.strip() == heading:
             return True
+    if review_cfg.failure_status in extract_status_values(stdout):
+        return True
     failure_marker = f"PIPELINE_STATUS: {review_cfg.failure_status}"
     for line in stdout.splitlines():
         if line.strip() == failure_marker:
@@ -181,6 +185,10 @@ def _violations_from_stdout(
             if not stripped:
                 break
             if stripped.startswith("PIPELINE_STATUS:"):
+                break
+            if stripped == "```ghdag" or (
+                stripped.startswith("```") and stripped.endswith("ghdag")
+            ):
                 break
             if line.startswith("- "):
                 messages.append(line[2:])

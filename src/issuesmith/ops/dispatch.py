@@ -35,14 +35,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
-from ghdag.dag import PIPELINE_WAIT_QUOTA
 from ghdag.forge import get_forge
 
 from issuesmith.andon import Andon as _FullAndon
 from issuesmith.andon import raise_andon as _raise_andon
 from issuesmith.config import StepConfig, get_config
 from issuesmith.contract import Andon, LabelWriteForbidden, StepContext, StepResult, Verdict
-from issuesmith.engine import RetrySignal
+from issuesmith.engine import RetrySignal, emit_pipeline_reply, write_reply_block
 from issuesmith.forge_guard import guard_step_forge
 from issuesmith.gate_registry import Violation
 from issuesmith.ops.labels import project_issue
@@ -312,7 +311,7 @@ def map_step_result(
             issue_num = int(context.get("issue_number") or "0")
             get_forge().issue_comment(issue_num, recovery)
         if pipeline_status:
-            print(f"PIPELINE_STATUS: {pipeline_status}")
+            emit_pipeline_reply(pipeline_status)
         if exit_code == 0:
             _project_step_done(step_id, context)
         return exit_code
@@ -335,8 +334,11 @@ def map_step_result(
             return rc
 
     print_derived_allow_paths(context)
-    for marker in markers:
-        print(f"PIPELINE_STATUS: {marker}")
+    if len(markers) > 1:
+        emit_pipeline_reply("DISPATCH_FAILED")
+        return 1
+    if len(markers) == 1:
+        emit_pipeline_reply(markers[0], outcome="ok")
     _project_step_done(step_id, context)
     return 0
 
@@ -1127,8 +1129,11 @@ def _handle_retry_signal(
         f"reason={sig.reason.value} after={after or '-'} role={role or '-'} engines={engines}",
         file=sys.stderr,
     )
-    print(f"PIPELINE_STATUS: {PIPELINE_WAIT_QUOTA}")
-    print(f"WAIT_QUOTA: after={after} engines={','.join(engines)}")
+    write_reply_block(
+        outcome="wait_quota",
+        engines=engines,
+        after=after or None,
+    )
 
 
 def _wait_quota_engines(

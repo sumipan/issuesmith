@@ -61,6 +61,9 @@ class TestDispatchAcceptsPass:
             with patch("issuesmith.ops.dispatch.get_forge"):
                 rc = _map_done(cfg)
         assert rc == 0
-        assert "PIPELINE_STATUS: IMPL_DONE" in capsys.readouterr().out
+        from ghdag.core import reply_block
+
+        block = reply_block.parse_reply_block(capsys.readouterr().out)
+        assert block is not None and block.status == "ok" and block.code == "IMPL_DONE"
 
 

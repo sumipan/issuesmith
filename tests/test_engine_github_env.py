@@ -246,5 +246,8 @@ def test_empty_issue_body_does_not_start_llm(
     exec_mock.assert_not_called()
     call_mock.assert_not_called()
     out = capsys.readouterr().out
-    assert "PIPELINE_STATUS: IMPL_FAILED" in out
+    from ghdag.core import reply_block
+
+    block = reply_block.parse_reply_block(out)
+    assert block is not None and block.status == "failed" and block.code == "IMPL"
     assert "REASON: issue body fetch failed for #7" in out

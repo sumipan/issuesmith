@@ -44,7 +44,7 @@ steps:
       role: review
       template: review.md
       success_status: REVIEW_PASS
-      failure_status: REVIEW_FAIL
+      failure_status: REVIEW_FAILED
       optional_variables: [issue_body, diff]
   merge:
     module: issuesmith.lines.develop.merge

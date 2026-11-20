@@ -377,9 +377,10 @@ class RetrySignal(RuntimeError):
 
     Replaces the old 6h wait loop: engine detects a paused / rate-limited state
     and immediately signals dispatch.py to hand the task back to ghdag as a quota wait
-    (``PIPELINE_STATUS: WAIT_QUOTA``) and apply the <ns>:waiting label (exit 0, no DEP_FAILED).
+    (a top-level ``ghdag`` reply block with ``status: wait_quota``) and apply the
+    <ns>:waiting label (exit 0, no DEP_FAILED).
 
-    The ``engine`` CLI converts ``RetrySignal`` to the WAIT_QUOTA companion lines and exit
+    The ``engine`` CLI converts ``RetrySignal`` to a wait_quota reply block and exit
     code 0. Direct Python API callers of ``_execute()`` still receive ``RetrySignal`` as
     raised. Other runtime errors remain ``REJECTED:`` on stderr with exit code 1.
     """

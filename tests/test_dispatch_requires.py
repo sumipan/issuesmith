@@ -272,7 +272,11 @@ class TestDispatchPreexisting:
                         step_cfg=cfg,
                     )
         assert rc == 0
-        assert "PIPELINE_STATUS: IMPL_DONE" in capsys.readouterr().out
+        from ghdag.core import reply_block
+
+        out = capsys.readouterr().out
+        block = reply_block.parse_reply_block(out)
+        assert block is not None and block.status == "ok" and block.code == "IMPL_DONE"
 
         # No andon raised — the RetrySignal propagated up
 
@@ -431,7 +435,7 @@ def test_map_step_result_prints_derived_allow_paths_block(capsys) -> None:
     )
     out = capsys.readouterr().out
     assert rc == 0
-    marker_pos = out.index("PIPELINE_STATUS: IMPL_DONE")
+    marker_pos = out.index("```ghdag")
     block = "derived_allow_paths:\n  - tests/a.py\n  - tests/b.py\n"
     assert out[:marker_pos] == block
 
