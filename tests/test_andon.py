@@ -168,7 +168,7 @@ def test_round_trip_options_empty():
     assert parsed.options == []
 
 
-_FENCED_TEXT = "レビュー結果:\n```python\nx = 1\n\ny = 2\n```\n以上"
+_FENCED_TEXT = "Review output:\n```python\nx = 1\n\ny = 2\n```\nDone"
 
 
 def test_from_comment_round_trips_fenced_summary_and_evidence():
