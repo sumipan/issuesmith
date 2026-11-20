@@ -1,12 +1,17 @@
-"""Review step placeholder; LLM review runs via dispatch requires."""
+"""Review step: branch freshness check, then review dispatch via requires."""
 
 from __future__ import annotations
 
+import functools
 import os
+import re
 import subprocess
 import sys
+from pathlib import Path
 
-from issuesmith.config import StepConfig
+import yaml
+
+from issuesmith.config import StepConfig, get_config
 from issuesmith.contract import Andon, StepContext, StepResult
 from issuesmith.forge import get_forge
 from issuesmith.verbs import map_step_result
@@ -23,6 +28,143 @@ def _parse_context(args: list[str]) -> dict[str, str]:
 
 
 _AUTO_FIX_COMMIT_MESSAGE = "Apply gate auto-fixes"
+_BRANCH_CHECK_TIMEOUT_SEC = 30
+_OBJECT_ID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+_LANG_EN = Path(__file__).resolve().parents[2] / "lang" / "en.yaml"
+
+
+def _is_object_id(value: str) -> bool:
+    return bool(_OBJECT_ID_RE.fullmatch(value))
+
+
+def _branch_name_valid(branch: str) -> bool:
+    proc = subprocess.run(
+        ["git", "check-ref-format", "--branch", branch],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return proc.returncode == 0
+
+
+@functools.lru_cache
+def _package_en_messages() -> dict[str, str]:
+    raw = yaml.safe_load(_LANG_EN.read_text(encoding="utf-8")) or {}
+    messages = raw.get("messages", raw)
+    if not isinstance(messages, dict):
+        return {}
+    return {str(k): str(v) for k, v in messages.items()}
+
+
+def _language_message(key: str, /, **kwargs: object) -> str:
+    pack = get_config().language
+    if key in pack.messages:
+        return pack.message(key, **kwargs)
+    template = _package_en_messages().get(key)
+    if template is None:
+        raise KeyError(key)
+    return template.format(**kwargs)
+
+
+def _worktree_path(ctx: StepContext) -> Path | None:
+    raw = ctx.worktree_path.strip()
+    if not raw:
+        return None
+    path = Path(raw)
+    if path.is_absolute():
+        return path
+    return get_config().root / path
+
+
+def _git_in_worktree(
+    worktree: Path, args: list[str], *, timeout: int = _BRANCH_CHECK_TIMEOUT_SEC
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=timeout,
+    )
+
+
+def _tail_stderr(stderr: str) -> str:
+    text = (stderr or "").strip()
+    return text[-200:] if len(text) > 200 else text
+
+
+def _branch_check_failed(detail: str) -> StepResult:
+    summary = _language_message(
+        "review.branch_check_failed",
+        detail=detail or "branch check failed",
+    )
+    return StepResult(
+        status="andon",
+        andon=Andon(
+            kind="broken",
+            rule_id="review.branch_check_failed",
+            summary=summary,
+        ),
+    )
+
+
+def _branch_moved_andon(branch: str) -> StepResult:
+    summary = _language_message("review.branch_moved", branch=branch)
+    return StepResult(
+        status="andon",
+        andon=Andon(
+            kind="blocked",
+            rule_id="review.branch_moved",
+            summary=summary,
+        ),
+    )
+
+
+def _check_remote_branch_matches_head(worktree: Path, branch: str) -> StepResult | None:
+    """Return a StepResult when the review must stop; None when check passes or is skipped."""
+    if not _branch_name_valid(branch):
+        return _branch_check_failed(f"invalid branch name: {branch}")
+    try:
+        head_proc = _git_in_worktree(worktree, ["rev-parse", "HEAD"])
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return _branch_check_failed(str(exc))
+    if head_proc.returncode != 0:
+        return _branch_check_failed(_tail_stderr(head_proc.stderr))
+    local_sha = head_proc.stdout.strip()
+    if not local_sha:
+        return _branch_check_failed("rev-parse returned empty HEAD")
+    if not _is_object_id(local_sha):
+        return _branch_check_failed("rev-parse returned invalid object id")
+
+    ref = f"refs/heads/{branch}"
+    try:
+        remote_proc = _git_in_worktree(
+            worktree, ["ls-remote", "--heads", "origin", ref]
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return _branch_check_failed(str(exc))
+    if remote_proc.returncode != 0:
+        return _branch_check_failed(_tail_stderr(remote_proc.stderr))
+
+    stdout = (remote_proc.stdout or "").strip()
+    if not stdout:
+        return None
+    lines = [ln for ln in stdout.splitlines() if ln.strip()]
+    if len(lines) != 1:
+        return _branch_check_failed("unexpected ls-remote output")
+    parts = lines[0].split("\t")
+    if len(parts) != 2 or not parts[0].strip():
+        return _branch_check_failed("unexpected ls-remote output")
+    remote_sha = parts[0].strip()
+    remote_ref = parts[1].strip()
+    if remote_ref != ref:
+        return _branch_check_failed("unexpected ls-remote output")
+    if not _is_object_id(remote_sha):
+        return _branch_check_failed("unexpected ls-remote output")
+    if remote_sha == local_sha:
+        return None
+    return _branch_moved_andon(branch)
 
 
 def _commit_tracked_changes(worktree: str) -> str:
@@ -83,7 +225,16 @@ def _enrich_review_context(context: dict[str, str]) -> dict[str, str]:
 
 
 def run(ctx: StepContext, step: StepConfig) -> StepResult:
-    _ = ctx, step
+    _ = step
+    branch = ctx.branch.strip()
+    if not branch:
+        return StepResult(status="done", markers=["REVIEW_READY"])
+    worktree = _worktree_path(ctx)
+    if worktree is None:
+        return _branch_check_failed("worktree_path is missing")
+    blocked = _check_remote_branch_matches_head(worktree, branch)
+    if blocked is not None:
+        return blocked
     return StepResult(status="done", markers=["REVIEW_READY"])
 
 

@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from issuesmith.config import ReviewConfig
+from issuesmith.config import ReviewConfig, TierConfig
 from issuesmith.contract import RetryReason, RetrySignal
 from issuesmith.engine import (
     _ENGINE_TRANSIENT_PAUSE_SEC,
@@ -17,7 +17,13 @@ from issuesmith.engine import (
     _EngineProcess,
 )
 from issuesmith.gates import GateBuildContext, GateBuildError
-from issuesmith.gates.review import ReviewGate, _violations_from_stdout, build_review_gate
+from issuesmith.gates.review import (
+    ReviewGate,
+    _violations_from_stdout,
+    _worktree_diff_lines,
+    build_review_gate,
+)
+from issuesmith.pr_scope import DIFF_LINES_FALLBACK
 from issuesmith.repair import evaluate_requires
 
 
@@ -370,3 +376,112 @@ def test_check_failure_status_line_not_engine_error(tmp_path: Path) -> None:
         vs = gate.check("", [])
     assert len(vs) == 1
     assert vs[0].rule_id == "review.cp2"
+
+
+@pytest.mark.parametrize(
+    ("diff_lines", "unchecked", "expected_tier"),
+    [
+        (4, 0, "light"),
+        (5, 0, "heavy"),
+        (0, 1, "heavy"),
+        (DIFF_LINES_FALLBACK, 0, "heavy"),
+    ],
+)
+def test_check_pr_diff_tier_uses_diff_boundary_and_ac_state(
+    tmp_path: Path,
+    diff_lines: int,
+    unchecked: int,
+    expected_tier: str,
+) -> None:
+    """Refs sumipan/nexus#7400 AC1 — pr_diff step tier selects review engine tier."""
+    tier_cfg = TierConfig(kind="pr_diff", light_max_diff_lines=5)
+    gate = ReviewGate(
+        _review_cfg(),
+        "review",
+        tmp_path,
+        {},
+        tier_cfg=tier_cfg,
+        base_branch="main",
+    )
+    body = (
+        "## Acceptance Criteria\n\n- [ ] item\n"
+        if unchecked
+        else ""
+    )
+    fallback = "diff_failed" if diff_lines == DIFF_LINES_FALLBACK else None
+    with patch(
+        "issuesmith.gates.review._worktree_diff_lines",
+        return_value=(diff_lines, fallback),
+    ):
+        with patch(
+            "issuesmith.engine.run_guarded_output",
+            return_value=(0, "PIPELINE_STATUS: CP2_PASS\n"),
+        ) as mock_run:
+            assert gate.check(body, []) == []
+    assert mock_run.call_args.kwargs["tier"] == expected_tier
+
+
+@pytest.mark.parametrize(
+    ("numstat", "expected"),
+    [
+        ("1\t2\tsrc/a.py\n-\t-\tasset.bin\n", (3, None)),
+        ("1\t2\n", (DIFF_LINES_FALLBACK, "invalid_numstat")),
+        ("-1\t2\tsrc/a.py\n", (DIFF_LINES_FALLBACK, "invalid_numstat")),
+        ("x\t2\tsrc/a.py\n", (DIFF_LINES_FALLBACK, "invalid_numstat")),
+    ],
+)
+def test_worktree_diff_lines_rejects_malformed_numstat(
+    tmp_path: Path,
+    numstat: str,
+    expected: tuple[int, str | None],
+) -> None:
+    proc = MagicMock(returncode=0, stdout=numstat)
+    with patch("issuesmith.gates.review.subprocess.run", return_value=proc):
+        assert _worktree_diff_lines(tmp_path, "main") == expected
+
+
+@pytest.mark.parametrize(
+    "tier_cfg",
+    [None, TierConfig(kind="design_doc")],
+)
+@pytest.mark.parametrize("review_tier", [None, "light"])
+def test_check_without_pr_diff_tier_preserves_review_tier(
+    tmp_path: Path,
+    tier_cfg: TierConfig | None,
+    review_tier: str | None,
+) -> None:
+    """Refs sumipan/nexus#7400 AC2 — fixed review.tier when step tier is not pr_diff."""
+    review = ReviewConfig(
+        role="review",
+        template="cp2.md",
+        success_status="CP2_PASS",
+        failure_status="CP2_FAIL",
+        tier=review_tier,
+    )
+    gate = ReviewGate(review, "x", tmp_path, {}, tier_cfg=tier_cfg)
+    with patch(
+        "issuesmith.engine.run_guarded_output",
+        return_value=(0, "PIPELINE_STATUS: CP2_PASS\n"),
+    ) as mock_run:
+        assert gate.check("", []) == []
+    assert mock_run.call_args.kwargs["tier"] == review_tier
+
+
+def test_readme_documents_step_tier_selects_review_engine() -> None:
+    """Refs sumipan/nexus#7400 AC6 — tier table documents pr_diff; gate doc states priority."""
+    import issuesmith.gates.review as review_mod
+
+    doc = review_mod.__doc__ or ""
+    assert "pr_diff" in doc
+    assert "review.tier" in doc
+    readme = Path(__file__).resolve().parents[1] / "README.md"
+    section = readme.read_text(encoding="utf-8")
+    anchor = section.index("#### `steps.<id>` fields")
+    table = section[anchor : section.index("#### `paths` keys", anchor)]
+    tier_row = next(line for line in table.splitlines() if "| `tier` |" in line)
+    review_row = next(line for line in table.splitlines() if "| `review` |" in line)
+    assert "pr_diff" in tier_row
+    assert "review.tier" in tier_row
+    assert "falls back" in tier_row
+    assert "pr_diff" in review_row
+    assert "takes priority" in review_row

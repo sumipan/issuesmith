@@ -334,6 +334,7 @@ def map_step_result(
         if rc is not None:
             return rc
 
+    print_derived_allow_paths(context)
     for marker in markers:
         print(f"PIPELINE_STATUS: {marker}")
     _project_step_done(step_id, context)
@@ -349,6 +350,20 @@ def _derived_allow_paths(context: dict[str, str]) -> list[str]:
     """Return derived allow_paths (#3756) stored newline-separated in context."""
     raw = context.get("derived_allow_paths", "")
     return [p.strip() for p in raw.splitlines() if p.strip()]
+
+
+def print_derived_allow_paths(context: Mapping[str, str]) -> None:
+    """Print derived_allow_paths block before PIPELINE_STATUS when non-empty (#7401)."""
+    derived = [
+        p.strip()
+        for p in context.get("derived_allow_paths", "").splitlines()
+        if p.strip()
+    ]
+    if not derived:
+        return
+    print("derived_allow_paths:")
+    for path in derived:
+        print(f"  - {path}")
 
 
 def _merge_derived_allow_paths(context: dict[str, str], gates: dict[str, object]) -> None:

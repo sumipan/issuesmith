@@ -8,3 +8,8 @@ messages:
   context_hook.empty_allow_paths: >-
     allow_paths is empty or missing; set allow_paths or add a scope_gate override
     in the Issue YAML metadata
+  review.branch_moved: >-
+    review stopped: origin/{branch} moved while the worktree was being reviewed;
+    push or reset the worktree before re-running review
+  review.branch_check_failed: >-
+    review could not verify the remote branch ({detail})

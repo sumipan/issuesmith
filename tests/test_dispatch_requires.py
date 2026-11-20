@@ -413,6 +413,29 @@ class TestDerivedAllowPaths:
         )
 
 
+def test_map_step_result_prints_derived_allow_paths_block(capsys) -> None:
+    """Refs sumipan/issuesmith#7401 AC4 — derived block precedes done marker."""
+    from issuesmith.contract import StepResult
+    from issuesmith.ops.dispatch import map_step_result
+
+    context = {
+        "issue_number": "42",
+        "workflow_name": "develop",
+        "derived_allow_paths": "tests/a.py\ntests/b.py",
+    }
+    rc = map_step_result(
+        StepResult(status="done", markers=["IMPL_DONE"]),
+        step_id="implement",
+        context=context,
+        step_cfg=StepConfig(),
+    )
+    out = capsys.readouterr().out
+    assert rc == 0
+    marker_pos = out.index("PIPELINE_STATUS: IMPL_DONE")
+    block = "derived_allow_paths:\n  - tests/a.py\n  - tests/b.py\n"
+    assert out[:marker_pos] == block
+
+
 class TestReviewEngineErrorAndon:
     """Refs sumipan/nexus#6604 — review engine_error offers resume_from_<step>."""
 

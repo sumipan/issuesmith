@@ -11,15 +11,17 @@ import signal
 import subprocess
 import sys
 import textwrap
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
 from ghdag.forge import get_forge
 
 from issuesmith.andon import list_open
-from issuesmith.config import StepConfig, reset_config_cache
+from issuesmith.config import RepairConfig, ReviewConfig, StepConfig, get_config, reset_config_cache
 from issuesmith.contract import StepContext
 from issuesmith.language import EN
 from issuesmith.lines import LINES, extract_line
@@ -1393,6 +1395,297 @@ def test_commit_tracked_changes_commits_tracked_edits_only(tmp_path: Path) -> No
     assert files == ["src/feature.py"]
 
 
+def _review_step_context(worktree: Path, *, branch: str = "feat/x") -> StepContext:
+    return StepContext(
+        issue_number="1",
+        base_branch="main",
+        handler_name="develop",
+        is_cross_repo="false",
+        target_clone_path="",
+        source="test",
+        workflow_name="issuesmith",
+        m1_result_filename="",
+        m1r_result_filename="",
+        worktree_path=str(worktree),
+        branch=branch,
+    )
+
+
+def _dispatch_context(worktree: Path, *, branch: str = "feat/x") -> dict[str, str]:
+    return {
+        "issue_number": "1",
+        "base_branch": "main",
+        "worktree_path": str(worktree),
+        "branch": branch,
+        "workflow_name": "issuesmith",
+    }
+
+
+def _bare_origin_with_worktree(
+    tmp_path: Path, *, branch: str = "feat/x"
+) -> tuple[Path, Path]:
+    seed = tmp_path / "seed"
+    origin = tmp_path / "origin.git"
+    _init_feature_seed(seed)
+    _git(seed, "add", "-A")
+    _git(seed, "commit", "-m", "init")
+    subprocess.run(
+        ["git", "clone", "--bare", str(seed), str(origin)],
+        check=True,
+        capture_output=True,
+    )
+    worktree = tmp_path / "worktree"
+    subprocess.run(
+        ["git", "clone", str(origin), str(worktree)],
+        check=True,
+        capture_output=True,
+    )
+    _git(worktree, "config", "user.email", "t@example.com")
+    _git(worktree, "config", "user.name", "T")
+    _git(worktree, "checkout", "-b", branch)
+    return origin, worktree
+
+
+def test_review_blocks_before_gate_when_remote_branch_moved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refs sumipan/nexus#7400 AC3 — moved remote branch blocks before review gate."""
+    from issuesmith.lines.develop import review as develop_review
+    from issuesmith.ops.dispatch import map_step_result
+
+    _origin, worktree = _bare_origin_with_worktree(tmp_path)
+    (worktree / "src" / "feature.py").write_text("VALUE = 2\n", encoding="utf-8")
+    _git(worktree, "add", "-A")
+    _git(worktree, "commit", "-m", "impl")
+    _git(worktree, "push", "-u", "origin", "feat/x")
+
+    mover = tmp_path / "mover"
+    subprocess.run(
+        ["git", "clone", str(_origin), str(mover)],
+        check=True,
+        capture_output=True,
+    )
+    _git(mover, "config", "user.email", "t@example.com")
+    _git(mover, "config", "user.name", "T")
+    _git(mover, "checkout", "feat/x")
+    (mover / "remote-only.txt").write_text("x\n", encoding="utf-8")
+    _git(mover, "add", "remote-only.txt")
+    _git(mover, "commit", "-m", "advance remote")
+    _git(mover, "push", "origin", "feat/x")
+
+    gate_calls: list[int] = []
+    monkeypatch.setattr(
+        "issuesmith.ops.dispatch.run_requires_loop",
+        lambda *args, **kwargs: gate_calls.append(1) or 1,
+    )
+    monkeypatch.setattr(
+        "issuesmith.ops.dispatch.get_forge",
+        lambda: MagicMock(),
+    )
+    ctx = _review_step_context(worktree)
+    result = develop_review.run(ctx, StepConfig())
+    assert result.andon is not None
+    assert result.andon.rule_id == "review.branch_moved"
+    assert result.andon.kind == "blocked"
+    assert map_step_result(
+        result, step_id="review", context=_dispatch_context(worktree)
+    ) == 1
+    assert gate_calls == []
+
+    fresh = tmp_path / "fresh"
+    subprocess.run(
+        ["git", "clone", str(_origin), str(fresh)],
+        check=True,
+        capture_output=True,
+    )
+    _git(fresh, "config", "user.email", "t@example.com")
+    _git(fresh, "config", "user.name", "T")
+    _git(fresh, "checkout", "-b", "feat/unpushed")
+    unpushed = develop_review.run(
+        _review_step_context(fresh, branch="feat/unpushed"),
+        StepConfig(),
+    )
+    assert unpushed.status == "done"
+    assert unpushed.markers == ["REVIEW_READY"]
+
+
+def test_review_repair_rechecks_gate_without_rerunning_branch_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refs sumipan/nexus#7400 AC4 — repair re-runs review gate only, not branch check."""
+    from issuesmith.gate_registry import Violation
+    from issuesmith.lines.develop import review as develop_review
+    from issuesmith.ops.dispatch import map_step_result
+    from issuesmith.repair import RequiresResult
+
+    _origin, worktree = _bare_origin_with_worktree(tmp_path)
+    (worktree / "src" / "feature.py").write_text("VALUE = 2\n", encoding="utf-8")
+    _git(worktree, "add", "-A")
+    _git(worktree, "commit", "-m", "impl")
+    _git(worktree, "push", "-u", "origin", "feat/x")
+
+    ls_remote_calls: list[int] = []
+    real_git = develop_review._git_in_worktree
+
+    def _counting_git(
+        wt: Path, args: list[str], *, timeout: int = develop_review._BRANCH_CHECK_TIMEOUT_SEC
+    ):
+        if "ls-remote" in args:
+            ls_remote_calls.append(1)
+        return real_git(wt, args, timeout=timeout)
+
+    monkeypatch.setattr(develop_review, "_git_in_worktree", _counting_git)
+
+    blocking = Violation(
+        rule_id="review.review",
+        severity="fail",
+        message="needs fix",
+        location=None,
+        auto_fixable=False,
+        fix_hint=None,
+    )
+    eval_calls: list[int] = []
+
+    def _eval_side_effect(*_args, **_kwargs):
+        eval_calls.append(1)
+        if len(eval_calls) == 1:
+            return RequiresResult(blocking=[blocking])
+        return RequiresResult(blocking=[])
+
+    step_cfg = StepConfig(
+        requires=("review",),
+        review=ReviewConfig(
+            role="review",
+            template="review.md",
+            success_status="REVIEW_PASS",
+            failure_status="REVIEW_FAIL",
+        ),
+        repair=RepairConfig(max=1),
+    )
+
+    with (
+        patch(
+            "issuesmith.ops.dispatch._build_requires_gates",
+            return_value={"review": MagicMock()},
+        ),
+        patch("issuesmith.ops.dispatch._fetch_fresh_issue_body", return_value=""),
+        patch("issuesmith.ops.dispatch._get_issue_labels", return_value=[]),
+        patch("issuesmith.repair.evaluate_requires", side_effect=_eval_side_effect),
+        patch("issuesmith.ops.dispatch._run_repair_step", return_value=None),
+        patch("issuesmith.ops.dispatch.get_forge", return_value=MagicMock()),
+    ):
+        ctx = _review_step_context(worktree)
+        ready = develop_review.run(ctx, step_cfg)
+        assert ready.markers == ["REVIEW_READY"]
+        assert (
+            map_step_result(
+                ready,
+                step_id="review",
+                context=_dispatch_context(worktree),
+                step_cfg=step_cfg,
+            )
+            == 0
+        )
+
+    assert len(ls_remote_calls) == 1
+    assert len(eval_calls) == 2
+
+
+@pytest.mark.parametrize(
+    "git_side_effect",
+    [
+        pytest.param("rev_parse_fail", id="rev_parse_fail"),
+        pytest.param("ls_remote_fail", id="ls_remote_fail"),
+        pytest.param("timeout", id="timeout"),
+        pytest.param("invalid_output", id="invalid_output"),
+    ],
+)
+def test_review_returns_broken_andon_when_branch_check_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    git_side_effect: str,
+) -> None:
+    """Refs sumipan/nexus#7400 AC5 — branch check failures become broken andon."""
+    from issuesmith.lines.develop import review as develop_review
+
+    repo = tmp_path / "repo"
+    _init_feature_seed(repo)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "init")
+    _git(repo, "checkout", "-b", "feat/x")
+    ctx = _review_step_context(repo)
+
+    def _runner(wt: Path, args: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        if git_side_effect == "rev_parse_fail":
+            return subprocess.CompletedProcess(args, 1, "", "git failed")
+        if git_side_effect == "ls_remote_fail":
+            if args[:1] == ["rev-parse"]:
+                return subprocess.CompletedProcess(args, 0, "a" * 40, "")
+            return subprocess.CompletedProcess(args, 1, "", "remote failed")
+        if git_side_effect == "timeout":
+            if args[:1] == ["rev-parse"]:
+                return subprocess.CompletedProcess(args, 0, "a" * 40, "")
+            raise subprocess.TimeoutExpired("git", develop_review._BRANCH_CHECK_TIMEOUT_SEC)
+        if args[:1] == ["rev-parse"]:
+            return subprocess.CompletedProcess(args, 0, "a" * 40, "")
+        return subprocess.CompletedProcess(args, 0, "not-a-remote-line", "")
+
+    monkeypatch.setattr(develop_review, "_git_in_worktree", _runner)
+    result = develop_review.run(ctx, StepConfig())
+    assert result.andon is not None
+    assert result.andon.rule_id == "review.branch_check_failed"
+    assert result.markers != ["REVIEW_READY"]
+
+
+@pytest.mark.parametrize(
+    "git_side_effect",
+    [
+        pytest.param("invalid_remote_sha", id="invalid_remote_sha"),
+        pytest.param("short_remote_sha", id="short_remote_sha"),
+        pytest.param("wrong_remote_ref", id="wrong_remote_ref"),
+        pytest.param("invalid_local_sha", id="invalid_local_sha"),
+    ],
+)
+def test_review_branch_check_invalid_refs_not_branch_moved(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    git_side_effect: str,
+) -> None:
+    """Refs sumipan/nexus#7400 — malformed ls-remote output is branch_check_failed."""
+    from issuesmith.lines.develop import review as develop_review
+
+    repo = tmp_path / "repo"
+    _init_feature_seed(repo)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "init")
+    _git(repo, "checkout", "-b", "feat/x")
+    ctx = _review_step_context(repo)
+
+    def _runner(wt: Path, args: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        if args[:1] == ["rev-parse"]:
+            sha = "ghij" if git_side_effect == "invalid_local_sha" else "a" * 40
+            return subprocess.CompletedProcess(args, 0, sha, "")
+        if git_side_effect == "invalid_remote_sha":
+            return subprocess.CompletedProcess(
+                args, 0, "not-a-sha\trefs/heads/feat/x", ""
+            )
+        if git_side_effect == "short_remote_sha":
+            return subprocess.CompletedProcess(
+                args, 0, "def5678\trefs/heads/feat/x", ""
+            )
+        if git_side_effect == "wrong_remote_ref":
+            return subprocess.CompletedProcess(
+                args, 0, f"{'b' * 40}\trefs/heads/other", ""
+            )
+        raise AssertionError(f"unexpected git args: {args}")
+
+    monkeypatch.setattr(develop_review, "_git_in_worktree", _runner)
+    result = develop_review.run(ctx, StepConfig())
+    assert result.andon is not None
+    assert result.andon.rule_id == "review.branch_check_failed"
+    assert result.andon.rule_id != "review.branch_moved"
+
+
 def test_cli_dispatch_raises_broken_andon_when_commit_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1785,6 +2078,294 @@ def test_merge_step_andons_when_rebump_not_bump_only(tmp_path: Path, monkeypatch
     assert result.andon is not None
     assert result.andon.kind == "blocked"
     assert "src/x.py" in result.andon.summary
+
+
+def _implement_ctx(worktree: Path, **overrides: str) -> StepContext:
+    defaults = {
+        "issue_number": "7401",
+        "base_branch": "main",
+        "handler_name": "develop",
+        "is_cross_repo": "false",
+        "target_clone_path": "",
+        "source": "test",
+        "workflow_name": "develop",
+        "m1_result_filename": "",
+        "m1r_result_filename": "",
+        "worktree_path": str(worktree),
+        "branch": "feat/implement-ac",
+        "target_repo": "example/reference-host",
+        "allow_paths": "- src/**",
+    }
+    defaults.update(overrides)
+    return StepContext(**defaults)
+
+
+def _init_implement_repo(repo: Path, tmp_path: Path) -> None:
+    _init_feature_seed(repo)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "init")
+    origin = tmp_path / "origin.git"
+    subprocess.run(
+        ["git", "clone", "--bare", str(repo), str(origin)],
+        check=True,
+        capture_output=True,
+    )
+    _git(repo, "remote", "add", "origin", str(origin))
+    _git(repo, "fetch", "origin")
+    _git(repo, "checkout", "-b", "feat/implement-ac")
+
+
+def _patch_implement_template_dir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmpl_dir: Path,
+) -> None:
+    from issuesmith.lines.develop import implement as develop_implement
+
+    cfg = get_config()
+    paths = replace(cfg.paths, template_dir=tmpl_dir)
+    monkeypatch.setattr(
+        develop_implement,
+        "get_config",
+        lambda: replace(cfg, paths=paths),
+    )
+
+
+def test_implement_pre_llm_gate_stops_before_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refs sumipan/issuesmith#7401 AC1 — pre_llm gate blocks before run_order."""
+    from issuesmith.engine import OrderRun
+    from issuesmith.gate_registry import Violation
+    from issuesmith.lines.develop import implement as develop_implement
+
+    repo = tmp_path / "repo"
+    _init_implement_repo(repo, tmp_path)
+    run_calls: list[str] = []
+    monkeypatch.setattr(
+        develop_implement,
+        "run_order",
+        lambda *_a, **_k: run_calls.append("called") or OrderRun(0, "", ()),
+    )
+    monkeypatch.setattr(
+        develop_implement,
+        "pre_llm_violations",
+        lambda *_a, **_k: [
+            Violation(
+                rule_id="scope_breadth.too_large",
+                severity="fail",
+                message="scope too large",
+                location=None,
+                auto_fixable=False,
+                fix_hint=None,
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        develop_implement,
+        "get_forge",
+        lambda: MagicMock(
+            issue_get=lambda *_a, **_k: {"body": "design body"}
+        ),
+    )
+    result = develop_implement.run(
+        _implement_ctx(repo),
+        StepConfig(module="", requires=("scope_breadth",), template="implement.md"),
+    )
+    assert run_calls == []
+    assert result.status == "andon"
+    assert result.andon is not None
+    assert result.andon.kind == "decision"
+    assert result.andon.options == ["split", "reject"]
+
+
+def test_implement_failure_status_line_is_not_done(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refs sumipan/issuesmith#7401 AC2 — standalone failure marker is broken andon."""
+    from issuesmith.engine import OrderRun
+    from issuesmith.lines.develop import implement as develop_implement
+
+    repo = tmp_path / "repo"
+    _init_implement_repo(repo, tmp_path)
+    (repo / "src" / "feature.py").write_text("VALUE = 2\n", encoding="utf-8")
+    _git(repo, "add", "src/feature.py")
+    _git(repo, "commit", "-m", "impl")
+    tmpl_dir = tmp_path / "templates"
+    tmpl_dir.mkdir()
+    (tmpl_dir / "implement.md").write_text("do work\n", encoding="utf-8")
+    _patch_implement_template_dir(monkeypatch, tmpl_dir)
+    monkeypatch.setattr(develop_implement, "pre_llm_violations", lambda *_a, **_k: [])
+    monkeypatch.setattr(
+        develop_implement,
+        "run_order",
+        lambda *_a, **_k: OrderRun(
+            0, "PIPELINE_STATUS: IMPL_FAILED\n", ("IMPL_FAILED",)
+        ),
+    )
+    monkeypatch.setattr(
+        develop_implement,
+        "get_forge",
+        lambda: MagicMock(issue_get=lambda *_a, **_k: {"body": ""}),
+    )
+    result = develop_implement.run(
+        _implement_ctx(repo),
+        StepConfig(module="", template="implement.md"),
+    )
+    assert result.status == "andon"
+    assert result.andon is not None
+    assert result.andon.kind == "broken"
+    assert "IMPL_FAILED" in result.andon.summary
+
+
+def test_implement_nonzero_exit_with_commit_is_done(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refs sumipan/issuesmith#7401 AC3 — nonzero exit with commits yields IMPL_DONE."""
+    from issuesmith.engine import OrderRun
+    from issuesmith.lines.develop import implement as develop_implement
+
+    repo = tmp_path / "repo"
+    _init_implement_repo(repo, tmp_path)
+    (repo / "src" / "feature.py").write_text("VALUE = 2\n", encoding="utf-8")
+    _git(repo, "add", "src/feature.py")
+    _git(repo, "commit", "-m", "impl")
+    tmpl_dir = tmp_path / "templates"
+    tmpl_dir.mkdir()
+    (tmpl_dir / "implement.md").write_text("do work\n", encoding="utf-8")
+    _patch_implement_template_dir(monkeypatch, tmpl_dir)
+    monkeypatch.setattr(develop_implement, "pre_llm_violations", lambda *_a, **_k: [])
+    monkeypatch.setattr(
+        develop_implement,
+        "run_order",
+        lambda *_a, **_k: OrderRun(1, "", ()),
+    )
+    monkeypatch.setattr(
+        develop_implement,
+        "get_forge",
+        lambda: MagicMock(issue_get=lambda *_a, **_k: {"body": ""}),
+    )
+    result = develop_implement.run(
+        _implement_ctx(repo),
+        StepConfig(module="", template="implement.md"),
+    )
+    assert result.status == "done"
+    assert result.markers == ["IMPL_DONE"]
+
+
+def test_implement_order_receives_step_context_variables(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refs sumipan/issuesmith#7401 AC5 — template gets StepContext fields."""
+    from issuesmith.engine import OrderRun
+    from issuesmith.lines.develop import implement as develop_implement
+
+    repo = tmp_path / "repo"
+    _init_implement_repo(repo, tmp_path)
+    tmpl_dir = tmp_path / "templates"
+    tmpl_dir.mkdir()
+    (tmpl_dir / "implement.md").write_text(
+        "base=${base_branch}\ntarget=${target_repo}\n",
+        encoding="utf-8",
+    )
+    _patch_implement_template_dir(monkeypatch, tmpl_dir)
+    monkeypatch.setattr(develop_implement, "pre_llm_violations", lambda *_a, **_k: [])
+    captured: list[str] = []
+
+    def _capture_order(_role, order, **_kwargs):
+        captured.append(order)
+        return OrderRun(1, "", ())
+
+    monkeypatch.setattr(develop_implement, "run_order", _capture_order)
+    monkeypatch.setattr(
+        develop_implement,
+        "get_forge",
+        lambda: MagicMock(issue_get=lambda *_a, **_k: {"body": ""}),
+    )
+    develop_implement.run(
+        _implement_ctx(repo, base_branch="develop", target_repo="example/other"),
+        StepConfig(module="", template="implement.md"),
+    )
+    assert captured
+    assert "base=develop" in captured[0]
+    assert "target=example/other" in captured[0]
+
+
+def test_implement_order_receives_issue_body_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The optional issue_body_file variable contains the body and is cleaned up."""
+    from issuesmith.engine import OrderRun
+    from issuesmith.lines.develop import implement as develop_implement
+
+    repo = tmp_path / "repo"
+    _init_implement_repo(repo, tmp_path)
+    tmpl_dir = tmp_path / "templates"
+    tmpl_dir.mkdir()
+    (tmpl_dir / "implement.md").write_text(
+        "body=${issue_body_file}\n",
+        encoding="utf-8",
+    )
+    _patch_implement_template_dir(monkeypatch, tmpl_dir)
+    monkeypatch.setattr(develop_implement.tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setattr(develop_implement, "pre_llm_violations", lambda *_a, **_k: [])
+    captured_path: list[Path] = []
+
+    def _capture_order(_role, order, **_kwargs):
+        path = Path(order.removeprefix("body=").strip())
+        assert path.read_text(encoding="utf-8") == "design body"
+        captured_path.append(path)
+        return OrderRun(1, "", ())
+
+    monkeypatch.setattr(develop_implement, "run_order", _capture_order)
+    monkeypatch.setattr(
+        develop_implement,
+        "get_forge",
+        lambda: MagicMock(
+            issue_get=lambda *_a, **_k: {"body": "design body"}
+        ),
+    )
+    develop_implement.run(
+        _implement_ctx(repo),
+        StepConfig(module="", template="implement.md"),
+    )
+    assert captured_path
+    assert not captured_path[0].exists()
+
+
+def test_implement_undefined_template_variable_is_broken(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refs sumipan/issuesmith#7401 AC6 — undefined template variable is broken andon."""
+    from issuesmith.engine import OrderRun
+    from issuesmith.lines.develop import implement as develop_implement
+
+    repo = tmp_path / "repo"
+    _init_implement_repo(repo, tmp_path)
+    tmpl_dir = tmp_path / "templates"
+    tmpl_dir.mkdir()
+    (tmpl_dir / "implement.md").write_text("${no_such_var}\n", encoding="utf-8")
+    _patch_implement_template_dir(monkeypatch, tmpl_dir)
+    monkeypatch.setattr(develop_implement, "pre_llm_violations", lambda *_a, **_k: [])
+    run_calls: list[str] = []
+    monkeypatch.setattr(
+        develop_implement,
+        "run_order",
+        lambda *_a, **_k: run_calls.append("called") or OrderRun(0, "", ()),
+    )
+    monkeypatch.setattr(
+        develop_implement,
+        "get_forge",
+        lambda: MagicMock(issue_get=lambda *_a, **_k: {"body": ""}),
+    )
+    result = develop_implement.run(
+        _implement_ctx(repo),
+        StepConfig(module="", template="implement.md"),
+    )
+    assert run_calls == []
+    assert result.status == "andon"
+    assert result.andon is not None
+    assert result.andon.kind == "broken"
+    assert "no_such_var" in result.andon.summary
 
 
 def test_merge_step_generic_merge_error_stays_broken(tmp_path: Path, monkeypatch) -> None:
