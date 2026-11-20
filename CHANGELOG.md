@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.203.5 - 2026-11-21
+
+### Changed
+
+- readme: sync Public API verbs and pipeline reply blocks
+
 ## 0.203.4 - 2026-11-21
 
 ### Changed
