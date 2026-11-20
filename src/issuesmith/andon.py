@@ -56,6 +56,14 @@ class AndonSink(Protocol):
 
 _FENCE_OPEN = "```andon"
 _FENCE_CLOSE = "```"
+_FENCE_CLOSE_LINE = re.compile(r"^```[ \t]*$", re.MULTILINE)
+
+
+def _find_fence_close(text: str, inner_start: int) -> int:
+    match = _FENCE_CLOSE_LINE.search(text, inner_start)
+    if match is None:
+        return -1
+    return match.start()
 
 
 def andon_namespace(andon: Andon) -> str:
@@ -80,7 +88,7 @@ def from_comment(text: str) -> Andon | None:
     # skip newline after opening fence
     if inner_start < len(text) and text[inner_start] == "\n":
         inner_start += 1
-    end = text.find(_FENCE_CLOSE, inner_start)
+    end = _find_fence_close(text, inner_start)
     if end == -1:
         return None
     raw = text[inner_start:end]
@@ -141,7 +149,7 @@ def _parse_note(text: str) -> tuple[str, str, str] | None:
     if start == -1:
         return None
     inner_start = start + len(_NOTE_FENCE_OPEN) + 1
-    end = text.find(_FENCE_CLOSE, inner_start)
+    end = _find_fence_close(text, inner_start)
     if end == -1:
         return None
     try:
