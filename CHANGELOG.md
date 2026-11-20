@@ -7,6 +7,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.202.10 - 2026-11-20
+
+### Fixed
+
+- version-bump: skip CJK subjects when CHANGELOG is ASCII-only
+- repair: reuse line_has_cjk instead of chr-assembled regex (#7471)
+- CP2 review CJK detection semantics
+- satisfy source text convention
+- repair: avoid \\u escape in external_leak CJK test (#7471)
+
 ## 0.202.9 - 2026-11-20
 
 ### Changed
