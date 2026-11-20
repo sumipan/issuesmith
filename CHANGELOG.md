@@ -7,6 +7,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.201.1 - 2026-11-20
+
+### Added
+
+- tests: treat readme_contract marker failures as warnings in P1
+
+### Fixed
+
+- CP2 レビュー指摘修正
+- CP2 レビュー指摘修正 — publish が上げた README の版を 0.200.2 に戻す (#7415)
+- readme: revert erroneous version bump from CP2 repair (#7415)
+
 ## 0.201.0 - 2026-11-20
 
 ### Added
