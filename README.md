@@ -635,29 +635,6 @@ Logs, exception messages, CLI help and violation text stay English and are not p
 
 Some shape errors raise plain `ValueError` instead of `ConfigError`: a missing `repo`, a non-mapping config file, an empty or malformed `phases` list, a non-positive or non-integer `engines.<role>.pause_ttl_sec`, a non-list `forbidden_pr_paths`, `forbidden_pr_paths_except`, `terminal_labels` or `terminal_without_merge`, and an incomplete `observe.main_health`. `TemplateVariableError` (`ghdag.pipeline.order`) can propagate from `issuesmith.engine` when a template variable is missing.
 
-## Error Reference
-
-| Type | Module | Base | Raised when |
-|---|---|---|---|
-| `AcceptanceError` | `issuesmith.verbs.acceptance` | `RuntimeError` | Temporary gate root (origin/base) could not be materialized |
-| `BumpCommitsError` | `issuesmith.bump_commits` | `RuntimeError` | Git could not list or rewrite publish bump commits |
-| `ChildPlanError` | `issuesmith.verbs.children` | `RuntimeError` | Raised on failure |
-| `ConfigError` | `issuesmith.config` | `ValueError` | Raised when issuesmith configuration is invalid |
-| `ContextHookError` | `issuesmith.context_hook` | `ValueError` | Issue YAML metadata failed security validation before template expansion |
-| `DerivedAllowPathsError` | `issuesmith.pr_scope` | `ValueError` | Raised when ``derived_allow_paths_from_result`` finds malformed entries |
-| `GateBuildError` | `issuesmith.gates.__init__` | `ValueError` | Raised by GateEntry.build when the gate cannot be instantiated |
-| `GateMaterializationError` | `issuesmith.ac_contract` | `RuntimeError` | origin/base temporary worktree could not be materialized |
-| `GrepError` | `issuesmith.ac_contract` | `RuntimeError` | git grep failed while evaluating greps_must_be_empty |
-| `LabelWriteForbidden` | `issuesmith.contract` | `RuntimeError` | A step wrote labels through the forge while ``label_write_guard`` is ``enforce`` |
-| `MainHealthError` | `issuesmith.observe.main_health` | `RuntimeError` | The health check could not run (git / worktree / timeout); state is not updated |
-| `MergeStateTimeoutError` | `issuesmith.merge` | `Exception` | Raised when merge state does not reach a non-BLOCKED status before timeout |
-| `QueueValidationError` | `issuesmith.queue_store` | `ValueError` | Invalid queue request input (exit 2) |
-| `RetrySignal` | `issuesmith.contract` | `RuntimeError` | Raised by _execute() when the step must be deferred for retry |
-| `WorktreeError` | `issuesmith.worktree` | `Exception` | Deterministic worktree preparation failure |
-| `WorktreePythonError` | `issuesmith.worktree_python` | `RuntimeError` | ``python_bin_command`` failed or returned an unusable path |
-
-Some shape errors raise plain `ValueError` instead of `ConfigError`: a missing `repo`, a non-mapping config file, an empty or malformed `phases` list, a non-positive or non-integer `engines.<role>.pause_ttl_sec`, a non-list `forbidden_pr_paths`, `forbidden_pr_paths_except`, `terminal_labels` or `terminal_without_merge`, and an incomplete `observe.main_health`. `TemplateVariableError` (`ghdag.pipeline.order`) can propagate from `issuesmith.engine` when a template variable is missing.
-
 ## License
 
 MIT (SPDX `MIT`). See [LICENSE](./LICENSE).
