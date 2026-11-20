@@ -402,6 +402,7 @@ def raise_andon(
     from issuesmith.projection import phase_for_step
 
     client.issue_comment(andon.issue, to_comment(andon))
+    _release_stopped_issue(andon)
     ns = andon_namespace(andon)
     if ns != _ns():
         client.issue_update(andon.issue, labels_add=[f"{ns}:andon-{andon.kind}"])
@@ -421,7 +422,6 @@ def raise_andon(
         return st
 
     project_issue(client, andon.issue, change)
-    _hold_in_flight(andon)
 
     for sink in sinks or []:
         sink.emit(andon)
@@ -430,21 +430,13 @@ def raise_andon(
     _write_metrics(path, "andon_raised", andon)
 
 
-def _hold_in_flight(andon: Andon) -> None:
-    """Best-effort: free the engine slot of the stopped Issue but keep its conflict claim."""
+def _release_stopped_issue(andon: Andon) -> None:
+    """Best-effort: remove queue tracking for the stopped issue."""
     try:
-        QueueStore().hold_in_flight(andon.issue, by=andon.id)
-    except Exception:
-        logger.warning("failed to hold in_flight for #%s (%s)", andon.issue, andon.id, exc_info=True)
-
-
-def _release_hold_for_andon(andon: Andon) -> None:
-    """Best-effort: drop the hold owned by this andon id; in_flight entry stays."""
-    try:
-        QueueStore().release_hold(andon.issue, by=andon.id)
+        QueueStore().drop_stopped_issue(andon.issue, f"stopped: andon {andon.id}")
     except Exception:
         logger.warning(
-            "failed to release hold for #%s (%s)", andon.issue, andon.id, exc_info=True
+            "failed to drop stopped issue #%s (%s)", andon.issue, andon.id, exc_info=True
         )
 
 
@@ -511,7 +503,6 @@ def answer(
         target,
         {"action": action, "answered_by": answered_by},
     )
-    _release_hold_for_andon(target)
     _call_resume_hook(client, andon_id, action)
 
 
@@ -570,8 +561,6 @@ def answer_if_open(
         target,
         {"action": action, "answered_by": "observe"},
     )
-    _release_hold_for_andon(target)
-
 
 def _count_auto_answer_notes(client: Any, issue: int, rule_name: str) -> int:
     count = 0

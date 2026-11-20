@@ -1052,9 +1052,36 @@ def _recheck_dependents_after_merge(
         print(f"warning: scope_coupling recheck after #{issue_number} failed: {exc}", file=sys.stderr)
 
 
+def _stopped_issues_from_client(client: ForgePort | None) -> list[dict[str, Any]]:
+    if client is None:
+        return []
+    try:
+        from issuesmith.andon import list_open
+
+        return [{"issue": a.issue, "andon": a.id} for a in list_open(client)]
+    except Exception:
+        return []
+
+
 def _release_finished_in_flight(
     store: QueueStore, client: ForgePort, open_issues: list[dict[str, Any]]
 ) -> None:
+    from issuesmith.andon import list_open
+    from issuesmith.contract import ANDON_KINDS
+
+    ns = get_config().label_namespace
+    andon_labels = {f"{ns}:andon-{kind}" for kind in ANDON_KINDS}
+    open_by_issue: dict[int, str] | None = None
+
+    def _open_andon_id(issue_num: int) -> str:
+        nonlocal open_by_issue
+        if open_by_issue is None:
+            try:
+                open_by_issue = {a.issue: a.id for a in list_open(client)}
+            except Exception:
+                open_by_issue = {}
+        return open_by_issue.get(issue_num, "unknown")
+
     for entry in list(store.snapshot().in_flight):
         issue_num = entry.get("issue")
         if not isinstance(issue_num, int):
@@ -1063,6 +1090,11 @@ def _release_finished_in_flight(
             issue = client.issue_get(issue_num, fields=["state", "labels"])
         except Exception:
             # Do not release a design slot until successor enqueue has been decided.
+            continue
+        if label_names(issue) & andon_labels:
+            store.drop_stopped_issue(
+                issue_num, f"stopped: andon {_open_andon_id(issue_num)}"
+            )
             continue
         snap = store.snapshot()
         _try_enqueue_queue_chain(store, entry, snap, issue)
@@ -1205,15 +1237,10 @@ def _format_in_flight_status(snap: QueueSnapshot) -> str:
     engines = sorted(set(counts) | set(concurrency.per_engine))
     if not engines:
         engines = sorted(role_map.values())
-    held = in_flight_by_engine(
-        [{k: v for k, v in e.items() if k != "held"} for e in snap.in_flight if e.get("held")],
-        role_engine_map=role_map,
-    )
     parts: list[str] = []
     for engine in engines:
         limit = concurrency.limit(engine)
-        held_part = f" (+{held[engine]} held)" if held.get(engine) else ""
-        parts.append(f"{engine}: {counts.get(engine, 0)}/{limit}{held_part}")
+        parts.append(f"{engine}: {counts.get(engine, 0)}/{limit}")
     return "{" + ", ".join(parts) + "}"
 
 
@@ -2471,11 +2498,13 @@ def _cmd_status(args: argparse.Namespace) -> int:
         lock_path=Path(args.lock_path) if getattr(args, "lock_path", None) else None,
     )
     snap = store.snapshot()
+    status_client: ForgePort | None = None
+    try:
+        status_client = get_forge(repo=REPO)
+    except Exception:
+        status_client = None
+    stopped_issues = _stopped_issues_from_client(status_client)
     if getattr(args, "json", False):
-        try:
-            status_client: ForgePort | None = get_forge(repo=REPO)
-        except Exception:
-            status_client = None
         if status_client is None:
             queue_plan = QueuePlan(
                 revision=snap.revision, entries=(), halt=_plan_has_global_halt(snap)
@@ -2491,6 +2520,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
                     "halt_reason": snap.halt_reason,
                     "blocks": [b.to_dict() for b in snap.blocks],
                     "in_flight": list(snap.in_flight),
+                    "stopped": stopped_issues,
                     "plan": [_plan_entry_to_dict(e) for e in queue_plan.entries],
                 },
                 ensure_ascii=False,
@@ -2509,9 +2539,12 @@ def _cmd_status(args: argparse.Namespace) -> int:
         engine = entry.get("engine", "")
         role = entry.get("role")
         role_part = f" role={role}" if role else ""
-        held = entry.get("held")
-        held_part = f" held=andon:{held.get('by', '')}" if isinstance(held, dict) and held else ""
-        print(f"  - in_flight issue=#{issue_num} engine={engine}{role_part}{held_part}")
+        print(f"  - in_flight issue=#{issue_num} engine={engine}{role_part}")
+    for stopped in stopped_issues:
+        issue_num = stopped.get("issue")
+        andon_id = stopped.get("andon", "")
+        if isinstance(issue_num, int):
+            print(f"  - stopped issue=#{issue_num} andon={andon_id}")
     for block in snap.blocks:
         print(
             f"  block scope={block.scope} kind={block.kind} reason={block.reason!r}"

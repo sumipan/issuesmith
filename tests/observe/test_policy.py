@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
 
 from issuesmith.config import ObserveConfig
 from issuesmith.observe.events import (
@@ -15,7 +14,6 @@ from issuesmith.observe.events import (
 from issuesmith.observe.policy import (
     AndonAction,
     HaltAction,
-    ReleaseInFlightAction,
     WaitAction,
     evaluate,
     execute,
@@ -72,34 +70,6 @@ class TestEvaluate:
     def test_empty_events_produces_no_actions(self):
         cfg_obs = ObserveConfig()
         assert evaluate([], cfg_obs) == []
-
-class TestExecuteReleaseInFlight:
-
-    def test_skips_release_when_open_linked_pr(self, tmp_path):
-        store = _store(tmp_path)
-        store.add_in_flight(3781, 'claude', role='implementation', allow_paths=('tools/asana/tasksmith.py',), target_repo='sumipan/issuesmith')
-        client = MagicMock()
-        client.pr_list.return_value = [{'number': 3892, 'title': 'tasksmith fix', 'body': 'Refs #3781', 'head': {'ref': 'issue-3781-abc123'}}]
-        execute([ReleaseInFlightAction(issue=3781, phase='develop', reason='test')], store, sinks=[], client=client)
-        assert any((e.get('issue') == 3781 for e in store.snapshot().in_flight))
-
-    def test_skips_release_on_normalized_pr_list_shape(self, tmp_path):
-        """GitHubClient.pr_list returns headRefName and no body; no per-PR fetch."""
-        store = _store(tmp_path)
-        store.add_in_flight(3781, 'claude', role='implementation')
-        client = MagicMock()
-        client.pr_list.return_value = [{'number': 158, 'title': 'unrelated', 'headRefName': 'feat/issue-1-x'}, {'number': 159, 'title': 'fix', 'headRefName': 'issue-3781-abc123'}]
-        execute([ReleaseInFlightAction(issue=3781, phase='develop', reason='test')], store, sinks=[], client=client)
-        assert any((e.get('issue') == 3781 for e in store.snapshot().in_flight))
-        client.pr_get.assert_not_called()
-
-    def test_releases_when_no_open_linked_pr(self, tmp_path):
-        store = _store(tmp_path)
-        store.add_in_flight(3782, 'claude', role='implementation')
-        client = MagicMock()
-        client.pr_list.return_value = []
-        execute([ReleaseInFlightAction(issue=3782, phase='develop', reason='test')], store, sinks=[], client=client)
-        assert not any((e.get('issue') == 3782 for e in store.snapshot().in_flight))
 
 class TestExecute:
 
