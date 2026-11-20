@@ -272,10 +272,10 @@ class TestDispatchPreexisting:
                         step_cfg=cfg,
                     )
         assert rc == 0
-        from ghdag.core.reply_block import parse_reply_block
+        from ghdag.core import reply_block
 
         out = capsys.readouterr().out
-        block = parse_reply_block(out)
+        block = reply_block.parse_reply_block(out)
         assert block is not None and block.status == "ok" and block.code == "IMPL_DONE"
 
         # No andon raised — the RetrySignal propagated up

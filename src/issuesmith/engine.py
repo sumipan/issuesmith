@@ -34,8 +34,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, TextIO
 
-from ghdag.core.reply_block import ReplyBlockError, find_reply_block, parse_reply_block
-from ghdag.core.vocabulary import PIPELINE_REPLY_BLOCK_FAILED, REPLY_BLOCK_INFO
+from ghdag.core import reply_block, vocabulary
 from ghdag.forge import get_forge
 from ghdag.llm import DANGEROUS_FULL_ACCESS, Permission, call
 from ghdag.metrics import FailureClass, MetricsRecorder, TaskMetrics
@@ -1604,15 +1603,13 @@ def _failure_code_for_reply_block(failure_status: str) -> str:
 
 
 def _status_value_from_reply_block(block: object) -> str | None:
-    from ghdag.core.vocabulary import PIPELINE_WAIT_QUOTA
-
     status = block.status  # type: ignore[attr-defined]
     if status == "ok":
         return block.code  # type: ignore[attr-defined]
     if status == "rejected":
         return None
     if status == "wait_quota":
-        return PIPELINE_WAIT_QUOTA
+        return vocabulary.PIPELINE_WAIT_QUOTA
     code = block.code or "REPLY"  # type: ignore[attr-defined]
     if code.endswith("_FAILED"):
         return code
@@ -1629,7 +1626,7 @@ def write_reply_block(
 ) -> None:
     """Write one top-level ghdag reply block to *sink* (stdout by default)."""
     out = sink if sink is not None else sys.stdout
-    lines: list[str] = [f"```{REPLY_BLOCK_INFO}"]
+    lines: list[str] = [f"```{vocabulary.REPLY_BLOCK_INFO}"]
     if outcome == "ok":
         if not code:
             raise ValueError("write_reply_block outcome ok requires code")
@@ -1695,23 +1692,26 @@ def _extract_legacy_status_values(stdout: str) -> list[str]:
     return values
 
 
-def _extract_status_values(stdout: str) -> list[str]:
+def extract_status_values(stdout: str) -> list[str]:
     """Return pipeline status values: reply block first, else legacy standalone lines."""
-    if find_reply_block(stdout) is None:
+    if reply_block.find_reply_block(stdout) is None:
         return _extract_legacy_status_values(stdout)
     try:
-        block = parse_reply_block(stdout)
-    except ReplyBlockError:
-        return [PIPELINE_REPLY_BLOCK_FAILED]
+        block = reply_block.parse_reply_block(stdout)
+    except reply_block.ReplyBlockError:
+        return [vocabulary.PIPELINE_REPLY_BLOCK_FAILED]
     if block is None:
         return _extract_legacy_status_values(stdout)
     value = _status_value_from_reply_block(block)
     return [value] if value is not None else []
 
 
+_extract_status_values = extract_status_values
+
+
 def _has_inline_marker(stdout: str, statuses: list[str]) -> bool:
     """Whether a marker string is embedded somewhere other than a standalone line (diagnostics)."""
-    standalone = set(_extract_status_values(stdout))
+    standalone = set(extract_status_values(stdout))
     return any(
         f"PIPELINE_STATUS: {status}" in stdout and status not in standalone
         for status in statuses
@@ -1798,7 +1798,7 @@ def _run_guarded_order(
                 path.unlink()
     sink.write(proc.stdout)
     sys.stderr.write(proc.stderr)
-    statuses = _extract_status_values(proc.stdout)
+    statuses = extract_status_values(proc.stdout)
     if (
         proc.returncode == 0
         and len(statuses) == 1
@@ -1925,7 +1925,7 @@ def run_order(
     return OrderRun(
         returncode=proc.returncode,
         stdout=proc.stdout,
-        reported=tuple(_extract_status_values(proc.stdout)),
+        reported=tuple(extract_status_values(proc.stdout)),
     )
 
 
@@ -2149,7 +2149,7 @@ def _run_guarded_with_requires(
                 role, template_path, variables, success_statuses, failure_status, cwd, tier
             )
         if rc != 0:
-            reported = [s for s in _extract_status_values(_stdout) if s not in success_statuses]
+            reported = [s for s in extract_status_values(_stdout) if s not in success_statuses]
             if reported:
                 print(
                     f"[issuesmith-engine] order reported failure ({', '.join(reported)}); "
@@ -2241,7 +2241,7 @@ def run_verified(
         if rc != 0:
             return rc
         for status in skip_verify_statuses or []:
-            if status in _extract_status_values(stdout):
+            if status in extract_status_values(stdout):
                 print(f"VERIFY: SKIPPED (status={status})")
                 return 0
 

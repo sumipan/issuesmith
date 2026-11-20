@@ -164,9 +164,9 @@ class TestAutoFixRoundLimit:
         assert rc == 0
         assert gate.fix.call_count == _MAX_AUTO_FIX_ROUNDS
         assert "auto-fix round limit" in out and "base_freshness.behind_base" in out
-        from ghdag.core.reply_block import parse_reply_block
+        from ghdag.core import reply_block
 
-        block = parse_reply_block(out)
+        block = reply_block.parse_reply_block(out)
         assert block is not None and block.status == "ok" and block.code == "IMPL_DONE"
         assert repair.launches == []
 

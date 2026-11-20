@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from issuesmith.engine import _extract_status_values, _has_inline_marker
+from issuesmith.engine import _has_inline_marker, extract_status_values
 
 # Shapes of the real incident strings from #4191 / #4202: prose glued to the marker
 # without whitespace, rewritten in English (#3385 / #4471).
@@ -20,7 +20,7 @@ _CP2_PASS_GLUED_SHORT = "PIPELINE_STATUS: CP2_PASSnote"
 
 
 def test_status_with_colon_suffix_is_kept_whole():
-    assert _extract_status_values("PIPELINE_STATUS: MERGE_FAILED:PERMISSION_ERROR\n") == [
+    assert extract_status_values("PIPELINE_STATUS: MERGE_FAILED:PERMISSION_ERROR\n") == [
         "MERGE_FAILED:PERMISSION_ERROR"
     ]
 
@@ -34,7 +34,7 @@ def test_status_with_colon_suffix_is_kept_whole():
     ],
 )
 def test_non_standalone_marker_is_rejected(line):
-    assert _extract_status_values(line + "\n") == []
+    assert extract_status_values(line + "\n") == []
     assert _has_inline_marker(line + "\n", ["CP2_PASS"]) is True
 
 
@@ -49,15 +49,15 @@ def test_non_standalone_marker_is_rejected(line):
     ],
 )
 def test_trailing_text_without_whitespace_is_stripped(line, expected):
-    assert _extract_status_values(line + "\n") == [expected]
+    assert extract_status_values(line + "\n") == [expected]
 
 
 def test_cpassed_is_not_truncated_to_cpass():
-    assert _extract_status_values("PIPELINE_STATUS: CP2_PASSED\n") == ["CP2_PASSED"]
+    assert extract_status_values("PIPELINE_STATUS: CP2_PASSED\n") == ["CP2_PASSED"]
 
 
 def test_clean_standalone_line_emits_no_trailing_diagnostic(capsys):
-    _extract_status_values("PIPELINE_STATUS: CP2_PASS\n")
+    extract_status_values("PIPELINE_STATUS: CP2_PASS\n")
     assert capsys.readouterr().err == ""
 
 
@@ -70,15 +70,15 @@ def test_reply_block_supersedes_legacy_pipeline_status():
         "code: IMPL_DONE\n"
         "```\n"
     )
-    assert _extract_status_values(stdout) == ["IMPL_DONE"]
+    assert extract_status_values(stdout) == ["IMPL_DONE"]
 
 
 def test_decorated_legacy_marker_without_reply_block():
     """Refs #7553 AC2 — decorated standalone legacy line still parses."""
-    assert _extract_status_values("`PIPELINE_STATUS: IMPL_DONE`\n") == ["IMPL_DONE"]
+    assert extract_status_values("`PIPELINE_STATUS: IMPL_DONE`\n") == ["IMPL_DONE"]
 
 
 def test_multiple_markers_preserve_order_with_trailing_split(capsys):
     stdout = f"{_CP2_PASS_GLUED_SHORT}\nPIPELINE_STATUS: IMPL_DONE\n"
-    assert _extract_status_values(stdout) == ["CP2_PASS", "IMPL_DONE"]
+    assert extract_status_values(stdout) == ["CP2_PASS", "IMPL_DONE"]
     assert capsys.readouterr().err.count("marker line had trailing text after") == 1

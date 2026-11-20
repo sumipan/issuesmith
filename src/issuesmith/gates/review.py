@@ -134,13 +134,13 @@ def _worktree_diff_lines(
 
 
 def _stdout_is_review_result(stdout: str, review_cfg: ReviewConfig) -> bool:
-    from issuesmith.engine import _extract_status_values
+    from issuesmith.engine import extract_status_values
 
     heading = review_cfg.problems_heading.strip()
     for line in stdout.splitlines():
         if line.strip() == heading:
             return True
-    if review_cfg.failure_status in _extract_status_values(stdout):
+    if review_cfg.failure_status in extract_status_values(stdout):
         return True
     failure_marker = f"PIPELINE_STATUS: {review_cfg.failure_status}"
     for line in stdout.splitlines():

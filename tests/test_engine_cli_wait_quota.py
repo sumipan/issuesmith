@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
-from ghdag.core.reply_block import parse_reply_block
+from ghdag.core import reply_block
 
 from issuesmith.engine import RetryReason, RetrySignal, main
 
@@ -55,7 +55,7 @@ def prompt_path(tmp_path):
 def _assert_wait_quota_stdout(capsys) -> None:
     captured = capsys.readouterr()
     assert "REJECTED:" not in captured.err
-    block = parse_reply_block(captured.out)
+    block = reply_block.parse_reply_block(captured.out)
     assert block is not None
     assert block.status == "wait_quota"
     assert block.engines

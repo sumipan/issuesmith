@@ -10,9 +10,9 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from ghdag.core.reply_block import parse_reply_block
+from ghdag.core import reply_block
 
-from issuesmith.engine import _extract_status_values
+from issuesmith.engine import extract_status_values
 
 
 def _git(root: Path, *args: str) -> None:
@@ -133,7 +133,7 @@ def test_run_guarded_evaluates_accepts_after_requires_pass(capsys, fresh_repo: P
     assert rc == 0
     assert origins == ["requires", "accepts"]
     out = capsys.readouterr().out
-    block = parse_reply_block(out)
+    block = reply_block.parse_reply_block(out)
     assert block is not None and block.status == "ok" and block.code == "IMPL_DONE"
     assert "PIPELINE_STATUS:" not in out
 
@@ -170,9 +170,9 @@ def test_run_guarded_with_requires_step_post_fail_no_impl_done(capsys, fresh_rep
     assert rc == 1
     out = capsys.readouterr().out
     assert "PIPELINE_STATUS:" not in out
-    block = parse_reply_block(out)
+    block = reply_block.parse_reply_block(out)
     assert block is not None and block.status == "failed" and block.code == "IMPL"
-    assert "IMPL_DONE" not in _extract_status_values(out)
+    assert "IMPL_DONE" not in extract_status_values(out)
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +263,7 @@ def test_scope_breadth_blocks_llm(capsys, fresh_repo: Path):
     captured = capsys.readouterr()
     assert "pre-LLM gate violation in step p1" in captured.out
     assert "scope too large" in captured.out
-    block = parse_reply_block(captured.out)
+    block = reply_block.parse_reply_block(captured.out)
     assert block is not None and block.status == "failed" and block.code == "IMPL"
     assert "PIPELINE_STATUS:" not in captured.out
 
@@ -401,7 +401,7 @@ def test_run_guarded_no_derived_block_when_empty(capsys, fresh_repo: Path):
     assert rc == 0
     out = capsys.readouterr().out
     assert "derived_allow_paths" not in out
-    block = parse_reply_block(out)
+    block = reply_block.parse_reply_block(out)
     assert block is not None and block.status == "ok" and block.code == "IMPL_DONE"
 
 
@@ -458,7 +458,7 @@ def test_run_guarded_head_advanced_proceeds_to_requires_despite_llm_failure(
     assert loop_called, "requires loop should run when HEAD advanced"
     assert rc == 0
     out = capsys.readouterr().out
-    block = parse_reply_block(out)
+    block = reply_block.parse_reply_block(out)
     assert block is not None and block.status == "ok" and block.code == "IMPL_DONE"
 
 
@@ -515,8 +515,8 @@ def test_run_guarded_explicit_failure_not_overridden_by_head_ahead(
     assert not loop_called, "requires loop must not run on explicit failure"
     assert rc == 1
     captured = capsys.readouterr()
-    assert parse_reply_block(captured.out) is None
-    assert "IMPL_DONE" not in _extract_status_values(captured.out)
+    assert reply_block.parse_reply_block(captured.out) is None
+    assert "IMPL_DONE" not in extract_status_values(captured.out)
     assert (
         "order reported failure (IMPL_FAILED); not overriding with HEAD-ahead"
         in captured.err
@@ -545,7 +545,7 @@ def _call_order_no_newline(fn_name: str, stdout: str, returncode: int = 1) -> in
 @pytest.mark.parametrize("fn_name", ["_run_emit_order", "_run_guarded_order"])
 def test_failure_status_standalone_when_stdout_lacks_newline(capsys, fn_name: str):
     """failure status is printed on its own line after unterminated LLM stdout."""
-    from issuesmith.engine import _extract_status_values
+    from issuesmith.engine import extract_status_values
 
     rc = _call_order_no_newline(fn_name, "no newline at end")
 
@@ -553,22 +553,22 @@ def test_failure_status_standalone_when_stdout_lacks_newline(capsys, fn_name: st
     out = capsys.readouterr().out
     assert out.startswith("no newline at end\n")
     assert "```ghdag" in out
-    assert _extract_status_values(out) == ["IMPL_FAILED"]
+    assert extract_status_values(out) == ["IMPL_FAILED"]
     assert "PIPELINE_STATUS:" not in out
 
 
 @pytest.mark.parametrize("fn_name", ["_run_emit_order", "_run_guarded_order"])
 def test_failure_status_standalone_when_stdout_ends_with_status(capsys, fn_name: str):
     """Unterminated LLM status line and engine status line stay separate."""
-    from issuesmith.engine import _extract_status_values
+    from issuesmith.engine import extract_status_values
 
     rc = _call_order_no_newline(fn_name, "oops\nPIPELINE_STATUS: IMPL_FAILED", returncode=0)
 
     assert rc == 1
     out = capsys.readouterr().out
     assert "oops\nPIPELINE_STATUS: IMPL_FAILED" in out
-    assert _extract_status_values(out) == ["IMPL_FAILED"]
-    block = parse_reply_block(out)
+    assert extract_status_values(out) == ["IMPL_FAILED"]
+    block = reply_block.parse_reply_block(out)
     assert block is not None and block.status == "failed" and block.code == "IMPL"
 
 
@@ -581,7 +581,7 @@ def test_failure_status_no_blank_line_when_stdout_ends_with_newline(capsys, fn_n
     out = capsys.readouterr().out
     assert out.startswith("line\n")
     assert "```ghdag" in out
-    assert _extract_status_values(out) == ["IMPL_FAILED"]
+    assert extract_status_values(out) == ["IMPL_FAILED"]
     assert "line\n\n```" not in out
 
 
@@ -599,7 +599,7 @@ def test_run_emit_order_failure_writes_single_failed_block(capsys):
             )
     out = capsys.readouterr().out
     assert rc == 1
-    block = parse_reply_block(out)
+    block = reply_block.parse_reply_block(out)
     assert block is not None and block.status == "failed" and block.code == "IMPL"
     assert "PIPELINE_STATUS:" not in out
 
@@ -619,7 +619,7 @@ def test_run_guarded_emit_success_writes_single_ok_block(capsys):
         )
     out = capsys.readouterr().out
     assert rc == 0
-    block = parse_reply_block(out)
+    block = reply_block.parse_reply_block(out)
     assert block is not None and block.status == "ok" and block.code == "IMPL_DONE"
     assert "PIPELINE_STATUS:" not in out
 
