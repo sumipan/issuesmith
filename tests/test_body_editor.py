@@ -42,6 +42,20 @@ def test_upsert_section() -> None:
     )
 
 
+def test_upsert_section_preserves_leading_yaml_block() -> None:
+    """Replace path keeps the leading ```yaml block (#7463)."""
+    body = "```yaml\ntarget_repo: org/repo\n```\n\n## Design\nold\n## Next\nnext\n"
+    assert upsert_section(body, "Design", "new") == (
+        "```yaml\ntarget_repo: org/repo\n```\n\n## Design\nnew\n## Next\nnext\n"
+    )
+
+
+def test_upsert_section_preserves_blank_line_between_sections() -> None:
+    """Replace path does not collapse blank lines between H2 sections (#7463)."""
+    body = "## Design\nold\n\n## Next\nbaz\n"
+    assert upsert_section(body, "Design", "new") == "## Design\nnew\n\n## Next\nbaz\n"
+
+
 def test_get_section_returns_content() -> None:
     assert get_section("## Design\nfoo\n## Acceptance Criteria\nbar", "Design") == "foo\n"
 
