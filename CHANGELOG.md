@@ -7,6 +7,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.203.0 - 2026-11-20
+
+### Added
+
+- engine: emit and read ghdag reply blocks for pipeline status
+
+### Fixed
+
+- repair: satisfy ghdag import-depth and public status API (#7553)
+
 ## 0.202.11 - 2026-11-20
 
 ### Fixed
