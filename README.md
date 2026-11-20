@@ -196,6 +196,8 @@ Run a command as `python3 -m issuesmith <command>` or through the `issuesmith` c
 
 `--tier` takes `light` or `heavy`. A step without a `module` runs as `engine run-guarded --requires-step <step_id>`.
 
+`engine run-guarded`, `engine run-verified`, and the workflow `dispatch` command end stdout with a single top-level **ghdag reply block** (a fenced `ghdag` code block) instead of a bare `PIPELINE_STATUS:` line. `issuesmith.engine.extract_status_values()` reads reply blocks first, then falls back to legacy standalone `PIPELINE_STATUS:` lines. Step outcomes use `status: ok` / `status: failed` with a `code:` field (for example `IMPL_DONE`, `IMPL_FAILED`); quota pauses use `status: wait_quota` with `engines:` and optional `after:`.
+
 The `implementation` role does not pass `GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_REPOSITORIES`, or `GITHUB_REPOSITORY` into the LLM child process. Order templates may read the issue design from a file via `${issue_body_file}` when the engine supplies that variable.
 
 ### `queue` subcommands
@@ -268,6 +270,10 @@ Commands routed through `issuesmith.cli` print usage errors to **stderr** in a m
 
 Commands implemented in `issuesmith.cli` and the module-level parsers for `queue`, `engine`, `metrics rework`, `publish`, `smoke`, and `version-bump` use this contract on usage mistakes. `gh`, `dispatch`, `tier`, `verify`, and `convert-to-milestone` still use their legacy argparse stderr shapes.
 
+### Pipeline status (ghdag reply blocks)
+
+LLM steps and `engine run-guarded` report step success or failure on **stdout** through one top-level ghdag reply block (see the `engine` subcommands section). The block uses `status: ok` or `status: failed` with `code: <PIPELINE_STATUS value>` (for example `IMPL_DONE`, `CP2_FAIL`). Rate-limit pauses emit `status: wait_quota` with `engines:` and optional `after:`. Readers such as `issuesmith.engine.extract_status_values()` and ghdag treat the reply block as authoritative; legacy lines that only print `PIPELINE_STATUS: <value>` are still accepted when no reply block is present.
+
 ### `--json` commands
 
 | Command | JSON top-level shape |
@@ -293,7 +299,7 @@ Supported Python imports are limited to seven modules (`issuesmith.__all__` is e
 | Module | Symbols |
 |---|---|
 | `issuesmith.contract` | `StepContext`, `StepResult`, `StepConfig`, `Andon`, `RetrySignal`, `RetryReason`, `parse_issue_metadata`, `validate_issue_metadata`, `MetadataViolation` |
-| `issuesmith.verbs` | `AcceptanceError`, `AcceptanceVerdict`, `ReviewFacts`, `ChildPlan`, `ChildPlanEntry`, `ChildPlanError`, `WorktreeError`, `block_design_only_issue`, `check_acceptance`, `check_contract`, `cleanup_branches`, `cleanup_worktrees`, `close_issue`, `create_child`, `ensure_base_included`, `exec_file`, `extract_contract`, `find_pr`, `map_step_result`, `merge_pr`, `merge_state`, `plan_children`, `prepare_worktree`, `publish_branch`, `resolve`, `resolve_base_ref`, `route`, `review_tier`, `run_guarded`, `run_verified`, `unchecked_acceptance_count`, `validate_children`, `widen_allow_paths` |
+| `issuesmith.verbs` | `AcceptanceError`, `AcceptanceVerdict`, `ReviewFacts`, `ChildPlan`, `ChildPlanEntry`, `ChildPlanError`, `WorktreeError`, `block_design_only_issue`, `check_acceptance`, `check_contract`, `cleanup_branches`, `cleanup_worktrees`, `close_issue`, `create_child`, `ensure_base_included`, `exec_file`, `extract_contract`, `find_pr`, `map_step_result`, `merge_pr`, `merge_state`, `OrderRun`, `plan_children`, `pre_llm_violations`, `prepare_worktree`, `RebumpResult`, `publish_branch`, `rebump_onto_base`, `resolve`, `resolve_base_ref`, `route`, `review_tier`, `run_guarded`, `run_order`, `run_verified`, `unchecked_acceptance_count`, `validate_children`, `widen_allow_paths` |
 | `issuesmith.gates` | `Verdict`, `GateBuildContext`, `GateBuildError`, `GateEntry`, `RequiresGate`, `GATE_REGISTRY`, `NON_REPAIRABLE_RULE_IDS`, `is_non_repairable_rule_id`, `resolve_gate`, `validate_step_requires`, `check_scope`, `check_pr_scope`, `check_ac_complete`, `check_deps`, `Violation`, `Gate`, `PreconditionContext`, `normalize_allow_path`, `external_target_state` |
 | `issuesmith.config` | `get_config`, `load_config`, `IssuesmithConfig`, `LanguagePack` (phase → role via IssuesmithConfig.phase(name).role) |
 | `issuesmith.andon` | `Andon`, `AndonSink`, `AutoAnswerPlan`, `raise_andon`, `list_open`, `list_open_records`, `answer`, `from_comment`, `to_comment`, `plan_auto_answers`, `apply_auto_answers` |

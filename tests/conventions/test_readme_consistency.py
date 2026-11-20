@@ -109,6 +109,37 @@ def test_readme_versions_match_pyproject():
         assert not bad_gh, f"ghdag tags in README {bad_gh} not in pyproject pins {pins}"
 
 
+_REQUIRED_SECTIONS = (
+    "## Status",
+    "## Installation",
+    "## Quick Start",
+    "## CLI Reference",
+    "## Public API",
+    "## Architecture",
+    "## Configuration",
+    "## Error Reference",
+    "## License",
+)
+
+_SPDX_IN_LICENSE = re.compile(
+    r"## License\b[\s\S]*?SPDX\s+`([^`]+)`",
+    re.IGNORECASE,
+)
+
+
+def test_readme_has_required_sections():
+    """OSS README §4.1 headings are present and License SPDX matches pyproject."""
+    readme = _README.read_text(encoding="utf-8")
+    for heading in _REQUIRED_SECTIONS:
+        assert heading in readme, f"README missing section {heading}"
+    m = _SPDX_IN_LICENSE.search(readme)
+    assert m, "README ## License must include SPDX `...`"
+    pyproject = _PYPROJECT.read_text(encoding="utf-8")
+    license_m = re.search(r'^license\s*=\s*"([^"]+)"', pyproject, re.MULTILINE)
+    assert license_m, "pyproject.toml missing license"
+    assert m.group(1) == license_m.group(1)
+
+
 def test_readme_step_modules_resolve():
     readme = _README.read_text(encoding="utf-8")
     unresolved = unresolved_issuesmith_step_modules(readme)
