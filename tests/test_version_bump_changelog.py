@@ -274,6 +274,11 @@ def test_run_bump_without_changelog_commits_only_pyproject(
 # --- CJK commit subjects (#7471) --------------------------------------------
 
 
+def test_has_cjk_does_not_decode_unicode_escapes():
+    """The changelog filter only treats literal CJK as CJK."""
+    assert not _has_cjk(r"\u65e5")
+
+
 def test_run_bump_drops_cjk_subjects_when_changelog_has_no_cjk(
     tmp_path: Path,
 ):

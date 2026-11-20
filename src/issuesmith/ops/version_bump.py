@@ -35,13 +35,22 @@ _CC_SUBJECT = re.compile(
 )
 _SKIP_CHANGELOG_TYPES = frozenset({"test", "ci", "style", "wip"})
 _CHANGELOG_SECTION_ORDER = ("Added", "Changed", "Fixed")
+# Same ranges as issuesmith.gates.worktree._CJK_RANGE_RE; kept local so this
+# module can run as a standalone script without importing gates.
+_CJK_RE = re.compile(
+    "["
+    + chr(0x3000) + "-" + chr(0x30FF)
+    + chr(0x3400) + "-" + chr(0x9FFF)
+    + chr(0xF900) + "-" + chr(0xFAFF)
+    + chr(0xFF00) + "-" + chr(0xFFEF)
+    + chr(0xAC00) + "-" + chr(0xD7AF)
+    + "]"
+)
 
 
 def _has_cjk(text: str) -> bool:
     """True when ``text`` contains a CJK character (literal only, no escapes)."""
-    from issuesmith.gates.worktree import line_has_cjk
-
-    return line_has_cjk(text)
+    return _CJK_RE.search(text) is not None
 
 
 @dataclass(frozen=True)
