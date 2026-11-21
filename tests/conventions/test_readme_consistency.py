@@ -3,8 +3,14 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import sys
 
 from tests.conventions._util import REPO_ROOT
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
 
 _README = REPO_ROOT / "README.md"
 _PYPROJECT = REPO_ROOT / "pyproject.toml"
@@ -17,11 +23,7 @@ _CURRENT_RELEASE = re.compile(
     r"current release is \*\*v([\d.]+(?:[a-zA-Z0-9._-]*)?)\*\*",
     re.IGNORECASE,
 )
-_GHDAG_GIT_V = re.compile(r"github\.com/sumipan/ghdag\.git@v([\d.]+(?:[a-zA-Z0-9._-]*)?)")
 _PY_VERSION = re.compile(r'^version\s*=\s*"([^"]+)"', re.MULTILINE)
-_GHDAG_PIN = re.compile(
-    r"ghdag @ git\+https://github\.com/sumipan/ghdag\.git@v([\d.]+(?:[a-zA-Z0-9._-]*)?)"
-)
 _MODULE_LINE = re.compile(r"^\s*module:\s*([a-zA-Z_][\w.]*)\s*$", re.MULTILINE)
 
 
@@ -32,11 +34,6 @@ def _pyproject_version() -> str:
     return m.group(1)
 
 
-def _pyproject_ghdag_pins() -> set[str]:
-    text = _PYPROJECT.read_text(encoding="utf-8")
-    return set(_GHDAG_PIN.findall(text))
-
-
 def _issuesmith_versions_in_readme(text: str) -> set[str]:
     found: set[str] = set()
     for line in text.splitlines():
@@ -45,15 +42,6 @@ def _issuesmith_versions_in_readme(text: str) -> set[str]:
         found.update(_ISSUESMITH_GIT_V.findall(line))
         found.update(_VERSION_BADGE.findall(line))
         found.update(_CURRENT_RELEASE.findall(line))
-    return found
-
-
-def _ghdag_versions_in_readme(text: str) -> set[str]:
-    found: set[str] = set()
-    for line in text.splitlines():
-        if "since v" in line.lower():
-            continue
-        found.update(_GHDAG_GIT_V.findall(line))
     return found
 
 
@@ -101,12 +89,19 @@ def test_readme_versions_match_pyproject():
     bad_iss = {v for v in iss_versions if v != expected}
     assert not bad_iss, f"issuesmith versions in README {bad_iss} != pyproject {expected}"
 
-    ghdag_in_readme = _ghdag_versions_in_readme(readme)
-    if ghdag_in_readme:
-        pins = _pyproject_ghdag_pins()
-        assert pins, "README cites ghdag tags but pyproject has no ghdag pin"
-        bad_gh = {v for v in ghdag_in_readme if v not in pins}
-        assert not bad_gh, f"ghdag tags in README {bad_gh} not in pyproject pins {pins}"
+
+def test_pyproject_ghdag_is_lower_bound_in_both_extras():
+    """Refs sumipan/issuesmith#7744: ghdag extra uses the same lower-bound specifier."""
+    data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
+    extras = data["project"]["optional-dependencies"]
+    ghdag_spec = extras["ghdag"][0]
+    dev_specs = [s for s in extras["dev"] if str(s).startswith("ghdag")]
+    assert len(dev_specs) == 1
+    dev_spec = dev_specs[0]
+    assert ghdag_spec == dev_spec
+    for spec in (ghdag_spec, dev_spec):
+        assert spec.startswith("ghdag>=")
+        assert "@" not in spec
 
 
 _REQUIRED_SECTIONS = (
