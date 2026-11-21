@@ -17,7 +17,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install package and ghdag (pin from pyproject)
+      - name: Install ghdag from main
+        run: pip install "ghdag @ git+https://github.com/sumipan/ghdag.git@main"
+      - name: Install package
         run: pip install -e ".[dev]"
       - name: Ruff
         run: ruff check src/ tests/

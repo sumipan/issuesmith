@@ -18,9 +18,13 @@ if TYPE_CHECKING:
     from issuesmith.config import IssuesmithConfig
     from issuesmith.preconditions import PreconditionContext
 
-_PIN_RE = re.compile(
+_URL_PIN_RE = re.compile(
     r"(?P<package>[a-zA-Z0-9_-]+)(?:\[[^\]]*\])?"
     r"\s*@\s*git\+[^@]+@v?(?P<version>\d+\.\d+\.\d+)"
+)
+_LOWER_BOUND_RE = re.compile(
+    r"(?P<package>[A-Za-z0-9_.-]+)(?:\[[^\]]*\])?"
+    r"\s*>=\s*v?(?P<version>\d+\.\d+\.\d+)"
 )
 
 
@@ -49,11 +53,46 @@ def requires_pins(metadata: dict) -> dict[str, Version]:
     return out
 
 
-def pin_version(pyproject_text: str, package: str) -> Version | None:
+def url_pin_version(pyproject_text: str, package: str) -> Version | None:
     """Read a git-pin version for ``package`` from ``pyproject.toml`` text."""
-    for match in _PIN_RE.finditer(pyproject_text):
+    for match in _URL_PIN_RE.finditer(pyproject_text):
         if match.group("package") == package:
             return Version(match.group("version"))
+    return None
+
+
+def lower_bound_version(pyproject_text: str, package: str) -> Version | None:
+    """Read a ``>=`` lower-bound version for ``package`` from ``pyproject.toml`` text."""
+    for match in _LOWER_BOUND_RE.finditer(pyproject_text):
+        if match.group("package") == package:
+            return Version(match.group("version"))
+    return None
+
+
+def pin_version(pyproject_text: str, package: str) -> Version | None:
+    """Read the effective pin or lower-bound version for ``package``."""
+    url_ver = url_pin_version(pyproject_text, package)
+    if url_ver is not None:
+        return url_ver
+    return lower_bound_version(pyproject_text, package)
+
+
+def base_pyproject_text(metadata: dict, config: IssuesmithConfig) -> str | None:
+    """Return ``origin/<base_branch>:pyproject.toml`` from the scoped checkout, if readable."""
+    from issuesmith.scope_gate import resolve_scope_root
+
+    root = resolve_scope_root(metadata, config)
+    if root is None:
+        return None
+    base_branch = str(metadata.get("base_branch") or "main")
+    proc = subprocess.run(
+        ["git", "-C", str(root), "show", f"origin/{base_branch}:pyproject.toml"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode == 0:
+        return proc.stdout
     return None
 
 
@@ -136,7 +175,6 @@ def unlanded_pins(
 def develop_pins_landed(body: str, config: IssuesmithConfig) -> tuple[bool, str]:
     """Return whether ``requires_pins`` in ``body`` have landed for develop."""
     from issuesmith.context_hook import parse_issue_metadata
-    from issuesmith.scope_gate import resolve_scope_root
 
     try:
         metadata = parse_issue_metadata(body)
@@ -151,18 +189,7 @@ def develop_pins_landed(body: str, config: IssuesmithConfig) -> tuple[bool, str]
     if not required:
         return True, "ok"
 
-    root = resolve_scope_root(metadata, config)
-    base_branch = str(metadata.get("base_branch") or "main")
-    base_text: str | None = None
-    if root is not None:
-        proc = subprocess.run(
-            ["git", "-C", str(root), "show", f"origin/{base_branch}:pyproject.toml"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if proc.returncode == 0:
-            base_text = proc.stdout
+    base_text = base_pyproject_text(metadata, config)
 
     unlanded = unlanded_pins(required, base_text, config.installs)
     if not unlanded:

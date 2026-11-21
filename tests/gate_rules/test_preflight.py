@@ -8,7 +8,7 @@ import issuesmith.gate_rules  # noqa: F401 - populates issuesmith.gate_registry.
 from issuesmith.cli import _run_gate_preflight
 from issuesmith.config import reset_config_cache
 from issuesmith.gate_registry import GATE_REGISTRY, Violation
-from issuesmith.ops.preflight import check_post_merge, main
+from issuesmith.ops.preflight import _check_upstream_apis, check_post_merge, main
 
 
 def run_preflight_direct(argv):
@@ -72,6 +72,18 @@ def test_gate_with_labels_file():
         GATE_REGISTRY.pop("_test_capture", None)
         Path(body_path).unlink(missing_ok=True)
         Path(labels_path).unlink(missing_ok=True)
+
+
+def test_upstream_apis_failure_does_not_mention_pin(monkeypatch):
+    """Refs sumipan/issuesmith#7744: upstream API failure hints install, not pin bump."""
+    monkeypatch.setattr(
+        "issuesmith.ops.preflight.missing_upstream_apis",
+        lambda: ["ghdag.SomeApi"],
+    )
+    ok, msg = _check_upstream_apis()
+    assert ok is False
+    assert "ghdag.SomeApi" in msg
+    assert "pin" not in msg.lower()
 
 
 def test_check_post_merge_tag_fails_with_recovery_command():

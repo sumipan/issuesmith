@@ -116,6 +116,39 @@ def test_unlanded_pins_env_install_lower():
     ]
 
 
+def test_pin_version_reads_lower_bound():
+    text = 'dependencies = ["ghdag>=1.2.3"]\n'
+    assert pins.pin_version(text, "ghdag") == Version("1.2.3")
+    text_extras = 'optional = ["ghdag[x] >= 1.2.3"]\n'
+    assert pins.pin_version(text_extras, "ghdag") == Version("1.2.3")
+
+
+def test_pin_version_prefers_url_over_lower_bound():
+    text = (
+        'ghdag = "ghdag @ git+https://github.com/sumipan/ghdag.git@v2.0.0"\n'
+        'other = "ghdag>=1.2.3"\n'
+    )
+    assert pins.pin_version(text, "ghdag") == Version("2.0.0")
+
+
+def test_lower_bound_version_ignores_other_package_prefix():
+    text = 'dep = "ghdag-foo>=9.9.9"\n'
+    assert pins.lower_bound_version(text, "ghdag") is None
+
+
+def test_unlanded_pins_lower_bound_landed():
+    required = {"ghdag": Version("1.2.0")}
+    base = 'ghdag = "ghdag>=1.3.0"\n'
+    assert pins.unlanded_pins(required, base, {}) == []
+
+
+def test_unlanded_pins_lower_bound_below_required():
+    required = {"ghdag": Version("1.2.0")}
+    base = 'ghdag = "ghdag>=1.1.0"\n'
+    got = pins.unlanded_pins(required, base, {})
+    assert got == ["ghdag v1.2.0 (base=v1.1.0, installed=unknown)"]
+
+
 def test_unlanded_pins_env_install_missing():
     """Refs sumipan/nexus#7096 acceptance: @env for absent package is installed=unknown."""
     pkg = "issuesmith-nonexistent-package-7096"

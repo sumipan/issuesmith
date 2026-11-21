@@ -10,6 +10,7 @@ from issuesmith.config import get_config
 from issuesmith.context_hook import parse_issue_metadata
 from issuesmith.contract import extract_change_table_rows
 from issuesmith.gate_registry import GATE_REGISTRY, Violation
+from issuesmith.pins import base_pyproject_text, lower_bound_version, url_pin_version
 from issuesmith.pr_scope import normalize_allow_path
 
 _VERSION_TOKEN = re.compile(r"v?\d+\.\d+\.\d+")
@@ -200,6 +201,16 @@ class PinBumpRules:
         package_names = frozenset(cfg.pin_packages) | pkg_names
         if self_package is not None:
             package_names = package_names - {self_package}
+        base_text = base_pyproject_text(metadata, cfg)
+        if base_text is not None:
+            package_names = frozenset(
+                pkg
+                for pkg in package_names
+                if not (
+                    url_pin_version(base_text, pkg) is None
+                    and lower_bound_version(base_text, pkg) is not None
+                )
+            )
         required_pins = required if isinstance(required, dict) else {}
         hits = _pin_change_lines(body, package_names, required_pins)
         if not hits:

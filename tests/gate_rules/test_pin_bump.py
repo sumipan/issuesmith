@@ -327,6 +327,57 @@ Feature work only.
     assert violations[0].rule_id == "pin_bump.self_requires_pin"
 
 
+_GHDAG_PIN_RAISE_BODY = """\
+```yaml
+target_repo: sumipan/issuesmith
+base_branch: main
+allow_paths:
+  - pyproject.toml
+requires_pins:
+  ghdag: 0.120.2
+```
+
+## Design
+
+Raise the ghdag pin to v0.121.0 in pyproject.toml.
+"""
+
+
+def test_lower_bound_package_raise_is_not_violation(monkeypatch):
+    """Refs sumipan/issuesmith#7744: base lower-bound ghdag is not pin_bump blocked."""
+    lower_base = 'ghdag = "ghdag>=0.100.0"\n'
+    monkeypatch.setattr(
+        "issuesmith.gate_rules.pin_bump.base_pyproject_text",
+        lambda metadata, config: lower_base,
+    )
+    assert _check(_GHDAG_PIN_RAISE_BODY, []) == []
+
+
+def test_url_pinned_package_change_still_violation(monkeypatch):
+    """Refs sumipan/issuesmith#7744: URL-pinned base still triggers pin_bump."""
+    url_base = (
+        'ghdag = "ghdag @ git+https://github.com/sumipan/ghdag.git@v0.100.0"\n'
+    )
+    monkeypatch.setattr(
+        "issuesmith.gate_rules.pin_bump.base_pyproject_text",
+        lambda metadata, config: url_base,
+    )
+    violations = _check(_GHDAG_PIN_RAISE_BODY, [])
+    assert len(violations) == 1
+    assert violations[0].rule_id == "pin_bump.in_feature_issue"
+
+
+def test_unreadable_base_keeps_violation(monkeypatch):
+    """Refs sumipan/issuesmith#7744: unreadable base keeps pin_bump enforcement."""
+    monkeypatch.setattr(
+        "issuesmith.gate_rules.pin_bump.base_pyproject_text",
+        lambda metadata, config: None,
+    )
+    violations = _check(_GHDAG_PIN_RAISE_BODY, [])
+    assert len(violations) == 1
+    assert violations[0].rule_id == "pin_bump.in_feature_issue"
+
+
 @pytest.mark.parametrize("required_version", ["0.120.2", "v0.120.2"])
 def test_pin_bump_ignores_required_version_on_a_line_with_the_pin_word(required_version: str):
     body = f"""\

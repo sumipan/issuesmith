@@ -64,7 +64,10 @@ def missing_upstream_apis(
 def _check_upstream_apis() -> tuple[bool, str]:
     missing = missing_upstream_apis()
     if missing:
-        return False, f"upstream_apis: missing: {', '.join(missing)} (bump the ghdag pin)"
+        return False, (
+            f"upstream_apis: missing: {', '.join(missing)} "
+            "(install a ghdag version that provides these names)"
+        )
     return True, "upstream_apis: ok"
 
 
@@ -95,7 +98,7 @@ def _check_shell_adapter() -> tuple[bool, str]:
     except (GhdagError, ValueError) as e:
         return False, (
             f"get_command_adapter('shell') failed: {e}\n"
-            "  Fix: reinstall the pinned ghdag version"
+            "  Fix: install a ghdag version that provides get_command_adapter('shell')"
         )
     return True, f"shell adapter OK: {type(adapter).__name__}"
 
