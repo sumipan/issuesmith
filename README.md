@@ -9,23 +9,23 @@ The package bundles design and merge gates, a request queue with triage, lane pl
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.204.0-blue)
+![version](https://img.shields.io/badge/version-v0.204.1-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.204.0** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.204.1** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
 ```bash
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.204.0"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.204.1"
 ```
 
 Gates, forge access, `observe`, `andon`, `lanes`, and `metrics` import ghdag, so install the `ghdag` extra unless another dependency already provides ghdag. The base install alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.204.0"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.204.1"
 ```
 
 | Item | Value |
@@ -101,6 +101,8 @@ allow_paths:
 
 `target_repo` must appear in `supported_repos`. An optional `## Acceptance Criteria` section with a fenced `yaml` block (`paths_must_exist`, `paths_must_not_exist`, `greps_must_be_empty`) lets `ac_format` and `ac_contract` enforce contract checks. The line calls `python3 -m issuesmith context`, then packaged prepare through merge.
 
+**When the line stops:** Issues labeled `scope:milestone` halt at `prepare` with a `decision` andon before any worktree exists. Issue-shaped gate violations on `prepare` (`design_lint`, `ac_format`, `scope_breadth`, …) are not auto-repaired. Dispatch raises a `decision` andon such as `non-repairable gate violation in step prepare: <message>`. Fix the Issue body, then `python3 -m issuesmith andon answer <id> resume`. On `verify`, repairable failures may run the repair step twice; persistent violations open a `decision` andon (`pr_scope` can offer `widen:<files>`). The line does not call `ensure_base_included` on `prepare`; `base_freshness` on `verify` handles catching up to the base branch.
+
 ### Reference line gates by step
 
 Gate ids for each step's `requires` list appear in the extracted `issuesmith.yaml`. Definitions are in [Gates](#gates).
@@ -110,8 +112,6 @@ Gate ids for each step's `requires` list appear in the extracted `issuesmith.yam
 | `prepare` | `deps`, `design_lint`, `ac_format`, `scope_coupling`, `allow_paths_forbidden`, `scope_breadth` |
 | `verify` | `base_freshness`, `lint`, `tests`, `pr_scope`, `ac_contract` |
 | `review` | `review` (bound gate; see [Gates](#gates)) |
-
-**Stops and recovery:** Issues labeled `scope:milestone` halt at `prepare` with a `decision` andon before any worktree exists. Issue-shaped gate violations on `prepare` (`design_lint`, `ac_format`, `scope_breadth`, …) are not auto-repaired. Dispatch raises a `decision` andon such as `non-repairable gate violation in step prepare: <message>`. Fix the Issue body, then `python3 -m issuesmith andon answer <id> resume`. On `verify`, repairable failures may run the repair step twice; persistent violations open a `decision` andon (`pr_scope` can offer `widen:<files>`). The line does not call `ensure_base_included` on `prepare`; `base_freshness` on `verify` handles catching up to the base branch.
 
 Validate configuration:
 
