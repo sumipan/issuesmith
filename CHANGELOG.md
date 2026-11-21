@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.204.0 - 2026-11-22
+
+### Added
+
+- pins: use ghdag lower bounds instead of git URL pins
+
 ## 0.203.10 - 2026-11-21
 
 ### Fixed
