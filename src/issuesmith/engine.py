@@ -1649,7 +1649,7 @@ def write_reply_block(
     else:
         raise ValueError(f"unknown reply block outcome: {outcome!r}")
     lines.append("```")
-    out.write("\n".join(lines) + "\n")
+    out.write("\n" + "\n".join(lines) + "\n")
     out.flush()
 
 

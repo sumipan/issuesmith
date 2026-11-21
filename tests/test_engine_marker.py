@@ -6,9 +6,12 @@ the CP2 FAIL handler.
 """
 from __future__ import annotations
 
-import pytest
+import io
 
-from issuesmith.engine import _has_inline_marker, extract_status_values
+import pytest
+from ghdag.core import reply_block
+
+from issuesmith.engine import _has_inline_marker, emit_pipeline_reply, extract_status_values
 
 # Shapes of the real incident strings from #4191 / #4202: prose glued to the marker
 # without whitespace, rewritten in English (#3385 / #4471).
@@ -82,3 +85,24 @@ def test_multiple_markers_preserve_order_with_trailing_split(capsys):
     stdout = f"{_CP2_PASS_GLUED_SHORT}\nPIPELINE_STATUS: IMPL_DONE\n"
     assert extract_status_values(stdout) == ["CP2_PASS", "IMPL_DONE"]
     assert capsys.readouterr().err.count("marker line had trailing text after") == 1
+
+
+def test_emit_pipeline_reply_after_unterminated_output_is_parsed():
+    """Refs #7728 — reply block after unterminated LLM output still parses."""
+    buf = io.StringIO()
+    buf.write("```ghdag\nstatus: ok\ncode: CP2_PASS\n```")
+    emit_pipeline_reply("CP2_DONE", sink=buf, outcome="ok")
+    parsed = reply_block.parse_reply_block(buf.getvalue())
+    assert parsed is not None
+    assert parsed.status == "ok"
+    assert parsed.code == "CP2_DONE"
+
+
+def test_emit_pipeline_reply_fence_starts_at_line_head():
+    """Refs #7728 — emit_reply fence must not glue to prior output on the same line."""
+    buf = io.StringIO()
+    buf.write("abc")
+    emit_pipeline_reply("IMPL_FAILED", sink=buf)
+    lines = buf.getvalue().splitlines()
+    assert "```ghdag" in lines
+    assert not any("```ghdag" in line and line != "```ghdag" for line in lines)
