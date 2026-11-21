@@ -5,6 +5,8 @@ import importlib.util
 import re
 import sys
 
+from packaging.version import Version
+
 from tests.conventions._util import REPO_ROOT
 
 if sys.version_info >= (3, 11):
@@ -25,6 +27,12 @@ _CURRENT_RELEASE = re.compile(
 )
 _PY_VERSION = re.compile(r'^version\s*=\s*"([^"]+)"', re.MULTILINE)
 _MODULE_LINE = re.compile(r"^\s*module:\s*([a-zA-Z_][\w.]*)\s*$", re.MULTILINE)
+_GHDAG_GIT_INSTALL_RE = re.compile(
+    r'pip install "ghdag @ git\+https://github\.com/sumipan/ghdag\.git@v\d+\.\d+\.\d+"'
+)
+_GHDAG_GIT_V = re.compile(r"github\.com/sumipan/ghdag\.git@v([\d.]+(?:[a-zA-Z0-9._-]*)?)")
+_GHDAG_LOWER_BOUND = re.compile(r"^ghdag>=(\d+\.\d+\.\d+)$")
+_TABLE_GHDAG_V = re.compile(r"v(\d+\.\d+\.\d+)")
 
 
 def _pyproject_version() -> str:
@@ -88,6 +96,63 @@ def test_readme_versions_match_pyproject():
     assert iss_versions, "README should mention the current issuesmith version at least once"
     bad_iss = {v for v in iss_versions if v != expected}
     assert not bad_iss, f"issuesmith versions in README {bad_iss} != pyproject {expected}"
+
+
+def _installation_block(text: str) -> str:
+    start = text.find("## Installation")
+    end = text.find("## Quick Start")
+    assert start >= 0, "README missing ## Installation"
+    assert end > start, "README missing ## Quick Start after Installation"
+    return text[start:end]
+
+
+def _installation_pip_install_lines(text: str) -> list[str]:
+    block = _installation_block(text)
+    return [line.strip() for line in block.splitlines() if line.strip().startswith("pip install ")]
+
+
+def _pyproject_ghdag_lower_bound() -> Version:
+    data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
+    spec = data["project"]["optional-dependencies"]["ghdag"][0]
+    match = _GHDAG_LOWER_BOUND.match(str(spec))
+    assert match is not None, f"ghdag extra is not a lower-bound specifier: {spec!r}"
+    return Version(match.group(1))
+
+
+def _ghdag_versions_in_readme_installation(text: str) -> list[Version]:
+    block = _installation_block(text)
+    found: list[Version] = []
+    for raw in _GHDAG_GIT_V.findall(block):
+        found.append(Version(raw))
+    for line in block.splitlines():
+        if "ghdag" not in line.lower():
+            continue
+        if "@v" in line or "git+" in line:
+            continue
+        for raw in _TABLE_GHDAG_V.findall(line):
+            found.append(Version(raw))
+    return found
+
+
+def test_readme_installs_ghdag_before_issuesmith_ghdag_extra():
+    """Refs sumipan/issuesmith#7748: ghdag git install precedes issuesmith[ghdag]."""
+    lines = _installation_pip_install_lines(_README.read_text(encoding="utf-8"))
+    ghdag_lines = [line for line in lines if "sumipan/ghdag" in line]
+    extra_lines = [line for line in lines if "issuesmith[ghdag]" in line]
+    assert len(ghdag_lines) == 1, ghdag_lines
+    assert _GHDAG_GIT_INSTALL_RE.fullmatch(ghdag_lines[0]), ghdag_lines[0]
+    assert len(extra_lines) == 1, extra_lines
+    assert lines.index(ghdag_lines[0]) < lines.index(extra_lines[0])
+
+
+def test_readme_ghdag_install_tag_meets_pyproject_lower_bound():
+    """Refs sumipan/issuesmith#7748: README ghdag versions sit at or above pyproject bound."""
+    readme = _README.read_text(encoding="utf-8")
+    lower = _pyproject_ghdag_lower_bound()
+    versions = _ghdag_versions_in_readme_installation(readme)
+    assert versions, "README Installation should document a ghdag version"
+    bad = [v for v in versions if v < lower]
+    assert not bad, f"README ghdag versions {bad} below pyproject lower bound {lower}"
 
 
 def test_pyproject_ghdag_is_lower_bound_in_both_extras():

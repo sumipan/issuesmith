@@ -19,6 +19,10 @@ The current release is **v0.204.1** (pre-1.0). Public interfaces can change in a
 ## Installation
 
 ```bash
+# ghdag is not on PyPI either. Install it first from a git tag at or above
+# the lower bound in pyproject.toml (ghdag>=0.152.2), then install issuesmith.
+pip install "ghdag @ git+https://github.com/sumipan/ghdag.git@v0.152.2"
+
 pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.204.1"
 ```
 
@@ -32,8 +36,8 @@ pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.204.1
 |---|---|
 | Python | `>=3.10` (tested on 3.10, 3.11, 3.12) |
 | Runtime dependencies | `pyyaml`, `ruamel.yaml`, `packaging`, `python-dotenv` |
-| `[ghdag]` extra | ghdag git tag pinned in this repo's `pyproject.toml` (`[project.optional-dependencies].ghdag`) — v0.151.1 |
-| `[dev]` extra | `pytest`, `pytest-cov`, `mypy`, `ruff`, plus the same ghdag pin as `[ghdag]` |
+| `[ghdag]` extra | `ghdag>=0.152.2` lower bound in this repo's `pyproject.toml` (`[project.optional-dependencies].ghdag`); install ghdag from its git tag first, as above |
+| `[dev]` extra | `pytest`, `pytest-cov`, `mypy`, `ruff`, plus the same ghdag lower bound as `[ghdag]` |
 | Console script | `issuesmith` (`issuesmith.cli:main`) |
 
 See [TESTING.md](./TESTING.md) for what tests should and should not pin.
