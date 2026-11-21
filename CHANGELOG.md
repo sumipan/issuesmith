@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.204.1 - 2026-11-22
+
+### Changed
+
+- readme: restore When the line stops paragraph for develop line
+
 ## 0.204.0 - 2026-11-22
 
 ### Added
