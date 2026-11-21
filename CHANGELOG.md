@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.203.9 - 2026-11-21
+
+### Changed
+
+- bump ghdag to v0.152.2
+
 ## 0.203.8 - 2026-11-21
 
 ### Added
