@@ -80,8 +80,20 @@ _FAKE_AGENT = textwrap.dedent(
     if [[ -f "$MODE_FILE" ]]; then
       MODE="$(cat "$MODE_FILE")"
     fi
+    STATE_FILE="$(dirname "$0")/fake-engine-state"
     if [[ "$PROMPT" == *"Review order"* ]] || [[ "$PROMPT" == *"REVIEW_PASS"* ]]; then
       case "$MODE" in
+        review_repair_breaks_tests)
+          REVIEW_ROUND=0
+          if [[ -f "$STATE_FILE" ]]; then
+            REVIEW_ROUND="$(cat "$STATE_FILE")"
+          fi
+          if [[ "$REVIEW_ROUND" == "0" ]]; then
+            echo 1 >"$STATE_FILE"
+            printf '%s\\n' 'PIPELINE_STATUS: REVIEW_FAILED'
+            exit 1
+          fi
+          ;;
         review_advance_clean)
           ORIGIN="$(git remote get-url origin)"
           PUSH_DIR="$(mktemp -d)"
@@ -119,6 +131,33 @@ _FAKE_AGENT = textwrap.dedent(
         printf 'import os\\n\\nVALUE = 2\\n' >>"$TARGET"
         git add src/feature.py
         git commit -m "fake engine change" || true
+        ;;
+      review_repair_breaks_tests)
+        REPAIR_ROUND=0
+        if [[ -f "$STATE_FILE" ]]; then
+          REPAIR_ROUND="$(cat "$STATE_FILE")"
+        fi
+        if [[ "$REPAIR_ROUND" -ge 1 ]]; then
+          printf 'VALUE = 99\\n' >"$TARGET"
+          printf '%s\\n' \
+            'from src import feature' \
+            '' \
+            'def test_value() -> None:' \
+            '    assert feature.VALUE == 2' \
+            >tests/test_feature.py
+          git add src/feature.py tests/test_feature.py
+          git commit -m "review repair breaks tests" || true
+        else
+          printf 'VALUE = 2\\n' >"$TARGET"
+          printf '%s\\n' \
+            'from src import feature' \
+            '' \
+            'def test_value() -> None:' \
+            '    assert feature.VALUE == 2' \
+            >tests/test_feature.py
+          git add src/feature.py tests/test_feature.py
+          git commit -m "fake engine change" || true
+        fi
         ;;
       good|review_advance_clean|review_advance_conflict)
         printf 'VALUE = 2\\n' >"$TARGET"
@@ -666,6 +705,9 @@ def _issue_comments(client, number: int) -> list[str]:
 
 def _set_fake_engine_mode(host: Path, mode: str) -> None:
     (host / "bin" / "fake-engine-mode").write_text(mode, encoding="utf-8")
+    state = host / "bin" / "fake-engine-state"
+    if state.is_file():
+        state.unlink()
 
 
 def _labels(client, number: int) -> set[str]:
@@ -990,6 +1032,24 @@ def test_issue_flows_from_ready_to_done_on_local_forge(host_env) -> None:
     assert pull_path.is_file(), f"missing local-forge pull record: {pull_path}"
     pull = json.loads(pull_path.read_text(encoding="utf-8"))
     assert pull.get("merged") is True, pull
+
+
+def test_review_repair_breaking_tests_blocks_merge(host_env) -> None:
+    """Refs sumipan/issuesmith#7676 AC7 — review repair is lint/tests re-checked."""
+    host, client, env, _slug = host_env
+    main_feature = _git(host, "show", "main:src/feature.py")
+    assert main_feature.returncode == 0
+    assert "VALUE = 1" in main_feature.stdout
+    _set_fake_engine_mode(host, "review_repair_breaks_tests")
+    number = client.issue_create("review recheck", _issue_body())
+    client.issue_update(number, labels_add=["issuesmith:develop-ready"])
+    outcome = _run_until(client, number, env, host, expect_done=False, max_rounds=80)
+    assert outcome == "andon"
+    labels = _labels(client, number)
+    assert "issuesmith:develop-done" not in labels
+    after = _git(host, "show", "main:src/feature.py")
+    assert after.returncode == 0
+    assert after.stdout == main_feature.stdout
 
 
 def test_failing_verify_raises_andon_and_resume_continues_from_verify(

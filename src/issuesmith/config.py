@@ -206,6 +206,7 @@ class StepConfig:
     requires: tuple[str, ...] = ()
     input_kind: Literal["issue", "worktree", "artifact"] = "issue"
     requires_declared: bool = False
+    recheck: tuple[str, ...] = ()
     accepts: tuple[str, ...] = ()
     andon_when: tuple[str, ...] = ()
     repair: RepairConfig = field(default_factory=RepairConfig)
@@ -983,6 +984,12 @@ def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
                     f"steps.{step_id}.input_kind must be one of"
                     f" {sorted(_valid_input_kinds)}, got {input_kind!r}"
                 )
+        recheck: tuple[str, ...] = ()
+        if "recheck" in conf:
+            recheck_raw = conf["recheck"]
+            if not isinstance(recheck_raw, list):
+                raise ConfigError(f"steps.{step_id}.recheck must be a list")
+            recheck = tuple(str(g) for g in recheck_raw)
         accepts: tuple[str, ...] = ()
         if "accepts" in conf:
             accepts_raw = conf["accepts"]
@@ -1001,7 +1008,7 @@ def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
 
         repair = _build_repair(conf.get("repair"), str(step_id))
         review = _build_review(conf.get("review"), str(step_id))
-        if ("review" in requires or "review" in accepts) and review is None:
+        if ("review" in requires or "review" in accepts or "review" in recheck) and review is None:
             raise ConfigError(
                 f"steps.{step_id}: gate 'review' requires steps.{step_id}.review"
             )
@@ -1019,6 +1026,7 @@ def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
             requires=requires,
             input_kind=input_kind,  # type: ignore[arg-type]
             requires_declared=requires_declared,
+            recheck=recheck,
             accepts=accepts,
             andon_when=andon_when,
             repair=repair,

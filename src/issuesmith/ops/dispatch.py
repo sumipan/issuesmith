@@ -768,6 +768,102 @@ def _violation_fingerprint(v) -> tuple[str, str, str]:
     return (v.rule_id, v.location or "", v.message)
 
 
+_WORKTREE_HEAD_UNREADABLE = "\x00"
+
+
+def _worktree_head(worktree_path: str) -> str:
+    """Return ``git rev-parse HEAD`` for worktree_path, or an unreadable sentinel."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", worktree_path, "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return _WORKTREE_HEAD_UNREADABLE
+    if proc.returncode != 0:
+        return _WORKTREE_HEAD_UNREADABLE
+    head = (proc.stdout or "").strip()
+    return head if head else _WORKTREE_HEAD_UNREADABLE
+
+
+def _heads_differ(initial: str, current: str) -> bool:
+    if initial == _WORKTREE_HEAD_UNREADABLE or current == _WORKTREE_HEAD_UNREADABLE:
+        return True
+    return initial != current
+
+
+def _merge_gate_ids(
+    requires: tuple[str, ...], extra: tuple[str, ...],
+) -> tuple[str, ...]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for gate_id in (*requires, *extra):
+        if gate_id not in seen:
+            seen.add(gate_id)
+            out.append(gate_id)
+    return tuple(out)
+
+
+def _resolve_requires_gate_ids(
+    step_cfg: StepConfig,
+    context: dict[str, str],
+    *,
+    origin: Literal["requires", "accepts"],
+    initial_head: str | None,
+) -> tuple[tuple[str, ...], str | None, bool]:
+    """Gate ids for this evaluation, captured initial HEAD, and whether recheck is included."""
+    if origin == "accepts":
+        return step_cfg.accepts, initial_head, False
+
+    captured = initial_head
+    wt = context.get("worktree_path", "")
+    if step_cfg.recheck and wt:
+        if captured is None:
+            captured = _worktree_head(wt)
+        current = _worktree_head(wt)
+        if _heads_differ(captured, current):
+            merged = _merge_gate_ids(step_cfg.requires, step_cfg.recheck)
+            included_recheck = bool(step_cfg.recheck)
+            return merged, captured, included_recheck
+    return step_cfg.requires, captured, False
+
+
+def _maybe_rerun_after_head_move(
+    step_cfg: StepConfig,
+    step_id: str,
+    context: dict[str, str],
+    *,
+    origin: Literal["requires", "accepts"],
+    initial_head: str | None,
+    included_recheck: bool,
+    repair_count: int,
+    auto_fix_round: int,
+    _total_repair_count: int | None,
+    _initial_blocking_count: int | None,
+) -> int | bool:
+    """Re-run requires with recheck when HEAD moved mid-pass without recheck in the set."""
+    if origin != "requires" or not step_cfg.recheck or not context.get("worktree_path"):
+        return False
+    if included_recheck or initial_head is None:
+        return False
+    current = _worktree_head(context["worktree_path"])
+    if not _heads_differ(initial_head, current):
+        return False
+    return run_requires_loop(
+        step_cfg,
+        step_id,
+        context,
+        repair_count=repair_count,
+        auto_fix_round=auto_fix_round,
+        _total_repair_count=_total_repair_count,
+        _initial_blocking_count=_initial_blocking_count,
+        _initial_head=initial_head,
+        origin=origin,
+    )
+
+
 def _repair_limit_summary(
     step_id: str,
     *,
@@ -793,6 +889,7 @@ def run_requires_loop(
     _prev_blocking_fingerprints: frozenset[tuple[str, str, str]] | None = None,
     _total_repair_count: int | None = None,
     _initial_blocking_count: int | None = None,
+    _initial_head: str | None = None,
     origin: Literal["requires", "accepts"] = "requires",
 ) -> int | None:
     """Evaluate requires gates; auto-fix, repair, or raise andon as needed.
@@ -807,9 +904,18 @@ def run_requires_loop(
     if _total_repair_count is None:
         _total_repair_count = repair_count
 
-    gate_ids = step_cfg.requires if origin == "requires" else step_cfg.accepts
+    gate_ids, _initial_head, _included_recheck = _resolve_requires_gate_ids(
+        step_cfg, context, origin=origin, initial_head=_initial_head,
+    )
     if not gate_ids:
         return None
+
+    _pass_kw = {
+        "repair_count": repair_count,
+        "auto_fix_round": auto_fix_round,
+        "_total_repair_count": _total_repair_count,
+        "_initial_blocking_count": _initial_blocking_count,
+    }
 
     # Always fetch fresh issue body (not from context cache)
     body = _fetch_fresh_issue_body(context)
@@ -883,6 +989,15 @@ def run_requires_loop(
             file=sys.stderr,
         )
         _safe_record_metrics("requires_check", step_id, issue_num, origin=origin)
+        rerun = _maybe_rerun_after_head_move(
+            step_cfg, step_id, context,
+            origin=origin,
+            initial_head=_initial_head,
+            included_recheck=_included_recheck,
+            **_pass_kw,
+        )
+        if rerun is not False:
+            return rerun
         return None
 
     # Try deterministic auto-fixes for auto_fixable violations.
@@ -907,6 +1022,7 @@ def run_requires_loop(
                 auto_fix_round=auto_fix_round + 1,
                 _total_repair_count=_total_repair_count,
                 _initial_blocking_count=_initial_blocking_count,
+                _initial_head=_initial_head,
                 origin=origin,
             )
 
@@ -916,6 +1032,15 @@ def run_requires_loop(
             file=sys.stderr,
         )
         _safe_record_metrics("requires_check", step_id, issue_num, origin=origin)
+        rerun = _maybe_rerun_after_head_move(
+            step_cfg, step_id, context,
+            origin=origin,
+            initial_head=_initial_head,
+            included_recheck=_included_recheck,
+            **_pass_kw,
+        )
+        if rerun is not False:
+            return rerun
         return None
 
     unmerged = [v for v in result.blocking if v.rule_id == "deps.unmerged"]
@@ -942,6 +1067,15 @@ def run_requires_loop(
                 file=sys.stderr,
             )
             _safe_record_metrics("requires_check", step_id, issue_num, origin=origin)
+            rerun = _maybe_rerun_after_head_move(
+                step_cfg, step_id, context,
+                origin=origin,
+                initial_head=_initial_head,
+                included_recheck=_included_recheck,
+                **_pass_kw,
+            )
+            if rerun is not False:
+                return rerun
             return None
 
     current_fingerprints = frozenset(_violation_fingerprint(v) for v in result.blocking)
@@ -1085,6 +1219,7 @@ def run_requires_loop(
         _prev_blocking_fingerprints=current_fingerprints,
         _total_repair_count=_total_repair_count + 1,
         _initial_blocking_count=_initial_blocking_count,
+        _initial_head=_initial_head,
         origin=origin,
     )
 

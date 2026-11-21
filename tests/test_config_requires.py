@@ -216,6 +216,44 @@ def test_resolve_gate_errors_and_registry_unchanged(tmp_path, monkeypatch) -> No
     assert set(GATE_REGISTRY) == keys_before
 
 
+def test_step_config_loads_recheck_from_yaml(tmp_path, monkeypatch) -> None:
+    """Refs sumipan/issuesmith#7676 AC1 — YAML recheck becomes StepConfig.recheck."""
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "repo": "example/app",
+            "steps": {
+                "cp2": {
+                    "module": "issuesmith.steps.cp2",
+                    "recheck": ["lint", "tests"],
+                    "input_kind": "worktree",
+                },
+            },
+        },
+    )
+    step = load_config().steps["cp2"]
+    assert step.recheck == ("lint", "tests")
+
+
+def test_step_config_default_recheck_empty() -> None:
+    """Refs sumipan/issuesmith#7676 AC1 — omitted recheck defaults to empty."""
+    assert StepConfig(module="issuesmith.steps.foo").recheck == ()
+
+
+def test_validate_step_requires_unknown_recheck_gate_raises() -> None:
+    """Refs sumipan/issuesmith#7676 AC2 — unknown gate ids in recheck."""
+    steps = {
+        "wt-step": StepConfig(
+            module="issuesmith.steps.foo",
+            recheck=("no_such_recheck_gate",),
+            input_kind="worktree",
+        ),
+    }
+    with pytest.raises(ConfigError, match=r"steps\.wt-step\.recheck contains unknown gate ids"):
+        validate_step_requires(steps)
+
+
 def test_requires_chain_report_external_missing_gate(tmp_path, monkeypatch) -> None:
     from issuesmith.ops.doctor import requires_chain_report
 

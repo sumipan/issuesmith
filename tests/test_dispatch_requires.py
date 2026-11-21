@@ -5,6 +5,7 @@ gate-exception→broken / preexisting-non-blocking.
 """
 from __future__ import annotations
 
+import subprocess
 import sys
 import types
 import uuid
@@ -16,7 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from issuesmith.andon import from_comment as _andon_from_comment_body
-from issuesmith.config import StepConfig, reset_config_cache
+from issuesmith.config import RepairConfig, StepConfig, reset_config_cache
 from issuesmith.gate_registry import Violation
 from issuesmith.gates.base import ContractInput
 from issuesmith.repair import (
@@ -549,5 +550,209 @@ class TestReviewEngineErrorAndon:
         andon = _raised_andons(forge)[0]
         assert andon.kind == "decision"
         assert andon.options == ["resume_from_cp2", "split", "reject"]
+
+
+# ---------------------------------------------------------------------------
+# recheck gates — HEAD-aware requires extension (sumipan/issuesmith#7676)
+# ---------------------------------------------------------------------------
+
+
+def _init_git_worktree(tmp_path: Path) -> Path:
+    repo = tmp_path / "wt"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-b", "main"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "t@example.com"],
+        cwd=repo, capture_output=True, check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "T"],
+        cwd=repo, capture_output=True, check=True,
+    )
+    (repo / "README.md").write_text("hello\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "init"],
+        cwd=repo, capture_output=True, check=True,
+    )
+    return repo
+
+
+class TestRecheckGates:
+    def test_recheck_gates_skipped_when_head_unchanged(self, tmp_path: Path) -> None:
+        """Refs sumipan/issuesmith#7676 AC3 — stable HEAD never evaluates recheck."""
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        wt = _init_git_worktree(tmp_path)
+        built: list[tuple[str, ...]] = []
+
+        def _capture_build(gate_ids, *_args, **_kwargs):
+            built.append(tuple(gate_ids))
+            return {g: _pass_gate() for g in gate_ids}
+
+        cfg = StepConfig(
+            module="",
+            requires=("scope",),
+            recheck=("recheck_stub",),
+            input_kind="worktree",
+        )
+        context = {
+            "issue_number": "42",
+            "workflow_name": "issuesmith",
+            "base_branch": "main",
+            "worktree_path": str(wt),
+        }
+        with (
+            patch("issuesmith.ops.dispatch._build_requires_gates", side_effect=_capture_build),
+            patch("issuesmith.ops.dispatch._fetch_fresh_issue_body", return_value=""),
+            patch("issuesmith.ops.dispatch._get_issue_labels", return_value=[]),
+        ):
+            rc = run_requires_loop(cfg, "review", context)
+        assert rc is None
+        assert built == [("scope",)]
+
+    def test_recheck_gates_run_after_repair_commit(self, tmp_path: Path) -> None:
+        """Refs sumipan/issuesmith#7676 AC4 — post-repair evaluation includes recheck."""
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        wt = _init_git_worktree(tmp_path)
+        built: list[tuple[str, ...]] = []
+        scope_calls = {"n": 0}
+
+        def _scope_check():
+            scope_calls["n"] += 1
+            if scope_calls["n"] == 1:
+                return _fail_gate()
+            return _pass_gate()
+
+        def _capture_build(gate_ids, *_args, **_kwargs):
+            built.append(tuple(gate_ids))
+            out = {"scope": _scope_check()}
+            if "recheck_stub" in gate_ids:
+                out["recheck_stub"] = _fail_gate(rule_id="recheck_stub.fail")
+            return out
+
+        repair = RepairStepBoundary()
+
+        def _commit_on_repair(ctx):
+            (wt / "extra.txt").write_text("x\n", encoding="utf-8")
+            subprocess.run(["git", "add", "extra.txt"], cwd=wt, check=True, capture_output=True)
+            subprocess.run(
+                ["git", "commit", "-m", "repair commit"],
+                cwd=wt, check=True, capture_output=True,
+            )
+
+        repair.on_run = _commit_on_repair
+
+        cfg = StepConfig(
+            module="",
+            requires=("scope",),
+            recheck=("recheck_stub",),
+            input_kind="worktree",
+            repair=RepairConfig(max=1),
+        )
+        context = {
+            "issue_number": "42",
+            "workflow_name": "issuesmith",
+            "base_branch": "main",
+            "worktree_path": str(wt),
+        }
+        with (
+            patch("issuesmith.ops.dispatch._build_requires_gates", side_effect=_capture_build),
+            patch("issuesmith.ops.dispatch._fetch_fresh_issue_body", return_value=""),
+            patch("issuesmith.ops.dispatch._get_issue_labels", return_value=[]),
+            stand_in_repair_step(repair),
+            patch("issuesmith.ops.dispatch.get_forge") as mock_forge,
+        ):
+            forge = _RecordingForge()
+            mock_forge.return_value = forge
+            rc = run_requires_loop(cfg, "review", context)
+        assert rc == 1
+        assert ("scope", "recheck_stub") in built
+        assert _raised_andons(forge)
+
+    def test_recheck_after_requires_gate_commits_mid_evaluation(self, tmp_path: Path) -> None:
+        """Refs sumipan/issuesmith#7676 AC5 — late commit triggers recheck before pass."""
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        wt = _init_git_worktree(tmp_path)
+        built: list[tuple[str, ...]] = []
+        calls = {"n": 0}
+
+        class _CommittingGate:
+            def check(self, body, labels):
+                calls["n"] += 1
+                if calls["n"] == 1:
+                    (wt / "mid.txt").write_text("y\n", encoding="utf-8")
+                    subprocess.run(["git", "add", "mid.txt"], cwd=wt, check=True, capture_output=True)
+                    subprocess.run(
+                        ["git", "commit", "-m", "mid-eval commit"],
+                        cwd=wt, check=True, capture_output=True,
+                    )
+                return []
+
+            def fix(self, inp):
+                return inp
+
+        def _capture_build(gate_ids, *_args, **_kwargs):
+            built.append(tuple(gate_ids))
+            out = {"scope": _CommittingGate()}
+            if "recheck_stub" in gate_ids:
+                out["recheck_stub"] = _pass_gate()
+            return out
+
+        cfg = StepConfig(
+            module="",
+            requires=("scope",),
+            recheck=("recheck_stub",),
+            input_kind="worktree",
+        )
+        context = {
+            "issue_number": "42",
+            "workflow_name": "issuesmith",
+            "base_branch": "main",
+            "worktree_path": str(wt),
+        }
+        with (
+            patch("issuesmith.ops.dispatch._build_requires_gates", side_effect=_capture_build),
+            patch("issuesmith.ops.dispatch._fetch_fresh_issue_body", return_value=""),
+            patch("issuesmith.ops.dispatch._get_issue_labels", return_value=[]),
+        ):
+            rc = run_requires_loop(cfg, "review", context)
+        assert rc is None
+        assert built == [("scope",), ("scope", "recheck_stub")]
+
+    def test_recheck_from_first_eval_when_head_unreadable(self, tmp_path: Path) -> None:
+        """Refs sumipan/issuesmith#7676 AC6 — non-repo worktree_path always includes recheck."""
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        not_git = tmp_path / "not-a-repo"
+        not_git.mkdir()
+        built: list[tuple[str, ...]] = []
+
+        def _capture_build(gate_ids, *_args, **_kwargs):
+            built.append(tuple(gate_ids))
+            return {g: _pass_gate() for g in gate_ids}
+
+        cfg = StepConfig(
+            module="",
+            requires=("scope",),
+            recheck=("recheck_stub",),
+            input_kind="worktree",
+        )
+        context = {
+            "issue_number": "42",
+            "workflow_name": "issuesmith",
+            "base_branch": "main",
+            "worktree_path": str(not_git),
+        }
+        with (
+            patch("issuesmith.ops.dispatch._build_requires_gates", side_effect=_capture_build),
+            patch("issuesmith.ops.dispatch._fetch_fresh_issue_body", return_value=""),
+            patch("issuesmith.ops.dispatch._get_issue_labels", return_value=[]),
+        ):
+            rc = run_requires_loop(cfg, "review", context)
+        assert rc is None
+        assert built == [("scope", "recheck_stub")]
 
 
