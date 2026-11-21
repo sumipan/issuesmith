@@ -573,16 +573,19 @@ def test_failure_status_standalone_when_stdout_ends_with_status(capsys, fn_name:
 
 
 @pytest.mark.parametrize("fn_name", ["_run_emit_order", "_run_guarded_order"])
-def test_failure_status_no_blank_line_when_stdout_ends_with_newline(capsys, fn_name: str):
-    """No extra blank line is added when LLM stdout already ends with a newline."""
+def test_failure_status_single_blank_line_when_stdout_ends_with_newline(capsys, fn_name: str):
+    """Exactly one separator line precedes the fence when LLM stdout ends with a newline.
+
+    write_reply_block always prepends a newline (#7728), so a newline-terminated
+    stdout yields one blank line before the fence, never more.
+    """
     rc = _call_order_no_newline(fn_name, "line\n")
 
     assert rc == 1
     out = capsys.readouterr().out
-    assert out.startswith("line\n")
-    assert "```ghdag" in out
+    assert out.startswith("line\n\n```ghdag\n")
+    assert "line\n\n\n" not in out
     assert extract_status_values(out) == ["IMPL_FAILED"]
-    assert "line\n\n```" not in out
 
 
 def test_run_emit_order_failure_writes_single_failed_block(capsys):

@@ -439,7 +439,8 @@ def test_map_step_result_prints_derived_allow_paths_block(capsys) -> None:
     out = capsys.readouterr().out
     assert rc == 0
     marker_pos = out.index("```ghdag")
-    block = "derived_allow_paths:\n  - tests/a.py\n  - tests/b.py\n"
+    # write_reply_block prepends one newline before the fence (#7728).
+    block = "derived_allow_paths:\n  - tests/a.py\n  - tests/b.py\n\n"
     assert out[:marker_pos] == block
 
 

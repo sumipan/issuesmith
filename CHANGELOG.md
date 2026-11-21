@@ -7,6 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.203.10 - 2026-11-21
+
+### Fixed
+
+- engine: prepend newline before reply block emission
+- repair: gate reply-block leading newline on buffered content (#7728)
+
 ## 0.203.9 - 2026-11-21
 
 ### Changed

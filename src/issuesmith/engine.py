@@ -1649,7 +1649,10 @@ def write_reply_block(
     else:
         raise ValueError(f"unknown reply block outcome: {outcome!r}")
     lines.append("```")
-    out.write("\n".join(lines) + "\n")
+    # Always start on a fresh line: the sink is usually stdout and cannot be read
+    # back, so prior output may end without a newline (#7728). A blank line is
+    # harmless because reply-block parsers skip lines outside the fence.
+    out.write("\n" + "\n".join(lines) + "\n")
     out.flush()
 
 
