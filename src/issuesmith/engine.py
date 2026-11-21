@@ -1616,6 +1616,17 @@ def _status_value_from_reply_block(block: object) -> str | None:
     return f"{code}_FAILED"
 
 
+def _leading_newline_before_reply_block(out: TextIO) -> str:
+    """Newline before the fence only when buffered sink content lacks a trailing newline."""
+    getvalue = getattr(out, "getvalue", None)
+    if getvalue is None:
+        return ""
+    prior = getvalue()
+    if prior and not prior.endswith("\n"):
+        return "\n"
+    return ""
+
+
 def write_reply_block(
     sink: TextIO | None = None,
     *,
@@ -1649,7 +1660,8 @@ def write_reply_block(
     else:
         raise ValueError(f"unknown reply block outcome: {outcome!r}")
     lines.append("```")
-    out.write("\n" + "\n".join(lines) + "\n")
+    prefix = _leading_newline_before_reply_block(out)
+    out.write(prefix + "\n".join(lines) + "\n")
     out.flush()
 
 
