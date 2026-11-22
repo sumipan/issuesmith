@@ -9,12 +9,12 @@ The package bundles design and merge gates, a request queue with triage, lane pl
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.204.2-blue)
+![version](https://img.shields.io/badge/version-v0.205.0-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.204.2** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.205.0** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
@@ -23,13 +23,13 @@ The current release is **v0.204.2** (pre-1.0). Public interfaces can change in a
 # the lower bound in pyproject.toml (ghdag>=0.152.2), then install issuesmith.
 pip install "ghdag @ git+https://github.com/sumipan/ghdag.git@v0.152.2"
 
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.204.2"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.205.0"
 ```
 
 Gates, forge access, `observe`, `andon`, `lanes`, and `metrics` import ghdag, so install the `ghdag` extra unless another dependency already provides ghdag. The base install alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.204.2"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.205.0"
 ```
 
 | Item | Value |
@@ -371,6 +371,7 @@ ghdag's `WorkflowDispatcher` drives workflow timing: label polling, DAG edges, a
 | `issuesmith/gates/ac_complete.py` | AC-complete gate — wraps ac_complete_entry.check_gate to return unified Verdict |
 | `issuesmith/gates/ac_contract.py` | Acceptance contract gate — paths and greps_must_be_empty on a worktree |
 | `issuesmith/gates/base.py` | Gate protocol and ContractInput for requires evaluation (#3626) |
+| `issuesmith/gates/command.py` | Configurable lint/tests gates driven by `issuesmith.yaml` commands (#7788) |
 | `issuesmith/gates/dep.py` | Dependency gate — wraps dep_extractor.check_dependencies to return unified Verdict |
 | `issuesmith/gates/pr_scope.py` | PR scope gate — wraps pr_scope.check_pr_diff_scope to return unified Verdict |
 | `issuesmith/gates/review.py` | LLM review gate for requires evaluation (#4986) |
@@ -522,7 +523,8 @@ A file that is not found is treated as empty, which fails validation because `re
 | `scope_gate` | `enabled: true` | P0 allow_paths size: `max_files` (`80`), `max_lines` (`20000`), `hard_max_files` (`200`) |
 | `scope_coupling` | `enabled: true` | `search_dirs` (`[tests, src]`), `data_file_tests` (`true`) |
 | `scope_size` | `enabled: true` | B1 Issue size: `max_files` (`8`), `max_concerns` (`4`), `max_slices` (`3`), `delete_with_new` (`false`), `exclude_prefixes`, `atomic_phrases` (`[]`, phrases matched in the design section skip sub-plan promotion, same as `split: atomic`) |
-| `tests` | `flaky_reruns: 2`, `python_command: [python]` | Reruns of newly failing tests (`0` turns flaky detection off); `python_command` is the argv prefix used to launch pytest (baseline and flaky reruns too) |
+| `tests` | `flaky_reruns: 2`, `python_command: [python]` | Reruns of newly failing tests (`0` turns flaky detection off); `python_command` is the argv prefix used to launch pytest (baseline and flaky reruns too); `command` (`[]`) replaces pytest with a repository command (exit code 0 passes); `report: junit` with `report_path` (relative to the worktree) reads failing test IDs from JUnit XML for baseline and flaky comparison |
+| `lint` | `command: []`, `fix_command: []` | `command` replaces ruff with a repository command (exit code 0 passes); `fix_command` (requires `command`) runs once as the auto-fix |
 | `metrics` | `done_step: m2` | Rework metrics: `done_step`, `repair_templates`, `cause_targets` |
 | `derived_allow` | `enabled: true`, `ledger_globs: [tests/conventions/known_*.txt]` | Let repair (and impl ahead of repair) edit tests outside allow_paths when they reference in-scope changes, or shrink matching ledgers; newly failing tests still extend the set via TestsGate, including repository `.md` files those tests name in source (`[]` turns ledger derivation off) |
 | `external_leak` | `cjk_free_external_targets: false` | Fail added CJK lines on branches whose `target_repo` is not `repo` |
@@ -624,6 +626,7 @@ Logs, exception messages, CLI help and violation text stay English and are not p
 | `BumpCommitsError` | `issuesmith.bump_commits` | `RuntimeError` | Git could not list or rewrite publish version-bump commits |
 | `ChildPlanError` | `issuesmith.verbs.children` | `RuntimeError` | Child-plan validation or creation failed with structured violations |
 | `ConfigError` | `issuesmith.config` | `ValueError` | Invalid `issuesmith.yaml` section, language pack, gate or predicate reference; missing `phases:` or `phases[].handler`; a step in two phases; `review` gate without `steps.<id>.review` |
+| `CommandStartError` | `issuesmith.gates.command` | `RuntimeError` | The configured lint/tests command or `python_bin_command` launcher could not be started |
 | `ContextHookError` | `issuesmith.context_hook` | `ValueError` | Issue YAML metadata failed security validation before ghdag context-hook template expansion |
 | `DerivedAllowPathsError` | `issuesmith.pr_scope` | `ValueError` | `derived_allow_paths_from_result` finds malformed entries |
 | `GateBuildError` | `issuesmith.gates` | `ValueError` | A gate cannot be built from its `GateBuildContext` |
