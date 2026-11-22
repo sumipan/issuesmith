@@ -97,3 +97,22 @@ def test_terminal_without_merge_excludes_closing_done(tmp_path, monkeypatch) -> 
     terminal = get_terminal_without_merge()
     assert "issuesmith:develop-done" not in terminal
     assert "bump:done" in terminal
+
+
+def test_terminal_without_merge_excludes_cross_namespace_closing_done(
+    tmp_path, monkeypatch
+) -> None:
+    """#7811: ``<other-ns>:<closing>-done`` is also treated as closed-with-merge."""
+    _write_cfg(
+        tmp_path,
+        monkeypatch,
+        {
+            "repo": "sumipan/issuesmith",
+            "phases": _SINGLE_DEVELOP_PHASES,
+            "terminal_labels": ["issuesmith:develop-done", "wsl:develop-done", "bump:done"],
+        },
+    )
+    terminal = get_terminal_without_merge()
+    assert "wsl:develop-done" not in terminal
+    assert "issuesmith:develop-done" not in terminal
+    assert "bump:done" in terminal
