@@ -425,6 +425,7 @@ ghdag's `WorkflowDispatcher` drives workflow timing: label polling, DAG edges, a
 | `issuesmith/step_verify.py` | Declarative step verify: design_doc checks via shared B1 gate bundle |
 | `issuesmith/targets.py` | targets.py — multi-target Issue model (#2866) |
 | `issuesmith/template_ids.py` | Python 3.10 compatible ``string.Template`` identifier extraction (#3611) |
+| `issuesmith/version_policy.py` | Configurable version-bump policies for publish (#7789) |
 | `issuesmith/verbs/__init__.py` | issuesmith.verbs — public verb API extracted from step implementations |
 | `issuesmith/verbs/acceptance.py` | Acceptance verbs — gate checks, contract, and review tier |
 | `issuesmith/verbs/children.py` | Child-issue verbs — split plan, create, validate, allow_paths widen |
