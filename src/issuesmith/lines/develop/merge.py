@@ -8,7 +8,6 @@ import time
 from pathlib import Path
 
 from issuesmith.bump_commits import BumpCommitsError, bump_versions_in_range
-from issuesmith.version_policy import resolve_policy, run_bump
 from issuesmith.config import StepConfig, get_config
 from issuesmith.contract import Andon, StepContext, StepResult
 from issuesmith.forge import get_forge
@@ -24,6 +23,7 @@ from issuesmith.verbs import (
     publish_branch,
     rebump_onto_base,
 )
+from issuesmith.version_policy import resolve_policy, run_bump
 
 
 def _repo_slug(ctx: StepContext) -> str:
