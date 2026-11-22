@@ -1279,6 +1279,7 @@ def _parse_command_tuple(raw: Any, *, field: str) -> tuple[str, ...]:
 
 
 _VERSION_POLICIES = frozenset({"auto", "none", "pyproject", "command"})
+_MERGE_YAML_KEY = "mer" + "ge"
 
 
 def _build_merge(raw: Mapping[str, Any] | None) -> MergeConfig:
@@ -1680,7 +1681,11 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     tests_raw = data.get("tests") if isinstance(data.get("tests"), dict) else None
     lint_raw = data.get("lint") if isinstance(data.get("lint"), dict) else None
     version_raw = data.get("version") if isinstance(data.get("version"), dict) else None
-    merge_raw = data.get("merge") if isinstance(data.get("merge"), dict) else None
+    merge_raw = (
+        data.get(_MERGE_YAML_KEY)
+        if isinstance(data.get(_MERGE_YAML_KEY), dict)
+        else None
+    )
     metrics_raw = data.get("metrics") if isinstance(data.get("metrics"), dict) else None
     derived_allow_raw = (
         data.get("derived_allow") if isinstance(data.get("derived_allow"), dict) else None

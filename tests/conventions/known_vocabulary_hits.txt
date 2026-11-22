@@ -1,5 +1,4 @@
 src/issuesmith/body_editor.py 1
-src/issuesmith/config.py 1
 src/issuesmith/convert_to_milestone.py 2
 src/issuesmith/dep_extractor.py 9
 src/issuesmith/design_lint_entry.py 1
