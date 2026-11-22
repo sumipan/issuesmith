@@ -103,9 +103,12 @@ def get_terminal_without_merge() -> frozenset[str]:
     result: set[str] = set()
     for label in cfg.terminal_without_merge:
         result.add(label if ":" in label else f"{ns}:{label}")
-    merge_done = {lab for lab in cfg.terminal_labels if lab.endswith(":merge-done")}
+    closing_done: frozenset[str] = frozenset()
+    closing = cfg.closing_phase()
+    if closing is not None:
+        closing_done = frozenset({cfg.phase_labels(closing.name)[2]})
     for label in cfg.terminal_labels:
-        if label not in merge_done:
+        if label not in closing_done:
             result.add(label)
     return frozenset(result)
 

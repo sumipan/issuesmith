@@ -226,9 +226,11 @@ def _resume_phase_command(issue: int, phase: str) -> str:
     return f"python3 -m issuesmith resume {issue} --phase {phase}"
 
 
-def _merge_redispatch_blocked(issue: int, client: ForgePort) -> str | None:
+def _closing_redispatch_blocked(
+    issue: int, client: ForgePort, phase_name: str
+) -> str | None:
     issue_data = client.issue_get(issue, fields=["state", "labels"])
-    ok, reason = phase_preconditions("merge", issue_data, client, issue)
+    ok, reason = phase_preconditions(phase_name, issue_data, client, issue)
     if not ok and "PR" in reason:
         return reason
     return None
@@ -247,11 +249,15 @@ def plan(
     consumed = _idempotency_consumed(handler, issue)
     intact, intact_reason = _prerequisites_intact(issue, handler)
 
-    def _merge_blocked() -> str | None:
-        if phase != "merge":
+    def _closing_blocked() -> str | None:
+        cfg = get_config()
+        closing = cfg.closing_phase()
+        if closing is None or phase != closing.name:
+            return None
+        if "closing_pr_exists" not in closing.advance_when:
             return None
         gh = client or _github_client()
-        return _merge_redispatch_blocked(issue, gh)
+        return _closing_redispatch_blocked(issue, gh, phase)
 
     if not consumed:
         if intact:
@@ -263,7 +269,7 @@ def plan(
                 required_labels=frozenset(),
                 blocked_by=None,
             )
-        blocked = _merge_blocked()
+        blocked = _closing_blocked()
         command = _resume_phase_command(issue, phase)
         return Plan(
             action="redispatch",
@@ -274,7 +280,7 @@ def plan(
         )
 
     if _generation_keys_available():
-        blocked = _merge_blocked()
+        blocked = _closing_blocked()
         command = _resume_phase_command(issue, phase)
         return Plan(
             action="redispatch",

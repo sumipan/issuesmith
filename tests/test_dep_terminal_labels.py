@@ -55,5 +55,51 @@ class TestHasTerminalLabel:
         assert _has_terminal_label(_MERGE_DONE_LABELS, ()) is False
 
 
+def test_dep_satisfied_by_develop_done_single_develop(tmp_path, monkeypatch) -> None:
+    """#7811 AC6."""
+    import yaml
+
+    from issuesmith.config import get_config, reset_config_cache
+    from issuesmith.dep_extractor import get_dep_status, is_satisfied
+
+    phases = [
+        {
+            "name": "draft",
+            "role": "design",
+            "entry_step": "b1",
+            "handler": "brushup",
+            "writes_files": False,
+            "advance_when": ["deps_terminal"],
+        },
+        {
+            "name": "develop",
+            "role": "implementation",
+            "entry_step": "prepare",
+            "handler": "develop",
+            "advance_when": ["deps_terminal"],
+        },
+    ]
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump(
+            {"repo": "sumipan/issuesmith", "phases": phases, "terminal_labels": []}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    _, _, develop_done = get_config().phase_labels("develop")
+
+    class _Client:
+        def issue_get(self, issue_number: int, *, fields=None):
+            return {
+                "state": "CLOSED",
+                "title": "dep",
+                "labels": [{"name": develop_done}],
+            }
+
+    assert is_satisfied(get_dep_status(_Client(), 1)) is True
+
+
 
 

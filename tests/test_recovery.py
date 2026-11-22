@@ -176,8 +176,8 @@ def test_merge_redispatch_blocked_without_open_pr(repo_layout: Path, monkeypatch
     monkeypatch.setattr(recovery, "_prerequisites_intact", lambda *_a, **_k: (False, "worktree missing"))
     monkeypatch.setattr(
         recovery,
-        "_merge_redispatch_blocked",
-        lambda _i, _c: "no open or merged PR with Closes #N",
+        "_closing_redispatch_blocked",
+        lambda _i, _c, _p: "no open or merged PR with Closes #N",
     )
 
     plan = recovery.plan(
@@ -190,6 +190,70 @@ def test_merge_redispatch_blocked_without_open_pr(repo_layout: Path, monkeypatch
     assert plan.action == "redispatch"
     assert plan.blocked_by is not None
     assert "PR" in plan.blocked_by or "Closes" in plan.blocked_by
+
+
+def test_plan_single_develop_skips_closing_pr_check(
+    repo_layout: Path, tmp_path, monkeypatch
+) -> None:
+    """#7811 AC8."""
+    import yaml
+
+    from issuesmith.config import reset_config_cache
+
+    phases = [
+        {
+            "name": "draft",
+            "role": "design",
+            "entry_step": "b1",
+            "handler": "brushup",
+            "writes_files": False,
+            "advance_when": ["deps_terminal"],
+        },
+        {
+            "name": "develop",
+            "role": "implementation",
+            "entry_step": "prepare",
+            "handler": "develop",
+            "steps": ["prepare", "implement", "verify", "review", "merge"],
+            "advance_when": ["deps_terminal"],
+        },
+    ]
+    cfg_path = tmp_path / "issuesmith-single-develop.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump(
+            {"repo": "sumipan/issuesmith", "phases": phases, "terminal_labels": []}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+
+    class TrackingClient:
+        issue_get_calls = 0
+
+        def issue_get(self, issue: int, *, fields=None):
+            TrackingClient.issue_get_calls += 1
+            return {"state": "OPEN", "labels": []}
+
+    issue = 42
+    monkeypatch.setattr(recovery, "_exec_path", lambda: _write_exec(repo_layout, []))
+    monkeypatch.setattr(recovery, "_repo_root", lambda: repo_layout)
+    monkeypatch.setattr(recovery, "_generation_keys_available", lambda: False)
+    monkeypatch.setattr(recovery, "_idempotency_consumed", lambda _h, _i: False)
+    monkeypatch.setattr(
+        recovery, "_prerequisites_intact", lambda *_a, **_k: (False, "worktree missing")
+    )
+
+    plan = recovery.plan(
+        issue=issue,
+        failed_step="merge",
+        labels={"issuesmith:develop-running"},
+        client=TrackingClient(),
+    )
+
+    assert plan.action == "redispatch"
+    assert plan.blocked_by is None
+    assert TrackingClient.issue_get_calls == 0
 
 
 def test_recover_dry_run_lists_steps(repo_layout: Path, monkeypatch) -> None:
