@@ -79,17 +79,17 @@ class PrScopeGate:
                     violations.append(v)
                 continue
             if v.rule_id == "pr_diff_scope.out_of_scope":
-                if f == "pyproject.toml":
-                    try:
-                        from issuesmith.bump_commits import is_bump_only_pyproject_change
+                try:
+                    from issuesmith.version_policy import bump_paths, is_bump_only_change
 
-                        if is_bump_only_pyproject_change(
-                            self._worktree_path, self._base_branch
-                        ):
-                            in_scope.append(f)
-                            continue
-                    except Exception:
-                        pass
+                    if (
+                        f in bump_paths(self._worktree_path, self._base_branch)
+                        and is_bump_only_change(self._worktree_path, self._base_branch)
+                    ):
+                        in_scope.append(f)
+                        continue
+                except Exception:
+                    pass
                 out_of_scope.append(f)
                 continue
             violations.append(v)

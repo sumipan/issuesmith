@@ -284,6 +284,14 @@ class MetricsConfig:
 
 
 @dataclass(frozen=True)
+class VersionConfig:
+    """Publish version-bump policy (``issuesmith.yaml`` ``version:`` section, #7789)."""
+
+    policy: Literal["auto", "none", "pyproject", "command"] = "auto"
+    bump_command: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class LintConfig:
     """Lint gate options (``issuesmith.yaml`` ``lint:`` section)."""
 
@@ -395,6 +403,7 @@ class IssuesmithConfig:
     scope_size: ScopeSizeConfig = field(default_factory=ScopeSizeConfig)
     tests: TestsConfig = field(default_factory=TestsConfig)
     lint: LintConfig = field(default_factory=LintConfig)
+    version: VersionConfig = field(default_factory=VersionConfig)
     metrics: MetricsConfig = field(default_factory=MetricsConfig)
     derived_allow: DerivedAllowConfig = field(default_factory=DerivedAllowConfig)
     external_leak: ExternalLeakConfig = field(default_factory=ExternalLeakConfig)
@@ -1260,6 +1269,37 @@ def _parse_command_tuple(raw: Any, *, field: str) -> tuple[str, ...]:
     return tuple(out)
 
 
+_VERSION_POLICIES = frozenset({"auto", "none", "pyproject", "command"})
+
+
+def _build_version(raw: Mapping[str, Any] | None) -> VersionConfig:
+    defaults = VersionConfig()
+    if not raw:
+        return defaults
+    unknown = sorted(str(k) for k in raw if k not in ("policy", "bump_command"))
+    if unknown:
+        raise ConfigError(
+            f"version supports only 'policy' and 'bump_command'; unknown keys: {unknown}"
+        )
+    policy_raw = raw.get("policy", defaults.policy)
+    policy = str(policy_raw)
+    if policy not in _VERSION_POLICIES:
+        raise ConfigError(
+            f"version.policy must be one of {sorted(_VERSION_POLICIES)}, got {policy!r}"
+        )
+    bump_command = defaults.bump_command
+    if "bump_command" in raw:
+        bump_command = _parse_command_tuple(
+            raw["bump_command"], field="version.bump_command"
+        )
+    if policy == "command" and not bump_command:
+        raise ConfigError(
+            "version.bump_command is required when version.policy is 'command'"
+        )
+    policy_lit: Literal["auto", "none", "pyproject", "command"] = policy  # type: ignore[assignment]
+    return VersionConfig(policy=policy_lit, bump_command=bump_command)
+
+
 def _build_lint(raw: Mapping[str, Any] | None) -> LintConfig:
     defaults = LintConfig()
     if not raw:
@@ -1595,6 +1635,7 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     )
     tests_raw = data.get("tests") if isinstance(data.get("tests"), dict) else None
     lint_raw = data.get("lint") if isinstance(data.get("lint"), dict) else None
+    version_raw = data.get("version") if isinstance(data.get("version"), dict) else None
     metrics_raw = data.get("metrics") if isinstance(data.get("metrics"), dict) else None
     derived_allow_raw = (
         data.get("derived_allow") if isinstance(data.get("derived_allow"), dict) else None
@@ -1634,6 +1675,7 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         scope_size=_build_scope_size(scope_size_raw, language),
         tests=_build_tests(tests_raw, root.resolve()),
         lint=_build_lint(lint_raw),
+        version=_build_version(version_raw),
         metrics=_build_metrics(metrics_raw),
         derived_allow=_build_derived_allow(derived_allow_raw),
         external_leak=_build_external_leak(external_leak_raw),

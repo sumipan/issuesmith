@@ -11,10 +11,10 @@ from typing import Literal
 from issuesmith.bump_commits import (
     BumpCommitsError,
     bump_versions_in_range,
-    is_bump_only_pyproject_change,
     strip_bump_version_lines,
 )
 from issuesmith.ops.publish import _push_branch, run_version_bump
+from issuesmith.version_policy import bump_paths, is_bump_only_change
 
 
 @dataclass(frozen=True)
@@ -67,7 +67,7 @@ def _non_bump_diff_fingerprint(
 
     by_file: dict[str, Counter[str]] = {}
     current_file: str | None = None
-    skip = {"CHANGELOG.md", "pyproject.toml"}
+    skip = set(bump_paths(worktree, base_branch))
     for line in stripped.splitlines():
         if line.startswith("diff --git "):
             parts = line.split()
@@ -116,9 +116,6 @@ def _merge_tree_conflicts(worktree: Path, base_branch: str) -> list[str] | None:
     return paths
 
 
-_BUMP_ONLY_PATHS = frozenset({"pyproject.toml", "CHANGELOG.md"})
-
-
 def rebump_onto_base(worktree: Path, base_branch: str, branch: str) -> RebumpResult:
     """Drop publish bumps, rebase onto base, re-bump, and force-push once when safe."""
     worktree = Path(worktree)
@@ -161,16 +158,18 @@ def rebump_onto_base(worktree: Path, base_branch: str, branch: str) -> RebumpRes
             detail=f"branch already contains origin/{base_branch}",
         )
 
+    allowed_bump_paths = bump_paths(worktree, base_branch)
+
     conflicts = _merge_tree_conflicts(worktree, base_branch)
     if conflicts is None:
         return RebumpResult(status="failed", detail="merge-tree failed")
-    if any(p not in _BUMP_ONLY_PATHS for p in conflicts):
+    if any(p not in allowed_bump_paths for p in conflicts):
         return RebumpResult(
             status="not_bump_only",
             conflict_files=tuple(conflicts),
         )
 
-    if not is_bump_only_pyproject_change(worktree, base_branch):
+    if not is_bump_only_change(worktree, base_branch):
         return RebumpResult(
             status="not_bump_only",
             detail="pyproject.toml changes beyond the version line",

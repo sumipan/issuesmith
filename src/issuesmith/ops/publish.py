@@ -222,13 +222,9 @@ def _build_pr_metadata(
 
 
 def _run_version_bump(worktree: Path, base_branch: str) -> subprocess.CompletedProcess[str]:
-    # Prefer the scripts/ shim so frozen orders and subprocess callers keep working.
-    script = get_config().root / "scripts" / "issuesmith-version-bump.py"
-    return subprocess.run(
-        [sys.executable, str(script), "--worktree", str(worktree), "--base", base_branch],
-        capture_output=True,
-        text=True,
-    )
+    from issuesmith.version_policy import run_bump
+
+    return run_bump(worktree, base_branch)
 
 
 # Public name for callers outside publish (M1 version_behind_base gate).
@@ -256,7 +252,9 @@ def _maybe_bump_version(
     """
     if repo == issue_repo:
         return None
-    if not (worktree / "pyproject.toml").is_file():
+    from issuesmith.version_policy import resolve_policy
+
+    if resolve_policy(worktree) == "none":
         return None
     if _bump_versions_in_range(worktree, base_branch):
         print(

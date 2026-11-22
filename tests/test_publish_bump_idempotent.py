@@ -126,6 +126,67 @@ def test_maybe_bump_version_runs_when_no_bump_commit(tmp_path: Path):
     run_bump.assert_called_with(ANY, "origin/main")
 
 
+def test_command_policy_bumps_once(tmp_path: Path, monkeypatch) -> None:
+    """Refs #7789 AC6 — command bump idempotency like pyproject bumps."""
+    import subprocess
+
+    import yaml
+
+    from issuesmith.config import reset_config_cache
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    script = tmp_path / "bump.sh"
+    script.write_text(
+        "#!/bin/sh\n"
+        'v=$(cat VERSION)\n'
+        'new=$(echo "$v" | awk -F. \'{$NF++; print $0}\' OFS=.)\n'
+        'echo "$new" > VERSION\n'
+        "echo bump $new\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({
+            "repo": "example/host",
+            "version": {"policy": "command", "bump_command": [str(script)]},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+
+    def _git(*args: str) -> None:
+        subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+
+    _git("init", "-q", "-b", "main")
+    _git("config", "user.email", "t@t")
+    _git("config", "user.name", "t")
+    (repo / "VERSION").write_text("0.1.0\n", encoding="utf-8")
+    _git("add", "VERSION")
+    _git("commit", "-q", "-m", "init")
+    _git("update-ref", "refs/remotes/origin/main", "HEAD")
+
+    assert _maybe_bump_version(repo, "main", "o/target", "o/host") is None
+    assert _maybe_bump_version(repo, "main", "o/target", "o/host") is None
+
+    subjects = subprocess.run(
+        ["git", "-C", str(repo), "log", "--format=%s", "origin/main..HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.splitlines()
+    bump_subjects = [s for s in subjects if s.startswith("chore: bump version to ")]
+    assert len(bump_subjects) == 1
+    assert "VERSION" in subprocess.run(
+        ["git", "-C", str(repo), "diff", "--name-only", "origin/main..HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+
 def test_publish_reports_pr_list_failure_instead_of_crashing(tmp_path: Path):
     client = MagicMock()
     client.pr_list.side_effect = RuntimeError("GitHub API GET .../pulls failed (403): API rate limit exceeded")
