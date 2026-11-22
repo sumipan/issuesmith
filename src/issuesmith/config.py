@@ -481,7 +481,7 @@ class IssuesmithConfig:
         )
 
     def workflow_name(self) -> str:
-        """ghdag の鍵と ``--workflow`` に使うワークフローの名前。"""
+        """ghdag workflow name for idempotency keys and ``--workflow``."""
         path = self.paths.workflow
         if path.is_file():
             try:
