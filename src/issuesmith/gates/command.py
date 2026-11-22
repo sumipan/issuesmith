@@ -15,6 +15,9 @@ from issuesmith.gate_registry import Violation
 from issuesmith.gates.base import ContractInput
 
 _OUTPUT_TAIL = 2000
+_PYTEST_TIMEOUT_ENV = "ISSUESMITH_PYTEST_TIMEOUT_SEC"
+_PYTEST_TIMEOUT_DEFAULT_SEC = 1500.0
+_INTERRUPTED_RC: frozenset[int] = frozenset({143, 137, -15, -9})
 
 
 class CommandStartError(RuntimeError):
@@ -33,7 +36,6 @@ def run_command(
 ) -> tuple[int, str]:
     """Run ``argv`` with cwd=root; return (exit code, combined stdout+stderr)."""
     from issuesmith.config import get_config
-    from issuesmith.gates.worktree import _pytest_timeout_sec
     from issuesmith.worktree_python import WorktreePythonError, python_bin_for
 
     env = dict(os.environ)
@@ -49,7 +51,7 @@ def run_command(
     if python_bin is not None:
         prefix = str(python_bin)
         env["PATH"] = prefix + os.pathsep + env.get("PATH", "")
-    limit = _pytest_timeout_sec()
+    limit = _command_timeout_sec()
     try:
         proc = subprocess.run(
             list(argv),
@@ -98,6 +100,28 @@ def read_junit_failed_ids(path: Path) -> list[str] | None:
     return ids
 
 
+def _command_timeout_sec() -> float:
+    raw = (os.environ.get(_PYTEST_TIMEOUT_ENV) or "").strip()
+    try:
+        return float(raw) if raw else _PYTEST_TIMEOUT_DEFAULT_SEC
+    except ValueError:
+        return _PYTEST_TIMEOUT_DEFAULT_SEC
+
+
+def _interrupted_violation(rc: int) -> Violation:
+    return Violation(
+        rule_id="tests.interrupted",
+        severity="fail",
+        message=(
+            f"pytest interrupted by external signal (rc={rc}, SIGTERM/SIGKILL);"
+            " not a test failure"
+        ),
+        location=None,
+        auto_fixable=False,
+        fix_hint="Rerun only; do not modify code",
+    )
+
+
 def _tail(output: str) -> str:
     return output[-_OUTPUT_TAIL:]
 
@@ -124,9 +148,22 @@ def _finalize_report(root: Path, rel: str) -> None:
 
 
 def _baseline_ref(root: Path, base_branch: str) -> str:
-    from issuesmith.gates.worktree import _baseline_ref as ref
-
-    return ref(root, base_branch)
+    """Return merge-base of HEAD and origin/<base>, or origin/<base> when unavailable."""
+    remote = f"origin/{base_branch}"
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(root), "merge-base", "HEAD", remote],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode == 0:
+            sha = proc.stdout.strip()
+            if sha:
+                return sha
+    except Exception:
+        pass
+    return remote
 
 
 def _baseline_junit_failed(
@@ -153,8 +190,6 @@ def _baseline_junit_failed(
             rc, _ = run_command(wt, command, python_root=root)
         except CommandStartError:
             return None
-        from issuesmith.gates.worktree import _INTERRUPTED_RC
-
         if rc in _INTERRUPTED_RC:
             return None
         report = wt / report_path
@@ -257,12 +292,10 @@ class CommandTestsGate:
                 _finalize_report(self._root, self._report_path)
 
     def _judge_exit_code(self, rc: int, output: str) -> list[Violation]:
-        from issuesmith.gates.worktree import _INTERRUPTED_RC, _interrupted
-
         if rc == 0:
             return []
         if rc in _INTERRUPTED_RC:
-            return [_interrupted(rc)]
+            return [_interrupted_violation(rc)]
         if rc == 124:
             return [Violation(
                 rule_id="tests.command_timeout",
@@ -282,12 +315,10 @@ class CommandTestsGate:
         )]
 
     def _judge_junit(self, rc: int, output: str) -> list[Violation]:
-        from issuesmith.gates.worktree import _INTERRUPTED_RC, _interrupted
-
         if rc == 0:
             return []
         if rc in _INTERRUPTED_RC:
-            return [_interrupted(rc)]
+            return [_interrupted_violation(rc)]
         if rc == 124:
             return [Violation(
                 rule_id="tests.command_timeout",

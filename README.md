@@ -371,6 +371,7 @@ ghdag's `WorkflowDispatcher` drives workflow timing: label polling, DAG edges, a
 | `issuesmith/gates/ac_complete.py` | AC-complete gate — wraps ac_complete_entry.check_gate to return unified Verdict |
 | `issuesmith/gates/ac_contract.py` | Acceptance contract gate — paths and greps_must_be_empty on a worktree |
 | `issuesmith/gates/base.py` | Gate protocol and ContractInput for requires evaluation (#3626) |
+| `issuesmith/gates/command.py` | Configurable lint/tests gates driven by `issuesmith.yaml` commands (#7788) |
 | `issuesmith/gates/dep.py` | Dependency gate — wraps dep_extractor.check_dependencies to return unified Verdict |
 | `issuesmith/gates/pr_scope.py` | PR scope gate — wraps pr_scope.check_pr_diff_scope to return unified Verdict |
 | `issuesmith/gates/review.py` | LLM review gate for requires evaluation (#4986) |
@@ -624,6 +625,7 @@ Logs, exception messages, CLI help and violation text stay English and are not p
 | `BumpCommitsError` | `issuesmith.bump_commits` | `RuntimeError` | Git could not list or rewrite publish version-bump commits |
 | `ChildPlanError` | `issuesmith.verbs.children` | `RuntimeError` | Child-plan validation or creation failed with structured violations |
 | `ConfigError` | `issuesmith.config` | `ValueError` | Invalid `issuesmith.yaml` section, language pack, gate or predicate reference; missing `phases:` or `phases[].handler`; a step in two phases; `review` gate without `steps.<id>.review` |
+| `CommandStartError` | `issuesmith.gates.command` | `RuntimeError` | The configured lint/tests command or `python_bin_command` launcher could not be started |
 | `ContextHookError` | `issuesmith.context_hook` | `ValueError` | Issue YAML metadata failed security validation before ghdag context-hook template expansion |
 | `DerivedAllowPathsError` | `issuesmith.pr_scope` | `ValueError` | `derived_allow_paths_from_result` finds malformed entries |
 | `GateBuildError` | `issuesmith.gates` | `ValueError` | A gate cannot be built from its `GateBuildContext` |
