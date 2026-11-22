@@ -7,6 +7,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.205.0 - 2026-11-23
+
+### Added
+
+- gates: run lint and tests from issuesmith.yaml commands
+
+### Fixed
+
+- repair: satisfy convention gates for command gates (#7788)
+
 ## 0.204.2 - 2026-11-22
 
 ### Changed
