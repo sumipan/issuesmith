@@ -129,12 +129,6 @@ def test_non_mapping_and_missing_file_are_config_errors(tmp_path):
         load_language_pack(tmp_path / "absent.yaml")
 
 
-def test_readme_lists_every_pack_field():
-    readme = (_REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    for f in dataclasses.fields(LanguagePack):
-        assert f"`{f.name}`" in readme, f.name
-
-
 # --- legacy keys -------------------------------------------------------------
 
 

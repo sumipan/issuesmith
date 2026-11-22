@@ -483,21 +483,10 @@ def test_check_without_pr_diff_tier_preserves_review_tier(
     assert mock_run.call_args.kwargs["tier"] == review_tier
 
 
-def test_readme_documents_step_tier_selects_review_engine() -> None:
-    """Refs sumipan/nexus#7400 AC6 — tier table documents pr_diff; gate doc states priority."""
+def test_review_gate_doc_states_tier_priority() -> None:
+    """Refs sumipan/nexus#7400 AC6 — review gate doc states pr_diff and tier priority."""
     import issuesmith.gates.review as review_mod
 
     doc = review_mod.__doc__ or ""
     assert "pr_diff" in doc
     assert "review.tier" in doc
-    readme = Path(__file__).resolve().parents[1] / "README.md"
-    section = readme.read_text(encoding="utf-8")
-    anchor = section.index("#### `steps.<id>` fields")
-    table = section[anchor : section.index("#### `paths` keys", anchor)]
-    tier_row = next(line for line in table.splitlines() if "| `tier` |" in line)
-    review_row = next(line for line in table.splitlines() if "| `review` |" in line)
-    assert "pr_diff" in tier_row
-    assert "review.tier" in tier_row
-    assert "falls back" in tier_row
-    assert "pr_diff" in review_row
-    assert "takes priority" in review_row

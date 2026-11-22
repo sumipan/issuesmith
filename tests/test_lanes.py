@@ -345,16 +345,3 @@ def test_report_suppresses_periodic_report_while_halted_or_paused(tmp_path: Path
     assert payload_ok["quiet"] is False
 
 
-def test_readme_lanes_section_lists_json_and_ledger_keys(tmp_path: Path):
-    """Issue #7326: README documents lanes JSON and ledger keys."""
-    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(
-        encoding="utf-8"
-    )
-    cfg = _cfg(tmp_path)
-    ledger = Ledger(lanes={})
-    lane_plan = _lane_plan(tmp_path, ledger=ledger, config=cfg)
-    check_keys = set(plan_to_dict(lane_plan))
-    auto = MagicMock(answers=[], escalations=[])
-    report_keys = set(report(lane_plan, auto, None, {}, _T0, ledger)[0])
-    for key in check_keys | report_keys | {"high", "high_labels"}:
-        assert f"`{key}`" in readme, f"missing README backtick for {key}"

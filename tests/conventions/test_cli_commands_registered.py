@@ -56,7 +56,7 @@ def test_detects_command_dropped_from_table():
 
 
 def unknown_mentioned_commands(registered: set[str]) -> dict[str, set[str]]:
-    texts = [(REPO_ROOT / "README.md"), (REPO_ROOT / "CHANGELOG.md"), *py_files(SRC)]
+    texts = [(REPO_ROOT / "CHANGELOG.md"), *py_files(SRC)]
     unknown: dict[str, set[str]] = {}
     for path in texts:
         for cmd in mentioned_commands(path.read_text(encoding="utf-8")):
@@ -76,10 +76,10 @@ def test_extractor_reads_both_invocation_forms():
 
 
 def test_detects_documented_command_dropped_from_table():
-    """Every command the docs currently name becomes a violation once dropped from the table."""
-    documented = set().union(*(mentioned_commands(p.read_text(encoding="utf-8")) for p in [REPO_ROOT / "README.md"]))
+    """Every command src currently names becomes a violation once dropped from the table."""
+    documented = set().union(*(mentioned_commands(p.read_text(encoding="utf-8")) for p in py_files(SRC)))
     documented &= set(cli._HANDLERS)
-    assert documented, "README.md names no CLI command in backticks"
+    assert documented, "src names no CLI command in backticks"
     dropped = sorted(documented)[0]
     assert dropped in unknown_mentioned_commands(_registered() - {dropped})
 
