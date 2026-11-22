@@ -537,6 +537,33 @@ def test_command_gate_config_rejects_invalid_values(
         load_config(cfg_path)
 
 
+def test_tests_rejects_legacy_marker_config_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Refs #7793 AC4 — removed tests marker config key is rejected as unknown."""
+    removed_key = "readme_" + "contract_marker"
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({
+            "repo": "example/repo",
+            "phases": [
+                {
+                    "name": "develop",
+                    "role": "implementation",
+                    "entry_step": "prepare",
+                    "handler": "develop",
+                }
+            ],
+            "tests": {removed_key: "x"},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    with pytest.raises(ConfigError, match=removed_key):
+        load_config(cfg_path)
+
+
 def test_version_policy_defaults_to_auto(tmp_path, monkeypatch):
     """Refs #7789 AC1 — omitted version section defaults to auto / empty bump_command."""
     cfg_path = tmp_path / "issuesmith.yaml"

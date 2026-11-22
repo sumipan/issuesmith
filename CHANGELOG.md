@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.206.1 - 2026-11-23
+
+### Fixed
+
+- tests: stop pinning README content in tests (#7793)
+
 ## 0.206.0 - 2026-11-23
 
 ### Added

@@ -544,36 +544,6 @@ def _broken_acceptance_issue_body() -> str:
     )
 
 
-def _readme_gate_rows(readme_text: str) -> dict[str, str]:
-    """Map step id to the gate-id cell from the reference-line gates table."""
-    rows: dict[str, str] = {}
-    in_table = False
-    for line in readme_text.splitlines():
-        if line.strip() == "### Reference line gates by step":
-            in_table = True
-            continue
-        if in_table and line.startswith("### "):
-            break
-        if not in_table or not line.startswith("|"):
-            continue
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if len(cells) < 2 or cells[0] in ("Step", "---", "------"):
-            continue
-        step = cells[0].strip("`")
-        rows[step] = cells[1]
-    return rows
-
-
-def _config_step_requires(config_path: Path) -> dict[str, list[str]]:
-    data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    out: dict[str, list[str]] = {}
-    for step_id, step in (data.get("steps") or {}).items():
-        requires = step.get("requires") or []
-        if requires:
-            out[step_id] = list(requires)
-    return out
-
-
 _RUNNER_TIMEOUT_SEC = 60.0
 _RUNNER_STOP_GRACE_SEC = 10.0
 
@@ -1444,35 +1414,6 @@ def test_base_conflict_stops_at_verify(host_env) -> None:
     assert "VALUE = 3" in show.stdout
     labels = _labels(client, number)
     assert "issuesmith:develop-done" not in labels
-
-
-def test_readme_mentions_host_not_target_checkout() -> None:
-    """refs #7311 AC6: README documents host_is_repo_checkout false for the reference line."""
-    readme = (_REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    start = readme.find("### Reference develop line (packaged)")
-    assert start >= 0
-    section = readme[start : readme.find("\n### ", start + 1)]
-    assert "host_is_repo_checkout" in section
-    assert "external_dir" in section
-    stop = readme.find("**When the line stops:**", start)
-    assert stop >= 0
-    stop_section = readme[stop : readme.find("\n\n", stop + 1)]
-    assert "scope:milestone" in stop_section
-    assert "ensure_base_included" in stop_section
-    assert "base_freshness" in stop_section
-
-
-def test_readme_lists_reference_line_gates_per_step() -> None:
-    """refs #7258 AC4: README gate table matches packaged reference line requires."""
-    config_path = _PACKAGE_FILES / "issuesmith.yaml"
-    requires = _config_step_requires(config_path)
-    readme = (_REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    rows = _readme_gate_rows(readme)
-    for step_id, gate_ids in requires.items():
-        assert step_id in rows, f"missing README row for step {step_id!r}"
-        row = rows[step_id]
-        for gate_id in gate_ids:
-            assert gate_id in row, f"README row for {step_id!r} missing gate {gate_id!r}"
 
 
 def test_step_modules_import_only_public_issuesmith_modules() -> None:

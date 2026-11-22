@@ -1,8 +1,5 @@
-"""Public export contract for issuesmith.verbs and README surface (sumipan/nexus#6560)."""
+"""Public export contract for issuesmith.verbs (sumipan/nexus#6560)."""
 from __future__ import annotations
-
-import importlib
-import re
 
 import issuesmith.verbs as verbs_mod
 from issuesmith import verbs as issuesmith_verbs
@@ -71,43 +68,6 @@ VERBS_PUBLIC_NAMES = frozenset(
     }
 )
 
-PUBLIC_MODULES = (
-    "issuesmith.contract",
-    "issuesmith.verbs",
-    "issuesmith.gates",
-    "issuesmith.config",
-    "issuesmith.andon",
-    "issuesmith.queue",
-    "issuesmith.forge",
-)
-
-_MODULE_ROW_RE = re.compile(r"^\| `(issuesmith\.[^`]+)` \| (.+) \|$")
-_SYMBOL_RE = re.compile(r"`([^`]+)`")
-
-
-def _module_all(modpath: str) -> frozenset[str]:
-    mod = importlib.import_module(modpath)
-    return frozenset(mod.__all__)
-
-
-def _parse_readme_public_api_table(readme_text: str) -> dict[str, frozenset[str]]:
-    start = readme_text.find("## Public API")
-    end = readme_text.find("### Public API Stability")
-    if start < 0 or end < 0 or end <= start:
-        msg = "README missing ## Public API or ### Public API Stability"
-        raise AssertionError(msg)
-    section = readme_text[start:end]
-    table: dict[str, frozenset[str]] = {}
-    for line in section.splitlines():
-        match = _MODULE_ROW_RE.match(line.strip())
-        if not match:
-            continue
-        modpath = match.group(1)
-        assert modpath not in table, f"duplicate README Public API row: {modpath}"
-        symbols = frozenset(_SYMBOL_RE.findall(match.group(2)))
-        table[modpath] = symbols
-    return table
-
 
 def test_verbs_public_exports():
     """issuesmith.verbs __all__ matches the contract; re-exports share definition objects."""
@@ -131,21 +91,8 @@ def test_verbs_public_exports():
     assert issuesmith_verbs.ChildPlanError is children_mod.ChildPlanError
 
 
-def test_readme_public_modules_match_all():
-    """README Public API table lists seven modules and each row matches that module __all__."""
-    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    table = _parse_readme_public_api_table(readme)
-    assert frozenset(table) == frozenset(PUBLIC_MODULES)
-    for modpath in PUBLIC_MODULES:
-        module_all = _module_all(modpath)
-        if modpath == "issuesmith.verbs":
-            assert module_all == VERBS_PUBLIC_NAMES
-        assert table[modpath] == module_all, modpath
-
-
 def test_public_api_docs_are_english():
-    """README and CHANGELOG Unreleased docs for the public API contain no CJK."""
-    for rel in ("README.md", "CHANGELOG.md"):
-        path = REPO_ROOT / rel
-        for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            assert not line_has_cjk(line), f"{rel}:{line_no}: CJK in public API docs"
+    """CHANGELOG Unreleased docs for the public API contain no CJK."""
+    path = REPO_ROOT / "CHANGELOG.md"
+    for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        assert not line_has_cjk(line), f"CHANGELOG.md:{line_no}: CJK in public API docs"
