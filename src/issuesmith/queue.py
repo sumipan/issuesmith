@@ -1466,7 +1466,6 @@ def _list_open_issues(client: ForgePort) -> list[dict[str, Any]]:
     return out
 
 
-WORKFLOW_NAME = "issuesmith"
 MAX_REPAIR_PER_REQUEST = 1
 
 
@@ -1513,13 +1512,15 @@ def _handler_key_consumed(handler: str, issue: int) -> bool:
         return False
     from ghdag.io import exec_jsonl
 
-    base = f"{WORKFLOW_NAME}:{handler}:{issue}"
+    workflow = get_config().workflow_name()
+    base = f"{workflow}:{handler}:{issue}"
     keys = [base] + [f"{base}:{gen}" for gen in range(1, _MAX_GENERATION_SCAN)]
     return any(not exec_jsonl.check_idempotency(EXEC_PATH, key) for key in keys)
 
 
 def _trigger_ghdag_redispatch(issue: int, handler: str, reason: str) -> int:
     """Bump the ghdag generation and start the handler (same as `ghdag trigger --redispatch`)."""
+    workflow = get_config().workflow_name()
     cmd = [
         sys.executable,
         "-m",
@@ -1529,7 +1530,7 @@ def _trigger_ghdag_redispatch(issue: int, handler: str, reason: str) -> int:
         "--handler",
         handler,
         "--workflow",
-        WORKFLOW_NAME,
+        workflow,
         "--exec-jsonl",
         str(EXEC_PATH),
         "--redispatch",

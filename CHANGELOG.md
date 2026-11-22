@@ -7,6 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.207.2 - 2026-11-23
+
+### Fixed
+
+- queue: derive redispatch workflow name from definition
+- repair: replace CJK docstring on workflow_name (#7816)
+
 ## 0.207.1 - 2026-11-23
 
 ### Added
