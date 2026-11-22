@@ -103,9 +103,12 @@ def get_terminal_without_merge() -> frozenset[str]:
     result: set[str] = set()
     for label in cfg.terminal_without_merge:
         result.add(label if ":" in label else f"{ns}:{label}")
-    merge_done = {lab for lab in cfg.terminal_labels if lab.endswith(":merge-done")}
+    closing = cfg.closing_phase()
+    # Match by suffix so cross-namespace done labels (e.g. ``wsl:develop-done``) count
+    # as closed-with-merge too (#7811).
+    closing_suffix = f":{closing.name}-done" if closing is not None else None
     for label in cfg.terminal_labels:
-        if label not in merge_done:
+        if closing_suffix is None or not label.endswith(closing_suffix):
             result.add(label)
     return frozenset(result)
 

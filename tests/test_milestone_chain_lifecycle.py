@@ -179,6 +179,45 @@ class TestPreDispatchAndResume:
         assert "#101" not in client.posted_comments[0][1]
 
 
+def test_classify_child_develop_done_is_merged_single_develop(tmp_path, monkeypatch) -> None:
+    """#7811 AC7."""
+    import yaml
+
+    from issuesmith.config import get_config, reset_config_cache
+    from issuesmith.milestone import _classify_child_terminal
+
+    phases = [
+        {
+            "name": "draft",
+            "role": "design",
+            "entry_step": "b1",
+            "handler": "brushup",
+            "writes_files": False,
+            "advance_when": ["deps_terminal"],
+        },
+        {
+            "name": "develop",
+            "role": "implementation",
+            "entry_step": "prepare",
+            "handler": "develop",
+            "advance_when": ["deps_terminal"],
+        },
+    ]
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump(
+            {"repo": "sumipan/issuesmith", "phases": phases, "terminal_labels": []}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    _, _, develop_done = get_config().phase_labels("develop")
+    child = _child_issue(101, state="CLOSED", labels=[develop_done])
+    client = FakeClient(issues={101: child})
+    assert _classify_child_terminal(client, 101) == "merged"
+
+
 class TestConsolidation:
 
 

@@ -113,6 +113,14 @@ def _issue_is_terminal(client: ForgePort, issue_number: int) -> bool:
     return _classify_child_terminal(client, issue_number) != "open"
 
 
+def _closing_done_label() -> str:
+    cfg = get_config()
+    closing = cfg.closing_phase()
+    if closing is None:
+        return ""
+    return cfg.phase_labels(closing.name)[2]
+
+
 def _classify_child_terminal(client: ForgePort, issue_number: int) -> str:
     """Classify a child Issue for C4: open | merged | closed_without_merge."""
     try:
@@ -123,8 +131,8 @@ def _classify_child_terminal(client: ForgePort, issue_number: int) -> str:
     state = str(issue.get("state", "")).upper()
     if state != "CLOSED":
         return "open"
-    _merge_done = DONE_LABEL.get("merge", "")
-    if _merge_done and _merge_done in labels:
+    closing_done = _closing_done_label()
+    if closing_done and closing_done in labels:
         return "merged"
     if labels & get_terminal_without_merge():
         return "closed_without_merge"
@@ -859,7 +867,7 @@ def advance_milestone_chains(
         without_merge = [num for num, status in statuses if status == "closed_without_merge"]
         if without_merge:
             first = without_merge[0]
-            _md_label = DONE_LABEL.get("merge", "")
+            _md_label = _closing_done_label()
             _end_lbl = _md_label.split(":")[-1] if _md_label else "closed"
             _ensure_parent_comment(
                 client,

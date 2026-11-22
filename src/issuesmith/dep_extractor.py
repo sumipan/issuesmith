@@ -11,7 +11,6 @@ from ghdag.forge import ForgePort, get_forge
 from issuesmith.body_editor import count_heading, get_section
 from issuesmith.config import get_config
 
-_MERGE_DONE_LABEL = "issuesmith:merge-done"
 _REJECTED_LABEL = "issuesmith:rejected"
 _SUB_DONE_LABEL = "issuesmith:sub-done"
 _MILESTONE_LABEL = "scope:milestone"
@@ -199,12 +198,14 @@ def _is_exempt(title: str, labels: list[dict]) -> bool:
     """Return True when a CLOSED dependency should be treated as satisfied.
 
     Exempt cases:
-    1. Title starts with ``_ANALYSIS_TITLE_PREFIX`` (analysis issues never get merge-done)
+    1. Title starts with ``_ANALYSIS_TITLE_PREFIX`` (analysis issues never get a
+       closing-phase done label)
     2. Has issuesmith:rejected label
     3. Has no issuesmith:* labels at all (outside issuesmith lifecycle)
     4. Is a milestone that finished splitting (scope:milestone + issuesmith:sub-done).
-       Milestones are closed by a human after all sub-issues merge and never get
-       merge-done themselves (2026-09-05: #2821 was blocked by closed milestone #2820).
+       Milestones are closed by a human after all sub-issues finish and never get
+       a closing-phase done label themselves (2026-09-05: #2821 was blocked by
+       closed milestone #2820).
     """
     if title.startswith(_ANALYSIS_TITLE_PREFIX):
         return True
@@ -247,7 +248,12 @@ def get_dep_status(client: ForgePort, issue_number: int) -> DepStatus:
     state = data.get("state", "UNKNOWN")
     labels = data.get("labels") or []
     title = data.get("title") or ""
-    terminal_labels = get_config().terminal_labels
+    cfg = get_config()
+    terminal_labels = cfg.terminal_labels
+    closing = cfg.closing_phase()
+    if closing is not None:
+        _, _, closing_done = cfg.phase_labels(closing.name)
+        terminal_labels = terminal_labels + (closing_done,)
     has_merge_done = _has_terminal_label(labels, terminal_labels)
     is_exempt = _is_exempt(title, labels)
 
@@ -266,7 +272,7 @@ def get_dep_status(client: ForgePort, issue_number: int) -> DepStatus:
 
 
 def is_satisfied(status: DepStatus) -> bool:
-    # exempt relaxes "CLOSED needs merge-done"; an OPEN dependency is still unresolved.
+    # exempt relaxes "CLOSED needs closing-phase done"; an OPEN dependency is unresolved.
     if status.state == "CLOSED" and status.is_exempt:
         return True
     if status.state == "CLOSED" and status.has_merge_done:

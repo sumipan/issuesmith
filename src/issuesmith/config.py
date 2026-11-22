@@ -456,6 +456,16 @@ class IssuesmithConfig:
             raise ConfigError("multiple design phases declared")
         return design_phases[0] if design_phases else None
 
+    def closing_phase(self) -> PhaseConfig | None:
+        """Phase that closes the implementation line (merge or sole develop)."""
+        fallback: PhaseConfig | None = None
+        for ph in self.phases:
+            if "closing_pr_exists" in ph.advance_when:
+                return ph
+            if ph.role == "implementation" and ph.writes_files:
+                fallback = ph
+        return fallback
+
     def _expand_label(self, label: str) -> str:
         if ":" in label:
             return label

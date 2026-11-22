@@ -157,10 +157,8 @@ def _primary_impl_phase_name() -> str | None:
 
 
 def _closing_phase_name() -> str | None:
-    for ph in get_config().phases:
-        if "closing_pr_exists" in ph.advance_when:
-            return ph.name
-    return None
+    ph = get_config().closing_phase()
+    return ph.name if ph is not None else None
 
 
 def _design_phase_name() -> str | None:
