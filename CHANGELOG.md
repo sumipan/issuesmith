@@ -7,6 +7,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.206.0 - 2026-11-23
+
+### Added
+
+- version: add configurable publish bump policies (#7789)
+
+### Fixed
+
+- repair: list version_policy.py in README Architecture (#7789)
+
 ## 0.205.0 - 2026-11-23
 
 ### Added
