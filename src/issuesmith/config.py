@@ -1337,6 +1337,8 @@ def _build_tests(raw: Mapping[str, Any] | None, root: Path) -> TestsConfig:
         raise ConfigError("tests.report and tests.report_path must be set together")
     if report and not command:
         raise ConfigError("tests.report requires tests.command")
+    if report_path and Path(report_path).is_absolute():
+        raise ConfigError("tests.report_path must be a relative path")
     if report_path and (".." in Path(report_path).parts):
         raise ConfigError("tests.report_path must not contain '..'")
     return TestsConfig(
