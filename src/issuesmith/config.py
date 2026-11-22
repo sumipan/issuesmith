@@ -284,6 +284,14 @@ class MetricsConfig:
 
 
 @dataclass(frozen=True)
+class LintConfig:
+    """Lint gate options (``issuesmith.yaml`` ``lint:`` section)."""
+
+    command: tuple[str, ...] = ()
+    fix_command: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class TestsConfig:
     """Pytest gate options (``issuesmith.yaml`` ``tests:`` section)."""
 
@@ -291,6 +299,9 @@ class TestsConfig:
     python_command: tuple[str, ...] = ("python",)
     python_bin_command: tuple[str, ...] = ()
     readme_contract_marker: str = "readme_contract"
+    command: tuple[str, ...] = ()
+    report: str = ""
+    report_path: str = ""
 
 
 @dataclass(frozen=True)
@@ -383,6 +394,7 @@ class IssuesmithConfig:
     scope_coupling: ScopeCouplingConfig = field(default_factory=ScopeCouplingConfig)
     scope_size: ScopeSizeConfig = field(default_factory=ScopeSizeConfig)
     tests: TestsConfig = field(default_factory=TestsConfig)
+    lint: LintConfig = field(default_factory=LintConfig)
     metrics: MetricsConfig = field(default_factory=MetricsConfig)
     derived_allow: DerivedAllowConfig = field(default_factory=DerivedAllowConfig)
     external_leak: ExternalLeakConfig = field(default_factory=ExternalLeakConfig)
@@ -1237,11 +1249,51 @@ def _parse_tests_python_bin_command(raw: Any, root: Path) -> tuple[str, ...]:
     return tuple(out)
 
 
+def _parse_command_tuple(raw: Any, *, field: str) -> tuple[str, ...]:
+    if not isinstance(raw, list) or not raw:
+        raise ConfigError(f"{field} must be a non-empty list of strings")
+    out: list[str] = []
+    for item in raw:
+        if not isinstance(item, str) or not item:
+            raise ConfigError(f"{field} must be a non-empty list of strings")
+        out.append(item)
+    return tuple(out)
+
+
+def _build_lint(raw: Mapping[str, Any] | None) -> LintConfig:
+    defaults = LintConfig()
+    if not raw:
+        return defaults
+    known = frozenset({"command", "fix_command"})
+    unknown = sorted(str(k) for k in raw if k not in known)
+    if unknown:
+        raise ConfigError(
+            f"lint supports only {sorted(known)}; unknown keys: {unknown}"
+        )
+    command = defaults.command
+    if "command" in raw:
+        command = _parse_command_tuple(raw["command"], field="lint.command")
+    fix_command = defaults.fix_command
+    if "fix_command" in raw:
+        fix_command = _parse_command_tuple(raw["fix_command"], field="lint.fix_command")
+    if fix_command and not command:
+        raise ConfigError("lint.fix_command requires lint.command")
+    return LintConfig(command=command, fix_command=fix_command)
+
+
 def _build_tests(raw: Mapping[str, Any] | None, root: Path) -> TestsConfig:
     defaults = TestsConfig()
     if not raw:
         return defaults
-    known = ("flaky_reruns", "python_command", "python_bin_command", "readme_contract_marker")
+    known = (
+        "flaky_reruns",
+        "python_command",
+        "python_bin_command",
+        "readme_contract_marker",
+        "command",
+        "report",
+        "report_path",
+    )
     unknown = sorted(str(k) for k in raw if k not in known)
     if unknown:
         raise ConfigError(
@@ -1266,11 +1318,35 @@ def _build_tests(raw: Mapping[str, Any] | None, root: Path) -> TestsConfig:
         if not isinstance(marker_raw, str):
             raise ConfigError("tests.readme_contract_marker must be a string")
         marker = marker_raw
+    command = defaults.command
+    if "command" in raw:
+        command = _parse_command_tuple(raw["command"], field="tests.command")
+    report = defaults.report
+    if "report" in raw:
+        if not isinstance(raw["report"], str) or not str(raw["report"]).strip():
+            raise ConfigError("tests.report must be a non-empty string")
+        report = str(raw["report"]).strip()
+    report_path = defaults.report_path
+    if "report_path" in raw:
+        if not isinstance(raw["report_path"], str) or not str(raw["report_path"]).strip():
+            raise ConfigError("tests.report_path must be a non-empty string")
+        report_path = str(raw["report_path"]).strip()
+    if report and report != "junit":
+        raise ConfigError("tests.report must be 'junit'")
+    if bool(report) != bool(report_path):
+        raise ConfigError("tests.report and tests.report_path must be set together")
+    if report and not command:
+        raise ConfigError("tests.report requires tests.command")
+    if report_path and (".." in Path(report_path).parts):
+        raise ConfigError("tests.report_path must not contain '..'")
     return TestsConfig(
         flaky_reruns=reruns_raw,
         python_command=python_command,
         python_bin_command=python_bin_command,
         readme_contract_marker=marker,
+        command=command,
+        report=report,
+        report_path=report_path,
     )
 
 
@@ -1516,6 +1592,7 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         data.get("scope_size") if isinstance(data.get("scope_size"), dict) else None
     )
     tests_raw = data.get("tests") if isinstance(data.get("tests"), dict) else None
+    lint_raw = data.get("lint") if isinstance(data.get("lint"), dict) else None
     metrics_raw = data.get("metrics") if isinstance(data.get("metrics"), dict) else None
     derived_allow_raw = (
         data.get("derived_allow") if isinstance(data.get("derived_allow"), dict) else None
@@ -1554,6 +1631,7 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         scope_coupling=_build_scope_coupling(scope_coupling_raw),
         scope_size=_build_scope_size(scope_size_raw, language),
         tests=_build_tests(tests_raw, root.resolve()),
+        lint=_build_lint(lint_raw),
         metrics=_build_metrics(metrics_raw),
         derived_allow=_build_derived_allow(derived_allow_raw),
         external_leak=_build_external_leak(external_leak_raw),

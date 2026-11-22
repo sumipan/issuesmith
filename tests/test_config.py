@@ -496,6 +496,47 @@ def test_target_remotes_rejects_unsupported_repo(
         load_config(cfg_path)
 
 
+@pytest.mark.parametrize(
+    "fragment,match",
+    [
+        ({"tests": {"report": "junit"}}, "set together"),
+        ({"tests": {"report": "xunit", "report_path": "r.xml", "command": ["t"]}}, "junit"),
+        ({"tests": {"command": []}}, "non-empty"),
+        (
+            {"tests": {"report": "junit", "report_path": "r.xml"}},
+            "tests.command",
+        ),
+        ({"lint": {"bogus": 1}}, "lint supports"),
+        ({"lint": {"fix_command": ["f"]}}, "lint.command"),
+    ],
+)
+def test_command_gate_config_rejects_invalid_values(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fragment: dict,
+    match: str,
+) -> None:
+    """Refs sumipan/issuesmith#7788 AC7 — command gate config validation."""
+    cfg_path = tmp_path / "issuesmith.yaml"
+    data = {
+        "repo": "example/repo",
+        "phases": [
+            {
+                "name": "develop",
+                "role": "implementation",
+                "entry_step": "prepare",
+                "handler": "develop",
+            }
+        ],
+        **fragment,
+    }
+    cfg_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    with pytest.raises(ConfigError, match=match):
+        load_config(cfg_path)
+
+
 def test_clone_url_resolves_target_remotes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

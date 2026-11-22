@@ -1828,10 +1828,31 @@ def _build_publish_diff(
 
 
 def _build_lint(worktree_path: Path, allow_paths: list[str], base_branch: str) -> LintGate:
+    from issuesmith.config import get_config
+
+    lint = get_config().lint
+    if lint.command:
+        from issuesmith.gates.command import CommandLintGate
+
+        return CommandLintGate(worktree_path, lint.command, lint.fix_command)
     return LintGate(worktree_path, allow_paths, base_branch)
 
 
 def _build_tests(worktree_path: Path, allow_paths: list[str], base_branch: str) -> TestsGate:
+    from issuesmith.config import get_config
+
+    tests = get_config().tests
+    if tests.command:
+        from issuesmith.gates.command import CommandTestsGate
+
+        return CommandTestsGate(
+            worktree_path,
+            base_branch,
+            tests.command,
+            report=tests.report,
+            report_path=tests.report_path,
+            flaky_reruns=tests.flaky_reruns,
+        )
     return TestsGate(worktree_path, base_branch=base_branch, allow_paths=allow_paths)
 
 

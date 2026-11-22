@@ -159,6 +159,11 @@ _FAKE_AGENT = textwrap.dedent(
           git commit -m "fake engine change" || true
         fi
         ;;
+      command_gate_good)
+        printf '2\\n' >src/value.txt
+        git add src/value.txt
+        git commit -m "fake engine change" || true
+        ;;
       good|review_advance_clean|review_advance_conflict)
         printf 'VALUE = 2\\n' >"$TARGET"
         printf '%s\\n' \
@@ -282,6 +287,65 @@ def _make_host_repo(tmp_path: Path, slug: str) -> Path:
     data = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
     data["repo"] = slug
     data["supported_repos"] = [slug]
+    for role in ("implementation", "review"):
+        eng = data.get("engines", {}).get(role)
+        if isinstance(eng, dict):
+            eng.pop("allowed", None)
+            eng["heavy"] = [["cursor", "auto"]]
+    cfg_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    _git(seed, "add", "-A")
+    _git(seed, "commit", "-m", "init")
+    subprocess.run(
+        ["git", "clone", "--bare", str(seed), str(origin)],
+        capture_output=True,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "clone", str(origin), str(host)],
+        capture_output=True,
+        check=True,
+    )
+    _git(host, "config", "user.email", "t@example.com")
+    _git(host, "config", "user.name", "T")
+    (host / "bin").mkdir()
+    fake_cli = host / "bin" / "cursor-agent"
+    fake_cli.write_text(_FAKE_AGENT, encoding="utf-8")
+    fake_cli.chmod(0o755)
+    (host / "jobs").mkdir(exist_ok=True)
+    (host / "logs").mkdir(exist_ok=True)
+    (host / ".pipeline-state").mkdir(exist_ok=True)
+    return host
+
+
+def _make_command_gate_host(tmp_path: Path, slug: str) -> Path:
+    """Reference host without Python sources; lint/tests use shell commands (#7788)."""
+    seed = tmp_path / "seed_cmd"
+    origin = tmp_path / "origin.git"
+    host = tmp_path / "host_cmd"
+    subprocess.run(
+        ["git", "init", "-b", "main", str(seed)],
+        capture_output=True,
+        check=True,
+    )
+    _git(seed, "config", "user.email", "t@example.com")
+    _git(seed, "config", "user.name", "T")
+    (seed / "src").mkdir()
+    (seed / "src" / "value.txt").write_text("1\n", encoding="utf-8")
+    tools = seed / "tools"
+    tools.mkdir()
+    for name in ("lint.sh", "test.sh"):
+        script = tools / name
+        script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        script.chmod(0o755)
+    (seed / "jobs").mkdir()
+    (seed / "logs").mkdir()
+    extract_line("develop", seed)
+    cfg_path = seed / "issuesmith.yaml"
+    data = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    data["repo"] = slug
+    data["supported_repos"] = [slug]
+    data["lint"] = {"command": ["./tools/lint.sh"]}
+    data["tests"] = {"command": ["./tools/test.sh"], "flaky_reruns": 0}
     for role in ("implementation", "review"):
         eng = data.get("engines", {}).get(role)
         if isinstance(eng, dict):
@@ -548,6 +612,37 @@ def host_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, runner_procs):
         "GHDAG_FORGE": "local",
         "GHDAG_FORGE_ROOT": str(forge_root),
         "ISSUESMITH_QUEUE_DIR": str(tmp_path / "queue"),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        "GHDAG_TASK_ENV_ALLOW": "*",
+    }
+    for key in ("GITHUB_TOKEN", "GH_TOKEN", "GITHUB_REPOSITORIES", "GITHUB_REPOSITORY"):
+        env.pop(key, None)
+        monkeypatch.delenv(key, raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.chdir(host)
+    reset_config_cache()
+    client = get_forge()
+    yield host, client, env, slug
+    reset_config_cache()
+
+
+@pytest.fixture
+def command_gate_host_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, runner_procs):
+    slug = "example/reference-host"
+    host = _make_command_gate_host(tmp_path, slug)
+    forge_root = tmp_path / "forge_cmd"
+    forge_root.mkdir()
+    (tmp_path / "queue_cmd").mkdir()
+    bin_dir = host / "bin"
+    env = {
+        **os.environ,
+        "ISSUESMITH_CONFIG": str(host / "issuesmith.yaml"),
+        "PYTHONPATH": f"{_REPO_ROOT / 'src'}{os.pathsep}{os.environ.get('PYTHONPATH', '')}",
+        "GHDAG_FORGE": "local",
+        "GHDAG_FORGE_ROOT": str(forge_root),
+        "ISSUESMITH_QUEUE_DIR": str(tmp_path / "queue_cmd"),
         "PYTHONDONTWRITEBYTECODE": "1",
         "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
         "GHDAG_TASK_ENV_ALLOW": "*",
@@ -1306,6 +1401,31 @@ def test_unmet_acceptance_contract_stops_at_verify(host_env) -> None:
     assert "ac_contract.paths_must_exist" in andon.summary
     labels = _labels(client, number)
     assert "issuesmith:develop-done" not in labels
+
+
+def test_verify_passes_without_python_files_using_commands(command_gate_host_env) -> None:
+    """Refs sumipan/issuesmith#7788 AC8 — command gates verify a non-Python target."""
+    host, client, env, _slug = command_gate_host_env
+    _set_fake_engine_mode(host, "command_gate_good")
+    number = client.issue_create(
+        "command gate verify",
+        textwrap.dedent(
+            """\
+            ```yaml
+            target_repo: example/reference-host
+            base_branch: main
+            allow_paths:
+              - src/**
+            ```
+
+            ## Task
+            Set src/value.txt to 2.
+            """
+        ),
+    )
+    client.issue_update(number, labels_add=["issuesmith:develop-ready"])
+    outcome = _run_until(client, number, env, host, expect_done=True, max_rounds=60)
+    assert outcome == "done"
 
 
 def test_base_conflict_stops_at_verify(host_env) -> None:
