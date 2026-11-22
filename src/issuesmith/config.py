@@ -480,6 +480,20 @@ class IssuesmithConfig:
             f"{ns}:{ph.name}-done",
         )
 
+    def workflow_name(self) -> str:
+        """ghdag の鍵と ``--workflow`` に使うワークフローの名前。"""
+        path = self.paths.workflow
+        if path.is_file():
+            try:
+                data = yaml.safe_load(path.read_text(encoding="utf-8"))
+            except (OSError, yaml.YAMLError):
+                data = None
+            if isinstance(data, dict):
+                name = data.get("name")
+                if isinstance(name, str) and name.strip():
+                    return name.strip()
+        return self.label_namespace
+
     def required_labels(self, name: str) -> frozenset[str]:
         ph = self.phase(name)
         return frozenset(self._expand_label(x) for x in ph.preconditions)

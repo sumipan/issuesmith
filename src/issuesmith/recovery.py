@@ -24,8 +24,6 @@ from issuesmith.queue import (
 )
 from issuesmith.queue_store import QueueStore
 
-WORKFLOW_NAME = "issuesmith"
-
 _STEP_FROM_DISPATCH_RE = re.compile(r"issuesmith dispatch ([\w-]+)")
 _ORDER_PATH_RE = re.compile(r"(?:bash -o pipefail )?(\S+jobs/\S+\.md)")
 _WORKTREE_RE = re.compile(r'worktree_path=([^\s"]+)')
@@ -81,7 +79,7 @@ def _github_client() -> ForgePort:
 
 
 def _idempotency_key(handler: str, issue: int, generation: int | None = None) -> str:
-    base = f"{WORKFLOW_NAME}:{handler}:{issue}"
+    base = f"{_cfg().workflow_name()}:{handler}:{issue}"
     if generation is None or generation == 0:
         return base
     return f"{base}:{generation}"
@@ -102,7 +100,7 @@ def _handler_records(handler: str, issue: int) -> list[dict[str, Any]]:
     path = _exec_path()
     if not path.exists():
         return []
-    prefix = f"{WORKFLOW_NAME}:{handler}:{issue}"
+    prefix = f"{_cfg().workflow_name()}:{handler}:{issue}"
     records: list[dict[str, Any]] = []
     for raw in path.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
