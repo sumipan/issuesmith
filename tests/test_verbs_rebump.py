@@ -180,6 +180,107 @@ def test_rebump_onto_base_stops_when_pyproject_changes_beyond_version(tmp_path: 
     assert _git(wt2, "rev-parse", "refs/remotes/origin/feat/two").stdout.strip() == remote_sha
 
 
+def _command_dual_branch_setup(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """Parallel branches whose only merge conflict with main is VERSION."""
+    import os
+
+    import yaml
+
+    from issuesmith.config import reset_config_cache
+
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({
+            "repo": "example/host",
+            "version": {"policy": "command", "bump_command": ["true"]},
+        }),
+        encoding="utf-8",
+    )
+    os.environ["ISSUESMITH_CONFIG"] = str(cfg_path)
+    reset_config_cache()
+
+    remote = tmp_path / "remote.git"
+    subprocess.run(
+        ["git", "init", "--bare", "-b", "main", str(remote)],
+        check=True,
+        capture_output=True,
+    )
+    seed = tmp_path / "seed"
+    subprocess.run(["git", "clone", str(remote), str(seed)], check=True, capture_output=True)
+    _config_identity(seed)
+    _write(seed, "VERSION", "0.1.0\n")
+    _git(seed, "add", "VERSION")
+    _git(seed, "commit", "-m", "init version")
+    _git(seed, "push", "-u", "origin", "main")
+
+    wt1 = tmp_path / "wt1"
+    subprocess.run(["git", "clone", str(remote), str(wt1)], check=True, capture_output=True)
+    _config_identity(wt1)
+    _git(wt1, "checkout", "-b", "feat/one")
+    _write(wt1, "src/one.py", "1\n")
+    _git(wt1, "add", "src/one.py")
+    _git(wt1, "commit", "-m", "feat one")
+    _write(wt1, "VERSION", "0.1.1\n")
+    _git(wt1, "add", "VERSION")
+    _git(wt1, "commit", "-m", f"{BUMP_SUBJECT_PREFIX}0.1.1 (command)")
+    _git(wt1, "push", "-u", "origin", "feat/one")
+
+    wt2 = tmp_path / "wt2"
+    subprocess.run(["git", "clone", str(remote), str(wt2)], check=True, capture_output=True)
+    _config_identity(wt2)
+    _git(wt2, "checkout", "-b", "feat/two")
+    _write(wt2, "src/two.py", "2\n")
+    _git(wt2, "add", "src/two.py")
+    _git(wt2, "commit", "-m", "feat two")
+    _write(wt2, "VERSION", "0.1.2\n")
+    _git(wt2, "add", "VERSION")
+    _git(wt2, "commit", "-m", f"{BUMP_SUBJECT_PREFIX}0.1.2 (command)")
+    _git(wt2, "push", "-u", "origin", "feat/two")
+
+    _git(seed, "fetch", "origin", "feat/one", "main")
+    _git(seed, "checkout", "main")
+    _git(seed, "reset", "--hard", "origin/feat/one")
+    _git(seed, "push", "--force", "origin", "main")
+
+    _git(wt2, "fetch", "origin", "main", "feat/two")
+    _git(wt2, "checkout", "feat/two")
+    _git(wt2, "reset", "--hard", "origin/feat/two")
+    return remote, seed, wt2
+
+
+def test_rebump_onto_base_reruns_bump_command(tmp_path: Path) -> None:
+    """Refs #7789 AC7 — command rebump re-runs bump after VERSION-only conflict."""
+    _, seed, wt2 = _command_dual_branch_setup(tmp_path)
+    calls: list[int] = []
+
+    def _fake_command_bump(
+        worktree: Path, base_branch: str,
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(1)
+        text = (worktree / "VERSION").read_text(encoding="utf-8").strip()
+        parts = text.split(".")
+        parts[-1] = str(int(parts[-1]) + 1)
+        new_v = ".".join(parts)
+        (worktree / "VERSION").write_text(f"{new_v}\n", encoding="utf-8")
+        _git(worktree, "add", "VERSION")
+        _git(worktree, "commit", "-m", f"{BUMP_SUBJECT_PREFIX}{new_v} (command)")
+        return subprocess.CompletedProcess([], 0, f"bump {new_v}\n", "")
+
+    with patch("issuesmith.verbs.publish.run_version_bump", side_effect=_fake_command_bump):
+        result = rebump_onto_base(wt2, "main", "feat/two")
+
+    assert result.status == "rebumped", result
+    assert calls == [1]
+    subjects = _git(
+        wt2, "log", "--format=%s", "origin/main..HEAD",
+    ).stdout.splitlines()
+    bump_subjects = [s for s in subjects if s.startswith(BUMP_SUBJECT_PREFIX)]
+    assert len(bump_subjects) == 1
+    _git(seed, "fetch", "origin", "feat/two", "main")
+    merge = _git(seed, "merge", "--ff-only", "origin/feat/two", check=False)
+    assert merge.returncode == 0
+
+
 def test_rebump_onto_base_refuses_push_when_non_bump_diff_changes(tmp_path: Path) -> None:
     """refs #7398 AC7: fingerprint mismatch rolls back before push."""
     _, _, wt2 = _dual_branch_setup(tmp_path)

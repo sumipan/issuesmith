@@ -537,6 +537,52 @@ def test_command_gate_config_rejects_invalid_values(
         load_config(cfg_path)
 
 
+def test_version_policy_defaults_to_auto(tmp_path, monkeypatch):
+    """Refs #7789 AC1 — omitted version section defaults to auto / empty bump_command."""
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(yaml.safe_dump({"repo": "example/repo"}), encoding="utf-8")
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    cfg = load_config()
+    assert cfg.version.policy == "auto"
+    assert cfg.version.bump_command == ()
+
+
+def test_version_command_requires_bump_command(tmp_path, monkeypatch):
+    """Refs #7789 AC2 — command policy requires bump_command."""
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "example/repo", "version": {"policy": "command"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    with pytest.raises(ConfigError, match="bump_command"):
+        load_config()
+
+
+@pytest.mark.parametrize(
+    "version_raw,match",
+    [
+        ({"policy": "bogus"}, "version.policy"),
+        ({"policy": "none", "extra": 1}, "unknown keys"),
+    ],
+)
+def test_version_rejects_unknown_policy_and_keys(
+    tmp_path, monkeypatch, version_raw, match,
+):
+    """Refs #7789 AC3 — invalid policy and extra keys raise ConfigError."""
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "example/repo", "version": version_raw}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    with pytest.raises(ConfigError, match=match):
+        load_config()
+
+
 def test_clone_url_resolves_target_remotes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
