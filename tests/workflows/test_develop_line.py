@@ -21,7 +21,8 @@ import yaml
 from ghdag.forge import get_forge
 
 from issuesmith.andon import list_open
-from issuesmith.config import RepairConfig, ReviewConfig, StepConfig, get_config, reset_config_cache
+from issuesmith.bump_commits import BUMP_SUBJECT_PREFIX
+from issuesmith.config import MergeConfig, RepairConfig, ReviewConfig, StepConfig, get_config, reset_config_cache
 from issuesmith.contract import StepContext
 from issuesmith.language import EN
 from issuesmith.lines import LINES, extract_line
@@ -40,6 +41,9 @@ _ALLOWED_ISSMITH_IMPORTS = frozenset(
         "issuesmith.config",
         "issuesmith.andon",
         "issuesmith.forge",
+        "issuesmith.bump_commits",
+        "issuesmith.version_policy",
+        "issuesmith.merge",
     }
 )
 
@@ -273,7 +277,7 @@ def _make_host_repo(tmp_path: Path, slug: str) -> Path:
         encoding="utf-8",
     )
     (seed / "pyproject.toml").write_text(
-        "[project]\nname = 'ref-host'\nversion = '0.0.0'\n\n"
+        '[project]\nname = "ref-host"\nversion = "0.0.0"\n\n'
         "[tool.pytest.ini_options]\ntestpaths = ['tests']\n\n"
         "[tool.ruff]\nline-length = 100\n\n"
         '[tool.ruff.lint]\nextend-select = ["W291"]\n',
@@ -392,7 +396,7 @@ def _init_feature_seed(repo: Path) -> None:
         encoding="utf-8",
     )
     (repo / "pyproject.toml").write_text(
-        "[project]\nname = 'ref-host'\nversion = '0.0.0'\n\n"
+        '[project]\nname = "ref-host"\nversion = "0.0.0"\n\n'
         "[tool.pytest.ini_options]\ntestpaths = ['tests']\n\n"
         "[tool.ruff]\nline-length = 100\n\n"
         '[tool.ruff.lint]\nextend-select = ["W291"]\n',
@@ -2531,4 +2535,392 @@ def test_merge_step_generic_merge_error_stays_broken(tmp_path: Path, monkeypatch
     assert result.andon is not None
     assert result.andon.kind == "broken"
     assert "403 Forbidden" in result.andon.summary
+    assert rebump_calls == []
+
+
+def test_merge_step_bumps_version_on_publish(cross_repo_other_target_env) -> None:
+    host, client, env, host_slug, target_slug, target_checkout, _external_dir = (
+        cross_repo_other_target_env
+    )
+    main_before = _git(target_checkout, "rev-parse", "main").stdout.strip()
+    number = client.issue_create(
+        "bump on publish",
+        _cross_repo_issue_body(target_slug),
+    )
+    client.issue_update(number, labels_add=["issuesmith:develop-ready"])
+    outcome = _run_until(client, number, env, host, expect_done=True)
+    assert outcome == "done"
+    subjects = _git(
+        target_checkout, "log", "--format=%s", f"{main_before}..main"
+    ).stdout.splitlines()
+    bump_subjects = [s for s in subjects if s.startswith(BUMP_SUBJECT_PREFIX)]
+    pyproject = _git(target_checkout, "show", "main:pyproject.toml")
+    assert pyproject.returncode == 0, pyproject.stderr
+    assert 'version = "0.0.0"' not in pyproject.stdout
+    assert len(bump_subjects) == 1
+
+
+def test_merge_step_skips_bump_when_policy_none(
+    cross_repo_other_target_env,
+) -> None:
+    host, client, env, host_slug, target_slug, target_checkout, _external_dir = (
+        cross_repo_other_target_env
+    )
+    cfg_path = host / "issuesmith.yaml"
+    data = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    data["version"] = {"policy": "none"}
+    cfg_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    reset_config_cache()
+    main_before = _git(target_checkout, "rev-parse", "main").stdout.strip()
+    number = client.issue_create(
+        "no bump on publish",
+        _cross_repo_issue_body(target_slug),
+    )
+    client.issue_update(number, labels_add=["issuesmith:develop-ready"])
+    outcome = _run_until(client, number, env, host, expect_done=True)
+    assert outcome == "done"
+    subjects = _git(
+        target_checkout, "log", "--format=%s", f"{main_before}..main"
+    ).stdout.splitlines()
+    bump_subjects = [s for s in subjects if s.startswith(BUMP_SUBJECT_PREFIX)]
+    assert bump_subjects == []
+    pyproject = _git(target_checkout, "show", "main:pyproject.toml")
+    assert 'version = "0.0.0"' in pyproject.stdout
+
+
+def test_merge_step_does_not_bump_twice(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from issuesmith.lines.develop import merge as develop_merge
+
+    seed = tmp_path / "seed"
+    worktree = tmp_path / "wt"
+    origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-b", "main", str(seed)], check=True, capture_output=True)
+    _git(seed, "config", "user.email", "t@example.com")
+    _git(seed, "config", "user.name", "T")
+    (seed / "pyproject.toml").write_text("[project]\nname='x'\nversion='0.0.0'\n", encoding="utf-8")
+    _git(seed, "add", "pyproject.toml")
+    _git(seed, "commit", "-m", "init")
+    subprocess.run(["git", "clone", "--bare", str(seed), str(origin)], check=True, capture_output=True)
+    subprocess.run(["git", "clone", str(origin), str(worktree)], check=True, capture_output=True)
+    _git(worktree, "config", "user.email", "t@example.com")
+    _git(worktree, "config", "user.name", "T")
+    _git(worktree, "fetch", "origin", "main")
+    _git(worktree, "checkout", "-b", "feat", "origin/main")
+    _git(worktree, "commit", "--allow-empty", "-m", f"{BUMP_SUBJECT_PREFIX}0.0.1")
+    run_calls: list[object] = []
+    monkeypatch.setattr(develop_merge, "run_bump", lambda *_a, **_k: run_calls.append(1))
+    assert develop_merge._bump_before_publish(worktree, "main", target_differs=True) == ""
+    assert run_calls == []
+
+
+def _patch_merge_run_stubs(monkeypatch: pytest.MonkeyPatch, develop_merge, worktree: Path) -> None:
+    from unittest.mock import MagicMock
+
+    if not (worktree / ".git").exists():
+        subprocess.run(
+            ["git", "init", "-q", "-b", "main", str(worktree)],
+            check=True,
+            capture_output=True,
+        )
+    monkeypatch.setattr(develop_merge, "publish_branch", lambda *_a, **_k: None)
+    monkeypatch.setattr(develop_merge, "_locate_pr", lambda *_a, **_k: 42)
+    monkeypatch.setattr(develop_merge, "get_forge", lambda **_k: MagicMock())
+    monkeypatch.setattr(develop_merge, "cleanup_worktrees", lambda *_a, **_k: None)
+    monkeypatch.setattr(develop_merge, "cleanup_branches", lambda *_a, **_k: None)
+    monkeypatch.setattr(develop_merge, "close_issue", lambda *_a, **_k: None)
+    monkeypatch.setattr(develop_merge, "_commit_gate_autofixes", lambda *_a, **_k: "")
+
+
+def test_merge_step_waits_while_mergeable_unknown(tmp_path: Path, monkeypatch) -> None:
+    from issuesmith.lines.develop import merge as develop_merge
+
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    states = iter(
+        [
+            {"mergeable": "UNKNOWN"},
+            {"mergeable": "UNKNOWN"},
+            {"mergeable": "MERGEABLE"},
+        ]
+    )
+    state_calls: list[int] = []
+
+    def fake_merge_state(_client, _repo, _pr) -> dict:
+        state_calls.append(1)
+        return next(states)
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(develop_merge, "merge_state", fake_merge_state)
+    monkeypatch.setattr(develop_merge, "_sleep", lambda sec: sleeps.append(sec))
+    monkeypatch.setattr(develop_merge, "merge_pr", lambda *_a, **_k: None)
+    _patch_merge_run_stubs(monkeypatch, develop_merge, worktree)
+
+    ctx = StepContext(
+        issue_number="7797",
+        base_branch="main",
+        handler_name="develop",
+        is_cross_repo="false",
+        target_clone_path="",
+        source="",
+        workflow_name="issuesmith",
+        m1_result_filename="",
+        m1r_result_filename="",
+        worktree_path=str(worktree),
+        branch="feat/issue-7797",
+    )
+    result = develop_merge.run(ctx, StepConfig())
+    assert result.status == "done"
+    assert result.markers == ["MERGE_DONE"]
+    assert len(state_calls) == 3
+    assert sleeps == [3.0, 3.0]
+
+
+def test_merge_step_merges_when_unknown_but_merge_tree_clean(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from issuesmith.lines.develop import merge as develop_merge
+    from issuesmith.merge import LocalMergeVerifyResult
+
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    state_calls: list[int] = []
+
+    def fake_merge_state(_client, _repo, _pr) -> dict:
+        state_calls.append(1)
+        return {"mergeable": "UNKNOWN"}
+
+    merge_calls: list[int] = []
+    verify_calls: list[int] = []
+    monkeypatch.setattr(develop_merge, "merge_state", fake_merge_state)
+    monkeypatch.setattr(develop_merge, "_sleep", lambda _sec: None)
+    monkeypatch.setattr(develop_merge, "merge_pr", lambda *_a, **_k: merge_calls.append(1))
+    monkeypatch.setattr(
+        develop_merge,
+        "verify_local_merge",
+        lambda *_a, **_k: verify_calls.append(1)
+        or LocalMergeVerifyResult("CLEAN", True, None, None, str(worktree)),
+    )
+    _patch_merge_run_stubs(monkeypatch, develop_merge, worktree)
+
+    ctx = StepContext(
+        issue_number="7797",
+        base_branch="main",
+        handler_name="develop",
+        is_cross_repo="false",
+        target_clone_path="",
+        source="",
+        workflow_name="issuesmith",
+        m1_result_filename="",
+        m1r_result_filename="",
+        worktree_path=str(worktree),
+        branch="feat/issue-7797",
+    )
+    result = develop_merge.run(ctx, StepConfig())
+    assert result.status == "done"
+    assert len(state_calls) == 5
+    assert verify_calls == [1]
+    assert merge_calls == [1]
+
+
+def test_merge_step_andons_when_unknown_and_merge_tree_conflicts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from issuesmith.lines.develop import merge as develop_merge
+    from issuesmith.merge import LocalMergeVerifyResult
+    from issuesmith.verbs.publish import RebumpResult
+
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    monkeypatch.setattr(
+        develop_merge,
+        "merge_state",
+        lambda *_a, **_k: {"mergeable": "UNKNOWN"},
+    )
+    monkeypatch.setattr(develop_merge, "_sleep", lambda _sec: None)
+    monkeypatch.setattr(
+        develop_merge,
+        "verify_local_merge",
+        lambda *_a, **_k: LocalMergeVerifyResult("CONFLICT", False, None, None, str(worktree)),
+    )
+    merge_calls: list[int] = []
+    monkeypatch.setattr(
+        develop_merge,
+        "merge_pr",
+        lambda *_a, **_k: merge_calls.append(1),
+    )
+    monkeypatch.setattr(
+        develop_merge,
+        "rebump_onto_base",
+        lambda *_a, **_k: RebumpResult(
+            status="not_bump_only", conflict_files=("src/x.py",), detail=""
+        ),
+    )
+    _patch_merge_run_stubs(monkeypatch, develop_merge, worktree)
+
+    ctx = StepContext(
+        issue_number="7797",
+        base_branch="main",
+        handler_name="develop",
+        is_cross_repo="false",
+        target_clone_path="",
+        source="",
+        workflow_name="issuesmith",
+        m1_result_filename="",
+        m1r_result_filename="",
+        worktree_path=str(worktree),
+        branch="feat/issue-7797",
+    )
+    result = develop_merge.run(ctx, StepConfig())
+    assert result.status == "andon"
+    assert result.andon is not None
+    assert result.andon.kind == "blocked"
+    assert "src/x.py" in result.andon.summary
+    assert merge_calls == []
+
+
+def test_merge_step_rebumps_until_mergeable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from issuesmith.lines.develop import merge as develop_merge
+    from issuesmith.verbs.publish import RebumpResult
+
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    states = iter(
+        [
+            {"mergeable": "CONFLICTING"},
+            {"mergeable": "CONFLICTING"},
+            {"mergeable": "MERGEABLE"},
+        ]
+    )
+    rebump_calls: list[int] = []
+    merge_calls: list[int] = []
+    monkeypatch.setattr(
+        develop_merge,
+        "merge_state",
+        lambda *_a, **_k: next(states),
+    )
+    monkeypatch.setattr(develop_merge, "_sleep", lambda _sec: None)
+    monkeypatch.setattr(
+        develop_merge,
+        "rebump_onto_base",
+        lambda *_a, **_k: rebump_calls.append(1) or RebumpResult(status="rebumped"),
+    )
+    monkeypatch.setattr(
+        develop_merge,
+        "merge_pr",
+        lambda *_a, **_k: merge_calls.append(1),
+    )
+    _patch_merge_run_stubs(monkeypatch, develop_merge, worktree)
+
+    ctx = StepContext(
+        issue_number="7797",
+        base_branch="main",
+        handler_name="develop",
+        is_cross_repo="false",
+        target_clone_path="",
+        source="",
+        workflow_name="issuesmith",
+        m1_result_filename="",
+        m1r_result_filename="",
+        worktree_path=str(worktree),
+        branch="feat/issue-7797",
+    )
+    result = develop_merge.run(ctx, StepConfig())
+    assert result.status == "done"
+    assert len(rebump_calls) == 2
+    assert merge_calls == [1]
+
+
+def test_merge_step_andons_after_rebump_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from issuesmith.lines.develop import merge as develop_merge
+    from issuesmith.verbs.publish import RebumpResult
+
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    cfg = get_config()
+    monkeypatch.setattr(
+        develop_merge,
+        "get_config",
+        lambda: replace(cfg, merge=MergeConfig(state_wait_attempts=5, state_wait_seconds=0, rebump_max=2)),
+    )
+    rebump_calls: list[int] = []
+    monkeypatch.setattr(
+        develop_merge,
+        "merge_state",
+        lambda *_a, **_k: {"mergeable": "CONFLICTING"},
+    )
+    monkeypatch.setattr(develop_merge, "_sleep", lambda _sec: None)
+    monkeypatch.setattr(
+        develop_merge,
+        "rebump_onto_base",
+        lambda *_a, **_k: rebump_calls.append(1) or RebumpResult(status="rebumped"),
+    )
+    monkeypatch.setattr(
+        develop_merge,
+        "merge_pr",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("no merge")),
+    )
+    _patch_merge_run_stubs(monkeypatch, develop_merge, worktree)
+
+    ctx = StepContext(
+        issue_number="7797",
+        base_branch="main",
+        handler_name="develop",
+        is_cross_repo="false",
+        target_clone_path="",
+        source="",
+        workflow_name="issuesmith",
+        m1_result_filename="",
+        m1r_result_filename="",
+        worktree_path=str(worktree),
+        branch="feat/issue-7797",
+    )
+    result = develop_merge.run(ctx, StepConfig())
+    assert result.status == "andon"
+    assert result.andon is not None
+    assert result.andon.kind == "blocked"
+    assert len(rebump_calls) == 2
+    assert "rebumped 2 time(s)" in result.andon.summary
+
+
+def test_merge_step_retries_merge_after_base_modified(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from issuesmith.lines.develop import merge as develop_merge
+
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    merge_calls: list[int] = []
+    rebump_calls: list[int] = []
+
+    def fake_merge_pr(_client, _repo, _pr) -> None:
+        merge_calls.append(1)
+        if len(merge_calls) == 1:
+            raise RuntimeError("405 Base branch was modified")
+
+    monkeypatch.setattr(develop_merge, "merge_state", lambda *_a, **_k: {"mergeable": "MERGEABLE"})
+    monkeypatch.setattr(develop_merge, "_sleep", lambda _sec: None)
+    monkeypatch.setattr(develop_merge, "merge_pr", fake_merge_pr)
+    monkeypatch.setattr(
+        develop_merge,
+        "rebump_onto_base",
+        lambda *_a, **_k: rebump_calls.append(1),
+    )
+    _patch_merge_run_stubs(monkeypatch, develop_merge, worktree)
+
+    ctx = StepContext(
+        issue_number="7797",
+        base_branch="main",
+        handler_name="develop",
+        is_cross_repo="false",
+        target_clone_path="",
+        source="",
+        workflow_name="issuesmith",
+        m1_result_filename="",
+        m1r_result_filename="",
+        worktree_path=str(worktree),
+        branch="feat/issue-7797",
+    )
+    result = develop_merge.run(ctx, StepConfig())
+    assert result.status == "done"
+    assert merge_calls == [1, 1]
     assert rebump_calls == []

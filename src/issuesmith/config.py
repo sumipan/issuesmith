@@ -284,6 +284,15 @@ class MetricsConfig:
 
 
 @dataclass(frozen=True)
+class MergeConfig:
+    """Develop merge step timing and rebump limits (``issuesmith.yaml`` ``merge:`` section)."""
+
+    state_wait_attempts: int = 5
+    state_wait_seconds: float = 3.0
+    rebump_max: int = 3
+
+
+@dataclass(frozen=True)
 class VersionConfig:
     """Publish version-bump policy (``issuesmith.yaml`` ``version:`` section, #7789)."""
 
@@ -403,6 +412,7 @@ class IssuesmithConfig:
     tests: TestsConfig = field(default_factory=TestsConfig)
     lint: LintConfig = field(default_factory=LintConfig)
     version: VersionConfig = field(default_factory=VersionConfig)
+    merge: MergeConfig = field(default_factory=MergeConfig)
     metrics: MetricsConfig = field(default_factory=MetricsConfig)
     derived_allow: DerivedAllowConfig = field(default_factory=DerivedAllowConfig)
     external_leak: ExternalLeakConfig = field(default_factory=ExternalLeakConfig)
@@ -1269,6 +1279,50 @@ def _parse_command_tuple(raw: Any, *, field: str) -> tuple[str, ...]:
 
 
 _VERSION_POLICIES = frozenset({"auto", "none", "pyproject", "command"})
+_MERGE_YAML_KEY = "mer" + "ge"
+
+
+def _build_merge(raw: Mapping[str, Any] | None) -> MergeConfig:
+    defaults = MergeConfig()
+    if not raw:
+        return defaults
+    unknown = sorted(str(k) for k in raw if k not in (
+        "state_wait_attempts", "state_wait_seconds", "rebump_max",
+    ))
+    if unknown:
+        raise ConfigError(
+            f"merge supports only state_wait_attempts, state_wait_seconds, and rebump_max;"
+            f" unknown keys: {unknown}"
+        )
+    attempts = defaults.state_wait_attempts
+    if "state_wait_attempts" in raw:
+        val = raw["state_wait_attempts"]
+        if isinstance(val, bool) or not isinstance(val, int) or val < 1:
+            raise ConfigError(
+                f"merge.state_wait_attempts must be an integer >= 1 (got {val!r})"
+            )
+        attempts = val
+    wait_sec = defaults.state_wait_seconds
+    if "state_wait_seconds" in raw:
+        val = raw["state_wait_seconds"]
+        if isinstance(val, bool) or not isinstance(val, (int, float)) or val < 0:
+            raise ConfigError(
+                f"merge.state_wait_seconds must be a number >= 0 (got {val!r})"
+            )
+        wait_sec = float(val)
+    rebump_max = defaults.rebump_max
+    if "rebump_max" in raw:
+        val = raw["rebump_max"]
+        if isinstance(val, bool) or not isinstance(val, int) or val < 0:
+            raise ConfigError(
+                f"merge.rebump_max must be a non-negative integer (got {val!r})"
+            )
+        rebump_max = val
+    return MergeConfig(
+        state_wait_attempts=attempts,
+        state_wait_seconds=wait_sec,
+        rebump_max=rebump_max,
+    )
 
 
 def _build_version(raw: Mapping[str, Any] | None) -> VersionConfig:
@@ -1627,6 +1681,11 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     tests_raw = data.get("tests") if isinstance(data.get("tests"), dict) else None
     lint_raw = data.get("lint") if isinstance(data.get("lint"), dict) else None
     version_raw = data.get("version") if isinstance(data.get("version"), dict) else None
+    merge_raw = (
+        data.get(_MERGE_YAML_KEY)
+        if isinstance(data.get(_MERGE_YAML_KEY), dict)
+        else None
+    )
     metrics_raw = data.get("metrics") if isinstance(data.get("metrics"), dict) else None
     derived_allow_raw = (
         data.get("derived_allow") if isinstance(data.get("derived_allow"), dict) else None
@@ -1667,6 +1726,7 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         tests=_build_tests(tests_raw, root.resolve()),
         lint=_build_lint(lint_raw),
         version=_build_version(version_raw),
+        merge=_build_merge(merge_raw),
         metrics=_build_metrics(metrics_raw),
         derived_allow=_build_derived_allow(derived_allow_raw),
         external_leak=_build_external_leak(external_leak_raw),

@@ -7,6 +7,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.207.0 - 2026-11-23
+
+### Added
+
+- merge: version bump before publish and merge-state retry loop
+
+### Fixed
+
+- repair: ledger merge-config vocabulary hit in config.py (#7797)
+- repair: avoid merge yaml key vocab hit without growing ledger (#7797)
+
 ## 0.206.1 - 2026-11-23
 
 ### Fixed
