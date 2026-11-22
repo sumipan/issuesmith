@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import re
 import subprocess
+import time
 from pathlib import Path
 
+from issuesmith.bump_commits import BumpCommitsError, bump_versions_in_range
+from issuesmith.version_policy import resolve_policy, run_bump
 from issuesmith.config import StepConfig, get_config
 from issuesmith.contract import Andon, StepContext, StepResult
 from issuesmith.forge import get_forge
+from issuesmith.merge import verify_local_merge
 from issuesmith.verbs import (
     RebumpResult,
     cleanup_branches,
@@ -52,6 +56,8 @@ def _target_clone(ctx: StepContext) -> Path:
 _BLOCKED_MERGEABLE = frozenset({"false", "conflicting", "dirty"})
 _PUSH_REJECT_MARKERS = ("non-fast-forward", "fetch first", "rejected")
 _AUTO_FIX_COMMIT_MESSAGE = "Apply gate auto-fixes"
+
+_sleep = time.sleep
 
 
 def _commit_gate_autofixes(worktree: Path) -> str:
@@ -194,6 +200,120 @@ def _locate_pr(
     return None
 
 
+def _bump_before_publish(worktree: Path, base: str, *, target_differs: bool) -> str:
+    if not target_differs:
+        return ""
+    if resolve_policy(worktree) == "none":
+        return ""
+    fetch = _git(worktree, "fetch", "origin", base)
+    if fetch.returncode != 0:
+        detail = (fetch.stderr or fetch.stdout or "").strip()
+        return detail or f"git fetch origin {base} failed"
+    try:
+        if bump_versions_in_range(worktree, base):
+            return ""
+    except BumpCommitsError as exc:
+        return str(exc)
+    proc = run_bump(worktree, f"origin/{base}")
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        return detail or f"version bump failed (exit {proc.returncode})"
+    return ""
+
+
+def _is_unknown(state: dict) -> bool:
+    mergeable = str(state.get("mergeable") or "").strip().lower()
+    return mergeable in ("", "unknown")
+
+
+def _wait_merge_state(client, repo: str, pr: int) -> dict:
+    cfg = get_config().merge
+    last: dict = {}
+    for attempt in range(cfg.state_wait_attempts):
+        last = merge_state(client, repo, pr)
+        if not _is_unknown(last):
+            return last
+        if attempt < cfg.state_wait_attempts - 1 and cfg.state_wait_seconds > 0:
+            _sleep(cfg.state_wait_seconds)
+    return last
+
+
+def _mergeable_blocked(state: dict) -> bool:
+    mergeable = str(state.get("mergeable") or "").lower()
+    return mergeable in _BLOCKED_MERGEABLE
+
+
+def _resolve_unknown_merge_state(
+    worktree: Path, base: str, branch: str
+) -> tuple[dict | None, StepResult | None]:
+    verify = verify_local_merge(str(worktree), base, branch)
+    if verify.result == "SKIPPED":
+        return None, StepResult(
+            status="andon",
+            andon=Andon(kind="blocked", summary="merge-tree skipped"),
+        )
+    if verify.result == "CLEAN":
+        return {"mergeable": "MERGEABLE"}, None
+    if verify.result == "CONFLICT":
+        return {"mergeable": "CONFLICTING"}, None
+    return None, StepResult(
+        status="andon",
+        andon=Andon(kind="broken", summary=f"unexpected merge-tree result: {verify.result!r}"),
+    )
+
+
+def _merge_via_pr(
+    worktree: Path,
+    pr_client,
+    pr_repo: str,
+    pr: int,
+    branch: str,
+    base: str,
+) -> StepResult | None:
+    rebump_max = get_config().merge.rebump_max
+    tries = 0
+    while True:
+        state = _wait_merge_state(pr_client, pr_repo, pr)
+        if _is_unknown(state):
+            resolved, early = _resolve_unknown_merge_state(worktree, base, branch)
+            if early is not None:
+                return early
+            assert resolved is not None
+            state = resolved
+
+        if _mergeable_blocked(state):
+            if tries >= rebump_max:
+                return _blocked_andon(
+                    pr,
+                    state,
+                    f"rebumped {tries} time(s), still not mergeable",
+                )
+            rebump = rebump_onto_base(worktree, base, branch)
+            tries += 1
+            if rebump.status != "rebumped":
+                return _blocked_andon(pr, state, _rebump_andon_summary(rebump))
+            continue
+
+        try:
+            merge_pr(pr_client, pr_repo, pr)
+        except Exception as exc:  # noqa: BLE001
+            msg = str(exc)
+            if ("405" in msg or "Base branch was modified" in msg):
+                if tries >= rebump_max:
+                    return _blocked_andon(
+                        pr,
+                        state,
+                        f"base changed {tries} time(s)",
+                    )
+                tries += 1
+                continue
+            return StepResult(
+                status="andon",
+                andon=Andon(kind="broken", summary=f"merge failed: {exc}"),
+            )
+        return None
+
+
 def _rebump_andon_summary(rebump: RebumpResult) -> str:
     parts = [f"rebump status={rebump.status}"]
     if rebump.conflict_files:
@@ -236,6 +356,16 @@ def _merge_without_pr_flow(
 ) -> StepResult:
     base = ctx.base_branch.strip() or "main"
     target_repo = ctx.target_repo.strip()
+    target_differs = target_repo != issue_repo
+    bump_err = _bump_before_publish(worktree, base, target_differs=target_differs)
+    if bump_err:
+        return StepResult(
+            status="andon",
+            andon=Andon(
+                kind="broken",
+                summary=f"version bump failed: {bump_err}",
+            ),
+        )
     try:
         old_sha, new_sha = _merge_without_pr(worktree, base)
     except _RebaseConflict as exc:
@@ -331,6 +461,18 @@ def run(ctx: StepContext, step: StepConfig) -> StepResult:
     repos_differ = pr_repo != issue_repo
     match_title = not repos_differ
 
+    base = ctx.base_branch.strip() or "main"
+    target_differs = pr_repo != issue_repo
+    bump_err = _bump_before_publish(worktree, base, target_differs=target_differs)
+    if bump_err:
+        return StepResult(
+            status="andon",
+            andon=Andon(
+                kind="broken",
+                summary=f"version bump failed: {bump_err}",
+            ),
+        )
+
     try:
         publish_branch(worktree, branch)
     except Exception as exc:  # noqa: BLE001
@@ -379,67 +521,11 @@ def run(ctx: StepContext, step: StepConfig) -> StepResult:
                 andon=Andon(kind="broken", summary="PR not found after create"),
             )
 
-    rebump_attempted = False
-
-    def _attempt_rebump() -> RebumpResult | None:
-        nonlocal rebump_attempted
-        if rebump_attempted:
-            return None
-        rebump_attempted = True
-        return rebump_onto_base(worktree, ctx.base_branch, branch)
-
-    state = merge_state(pr_client, pr_repo, pr)
-    mergeable = str(state.get("mergeable") or "").lower()
-    if mergeable in _BLOCKED_MERGEABLE:
-        rebump = _attempt_rebump()
-        if rebump is None:
-            return _blocked_andon(pr, state)
-        if rebump.status == "rebumped":
-            state = merge_state(pr_client, pr_repo, pr)
-            mergeable = str(state.get("mergeable") or "").lower()
-            if mergeable in _BLOCKED_MERGEABLE:
-                return _blocked_andon(
-                    pr, state, "rebumped once, still not mergeable"
-                )
-        elif rebump.status in ("not_bump_only", "failed"):
-            return _blocked_andon(pr, state, _rebump_andon_summary(rebump))
-        else:
-            return _blocked_andon(pr, state)
-
-    try:
-        merge_pr(pr_client, pr_repo, pr)
-    except Exception as exc:  # noqa: BLE001
-        msg = str(exc)
-        if ("405" in msg or "Base branch was modified" in msg) and not rebump_attempted:
-            rebump = _attempt_rebump()
-            if rebump is not None and rebump.status == "rebumped":
-                state = merge_state(pr_client, pr_repo, pr)
-                mergeable = str(state.get("mergeable") or "").lower()
-                if mergeable not in _BLOCKED_MERGEABLE:
-                    try:
-                        merge_pr(pr_client, pr_repo, pr)
-                    except Exception as retry_exc:  # noqa: BLE001
-                        return StepResult(
-                            status="andon",
-                            andon=Andon(
-                                kind="broken", summary=f"merge failed: {retry_exc}"
-                            ),
-                        )
-                else:
-                    return _blocked_andon(
-                        pr, state, "rebumped once, still not mergeable"
-                    )
-            elif rebump is not None and rebump.status in ("not_bump_only", "failed"):
-                state = merge_state(pr_client, pr_repo, pr)
-                return _blocked_andon(pr, state, _rebump_andon_summary(rebump))
-            else:
-                state = merge_state(pr_client, pr_repo, pr)
-                return _blocked_andon(pr, state)
-        else:
-            return StepResult(
-                status="andon",
-                andon=Andon(kind="broken", summary=f"merge failed: {exc}"),
-            )
+    merge_result = _merge_via_pr(
+        worktree, pr_client, pr_repo, pr, branch, base
+    )
+    if merge_result is not None:
+        return merge_result
 
     if cross:
         clone = _target_clone(ctx)

@@ -9,6 +9,7 @@ import yaml
 
 from issuesmith.config import (
     ConfigError,
+    MergeConfig,
     ScopeSizeConfig,
     load_config,
     reset_config_cache,
@@ -602,6 +603,55 @@ def test_version_rejects_unknown_policy_and_keys(
     cfg_path = tmp_path / "issuesmith.yaml"
     cfg_path.write_text(
         yaml.safe_dump({"repo": "example/repo", "version": version_raw}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    with pytest.raises(ConfigError, match=match):
+        load_config()
+
+
+def test_merge_config_defaults_and_values(tmp_path, monkeypatch):
+    """Refs #7797 AC10 — merge section defaults and explicit values load correctly."""
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(yaml.safe_dump({"repo": "example/repo"}), encoding="utf-8")
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    cfg = load_config()
+    assert cfg.merge == MergeConfig(5, 3.0, 3)
+
+    cfg_path.write_text(
+        yaml.safe_dump({
+            "repo": "example/repo",
+            "merge": {
+                "state_wait_attempts": 2,
+                "state_wait_seconds": 0,
+                "rebump_max": 0,
+            },
+        }),
+        encoding="utf-8",
+    )
+    reset_config_cache()
+    cfg = load_config()
+    assert cfg.merge == MergeConfig(2, 0.0, 0)
+
+
+@pytest.mark.parametrize(
+    "merge_raw,match",
+    [
+        ({"foo": 1}, "unknown keys"),
+        ({"state_wait_attempts": 0}, "state_wait_attempts"),
+        ({"state_wait_seconds": -1}, "state_wait_seconds"),
+        ({"rebump_max": True}, "rebump_max"),
+    ],
+)
+def test_merge_config_rejects_invalid_values(
+    tmp_path, monkeypatch, merge_raw, match,
+):
+    """Refs #7797 AC11 — invalid merge keys and values raise ConfigError."""
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "example/repo", "merge": merge_raw}),
         encoding="utf-8",
     )
     monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
