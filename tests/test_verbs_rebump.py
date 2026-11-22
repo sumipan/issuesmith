@@ -7,6 +7,8 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from issuesmith.bump_commits import BUMP_SUBJECT_PREFIX
 from issuesmith.verbs.publish import rebump_onto_base
 
@@ -180,10 +182,10 @@ def test_rebump_onto_base_stops_when_pyproject_changes_beyond_version(tmp_path: 
     assert _git(wt2, "rev-parse", "refs/remotes/origin/feat/two").stdout.strip() == remote_sha
 
 
-def _command_dual_branch_setup(tmp_path: Path) -> tuple[Path, Path, Path]:
+def _command_dual_branch_setup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Path, Path, Path]:
     """Parallel branches whose only merge conflict with main is VERSION."""
-    import os
-
     import yaml
 
     from issuesmith.config import reset_config_cache
@@ -196,7 +198,7 @@ def _command_dual_branch_setup(tmp_path: Path) -> tuple[Path, Path, Path]:
         }),
         encoding="utf-8",
     )
-    os.environ["ISSUESMITH_CONFIG"] = str(cfg_path)
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
     reset_config_cache()
 
     remote = tmp_path / "remote.git"
@@ -248,9 +250,11 @@ def _command_dual_branch_setup(tmp_path: Path) -> tuple[Path, Path, Path]:
     return remote, seed, wt2
 
 
-def test_rebump_onto_base_reruns_bump_command(tmp_path: Path) -> None:
+def test_rebump_onto_base_reruns_bump_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Refs #7789 AC7 — command rebump re-runs bump after VERSION-only conflict."""
-    _, seed, wt2 = _command_dual_branch_setup(tmp_path)
+    _, seed, wt2 = _command_dual_branch_setup(tmp_path, monkeypatch)
     calls: list[int] = []
 
     def _fake_command_bump(
