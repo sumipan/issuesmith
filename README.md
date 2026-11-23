@@ -9,12 +9,12 @@ The package bundles design and merge gates, a request queue with triage, lane pl
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.209.0-blue)
+![version](https://img.shields.io/badge/version-v0.209.1-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.209.0** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.209.1** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
@@ -23,13 +23,13 @@ The current release is **v0.209.0** (pre-1.0). Public interfaces can change in a
 # the lower bound in pyproject.toml (ghdag>=0.152.2), then install issuesmith.
 pip install "ghdag @ git+https://github.com/sumipan/ghdag.git@v0.152.2"
 
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.209.0"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.209.1"
 ```
 
 Gates, forge access, `observe`, `andon`, `lanes`, and `metrics` import ghdag, so install the `ghdag` extra unless another dependency already provides ghdag. The base install alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.209.0"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.209.1"
 ```
 
 | Item | Value |
@@ -324,6 +324,10 @@ Gate ids usable in `steps.*.requires`: `ac_complete`, `ac_contract`, `ac_format`
 
 issuesmith is pre-1.0 and follows `0.Y.Z`: a `Y` bump may change or remove public API, a `Z` bump does not. The seven modules in the [Public API](#public-api) table are the supported surface; anything else may change in any release. Bundled reference-line step modules and the files under `issuesmith.lines.*/files/` may change in `0.Y.0` releases; module path changes are listed under Breaking in [CHANGELOG.md](./CHANGELOG.md).
 
+### Deprecated API
+
+No symbols are deprecated at **v0.209.1**. Retired interfaces are listed under Deprecated and Removed in [CHANGELOG.md](./CHANGELOG.md); they must not reappear in the CLI or Public API tables above.
+
 ## Architecture
 
 ghdag's `WorkflowDispatcher` drives workflow timing: label polling, DAG edges, and idempotent phase transitions. issuesmith supplies gates, step helpers, and CLIs that shell templates invoke. A phase advances when its `preconditions` labels are present, `excludes` labels are absent, and every `advance_when` predicate passes. After a step completes, `requires` gates run; auto-fixable violations are repaired in place, while others trigger `steps.*.repair` or an andon (`steps.*.andon_when`). Step label writes go through `forge_guard`; `projection` derives managed labels written only by `ops/labels.project_issue`.
@@ -523,8 +527,12 @@ A file that is not found is treated as empty, which fails validation because `re
 | `terminal_without_merge` | `[]` | Labels that mark an Issue finished without a merge (names without `:` get the `label_namespace` prefix) |
 | `scope_gate` | `enabled: true` | P0 allow_paths size: `max_files` (`80`), `max_lines` (`20000`), `hard_max_files` (`200`) |
 | `scope_coupling` | `enabled: true` | `search_dirs` (`[tests, src]`), `data_file_tests` (`true`) |
-| `scope_size` | `enabled: true` | B1 Issue size: `max_files` (`8`), `max_concerns` (`4`), `max_slices` (`3`), `delete_with_new` (`false`), `exclude_prefixes`, `atomic_phrases` (`[]`, phrases matched in the design section skip sub-plan promotion, same as `split: atomic`) |
-| `tests` | `flaky_reruns: 2`, `python_command: [python]` | Reruns of newly failing tests (`0` turns flaky detection off); `python_command` is the argv prefix used to launch pytest (baseline and flaky reruns too); `command` (`[]`) replaces pytest with a repository command (exit code 0 passes); `report: junit` with `report_path` (relative to the worktree) reads failing test IDs from JUnit XML for baseline and flaky comparison |
+| `scope_size` | `enabled: true` | B1 Issue size: `max_files` (`8`), `max_concerns` (`4`), `max_slices` (`3`), `delete_with_new` (`false`), `exclude_prefixes`, `sub_plan_header` (sub-plan table heading from the language pack), `atomic_phrases` (`[]`, phrases matched in the design section skip sub-plan promotion, same as `split: atomic`) |
+| `tests` | `flaky_reruns: 2`, `python_command: [python]` | Reruns of newly failing tests (`0` turns flaky detection off); `python_command` is the argv prefix used to launch pytest (baseline and flaky reruns too); `python_bin_command` resolves a worktree interpreter when the host and target repos differ; `command` (`[]`) replaces pytest with a repository command (exit code 0 passes); `report: junit` with `report_path` (relative to the worktree) reads failing test IDs from JUnit XML for baseline and flaky comparison |
+| `version` | `policy: auto` | Publish bump policy: `auto`, `none`, `pyproject`, or `command` (`bump_command` argv when `policy` is `command`) |
+| `merge` | see below | PR merge polling: `state_wait_attempts`, `state_wait_seconds`, `rebump_max` |
+| `path_env_prefixes` | `[]` | Extra directory prefixes prepended to `PATH` when resolving launcher commands relative to the config file |
+| `target_remotes` | `{}` | Map `supported_repos` entries to non-GitHub clone URLs (also used for merge-without-pr targets) |
 | `lint` | `command: []`, `fix_command: []` | `command` replaces ruff with a repository command (exit code 0 passes); `fix_command` (requires `command`) runs once as the auto-fix |
 | `metrics` | `done_step: m2` | Rework metrics: `done_step`, `repair_templates`, `cause_targets` |
 | `derived_allow` | `enabled: true`, `ledger_globs: [tests/conventions/known_*.txt]` | Let repair (and impl ahead of repair) edit tests outside allow_paths when they reference in-scope changes, or shrink matching ledgers; newly failing tests still extend the set via TestsGate, including repository `.md` files those tests name in source (`[]` turns ledger derivation off) |
@@ -570,6 +578,8 @@ When the host environment that runs the pipeline differs from the target reposit
 | `module` | `""` | Python module implementing the step; empty means an LLM step run through `engine run-guarded` |
 | `template` | (unset) | Template path for LLM steps |
 | `requires` | `[]` | Gate ids (or `module.path:attr`) evaluated after the step |
+| `requires_declared` | `false` | When true, `requires` must list every gate referenced by the step template (undeclared gates fail at dispatch) |
+| `recheck` | `[]` | Gate ids to re-run after repair before accepting the step result |
 | `input_kind` | `issue` | `issue`, `worktree` or `artifact` |
 | `accepts` | `[]` | Accepted artifact kinds |
 | `andon_when` | `[]` (`p1`: `external_leak.target_unknown`) | Violation ids that raise an andon instead of a repair |
@@ -577,11 +587,15 @@ When the host environment that runs the pipeline differs from the target reposit
 | `repair.push` | `false` | Push the branch after a repair |
 | `tier` | (unset) | Tier selection for `issuesmith tier <id>`: `kind: design_doc` (issue body) or `pr_diff` (`light_max_diff_lines`, default `200`). For the `review` gate, `pr_diff` selects the engine tier from PR diff lines and unchecked AC count; otherwise the gate falls back to `steps.<id>.review.tier` |
 | `verify` | (unset) | When set to `design_doc`, `issuesmith verify <id>` runs the design-doc gate bundle (`VERIFY_RECOVERY:` markers) |
-| `review` | (unset) | Required when `requires` or `accepts` lists `review`: `role`, `template`, `success_status`, `failure_status` (required), `tier` (engine tier when step `tier` is unset or not `pr_diff`; step `tier: pr_diff` takes priority), `problems_heading` (`Problems:`) |
+| `review` | (unset) | Required when `requires` or `accepts` lists `review`: `role`, `template`, `success_status`, `failure_status` (required), `tier` (engine tier when step `tier` is unset or not `pr_diff`; step `tier: pr_diff` takes priority), `problems_heading` (`Problems:`), `optional_variables` (template variables that may be omitted) |
 
 #### `paths` keys
 
 Relative to the config file directory: `queue` `jobs/issuesmith-queue.jsonl`, `queue_state` `logs/issuesmith-queue-state.json`, `queue_lock` `logs/issuesmith-queue.lock`, `triage_log` `jobs/issuesmith-triage.jsonl`, `seed` `configs/night-queue.yaml`, `night_state` `logs/night-queue-state.json`, `exec_jsonl` `jobs/exec.jsonl`, `done_dir` `jobs/done`, `quota_state` `jobs/quota-gate.json`, `metrics` `jobs/metrics.jsonl`, `worktrees_dir` `.claude/worktrees`, `external_dir` `.claude/external`, `workflow` `workflows/issuesmith.yml`, `template_dir` `workflows/issuesmith`, `engine_state` `.pipeline-state/issuesmith-engine.yml`, `lanes` (unset; the ledger read by the `lanes` command).
+
+#### `merge` keys
+
+`state_wait_attempts` (`5`), `state_wait_seconds` (`3.0`), and `rebump_max` (`3`) control merge polling and how many times publish may rebump onto a moving base.
 
 #### `observe` keys
 
