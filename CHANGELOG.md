@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.209.2 - 2026-11-24
+
+### Changed
+
+- readme: align v0.209.1 with source and add contract tests
+
 ## 0.209.1 - 2026-11-23
 
 ### Fixed
