@@ -101,7 +101,9 @@ def test_answer_resume_restores_in_flight(tmp_path, monkeypatch):
     exec_path = _exec_record(tmp_path, 0, tmp_path / "missing")
     _resume_cfg(tmp_path, monkeypatch, exec_path=exec_path)
     client = get_forge()
-    issue_num = client.issue_create("impl", '```yaml\ntarget_repo: owner/repo\nallow_paths: ["src/a.py"]\n```\n')
+    issue_num = client.issue_create(
+        "impl", "```yaml\ntarget_repo: owner/repo\nallow_paths: [\"src/a.py\"]\n```\n"
+    )
     store = QueueStore()
     store.add_in_flight(issue_num, "claude", role="implementation", phase="develop")
     andon = Andon(
@@ -226,16 +228,15 @@ def test_resume_conflict_raises_andon_without_running_step(tmp_path, monkeypatch
         rc = resume_mod.resume(issue_num, from_step="p1")
     assert rc == 1
     recover.assert_not_called()
-    bodies = " ".join(str(c.get("body", "")) for c in forge_client.get_issue_comments(issue_num))
+    bodies = " ".join(
+        str(c.get("body", "")) for c in forge_client.get_issue_comments(issue_num)
+    )
     assert "p0.base_rebase_conflict" in bodies
     assert "README.md" in bodies
-    assert (
-        subprocess.run(
-            ["git", "-C", str(worktree), "rev-parse", "-q", "--verify", "REBASE_HEAD"],
-            check=False,
-        ).returncode
-        != 0
-    )
+    assert subprocess.run(
+        ["git", "-C", str(worktree), "rev-parse", "-q", "--verify", "REBASE_HEAD"],
+        check=False,
+    ).returncode != 0
 
 
 def _advance_main_on_bare(tmp_path: Path, bare: Path, worktree: Path) -> None:
@@ -265,7 +266,9 @@ def _resume_env(
     )
 
 
-def test_resume_pushes_rebased_branch_when_remote_was_in_sync(tmp_path, monkeypatch, capsys):
+def test_resume_pushes_rebased_branch_when_remote_was_in_sync(
+    tmp_path, monkeypatch, capsys
+):
     """refs #7756 AC-1."""
     from issuesmith.lines.develop.review import _check_remote_branch_matches_head
 
@@ -321,7 +324,9 @@ def test_resume_does_not_create_remote_branch_when_unpublished(tmp_path, monkeyp
         "body": "```yaml\nbase_branch: main\n```\n",
         "number": issue_num,
     }
-    q_path, s_path, l_path = _resume_env(tmp_path, monkeypatch, issue_num, worktree, queue_suffix="q2")
+    q_path, s_path, l_path = _resume_env(
+        tmp_path, monkeypatch, issue_num, worktree, queue_suffix="q2"
+    )
     recover = MagicMock(return_value=0)
     with (
         patch("issuesmith.resume.get_forge", return_value=client),
@@ -363,7 +368,9 @@ def test_resume_does_not_push_when_remote_already_diverged(tmp_path, monkeypatch
         "body": "```yaml\nbase_branch: main\n```\n",
         "number": issue_num,
     }
-    q_path, s_path, l_path = _resume_env(tmp_path, monkeypatch, issue_num, worktree, queue_suffix="q3")
+    q_path, s_path, l_path = _resume_env(
+        tmp_path, monkeypatch, issue_num, worktree, queue_suffix="q3"
+    )
     recover = MagicMock(return_value=0)
     with (
         patch("issuesmith.resume.get_forge", return_value=client),
@@ -377,12 +384,16 @@ def test_resume_does_not_push_when_remote_already_diverged(tmp_path, monkeypatch
             lock_path=l_path,
         )
         assert resume_mod.resume(issue_num, from_step="p1") == 0
-    remote_now = _git(worktree, "ls-remote", "--heads", "origin", f"refs/heads/{branch}").split("\t", 1)[0]
+    remote_now = _git(
+        worktree, "ls-remote", "--heads", "origin", f"refs/heads/{branch}"
+    ).split("\t", 1)[0]
     assert remote_now == remote_after_other
     recover.assert_called_once()
 
 
-def test_resume_continues_when_remote_branch_check_fails(tmp_path, monkeypatch, capsys):
+def test_resume_continues_when_remote_branch_check_fails(
+    tmp_path, monkeypatch, capsys
+):
     """refs #7756 AC-4."""
     bare, worktree = _bare_clone_setup(tmp_path)
     issue_num = 13
@@ -421,7 +432,9 @@ def test_resume_continues_when_remote_branch_check_fails(tmp_path, monkeypatch, 
     recover.assert_called_once()
 
 
-def test_resume_continues_when_remote_branch_check_raises(tmp_path, monkeypatch, capsys):
+def test_resume_continues_when_remote_branch_check_raises(
+    tmp_path, monkeypatch, capsys
+):
     """Git execution errors disable only the optional push decision."""
     bare, worktree = _bare_clone_setup(tmp_path)
     issue_num = 15
@@ -454,7 +467,10 @@ def test_resume_continues_when_remote_branch_check_raises(tmp_path, monkeypatch,
             lock_path=tmp_path / "l6",
         )
         assert resume_mod.resume(issue_num, from_step="p1") == 0
-    assert "warning: resume remote branch check skipped: git unavailable" in capsys.readouterr().err
+    assert (
+        "warning: resume remote branch check skipped: git unavailable"
+        in capsys.readouterr().err
+    )
     recover.assert_called_once()
 
 
@@ -471,7 +487,9 @@ def test_resume_stops_when_rebased_branch_push_fails(tmp_path, monkeypatch, caps
         "body": "```yaml\nbase_branch: main\n```\n",
         "number": issue_num,
     }
-    q_path, s_path, l_path = _resume_env(tmp_path, monkeypatch, issue_num, worktree, queue_suffix="q5")
+    q_path, s_path, l_path = _resume_env(
+        tmp_path, monkeypatch, issue_num, worktree, queue_suffix="q5"
+    )
     recover = MagicMock(return_value=0)
     with (
         patch("issuesmith.resume.get_forge", return_value=client),

@@ -4,7 +4,6 @@ resume(issue, *, from_step=None, phase=None) unifies recover/redispatch:
   - from_step: ghdag dag recover + in_flight release
   - phase: in_flight release + label reset + queue re-enqueue
 """
-
 from __future__ import annotations
 
 import json
@@ -133,7 +132,12 @@ def _resume_push_after_catch_up(
     if new_head_proc.returncode != 0:
         return 0
     new_head = (new_head_proc.stdout or "").strip()
-    if not new_head or old_head == new_head or remote_head is None or remote_head != old_head:
+    if (
+        not new_head
+        or old_head == new_head
+        or remote_head is None
+        or remote_head != old_head
+    ):
         return 0
     ref = f"refs/heads/{branch}"
     try:
@@ -229,7 +233,9 @@ def resume(
     store.remove_in_flight(issue)
 
     if from_step is not None:
-        return _resume_from_step(issue, from_step, workflow=workflow, handler=handler, mark_done=mark_done, force=force)
+        return _resume_from_step(
+            issue, from_step, workflow=workflow, handler=handler, mark_done=mark_done, force=force
+        )
 
     assert phase is not None
     return _resume_phase(issue, phase)
@@ -364,7 +370,6 @@ def _catch_up_base_before_resume(issue: int, *, caller_step: str) -> int:
 
 def _generation_keys_available() -> bool:
     from issuesmith.recovery import _generation_keys_available as _gka
-
     return _gka()
 
 
@@ -372,13 +377,16 @@ def _default_workflow_name() -> str:
     return get_config().paths.workflow.stem
 
 
-def _run_ghdag_recover(issue: int, handler: str, from_step: str | None, workflow: str | None = None) -> int:
+def _run_ghdag_recover(
+    issue: int, handler: str, from_step: str | None, workflow: str | None = None
+) -> int:
     from issuesmith.recovery import _run_ghdag_recover as _rgr
-
     return _rgr(issue, handler, from_step, workflow=workflow)
 
 
-def _load_step_statuses(issue: int, handler: str, workflow: str) -> list[StepStatus] | None:
+def _load_step_statuses(
+    issue: int, handler: str, workflow: str
+) -> list[StepStatus] | None:
     """Return steps for the current DAG run, or None on I/O error (fail closed)."""
     from ghdag import status as ghdag_status
     from ghdag.dag import running_uuids_from_queue_dir
@@ -433,7 +441,9 @@ def _infer_handler_from_exec(issue: int, step: str) -> str | None:
     return next((h for h, s in _exec_step_handlers(issue) if s == step), None)
 
 
-def _upstream_blockers(steps: list[StepStatus], from_step: str) -> list[StepStatus]:
+def _upstream_blockers(
+    steps: list[StepStatus], from_step: str
+) -> list[StepStatus]:
     """Return ancestors of from_step whose status blocks re-execution.
 
     Returned in topological order (upstream first). Statuses that do NOT
@@ -489,16 +499,22 @@ def _upstream_blockers(steps: list[StepStatus], from_step: str) -> list[StepStat
     return [s for s in topo if s.status not in _non_blocking]
 
 
-def _format_blockers_message(issue: int, from_step: str, blockers: list[StepStatus]) -> str:
+def _format_blockers_message(
+    issue: int, from_step: str, blockers: list[StepStatus]
+) -> str:
     blocker_list = ", ".join(f"{b.step_name} ({b.status})" for b in blockers)
-    lines = [f"cannot resume #{issue} from {from_step!r}: upstream step(s) not succeeded: {blocker_list}"]
+    lines = [
+        f"cannot resume #{issue} from {from_step!r}: "
+        f"upstream step(s) not succeeded: {blocker_list}"
+    ]
 
     roots = [b for b in blockers if b.status != "dep_failed"]
     dep_failed_blockers = [b for b in blockers if b.status == "dep_failed"]
 
     for root in roots:
         lines.append(
-            f"  option 1 (re-run the failed step):   python3 -m issuesmith resume {issue} --from {root.step_name}"
+            f"  option 1 (re-run the failed step):   "
+            f"python3 -m issuesmith resume {issue} --from {root.step_name}"
         )
 
     if dep_failed_blockers:
@@ -535,6 +551,7 @@ def _write_step_mark_done(step: StepStatus) -> None:
                 " downstream steps that read it may treat the step as skipped",
                 file=sys.stderr,
             )
+
 
 
 def _phase_for_handler(handler: str) -> str | None:
@@ -606,7 +623,9 @@ def _restore_running_state(issue: int, handler: str) -> None:
     try:
         client = get_forge(repo=cfg.repo)
         issue_data = client.issue_get(issue, fields=["state", "labels", "body", "number"])
-        add, _remove = project_issue(client, issue, lambda st: replace(st, phases={**st.phases, phase: "running"}))
+        add, _remove = project_issue(
+            client, issue, lambda st: replace(st, phases={**st.phases, phase: "running"})
+        )
         if add:
             print(f"restored label: {', '.join(add)}", file=sys.stderr)
         target_repo, allow_paths = issue_target_meta(issue_data)
@@ -725,7 +744,8 @@ def _resume_from_step(
                 return 2
             if step.status not in _markable:
                 print(
-                    f"error: --mark-done {name!r}: status is {step.status!r}, must be one of {sorted(_markable)}",
+                    f"error: --mark-done {name!r}: status is {step.status!r},"
+                    f" must be one of {sorted(_markable)}",
                     file=sys.stderr,
                 )
                 return 2
