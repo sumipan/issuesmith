@@ -237,6 +237,7 @@ def test_readme_cli_and_public_api_match_source():
     """Refs #7850 AC-2 — CLI handlers and public __all__ names appear in README tables."""
     readme = _readme()
     cli_section = _section(readme, "## CLI Reference", "## Output contract")
+    api_section = _section(readme, "## Public API", "## Architecture")
 
     missing_handlers = [h for h in _cli_handlers() if not _cli_handler_documented(cli_section, h)]
     assert not missing_handlers, f"CLI handlers missing from README: {missing_handlers}"
@@ -244,9 +245,9 @@ def test_readme_cli_and_public_api_match_source():
     missing_exports: list[str] = []
     for mod, path in PUBLIC_MODULES:
         for name in _module_all(path):
-            if f"`{name}`" not in readme:
+            if f"`{name}`" not in api_section:
                 missing_exports.append(f"{mod}.{name}")
-    assert not missing_exports, f"public API names missing from README: {missing_exports}"
+    assert not missing_exports, f"public API names missing from README Public API table: {missing_exports}"
 
 
 def test_readme_architecture_and_configuration_match_source():
