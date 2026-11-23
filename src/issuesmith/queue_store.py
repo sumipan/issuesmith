@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import sys
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -428,7 +429,11 @@ class QueueStore:
             fh.flush()
             os.fsync(fh.fileno())
 
-    def _read_requests_unlocked(self) -> dict[str, QueueRequest]:
+    def _read_requests_unlocked(
+        self, completed_request_ids: set[str] | None = None
+    ) -> dict[str, QueueRequest]:
+        completed = completed_request_ids if completed_request_ids is not None else set()
+        configured_phases = frozenset(p.name for p in get_config().phases)
         requests: dict[str, QueueRequest] = {}
         if not self.queue_path.exists():
             return requests
@@ -439,14 +444,31 @@ class QueueStore:
             try:
                 data = json.loads(line)
             except json.JSONDecodeError:
-                print(f"warning: skipping malformed queue line {lineno}", flush=True)
+                print(
+                    f"warning: skipping malformed queue line {lineno}",
+                    file=sys.stderr,
+                    flush=True,
+                )
                 continue
             if not isinstance(data, dict):
+                continue
+            rid = data.get("request_id")
+            phase = data.get("phase")
+            if (
+                isinstance(rid, str)
+                and rid in completed
+                and isinstance(phase, str)
+                and phase not in configured_phases
+            ):
                 continue
             try:
                 req = request_from_dict(data)
             except QueueValidationError:
-                print(f"warning: skipping invalid queue line {lineno}", flush=True)
+                print(
+                    f"warning: skipping invalid queue line {lineno}",
+                    file=sys.stderr,
+                    flush=True,
+                )
                 continue
             requests[req.request_id] = req
         return requests
@@ -457,7 +479,8 @@ class QueueStore:
 
     def _snapshot_unlocked(self) -> QueueSnapshot:
         state = self._load_state_unlocked()
-        requests = self._read_requests_unlocked()
+        completed = set(state.get("completed_request_ids") or [])
+        requests = self._read_requests_unlocked(completed)
         completed = set(state.get("completed_request_ids") or [])
         active_order = [
             rid for rid in (state.get("active_order") or []) if rid in requests and rid not in completed
@@ -790,7 +813,8 @@ class QueueStore:
         """
         with self.lock():
             state = self._load_state_unlocked()
-            requests = self._read_requests_unlocked()
+            completed = set(state.get("completed_request_ids") or [])
+            requests = self._read_requests_unlocked(completed)
             dequeued: list[str] = []
             changed = False
 
@@ -870,7 +894,8 @@ class QueueStore:
         """
         with self.lock():
             state = self._load_state_unlocked()
-            requests = self._read_requests_unlocked()
+            completed = set(state.get("completed_request_ids") or [])
+            requests = self._read_requests_unlocked(completed)
             active = list(state.get("active_order") or [])
             orphans = [rid for rid in active if rid not in requests]
             if not orphans:
