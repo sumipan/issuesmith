@@ -2575,6 +2575,12 @@ def _cmd_tick(args: argparse.Namespace) -> int:
         state_path=Path(args.state_path) if getattr(args, "state_path", None) else None,
         lock_path=Path(args.lock_path) if getattr(args, "lock_path", None) else None,
     )
+    pruned = store.prune_unknown_phase_requests()
+    if pruned:
+        phases = ", ".join(sorted({phase for _, phase in pruned}))
+        print(
+            f"queue: pruned {len(pruned)} request(s) with unknown phase: {phases}"
+        )
     result = dispatch_one(store=store, seed_path=Path(args.seed) if getattr(args, "seed", None) else None)
     if result.dispatched:
         for item in result.started or (
