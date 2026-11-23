@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.208.1 - 2026-11-23
+
+### Fixed
+
+- queue_store: skip completed unknown phases without stdout noise
+
 ## 0.208.0 - 2026-11-23
 
 ### Fixed
