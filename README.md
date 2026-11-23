@@ -335,6 +335,7 @@ ghdag's `WorkflowDispatcher` drives workflow timing: label polling, DAG edges, a
 | Module | Role |
 |---|---|
 | `issuesmith/__init__.py` | issuesmith — tools for ghdag workflows |
+| `issuesmith/__main__.py` | Entry point for `python3 -m issuesmith`. |
 | `issuesmith/ac_complete_entry.py` | ac_complete_entry.py — acceptance-criteria completion gate entry point |
 | `issuesmith/ac_contract.py` | ac_contract.py — extract and run the AC YAML contract (paths_must_exist etc.). |
 | `issuesmith/andon.py` | Andon (paper lantern) — typed stop-the-line signals posted as Issue comment yaml blocks. |

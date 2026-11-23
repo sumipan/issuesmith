@@ -102,9 +102,13 @@ def _architecture_paths() -> list[str]:
             continue
         rel = path.relative_to(REPO_ROOT / "src").as_posix()
         segment = rel.split("/")[-1]
-        if segment.startswith("_") and segment != "__init__.py":
+        if segment.startswith("_") and segment not in {"__init__.py", "__main__.py"}:
             continue
-        if any(part.startswith("_") for part in rel.split("/") if part != "__init__.py"):
+        if any(
+            part.startswith("_")
+            for part in rel.split("/")
+            if part not in {"__init__.py", "__main__.py"}
+        ):
             continue
         paths.append(rel)
     return paths
