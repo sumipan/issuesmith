@@ -4,6 +4,7 @@ resume(issue, *, from_step=None, phase=None) unifies recover/redispatch:
   - from_step: ghdag dag recover + in_flight release
   - phase: in_flight release + label reset + queue re-enqueue
 """
+
 from __future__ import annotations
 
 import json
@@ -37,6 +38,7 @@ _RESUME_WORKFLOW = "issuesmith"
 _ORDER_PATH_RE = re.compile(r"(?:bash -o pipefail )?(\S+jobs/\S+\.md)")
 _WORKTREE_RE = re.compile(r'worktree_path=([^\s"]+)')
 _TARGET_WORKTREE_RE = re.compile(r'target_worktree_path=([^\s"]+)')
+_OBJECT_ID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 
 
 def _dispatch_records_for_handler(handler: str, issue: int) -> list[dict]:
@@ -93,24 +95,27 @@ def _git_tail(proc: subprocess.CompletedProcess[str], *, max_len: int = 300) -> 
     return err or f"exit {proc.returncode}"
 
 
-def _resume_remote_branch_sha(worktree: Path, branch: str) -> tuple[str | None, bool]:
-    """Return (remote_sha, observation_ok). Unpublished branch yields (None, True)."""
+def _resume_remote_branch_sha(worktree: Path, branch: str) -> tuple[str | None, bool, str]:
+    """Return remote SHA, observation status, and failure detail."""
     ref = f"refs/heads/{branch}"
-    proc = _git_in_worktree(worktree, "ls-remote", "--heads", "origin", ref)
+    try:
+        proc = _git_in_worktree(worktree, "ls-remote", "--heads", "origin", ref)
+    except OSError as exc:
+        return None, False, str(exc)
     if proc.returncode != 0:
-        return None, False
+        return None, False, _git_tail(proc)
     lines = [ln for ln in (proc.stdout or "").splitlines() if ln.strip()]
     if not lines:
-        return None, True
+        return None, True, ""
     if len(lines) != 1:
-        return None, False
+        return None, False, "unexpected ls-remote output"
     parts = lines[0].split("\t")
     if len(parts) != 2 or parts[1].strip() != ref:
-        return None, False
+        return None, False, "unexpected ls-remote output"
     sha = parts[0].strip()
-    if not sha or not re.fullmatch(r"[0-9a-f]{7,40}", sha):
-        return None, False
-    return sha, True
+    if not _OBJECT_ID_RE.fullmatch(sha):
+        return None, False, "unexpected ls-remote object id"
+    return sha, True, ""
 
 
 def _resume_push_after_catch_up(
@@ -120,25 +125,28 @@ def _resume_push_after_catch_up(
     old_head: str,
     remote_head: str | None,
 ) -> int:
-    new_head_proc = _git_in_worktree(worktree, "rev-parse", "HEAD")
+    try:
+        new_head_proc = _git_in_worktree(worktree, "rev-parse", "HEAD")
+    except OSError as exc:
+        print(f"warning: resume branch snapshot skipped: {exc}", file=sys.stderr)
+        return 0
     if new_head_proc.returncode != 0:
         return 0
     new_head = (new_head_proc.stdout or "").strip()
-    if (
-        not new_head
-        or old_head == new_head
-        or remote_head is None
-        or remote_head != old_head
-    ):
+    if not new_head or old_head == new_head or remote_head is None or remote_head != old_head:
         return 0
     ref = f"refs/heads/{branch}"
-    pushed = _git_in_worktree(
-        worktree,
-        "push",
-        f"--force-with-lease={ref}:{old_head}",
-        "origin",
-        f"HEAD:{ref}",
-    )
+    try:
+        pushed = _git_in_worktree(
+            worktree,
+            "push",
+            f"--force-with-lease={ref}:{old_head}",
+            "origin",
+            f"HEAD:{ref}",
+        )
+    except OSError as exc:
+        print(f"error: resume push failed: {exc}", file=sys.stderr)
+        return 1
     if pushed.returncode != 0:
         print(f"error: resume push failed: {_git_tail(pushed)}", file=sys.stderr)
         return 1
@@ -221,9 +229,7 @@ def resume(
     store.remove_in_flight(issue)
 
     if from_step is not None:
-        return _resume_from_step(
-            issue, from_step, workflow=workflow, handler=handler, mark_done=mark_done, force=force
-        )
+        return _resume_from_step(issue, from_step, workflow=workflow, handler=handler, mark_done=mark_done, force=force)
 
     assert phase is not None
     return _resume_phase(issue, phase)
@@ -289,29 +295,32 @@ def _catch_up_base_before_resume(issue: int, *, caller_step: str) -> int:
     remote_head: str | None = None
     push_after_catch_up = False
 
-    branch_proc = _git_in_worktree(worktree, "branch", "--show-current")
-    head_proc = _git_in_worktree(worktree, "rev-parse", "HEAD")
-    if branch_proc.returncode != 0 or head_proc.returncode != 0:
-        detail = _git_tail(branch_proc if branch_proc.returncode != 0 else head_proc)
-        print(f"warning: resume branch snapshot skipped: {detail}", file=sys.stderr)
+    try:
+        branch_proc = _git_in_worktree(worktree, "branch", "--show-current")
+        head_proc = _git_in_worktree(worktree, "rev-parse", "HEAD")
+    except OSError as exc:
+        print(f"warning: resume branch snapshot skipped: {exc}", file=sys.stderr)
     else:
-        branch = (branch_proc.stdout or "").strip()
-        old_head = (head_proc.stdout or "").strip()
-        if not old_head:
-            print(
-                "warning: resume branch snapshot skipped: empty HEAD",
-                file=sys.stderr,
-            )
-        elif branch:
-            remote_head, remote_ok = _resume_remote_branch_sha(worktree, branch)
-            if not remote_ok:
+        if branch_proc.returncode != 0 or head_proc.returncode != 0:
+            detail = _git_tail(branch_proc if branch_proc.returncode != 0 else head_proc)
+            print(f"warning: resume branch snapshot skipped: {detail}", file=sys.stderr)
+        else:
+            branch = (branch_proc.stdout or "").strip()
+            old_head = (head_proc.stdout or "").strip()
+            if not old_head:
                 print(
-                    f"warning: resume remote branch check skipped: "
-                    f"could not read origin/{branch}",
+                    "warning: resume branch snapshot skipped: empty HEAD",
                     file=sys.stderr,
                 )
-            else:
-                push_after_catch_up = True
+            elif branch:
+                remote_head, remote_ok, remote_detail = _resume_remote_branch_sha(worktree, branch)
+                if not remote_ok:
+                    print(
+                        f"warning: resume remote branch check skipped: {remote_detail}",
+                        file=sys.stderr,
+                    )
+                else:
+                    push_after_catch_up = True
 
     step_result = ensure_base_included(
         worktree,
@@ -355,6 +364,7 @@ def _catch_up_base_before_resume(issue: int, *, caller_step: str) -> int:
 
 def _generation_keys_available() -> bool:
     from issuesmith.recovery import _generation_keys_available as _gka
+
     return _gka()
 
 
@@ -362,16 +372,13 @@ def _default_workflow_name() -> str:
     return get_config().paths.workflow.stem
 
 
-def _run_ghdag_recover(
-    issue: int, handler: str, from_step: str | None, workflow: str | None = None
-) -> int:
+def _run_ghdag_recover(issue: int, handler: str, from_step: str | None, workflow: str | None = None) -> int:
     from issuesmith.recovery import _run_ghdag_recover as _rgr
+
     return _rgr(issue, handler, from_step, workflow=workflow)
 
 
-def _load_step_statuses(
-    issue: int, handler: str, workflow: str
-) -> list[StepStatus] | None:
+def _load_step_statuses(issue: int, handler: str, workflow: str) -> list[StepStatus] | None:
     """Return steps for the current DAG run, or None on I/O error (fail closed)."""
     from ghdag import status as ghdag_status
     from ghdag.dag import running_uuids_from_queue_dir
@@ -426,9 +433,7 @@ def _infer_handler_from_exec(issue: int, step: str) -> str | None:
     return next((h for h, s in _exec_step_handlers(issue) if s == step), None)
 
 
-def _upstream_blockers(
-    steps: list[StepStatus], from_step: str
-) -> list[StepStatus]:
+def _upstream_blockers(steps: list[StepStatus], from_step: str) -> list[StepStatus]:
     """Return ancestors of from_step whose status blocks re-execution.
 
     Returned in topological order (upstream first). Statuses that do NOT
@@ -484,22 +489,16 @@ def _upstream_blockers(
     return [s for s in topo if s.status not in _non_blocking]
 
 
-def _format_blockers_message(
-    issue: int, from_step: str, blockers: list[StepStatus]
-) -> str:
+def _format_blockers_message(issue: int, from_step: str, blockers: list[StepStatus]) -> str:
     blocker_list = ", ".join(f"{b.step_name} ({b.status})" for b in blockers)
-    lines = [
-        f"cannot resume #{issue} from {from_step!r}: "
-        f"upstream step(s) not succeeded: {blocker_list}"
-    ]
+    lines = [f"cannot resume #{issue} from {from_step!r}: upstream step(s) not succeeded: {blocker_list}"]
 
     roots = [b for b in blockers if b.status != "dep_failed"]
     dep_failed_blockers = [b for b in blockers if b.status == "dep_failed"]
 
     for root in roots:
         lines.append(
-            f"  option 1 (re-run the failed step):   "
-            f"python3 -m issuesmith resume {issue} --from {root.step_name}"
+            f"  option 1 (re-run the failed step):   python3 -m issuesmith resume {issue} --from {root.step_name}"
         )
 
     if dep_failed_blockers:
@@ -536,7 +535,6 @@ def _write_step_mark_done(step: StepStatus) -> None:
                 " downstream steps that read it may treat the step as skipped",
                 file=sys.stderr,
             )
-
 
 
 def _phase_for_handler(handler: str) -> str | None:
@@ -608,9 +606,7 @@ def _restore_running_state(issue: int, handler: str) -> None:
     try:
         client = get_forge(repo=cfg.repo)
         issue_data = client.issue_get(issue, fields=["state", "labels", "body", "number"])
-        add, _remove = project_issue(
-            client, issue, lambda st: replace(st, phases={**st.phases, phase: "running"})
-        )
+        add, _remove = project_issue(client, issue, lambda st: replace(st, phases={**st.phases, phase: "running"}))
         if add:
             print(f"restored label: {', '.join(add)}", file=sys.stderr)
         target_repo, allow_paths = issue_target_meta(issue_data)
@@ -729,8 +725,7 @@ def _resume_from_step(
                 return 2
             if step.status not in _markable:
                 print(
-                    f"error: --mark-done {name!r}: status is {step.status!r},"
-                    f" must be one of {sorted(_markable)}",
+                    f"error: --mark-done {name!r}: status is {step.status!r}, must be one of {sorted(_markable)}",
                     file=sys.stderr,
                 )
                 return 2
