@@ -1,4 +1,8 @@
-"""OSS README §4.1 section order, License SPDX, and backtick module references."""
+"""OSS README §4.1 section order, License SPDX, and backtick module references.
+
+Replaces the removed ``readme_contract`` convention suite (#7793); these are ordinary
+blocking convention tests, not ``tests.readme_contract`` warnings.
+"""
 from __future__ import annotations
 
 import importlib
@@ -12,8 +16,6 @@ if sys.version_info >= (3, 11):
     import tomllib
 else:
     import tomli as tomllib
-
-import pytest
 
 _README = REPO_ROOT / "README.md"
 _PYPROJECT = REPO_ROOT / "pyproject.toml"
@@ -109,7 +111,6 @@ def unresolved_issuesmith_backtick_refs(text: str) -> list[str]:
     return errors
 
 
-@pytest.mark.readme_contract
 def test_readme_has_required_sections():
     """Refs sumipan/nexus#7801 — OSS §4.1 headings exist in the required relative order."""
     text = _README.read_text(encoding="utf-8")
@@ -118,7 +119,6 @@ def test_readme_has_required_sections():
     assert ordered_required_sections(missing_license) != list(_REQUIRED_HEADINGS)
 
 
-@pytest.mark.readme_contract
 def test_readme_license_matches_pyproject():
     """Refs sumipan/nexus#7801 — License section SPDX matches pyproject [project].license."""
     readme = _README.read_text(encoding="utf-8")
@@ -131,7 +131,6 @@ def test_readme_license_matches_pyproject():
     assert match.group(1) == license_value
 
 
-@pytest.mark.readme_contract
 def test_readme_issuesmith_references_resolve():
     """Refs sumipan/nexus#7801 — backtick issuesmith.* paths resolve via importlib/getattr."""
     readme = _README.read_text(encoding="utf-8")
