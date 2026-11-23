@@ -481,7 +481,6 @@ class QueueStore:
         state = self._load_state_unlocked()
         completed = set(state.get("completed_request_ids") or [])
         requests = self._read_requests_unlocked(completed)
-        completed = set(state.get("completed_request_ids") or [])
         active_order = [
             rid for rid in (state.get("active_order") or []) if rid in requests and rid not in completed
         ]
