@@ -37,6 +37,7 @@ _RESUME_WORKFLOW = "issuesmith"
 _ORDER_PATH_RE = re.compile(r"(?:bash -o pipefail )?(\S+jobs/\S+\.md)")
 _WORKTREE_RE = re.compile(r'worktree_path=([^\s"]+)')
 _TARGET_WORKTREE_RE = re.compile(r'target_worktree_path=([^\s"]+)')
+_OBJECT_ID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 
 
 def _dispatch_records_for_handler(handler: str, issue: int) -> list[dict]:
@@ -75,6 +76,86 @@ def _frozen_orders_for_issue(issue: int) -> list[Path]:
         if marker in text:
             found.append(path)
     return found
+
+
+def _git_in_worktree(worktree: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-C", str(worktree), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _git_tail(proc: subprocess.CompletedProcess[str], *, max_len: int = 300) -> str:
+    err = (proc.stderr or proc.stdout or "").strip()
+    if len(err) > max_len:
+        err = err[-max_len:]
+    return err or f"exit {proc.returncode}"
+
+
+def _resume_remote_branch_sha(worktree: Path, branch: str) -> tuple[str | None, bool, str]:
+    """Return remote SHA, observation status, and failure detail."""
+    ref = f"refs/heads/{branch}"
+    try:
+        proc = _git_in_worktree(worktree, "ls-remote", "--heads", "origin", ref)
+    except OSError as exc:
+        return None, False, str(exc)
+    if proc.returncode != 0:
+        return None, False, _git_tail(proc)
+    lines = [ln for ln in (proc.stdout or "").splitlines() if ln.strip()]
+    if not lines:
+        return None, True, ""
+    if len(lines) != 1:
+        return None, False, "unexpected ls-remote output"
+    parts = lines[0].split("\t")
+    if len(parts) != 2 or parts[1].strip() != ref:
+        return None, False, "unexpected ls-remote output"
+    sha = parts[0].strip()
+    if not _OBJECT_ID_RE.fullmatch(sha):
+        return None, False, "unexpected ls-remote object id"
+    return sha, True, ""
+
+
+def _resume_push_after_catch_up(
+    worktree: Path,
+    *,
+    branch: str,
+    old_head: str,
+    remote_head: str | None,
+) -> int:
+    try:
+        new_head_proc = _git_in_worktree(worktree, "rev-parse", "HEAD")
+    except OSError as exc:
+        print(f"warning: resume branch snapshot skipped: {exc}", file=sys.stderr)
+        return 0
+    if new_head_proc.returncode != 0:
+        return 0
+    new_head = (new_head_proc.stdout or "").strip()
+    if (
+        not new_head
+        or old_head == new_head
+        or remote_head is None
+        or remote_head != old_head
+    ):
+        return 0
+    ref = f"refs/heads/{branch}"
+    try:
+        pushed = _git_in_worktree(
+            worktree,
+            "push",
+            f"--force-with-lease={ref}:{old_head}",
+            "origin",
+            f"HEAD:{ref}",
+        )
+    except OSError as exc:
+        print(f"error: resume push failed: {exc}", file=sys.stderr)
+        return 1
+    if pushed.returncode != 0:
+        print(f"error: resume push failed: {_git_tail(pushed)}", file=sys.stderr)
+        return 1
+    print(f"RESUME_PUSH: {branch} {old_head}..{new_head}", file=sys.stderr)
+    return 0
 
 
 def _worktree_path_for_resume(issue: int, records: list[dict]) -> Path | None:
@@ -215,6 +296,38 @@ def _catch_up_base_before_resume(issue: int, *, caller_step: str) -> int:
         print(f"error: resume base fetch failed: {exc}", file=sys.stderr)
         return 1
 
+    branch = ""
+    old_head = ""
+    remote_head: str | None = None
+    push_after_catch_up = False
+
+    try:
+        branch_proc = _git_in_worktree(worktree, "branch", "--show-current")
+        head_proc = _git_in_worktree(worktree, "rev-parse", "HEAD")
+    except OSError as exc:
+        print(f"warning: resume branch snapshot skipped: {exc}", file=sys.stderr)
+    else:
+        if branch_proc.returncode != 0 or head_proc.returncode != 0:
+            detail = _git_tail(branch_proc if branch_proc.returncode != 0 else head_proc)
+            print(f"warning: resume branch snapshot skipped: {detail}", file=sys.stderr)
+        else:
+            branch = (branch_proc.stdout or "").strip()
+            old_head = (head_proc.stdout or "").strip()
+            if not old_head:
+                print(
+                    "warning: resume branch snapshot skipped: empty HEAD",
+                    file=sys.stderr,
+                )
+            elif branch:
+                remote_head, remote_ok, remote_detail = _resume_remote_branch_sha(worktree, branch)
+                if not remote_ok:
+                    print(
+                        f"warning: resume remote branch check skipped: {remote_detail}",
+                        file=sys.stderr,
+                    )
+                else:
+                    push_after_catch_up = True
+
     step_result = ensure_base_included(
         worktree,
         base_branch,
@@ -224,6 +337,15 @@ def _catch_up_base_before_resume(issue: int, *, caller_step: str) -> int:
         caller_step=caller_step,
     )
     if step_result is None:
+        if push_after_catch_up and branch and old_head:
+            rc = _resume_push_after_catch_up(
+                worktree,
+                branch=branch,
+                old_head=old_head,
+                remote_head=remote_head,
+            )
+            if rc != 0:
+                return rc
         return 0
     if getattr(step_result, "status", "done") != "andon" or step_result.andon is None:
         print("error: resume base catch-up failed", file=sys.stderr)
