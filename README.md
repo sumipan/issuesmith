@@ -9,12 +9,12 @@ The package bundles design and merge gates, a request queue with triage, lane pl
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.209.0-blue)
+![version](https://img.shields.io/badge/version-v0.209.2-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.209.0** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.209.2** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
@@ -23,13 +23,13 @@ The current release is **v0.209.0** (pre-1.0). Public interfaces can change in a
 # the lower bound in pyproject.toml (ghdag>=0.152.2), then install issuesmith.
 pip install "ghdag @ git+https://github.com/sumipan/ghdag.git@v0.152.2"
 
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.209.0"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.209.2"
 ```
 
 Gates, forge access, `observe`, `andon`, `lanes`, and `metrics` import ghdag, so install the `ghdag` extra unless another dependency already provides ghdag. The base install alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.209.0"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.209.2"
 ```
 
 | Item | Value |
@@ -324,6 +324,10 @@ Gate ids usable in `steps.*.requires`: `ac_complete`, `ac_contract`, `ac_format`
 
 issuesmith is pre-1.0 and follows `0.Y.Z`: a `Y` bump may change or remove public API, a `Z` bump does not. The seven modules in the [Public API](#public-api) table are the supported surface; anything else may change in any release. Bundled reference-line step modules and the files under `issuesmith.lines.*/files/` may change in `0.Y.0` releases; module path changes are listed under Breaking in [CHANGELOG.md](./CHANGELOG.md).
 
+### Deprecated API
+
+No symbols are deprecated at **v0.209.2**. Retired interfaces are listed under Deprecated and Removed in [CHANGELOG.md](./CHANGELOG.md); they must not reappear in the CLI or Public API tables above.
+
 ## Architecture
 
 ghdag's `WorkflowDispatcher` drives workflow timing: label polling, DAG edges, and idempotent phase transitions. issuesmith supplies gates, step helpers, and CLIs that shell templates invoke. A phase advances when its `preconditions` labels are present, `excludes` labels are absent, and every `advance_when` predicate passes. After a step completes, `requires` gates run; auto-fixable violations are repaired in place, while others trigger `steps.*.repair` or an andon (`steps.*.andon_when`). Step label writes go through `forge_guard`; `projection` derives managed labels written only by `ops/labels.project_issue`.
@@ -331,110 +335,110 @@ ghdag's `WorkflowDispatcher` drives workflow timing: label polling, DAG edges, a
 | Module | Role |
 |---|---|
 | `issuesmith/__init__.py` | issuesmith — tools for ghdag workflows |
-| `issuesmith/__main__.py` | Entry point for ``python3 -m issuesmith`` |
+| `issuesmith/__main__.py` | Entry point for `python3 -m issuesmith`. |
 | `issuesmith/ac_complete_entry.py` | ac_complete_entry.py — acceptance-criteria completion gate entry point |
-| `issuesmith/ac_contract.py` | ac_contract.py — extract and run the AC YAML contract (paths_must_exist etc.) |
-| `issuesmith/andon.py` | Andon (paper lantern) — typed stop-the-line signals posted as Issue comment yaml blocks |
-| `issuesmith/body_editor.py` | Utilities for deterministically editing H2 sections of an Issue body |
-| `issuesmith/branch_reuse.py` | branch_reuse.py — locate and record reusable previous-generation branches |
-| `issuesmith/bump_commits.py` | Shared helpers for publish-made version bump commits (#6177) |
-| `issuesmith/cli.py` | Unified issuesmith CLI (``python3 -m issuesmith <subcommand>``) |
-| `issuesmith/cli_errors.py` | Shared CLI usage-error contract for issuesmith command modules |
-| `issuesmith/config.py` | issuesmith instance configuration (issuesmith.yaml) |
+| `issuesmith/ac_contract.py` | ac_contract.py — extract and run the AC YAML contract (paths_must_exist etc.). |
+| `issuesmith/andon.py` | Andon (paper lantern) — typed stop-the-line signals posted as Issue comment yaml blocks. |
+| `issuesmith/body_editor.py` | Utilities for deterministically editing H2 sections of an Issue body. |
+| `issuesmith/branch_reuse.py` | branch_reuse.py — locate and record reusable previous-generation branches. |
+| `issuesmith/bump_commits.py` | Shared helpers for publish-made version bump commits (#6177). |
+| `issuesmith/cli.py` | Unified issuesmith CLI (``python3 -m issuesmith <subcommand>``). |
+| `issuesmith/cli_errors.py` | Shared CLI usage-error contract for issuesmith command modules. |
+| `issuesmith/config.py` | issuesmith instance configuration (issuesmith.yaml). |
 | `issuesmith/context_hook.py` | context_hook.py — ghdag context_hook for issuesmith |
-| `issuesmith/contract.py` | Canonical contract types and extractors for issuesmith (#3487, #4272) |
-| `issuesmith/convert_to_milestone.py` | convert-to-milestone — move an Issue that wrongly entered the develop path back to the milestone path |
-| `issuesmith/dep_extractor.py` | Deterministic dependency extraction and verification for issuesmith B1 |
+| `issuesmith/contract.py` | Canonical contract types and extractors for issuesmith (#3487, #4272). |
+| `issuesmith/convert_to_milestone.py` | convert-to-milestone — move an Issue that wrongly entered the develop path back to the milestone path. |
+| `issuesmith/dep_extractor.py` | Deterministic dependency extraction and verification for issuesmith B1. |
 | `issuesmith/design_lint_entry.py` | design_lint_entry.py — design-lint pattern check gate entry point |
-| `issuesmith/engine.py` | Switch and run issuesmith LLM roles |
-| `issuesmith/engine_route.py` | Pure route construction for (engine, model) candidate lists (#6681, #6682) |
-| `issuesmith/forge.py` | Public re-exports of ghdag.forge for host consumers |
-| `issuesmith/forge_api.py` | Typed entry point for raw REST calls on forge clients (#3611) |
-| `issuesmith/forge_guard.py` | Keep steps from writing labels through the forge (#4807) |
-| `issuesmith/gate_registry.py` | Rule-class gate registry types (stdlib-only; no ghdag dependency) |
-| `issuesmith/gate_rules/__init__.py` | Package module. |
-| `issuesmith/gate_rules/ac_complete_rules.py` | Package module. |
-| `issuesmith/gate_rules/ac_format_rules.py` | Package module. |
-| `issuesmith/gate_rules/allow_paths_forbidden.py` | Detect allow_paths entries that overlap host forbidden_pr_paths (#5408) |
-| `issuesmith/gate_rules/change_table_scope.py` | B1 gate: change-table rows must fall within YAML allow_paths (#5589) |
-| `issuesmith/gate_rules/common.py` | Package module. |
-| `issuesmith/gate_rules/deps_format.py` | Dependencies section format gate — unparsed #N refs without forge calls |
-| `issuesmith/gate_rules/design_lint_rules.py` | Package module. |
-| `issuesmith/gate_rules/migration_plan_rules.py` | Package module. |
-| `issuesmith/gate_rules/milestone_consistency.py` | milestone_consistency — detect a sub-issue split plan without the scope:milestone label |
-| `issuesmith/gate_rules/milestone_subdesign_rules.py` | Package module. |
-| `issuesmith/gate_rules/pin_bump.py` | Reject feature Issues that change dependency pins in pyproject.toml |
-| `issuesmith/gate_rules/scope_breadth.py` | CP1 allow_paths breadth gate (#3427) |
-| `issuesmith/gate_rules/scope_coupling.py` | CP1/B1 scope coupling gate (#3520) |
-| `issuesmith/gate_rules/scope_size.py` | B1 Issue size gate |
-| `issuesmith/gates/__init__.py` | issuesmith.gates — unified gate public API with Verdict return type |
-| `issuesmith/gates/ac_complete.py` | AC-complete gate — wraps ac_complete_entry.check_gate to return unified Verdict |
-| `issuesmith/gates/ac_contract.py` | Acceptance contract gate — paths and greps_must_be_empty on a worktree |
-| `issuesmith/gates/base.py` | Gate protocol and ContractInput for requires evaluation (#3626) |
-| `issuesmith/gates/command.py` | Configurable lint/tests gates driven by `issuesmith.yaml` commands (#7788) |
-| `issuesmith/gates/dep.py` | Dependency gate — wraps dep_extractor.check_dependencies to return unified Verdict |
-| `issuesmith/gates/pr_scope.py` | PR scope gate — wraps pr_scope.check_pr_diff_scope to return unified Verdict |
-| `issuesmith/gates/review.py` | LLM review gate for requires evaluation (#4986) |
-| `issuesmith/gates/scope.py` | Scope gate — wraps issuesmith.scope_gate to return unified Verdict |
-| `issuesmith/gates/worktree.py` | Worktree gates: lint, tests, external_leak, base_freshness (#3626), importer_import (#5013), publish_diff (#7031) |
-| `issuesmith/github_api.py` | Package module. |
-| `issuesmith/lanes.py` | Lane ledger planning: capacity, candidates, enqueue, and patrol report (#4792) |
-| `issuesmith/language.py` | Language packs: host-facing vocabulary and GitHub-posted text |
-| `issuesmith/lines/__init__.py` | Bundled reference production lines and file extract helpers |
-| `issuesmith/lines/develop/__init__.py` | Reference develop-line step modules shipped with the issuesmith package |
-| `issuesmith/lines/develop/hooks.py` | ghdag runner hooks for the reference develop line (failure record on the Issue) |
-| `issuesmith/lines/develop/implement.py` | Run the implementation LLM for the reference develop line |
-| `issuesmith/lines/develop/merge.py` | Publish, open or find a PR, merge, and finalize the reference develop line |
-| `issuesmith/lines/develop/prepare.py` | Prepare a git worktree for the reference develop line |
-| `issuesmith/lines/develop/review.py` | Review step: branch freshness check, then review dispatch via requires |
-| `issuesmith/lines/develop/verify.py` | Verify step placeholder; gates run via dispatch requires |
-| `issuesmith/merge.py` | Reusable merge helpers for issuesmith consumers (#4275) |
-| `issuesmith/metrics_events.py` | Centralized metrics JSONL event writers (#4422) |
-| `issuesmith/metrics_rework.py` | Aggregate rework metrics from paths.metrics and optional ghdag audit (#4431) |
-| `issuesmith/milestone.py` | Milestone chain automation and SUB1 split-plan helpers (#4276) |
-| `issuesmith/observe/__init__.py` | issuesmith.observe -- pipeline observation layer |
-| `issuesmith/observe/dag_state.py` | issuesmith.observe.dag_state — read DAG liveness from exec.jsonl and done/running markers |
-| `issuesmith/observe/events.py` | issuesmith.observe.events — typed observe event definitions |
-| `issuesmith/observe/main_health.py` | issuesmith.observe.main_health -- base-branch health check (#3664) |
-| `issuesmith/observe/policy.py` | issuesmith.observe.policy — evaluate events into actions, execute actions |
-| `issuesmith/ops/__init__.py` | Operational scripts relocated from scripts/issuesmith-*.py |
-| `issuesmith/ops/dispatch.py` | issuesmith-dispatch.py — live re-render runner for shell dispatch bodies (#2595 / #2596) |
-| `issuesmith/ops/doctor.py` | issuesmith doctor — requires_chain validation for StepConfig.requires / input_kind |
-| `issuesmith/ops/gen_live_dispatch.py` | issuesmith gen-live — generate shell step trampoline templates from their bodies (#2595 / #2596 / #2828) |
-| `issuesmith/ops/labels.py` | labels.py — phase/attention label projection and reconciliation (#3484 / #4807) |
-| `issuesmith/ops/preflight.py` | **Runtime environment** health check to run before driving the issuesmith pipeline |
-| `issuesmith/ops/publish.py` | Deterministic publish helper for issuesmith P3 (#2742) |
-| `issuesmith/ops/repair_step.py` | Explicit repair step module for requires violations (#4276) |
-| `issuesmith/ops/smoke.py` | Real-Issue smoke test of the issuesmith pipeline |
-| `issuesmith/ops/version_bump.py` | Deterministic pyproject.toml version bump for issuesmith publish (#2766) |
-| `issuesmith/pins.py` | Pin version reading and comparison for requires_pins landing checks |
-| `issuesmith/pipeline_comments.py` | Pipeline comment filter for issuesmith |
-| `issuesmith/pr_scope.py` | PR diff scope gate — allow_paths / forbidden_pr_paths check (#3178) |
-| `issuesmith/preconditions.py` | Config-driven phase advance predicates (#4790) |
-| `issuesmith/projection.py` | Pure label projection: issue state -> managed label set (#4807) |
-| `issuesmith/queue.py` | issuesmith queue CLI — enqueue, triage, dispatch, migrate |
-| `issuesmith/queue_store.py` | issuesmith queue store — JSONL requests, state, and exclusive lock |
-| `issuesmith/queue_triage.py` | Deterministic gates and LLM triage for issuesmith queue |
-| `issuesmith/quota_gate.py` | GitHub API rate-limit brake (#3769) |
-| `issuesmith/recovery.py` | issuesmith recovery — plan recover vs redispatch and execute operator commands (#2865) |
-| `issuesmith/repair.py` | Requires evaluation and repair orchestration for completed steps (#3626) |
-| `issuesmith/resume.py` | Central resume entry point (#3509) |
-| `issuesmith/rule_ids.py` | Normalize legacy host rule ids to concept names (#6125) |
-| `issuesmith/scope_gate.py` | Reusable allow_paths scope measurement for issuesmith consumers |
-| `issuesmith/step_tier.py` | Declarative step tier: design_doc (issue body) or pr_diff (PR metrics) |
-| `issuesmith/step_verify.py` | Declarative step verify: design_doc checks via shared B1 gate bundle |
-| `issuesmith/targets.py` | targets.py — multi-target Issue model (#2866) |
-| `issuesmith/template_ids.py` | Python 3.10 compatible ``string.Template`` identifier extraction (#3611) |
-| `issuesmith/version_policy.py` | Configurable version-bump policies for publish (#7789) |
-| `issuesmith/verbs/__init__.py` | issuesmith.verbs — public verb API extracted from step implementations |
-| `issuesmith/verbs/acceptance.py` | Acceptance verbs — gate checks, contract, and review tier |
-| `issuesmith/verbs/children.py` | Child-issue verbs — split plan, create, validate, allow_paths widen |
-| `issuesmith/verbs/finalize.py` | cleanup_worktrees / cleanup_branches / close_issue verbs |
-| `issuesmith/verbs/merge.py` | find_pr / merge_state / merge_pr verbs — public extraction from issuesmith.merge |
-| `issuesmith/verbs/publish.py` | publish_branch verb — public extraction from ops.publish |
-| `issuesmith/verbs/worktree.py` | prepare_worktree verb — public worktree orchestration |
-| `issuesmith/worktree.py` | Reusable git worktree helpers for issuesmith consumers (#4274) |
-| `issuesmith/worktree_python.py` | Resolve a worktree-specific Python bin directory via ``tests.python_bin_command`` |
+| `issuesmith/engine.py` | Switch and run issuesmith LLM roles. |
+| `issuesmith/engine_route.py` | Pure route construction for (engine, model) candidate lists (#6681, #6682). |
+| `issuesmith/forge.py` | Public re-exports of ghdag.forge for host consumers. |
+| `issuesmith/forge_api.py` | Typed entry point for raw REST calls on forge clients (#3611). |
+| `issuesmith/forge_guard.py` | Keep steps from writing labels through the forge (#4807). |
+| `issuesmith/gate_registry.py` | Rule-class gate registry types (stdlib-only; no ghdag dependency). |
+| `issuesmith/gate_rules/__init__.py` | issuesmith.gate_rules.__init__ |
+| `issuesmith/gate_rules/ac_complete_rules.py` | issuesmith.gate_rules.ac_complete_rules |
+| `issuesmith/gate_rules/ac_format_rules.py` | issuesmith.gate_rules.ac_format_rules |
+| `issuesmith/gate_rules/allow_paths_forbidden.py` | Detect allow_paths entries that overlap host forbidden_pr_paths (#5408). |
+| `issuesmith/gate_rules/change_table_scope.py` | B1 gate: change-table rows must fall within YAML allow_paths (#5589). |
+| `issuesmith/gate_rules/common.py` | issuesmith.gate_rules.common |
+| `issuesmith/gate_rules/deps_format.py` | Dependencies section format gate — unparsed #N refs without forge calls. |
+| `issuesmith/gate_rules/design_lint_rules.py` | issuesmith.gate_rules.design_lint_rules |
+| `issuesmith/gate_rules/migration_plan_rules.py` | issuesmith.gate_rules.migration_plan_rules |
+| `issuesmith/gate_rules/milestone_consistency.py` | milestone_consistency — detect a sub-issue split plan without the scope:milestone label. |
+| `issuesmith/gate_rules/milestone_subdesign_rules.py` | issuesmith.gate_rules.milestone_subdesign_rules |
+| `issuesmith/gate_rules/pin_bump.py` | Reject feature Issues that change dependency pins in pyproject.toml. |
+| `issuesmith/gate_rules/scope_breadth.py` | CP1 allow_paths breadth gate (#3427). |
+| `issuesmith/gate_rules/scope_coupling.py` | CP1/B1 scope coupling gate (#3520). |
+| `issuesmith/gate_rules/scope_size.py` | B1 Issue size gate. |
+| `issuesmith/gates/__init__.py` | issuesmith.gates — unified gate public API with Verdict return type. |
+| `issuesmith/gates/ac_complete.py` | AC-complete gate — wraps ac_complete_entry.check_gate to return unified Verdict. |
+| `issuesmith/gates/ac_contract.py` | Acceptance contract gate — paths and greps_must_be_empty on a worktree. |
+| `issuesmith/gates/base.py` | Gate protocol and ContractInput for requires evaluation (#3626). |
+| `issuesmith/gates/command.py` | Configurable lint/tests gates driven by issuesmith.yaml commands (#7788). |
+| `issuesmith/gates/dep.py` | Dependency gate — wraps dep_extractor.check_dependencies to return unified Verdict. |
+| `issuesmith/gates/pr_scope.py` | PR scope gate — wraps pr_scope.check_pr_diff_scope to return unified Verdict. |
+| `issuesmith/gates/review.py` | LLM review gate for requires evaluation (#4986). |
+| `issuesmith/gates/scope.py` | Scope gate — wraps issuesmith.scope_gate to return unified Verdict. |
+| `issuesmith/gates/worktree.py` | Worktree gates: lint, tests, external_leak, base_freshness (#3626), importer_import (#5013), publish_diff (#7031). |
+| `issuesmith/github_api.py` | issuesmith.github_api |
+| `issuesmith/lanes.py` | Lane ledger planning: capacity, candidates, enqueue, and patrol report (#4792). |
+| `issuesmith/language.py` | Language packs: host-facing vocabulary and GitHub-posted text. |
+| `issuesmith/lines/__init__.py` | Bundled reference production lines and file extract helpers. |
+| `issuesmith/lines/develop/__init__.py` | Reference develop-line step modules shipped with the issuesmith package. |
+| `issuesmith/lines/develop/hooks.py` | ghdag runner hooks for the reference develop line (failure record on the Issue). |
+| `issuesmith/lines/develop/implement.py` | Run the implementation LLM for the reference develop line. |
+| `issuesmith/lines/develop/merge.py` | Publish, open or find a PR, merge, and finalize the reference develop line. |
+| `issuesmith/lines/develop/prepare.py` | Prepare a git worktree for the reference develop line. |
+| `issuesmith/lines/develop/review.py` | Review step: branch freshness check, then review dispatch via requires. |
+| `issuesmith/lines/develop/verify.py` | Verify step placeholder; gates run via dispatch requires. |
+| `issuesmith/merge.py` | Reusable merge helpers for issuesmith consumers (#4275). |
+| `issuesmith/metrics_events.py` | Centralized metrics JSONL event writers (#4422). |
+| `issuesmith/metrics_rework.py` | Aggregate rework metrics from paths.metrics and optional ghdag audit (#4431). |
+| `issuesmith/milestone.py` | Milestone chain automation and SUB1 split-plan helpers (#4276). |
+| `issuesmith/observe/__init__.py` | issuesmith.observe -- pipeline observation layer. |
+| `issuesmith/observe/dag_state.py` | issuesmith.observe.dag_state — read DAG liveness from exec.jsonl and done/running markers. |
+| `issuesmith/observe/events.py` | issuesmith.observe.events — typed observe event definitions. |
+| `issuesmith/observe/main_health.py` | issuesmith.observe.main_health -- base-branch health check (#3664). |
+| `issuesmith/observe/policy.py` | issuesmith.observe.policy — evaluate events into actions, execute actions. |
+| `issuesmith/ops/__init__.py` | Operational scripts relocated from scripts/issuesmith-*.py. |
+| `issuesmith/ops/dispatch.py` | issuesmith-dispatch.py — live re-render runner for shell dispatch bodies (#2595 / #2596). |
+| `issuesmith/ops/doctor.py` | issuesmith doctor — requires_chain validation for StepConfig.requires / input_kind. |
+| `issuesmith/ops/gen_live_dispatch.py` | issuesmith gen-live — generate shell step trampoline templates from their bodies (#2595 / #2596 / #2828). |
+| `issuesmith/ops/labels.py` | labels.py — phase/attention label projection and reconciliation (#3484 / #4807). |
+| `issuesmith/ops/preflight.py` | **Runtime environment** health check to run before driving the issuesmith pipeline. |
+| `issuesmith/ops/publish.py` | Deterministic publish helper for issuesmith P3 (#2742). |
+| `issuesmith/ops/repair_step.py` | Explicit repair step module for requires violations (#4276). |
+| `issuesmith/ops/smoke.py` | Real-Issue smoke test of the issuesmith pipeline. |
+| `issuesmith/ops/version_bump.py` | Deterministic pyproject.toml version bump for issuesmith publish (#2766). |
+| `issuesmith/pins.py` | Pin version reading and comparison for requires_pins landing checks. |
+| `issuesmith/pipeline_comments.py` | Pipeline comment filter for issuesmith. |
+| `issuesmith/pr_scope.py` | PR diff scope gate — allow_paths / forbidden_pr_paths check (#3178). |
+| `issuesmith/preconditions.py` | Config-driven phase advance predicates (#4790). |
+| `issuesmith/projection.py` | Pure label projection: issue state -> managed label set (#4807). |
+| `issuesmith/queue.py` | issuesmith queue CLI — enqueue, triage, dispatch, migrate. |
+| `issuesmith/queue_store.py` | issuesmith queue store — JSONL requests, state, and exclusive lock. |
+| `issuesmith/queue_triage.py` | Deterministic gates and LLM triage for issuesmith queue. |
+| `issuesmith/quota_gate.py` | GitHub API rate-limit brake (#3769). |
+| `issuesmith/recovery.py` | issuesmith recovery — plan recover vs redispatch and execute operator commands (#2865). |
+| `issuesmith/repair.py` | Requires evaluation and repair orchestration for completed steps (#3626). |
+| `issuesmith/resume.py` | Central resume entry point (#3509). |
+| `issuesmith/rule_ids.py` | Normalize legacy host rule ids to concept names (#6125). |
+| `issuesmith/scope_gate.py` | Reusable allow_paths scope measurement for issuesmith consumers. |
+| `issuesmith/step_tier.py` | Declarative step tier: design_doc (issue body) or pr_diff (PR metrics). |
+| `issuesmith/step_verify.py` | Declarative step verify: design_doc checks via shared B1 gate bundle. |
+| `issuesmith/targets.py` | targets.py — multi-target Issue model (#2866). |
+| `issuesmith/template_ids.py` | Python 3.10 compatible ``string.Template`` identifier extraction (#3611). |
+| `issuesmith/verbs/__init__.py` | issuesmith.verbs — public verb API extracted from step implementations. |
+| `issuesmith/verbs/acceptance.py` | Acceptance verbs — gate checks, contract, and review tier. |
+| `issuesmith/verbs/children.py` | Child-issue verbs — split plan, create, validate, allow_paths widen. |
+| `issuesmith/verbs/finalize.py` | cleanup_worktrees / cleanup_branches / close_issue verbs. |
+| `issuesmith/verbs/merge.py` | find_pr / merge_state / merge_pr verbs — public extraction from issuesmith.merge. |
+| `issuesmith/verbs/publish.py` | publish_branch verb — public extraction from ops.publish. |
+| `issuesmith/verbs/worktree.py` | prepare_worktree verb — public worktree orchestration. |
+| `issuesmith/version_policy.py` | Configurable version-bump policies for publish (#7789). |
+| `issuesmith/worktree.py` | Reusable git worktree helpers for issuesmith consumers (#4274). |
+| `issuesmith/worktree_python.py` | Resolve a worktree-specific Python bin directory via ``tests.python_bin_command``. |
 
 ## Gates
 
@@ -523,8 +527,12 @@ A file that is not found is treated as empty, which fails validation because `re
 | `terminal_without_merge` | `[]` | Labels that mark an Issue finished without a merge (names without `:` get the `label_namespace` prefix) |
 | `scope_gate` | `enabled: true` | P0 allow_paths size: `max_files` (`80`), `max_lines` (`20000`), `hard_max_files` (`200`) |
 | `scope_coupling` | `enabled: true` | `search_dirs` (`[tests, src]`), `data_file_tests` (`true`) |
-| `scope_size` | `enabled: true` | B1 Issue size: `max_files` (`8`), `max_concerns` (`4`), `max_slices` (`3`), `delete_with_new` (`false`), `exclude_prefixes`, `atomic_phrases` (`[]`, phrases matched in the design section skip sub-plan promotion, same as `split: atomic`) |
-| `tests` | `flaky_reruns: 2`, `python_command: [python]` | Reruns of newly failing tests (`0` turns flaky detection off); `python_command` is the argv prefix used to launch pytest (baseline and flaky reruns too); `command` (`[]`) replaces pytest with a repository command (exit code 0 passes); `report: junit` with `report_path` (relative to the worktree) reads failing test IDs from JUnit XML for baseline and flaky comparison |
+| `scope_size` | `enabled: true` | B1 Issue size: `max_files` (`8`), `max_concerns` (`4`), `max_slices` (`3`), `delete_with_new` (`false`), `exclude_prefixes`, `sub_plan_header` (sub-plan table heading from the language pack), `atomic_phrases` (`[]`, phrases matched in the design section skip sub-plan promotion, same as `split: atomic`) |
+| `tests` | `flaky_reruns: 2`, `python_command: [python]` | Reruns of newly failing tests (`0` turns flaky detection off); `python_command` is the argv prefix used to launch pytest (baseline and flaky reruns too); `python_bin_command` resolves a worktree interpreter when the host and target repos differ; `command` (`[]`) replaces pytest with a repository command (exit code 0 passes); `report: junit` with `report_path` (relative to the worktree) reads failing test IDs from JUnit XML for baseline and flaky comparison |
+| `version` | `policy: auto` | Publish bump policy: `auto`, `none`, `pyproject`, or `command` (`bump_command` argv when `policy` is `command`) |
+| `merge` | see below | PR merge polling: `state_wait_attempts`, `state_wait_seconds`, `rebump_max` |
+| `path_env_prefixes` | `[]` | Extra directory prefixes prepended to `PATH` when resolving launcher commands relative to the config file |
+| `target_remotes` | `{}` | Map `supported_repos` entries to non-GitHub clone URLs (also used for merge-without-pr targets) |
 | `lint` | `command: []`, `fix_command: []` | `command` replaces ruff with a repository command (exit code 0 passes); `fix_command` (requires `command`) runs once as the auto-fix |
 | `metrics` | `done_step: m2` | Rework metrics: `done_step`, `repair_templates`, `cause_targets` |
 | `derived_allow` | `enabled: true`, `ledger_globs: [tests/conventions/known_*.txt]` | Let repair (and impl ahead of repair) edit tests outside allow_paths when they reference in-scope changes, or shrink matching ledgers; newly failing tests still extend the set via TestsGate, including repository `.md` files those tests name in source (`[]` turns ledger derivation off) |
@@ -570,6 +578,8 @@ When the host environment that runs the pipeline differs from the target reposit
 | `module` | `""` | Python module implementing the step; empty means an LLM step run through `engine run-guarded` |
 | `template` | (unset) | Template path for LLM steps |
 | `requires` | `[]` | Gate ids (or `module.path:attr`) evaluated after the step |
+| `requires_declared` | `false` | When true, `requires` must list every gate referenced by the step template (undeclared gates fail at dispatch) |
+| `recheck` | `[]` | Gate ids to re-run after repair before accepting the step result |
 | `input_kind` | `issue` | `issue`, `worktree` or `artifact` |
 | `accepts` | `[]` | Accepted artifact kinds |
 | `andon_when` | `[]` (`p1`: `external_leak.target_unknown`) | Violation ids that raise an andon instead of a repair |
@@ -577,11 +587,15 @@ When the host environment that runs the pipeline differs from the target reposit
 | `repair.push` | `false` | Push the branch after a repair |
 | `tier` | (unset) | Tier selection for `issuesmith tier <id>`: `kind: design_doc` (issue body) or `pr_diff` (`light_max_diff_lines`, default `200`). For the `review` gate, `pr_diff` selects the engine tier from PR diff lines and unchecked AC count; otherwise the gate falls back to `steps.<id>.review.tier` |
 | `verify` | (unset) | When set to `design_doc`, `issuesmith verify <id>` runs the design-doc gate bundle (`VERIFY_RECOVERY:` markers) |
-| `review` | (unset) | Required when `requires` or `accepts` lists `review`: `role`, `template`, `success_status`, `failure_status` (required), `tier` (engine tier when step `tier` is unset or not `pr_diff`; step `tier: pr_diff` takes priority), `problems_heading` (`Problems:`) |
+| `review` | (unset) | Required when `requires` or `accepts` lists `review`: `role`, `template`, `success_status`, `failure_status` (required), `tier` (engine tier when step `tier` is unset or not `pr_diff`; step `tier: pr_diff` takes priority), `problems_heading` (`Problems:`), `optional_variables` (template variables that may be omitted) |
 
 #### `paths` keys
 
 Relative to the config file directory: `queue` `jobs/issuesmith-queue.jsonl`, `queue_state` `logs/issuesmith-queue-state.json`, `queue_lock` `logs/issuesmith-queue.lock`, `triage_log` `jobs/issuesmith-triage.jsonl`, `seed` `configs/night-queue.yaml`, `night_state` `logs/night-queue-state.json`, `exec_jsonl` `jobs/exec.jsonl`, `done_dir` `jobs/done`, `quota_state` `jobs/quota-gate.json`, `metrics` `jobs/metrics.jsonl`, `worktrees_dir` `.claude/worktrees`, `external_dir` `.claude/external`, `workflow` `workflows/issuesmith.yml`, `template_dir` `workflows/issuesmith`, `engine_state` `.pipeline-state/issuesmith-engine.yml`, `lanes` (unset; the ledger read by the `lanes` command).
+
+#### `merge` keys
+
+`state_wait_attempts` (`5`), `state_wait_seconds` (`3.0`), and `rebump_max` (`3`) control merge polling and how many times publish may rebump onto a moving base.
 
 #### `observe` keys
 
