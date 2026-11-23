@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.209.1 - 2026-11-23
+
+### Fixed
+
+- resume: push rebased branch with lease after base catch-up
+
 ## 0.209.0 - 2026-11-23
 
 ### Added
