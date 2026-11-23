@@ -237,3 +237,230 @@ def test_resume_conflict_raises_andon_without_running_step(tmp_path, monkeypatch
         ["git", "-C", str(worktree), "rev-parse", "-q", "--verify", "REBASE_HEAD"],
         check=False,
     ).returncode != 0
+
+
+def _advance_main_on_bare(tmp_path: Path, bare: Path, worktree: Path) -> None:
+    seed = tmp_path / "seed"
+    (seed / "ahead.txt").write_text("ahead\n", encoding="utf-8")
+    _git(seed, "add", "ahead.txt")
+    _git(seed, "commit", "-q", "-m", "advance main")
+    subprocess.run(["git", "-C", str(bare), "fetch", str(seed), "main:main"], check=True)
+    _git(worktree, "fetch", "origin", "main")
+
+
+def _resume_env(
+    tmp_path: Path,
+    monkeypatch,
+    issue_num: int,
+    worktree: Path,
+    *,
+    queue_suffix: str = "",
+) -> tuple[Path, Path, Path]:
+    exec_path = _exec_record(tmp_path, issue_num, worktree)
+    _resume_cfg(tmp_path, monkeypatch, exec_path=exec_path)
+    suffix = queue_suffix or "q"
+    return (
+        tmp_path / f"{suffix}.jsonl",
+        tmp_path / f"{suffix}s.json",
+        tmp_path / f"{suffix}l",
+    )
+
+
+def test_resume_pushes_rebased_branch_when_remote_was_in_sync(
+    tmp_path, monkeypatch, capsys
+):
+    """refs #7756 AC-1."""
+    from issuesmith.lines.develop.review import _check_remote_branch_matches_head
+
+    bare, worktree = _bare_clone_setup(tmp_path)
+    issue_num = 10
+    branch = _git(worktree, "branch", "--show-current")
+    _advance_main_on_bare(tmp_path, bare, worktree)
+    client = MagicMock()
+    client.issue_get.return_value = {
+        "body": "```yaml\nbase_branch: main\n```\n",
+        "number": issue_num,
+    }
+    q_path, s_path, l_path = _resume_env(tmp_path, monkeypatch, issue_num, worktree)
+    recover = MagicMock(return_value=0)
+    with (
+        patch("issuesmith.resume.get_forge", return_value=client),
+        patch("issuesmith.resume.QueueStore") as store_cls,
+        patch("issuesmith.resume._generation_keys_available", return_value=True),
+        patch("issuesmith.resume._resume_from_step", recover),
+    ):
+        store_cls.return_value = QueueStore(
+            queue_path=q_path,
+            state_path=s_path,
+            lock_path=l_path,
+        )
+        assert resume_mod.resume(issue_num, from_step="p1") == 0
+    head = _git(worktree, "rev-parse", "HEAD")
+    remote = _git(worktree, "ls-remote", "--heads", "origin", f"refs/heads/{branch}")
+    remote_sha = remote.split("\t", 1)[0]
+    assert head == remote_sha
+    assert _check_remote_branch_matches_head(worktree, branch) is None
+    assert "RESUME_PUSH:" in capsys.readouterr().err
+    recover.assert_called_once()
+
+
+def _unpublished_branch_setup(tmp_path: Path) -> tuple[Path, Path, str]:
+    bare, worktree = _bare_clone_setup(tmp_path)
+    branch = "feat/local-only"
+    _git(worktree, "checkout", "-q", "-b", branch)
+    (worktree / "local.txt").write_text("local\n", encoding="utf-8")
+    _git(worktree, "add", "local.txt")
+    _git(worktree, "commit", "-q", "-m", "local only")
+    return bare, worktree, branch
+
+
+def test_resume_does_not_create_remote_branch_when_unpublished(tmp_path, monkeypatch):
+    """refs #7756 AC-2."""
+    bare, worktree, branch = _unpublished_branch_setup(tmp_path)
+    issue_num = 11
+    _advance_main_on_bare(tmp_path, bare, worktree)
+    client = MagicMock()
+    client.issue_get.return_value = {
+        "body": "```yaml\nbase_branch: main\n```\n",
+        "number": issue_num,
+    }
+    q_path, s_path, l_path = _resume_env(
+        tmp_path, monkeypatch, issue_num, worktree, queue_suffix="q2"
+    )
+    recover = MagicMock(return_value=0)
+    with (
+        patch("issuesmith.resume.get_forge", return_value=client),
+        patch("issuesmith.resume.QueueStore") as store_cls,
+        patch("issuesmith.resume._generation_keys_available", return_value=True),
+        patch("issuesmith.resume._resume_from_step", recover),
+    ):
+        store_cls.return_value = QueueStore(
+            queue_path=q_path,
+            state_path=s_path,
+            lock_path=l_path,
+        )
+        assert resume_mod.resume(issue_num, from_step="p1") == 0
+    remote = _git(worktree, "ls-remote", "--heads", "origin", f"refs/heads/{branch}")
+    assert remote == ""
+    recover.assert_called_once()
+
+
+def test_resume_does_not_push_when_remote_already_diverged(tmp_path, monkeypatch):
+    """refs #7756 AC-3."""
+    bare, worktree = _bare_clone_setup(tmp_path)
+    issue_num = 12
+    branch = _git(worktree, "branch", "--show-current")
+    remote_before = _git(worktree, "rev-parse", f"refs/remotes/origin/{branch}")
+    other = tmp_path / "other"
+    subprocess.run(["git", "clone", "-q", str(bare), str(other)], check=True)
+    _git(other, "config", "user.email", "t@example.com")
+    _git(other, "config", "user.name", "t")
+    _git(other, "checkout", "-q", branch)
+    (other / "diverge.txt").write_text("x\n", encoding="utf-8")
+    _git(other, "add", "diverge.txt")
+    _git(other, "commit", "-q", "-m", "diverge")
+    _git(other, "push", "origin", branch)
+    remote_after_other = _git(other, "rev-parse", "HEAD")
+    assert remote_after_other != remote_before
+    _advance_main_on_bare(tmp_path, bare, worktree)
+    client = MagicMock()
+    client.issue_get.return_value = {
+        "body": "```yaml\nbase_branch: main\n```\n",
+        "number": issue_num,
+    }
+    q_path, s_path, l_path = _resume_env(
+        tmp_path, monkeypatch, issue_num, worktree, queue_suffix="q3"
+    )
+    recover = MagicMock(return_value=0)
+    with (
+        patch("issuesmith.resume.get_forge", return_value=client),
+        patch("issuesmith.resume.QueueStore") as store_cls,
+        patch("issuesmith.resume._generation_keys_available", return_value=True),
+        patch("issuesmith.resume._resume_from_step", recover),
+    ):
+        store_cls.return_value = QueueStore(
+            queue_path=q_path,
+            state_path=s_path,
+            lock_path=l_path,
+        )
+        assert resume_mod.resume(issue_num, from_step="p1") == 0
+    remote_now = _git(
+        worktree, "ls-remote", "--heads", "origin", f"refs/heads/{branch}"
+    ).split("\t", 1)[0]
+    assert remote_now == remote_after_other
+    recover.assert_called_once()
+
+
+def test_resume_continues_when_remote_branch_check_fails(
+    tmp_path, monkeypatch, capsys
+):
+    """refs #7756 AC-4."""
+    bare, worktree = _bare_clone_setup(tmp_path)
+    issue_num = 13
+    _advance_main_on_bare(tmp_path, bare, worktree)
+    client = MagicMock()
+    client.issue_get.return_value = {
+        "body": "```yaml\nbase_branch: main\n```\n",
+        "number": issue_num,
+    }
+    exec_path = _exec_record(tmp_path, issue_num, worktree)
+    _resume_cfg(tmp_path, monkeypatch, exec_path=exec_path)
+    recover = MagicMock(return_value=0)
+
+    real_git = resume_mod._git_in_worktree
+
+    def _git_ls_remote_fail(worktree, *args):
+        if "ls-remote" in args:
+            return subprocess.CompletedProcess(args, 1, "", "ls-remote failed")
+        return real_git(worktree, *args)
+
+    with (
+        patch("issuesmith.resume.get_forge", return_value=client),
+        patch("issuesmith.resume.QueueStore") as store_cls,
+        patch("issuesmith.resume._generation_keys_available", return_value=True),
+        patch("issuesmith.resume._resume_from_step", recover),
+        patch("issuesmith.resume._git_in_worktree", side_effect=_git_ls_remote_fail),
+    ):
+        store_cls.return_value = QueueStore(
+            queue_path=tmp_path / "q4.jsonl",
+            state_path=tmp_path / "s4.json",
+            lock_path=tmp_path / "l4",
+        )
+        assert resume_mod.resume(issue_num, from_step="p1") == 0
+    err = capsys.readouterr().err
+    assert "warning: resume remote branch check skipped:" in err
+    recover.assert_called_once()
+
+
+def test_resume_stops_when_rebased_branch_push_fails(tmp_path, monkeypatch, capsys):
+    """refs #7756 AC-5."""
+    bare, worktree = _bare_clone_setup(tmp_path)
+    hook = bare / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    hook.chmod(0o755)
+    issue_num = 14
+    _advance_main_on_bare(tmp_path, bare, worktree)
+    client = MagicMock()
+    client.issue_get.return_value = {
+        "body": "```yaml\nbase_branch: main\n```\n",
+        "number": issue_num,
+    }
+    q_path, s_path, l_path = _resume_env(
+        tmp_path, monkeypatch, issue_num, worktree, queue_suffix="q5"
+    )
+    recover = MagicMock(return_value=0)
+    with (
+        patch("issuesmith.resume.get_forge", return_value=client),
+        patch("issuesmith.resume.QueueStore") as store_cls,
+        patch("issuesmith.resume._generation_keys_available", return_value=True),
+        patch("issuesmith.resume._resume_from_step", recover),
+    ):
+        store_cls.return_value = QueueStore(
+            queue_path=q_path,
+            state_path=s_path,
+            lock_path=l_path,
+        )
+        assert resume_mod.resume(issue_num, from_step="p1") == 1
+    err = capsys.readouterr().err
+    assert "error: resume push failed:" in err
+    recover.assert_not_called()
