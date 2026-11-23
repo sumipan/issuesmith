@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.207.3 - 2026-11-23
+
+### Fixed
+
+- repair: align README §4.1 section gates with OSS headings (#7801)
+
 ## 0.207.2 - 2026-11-23
 
 ### Fixed
