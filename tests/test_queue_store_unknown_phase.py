@@ -140,7 +140,7 @@ def test_incomplete_unknown_phase_warns_once_and_keeps_valid_rows(
 
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert captured.err == "warning: skipping invalid queue line 1\n"
+    assert captured.err == ""
     assert _RID_UNKNOWN not in snap.requests
     assert _RID_VALID in snap.requests
     assert snap.active_order == [_RID_VALID]

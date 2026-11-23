@@ -7,6 +7,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.209.0 - 2026-11-23
+
+### Added
+
+- queue: prune queue lines for removed phases on tick
+
+### Fixed
+
+- repair: expect silent stale-phase skip on snapshot read (#7836)
+
 ## 0.208.1 - 2026-11-23
 
 ### Fixed

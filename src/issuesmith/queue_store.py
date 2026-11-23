@@ -255,6 +255,35 @@ def validate_request_fields(
             raise QueueValidationError(f"invalid request_id: {request_id!r}") from exc
 
 
+def _configured_phase_names() -> frozenset[str]:
+    return frozenset(p.name for p in get_config().phases)
+
+
+def _stale_phase_only_substitute(data: dict[str, Any]) -> dict[str, Any]:
+    phases = sorted(_configured_phase_names())
+    if not phases:
+        raise QueueValidationError("no phases configured")
+    patched = dict(data)
+    patched["phase"] = phases[0]
+    return patched
+
+
+def is_stale_phase_only_data(data: dict[str, Any]) -> bool:
+    """True when the only validation failure is an unconfigured phase name."""
+    if not isinstance(data, dict):
+        return False
+    phase = data.get("phase")
+    if not isinstance(phase, str) or not phase:
+        return False
+    if phase in _configured_phase_names():
+        return False
+    try:
+        request_from_dict(_stale_phase_only_substitute(data))
+        return True
+    except QueueValidationError:
+        return False
+
+
 def request_from_dict(data: dict[str, Any]) -> QueueRequest:
     known = {
         "request_id",
@@ -451,6 +480,8 @@ class QueueStore:
                 )
                 continue
             if not isinstance(data, dict):
+                continue
+            if is_stale_phase_only_data(data):
                 continue
             rid = data.get("request_id")
             phase = data.get("phase")
@@ -946,6 +977,77 @@ class QueueStore:
             state["milestone_chains"] = chains
             self._save_state_unlocked(state)
             return True
+
+    def prune_unknown_phase_requests(
+        self, *, dry_run: bool = False
+    ) -> list[tuple[str, str]]:
+        """Archive otherwise-valid queue lines whose phase is no longer configured."""
+        archive_path = self.queue_path.with_name(f"{self.queue_path.stem}.pruned.jsonl")
+        with self.lock():
+            if not self.queue_path.exists():
+                return []
+            state = self._load_state_unlocked()
+            active_order = set(state.get("active_order") or [])
+            in_flight_issues = {
+                entry.get("issue")
+                for entry in (state.get("in_flight") or [])
+                if isinstance(entry, dict) and isinstance(entry.get("issue"), int)
+            }
+            raw_lines = self.queue_path.read_text(encoding="utf-8").splitlines(keepends=True)
+            kept: list[str] = []
+            archive_lines: list[str] = []
+            pruned: list[tuple[str, str]] = []
+            for raw in raw_lines:
+                stripped = raw.strip()
+                if not stripped:
+                    kept.append(raw)
+                    continue
+                try:
+                    data = json.loads(stripped)
+                except json.JSONDecodeError:
+                    kept.append(raw)
+                    continue
+                if not isinstance(data, dict) or not is_stale_phase_only_data(data):
+                    kept.append(raw)
+                    continue
+                rid = data.get("request_id")
+                phase = data.get("phase")
+                issue = data.get("issue")
+                if not isinstance(rid, str) or not isinstance(phase, str):
+                    kept.append(raw)
+                    continue
+                protected: str | None = None
+                if rid in active_order:
+                    protected = "active_order"
+                elif isinstance(issue, int) and issue in in_flight_issues:
+                    protected = f"in_flight issue #{issue}"
+                if protected:
+                    print(
+                        "warning: not pruning stale phase queue request "
+                        f"{rid}: protected by {protected}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    kept.append(raw)
+                    continue
+                archive_lines.append(raw if raw.endswith("\n") else raw + "\n")
+                pruned.append((rid, phase))
+            if dry_run or not pruned:
+                return pruned
+            archive_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(archive_path, "a", encoding="utf-8") as archive_fh:
+                for line in archive_lines:
+                    archive_fh.write(line)
+                archive_fh.flush()
+                os.fsync(archive_fh.fileno())
+            tmp = self.queue_path.with_name(f"{self.queue_path.name}.tmp.{os.getpid()}")
+            payload = "".join(kept)
+            with open(tmp, "w", encoding="utf-8") as queue_fh:
+                queue_fh.write(payload)
+                queue_fh.flush()
+                os.fsync(queue_fh.fileno())
+            os.replace(tmp, self.queue_path)
+            return pruned
 
     def prune_milestone_chains(self, *, dry_run: bool = False) -> list[int]:
         """Remove milestone chains whose parent was already closed.
