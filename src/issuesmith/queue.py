@@ -18,11 +18,12 @@ from zoneinfo import ZoneInfo
 
 import yaml
 from ghdag.forge import ForgePort, GitHubApiError, get_forge
-from ghdag.quota import QuotaGate
+from ghdag.quota import QuotaGate, QuotaSnapshot
 
 from issuesmith.cli_errors import ContractParser, fail
 from issuesmith.config import get_config
 from issuesmith.dep_extractor import check_dependencies
+from issuesmith.engine_route import build_route
 from issuesmith.forge_api import api_request
 from issuesmith.gate_rules.scope_coupling import (
     deletion_references_for_body,
@@ -434,30 +435,114 @@ def _dispatch_pipeline_ready(
 
 
 ENGINE_STATE_PATH = _cfg.paths.engine_state
-_DEFAULT_ROLE_ENGINES = {"design": "claude", "implementation": "claude"}
 
 
-def _required_engines(engine_state_path: Path | None = None) -> dict[str, str]:
-    """Read role -> engine from .pipeline-state/issuesmith-engine.yml.
+@dataclass(frozen=True)
+class RoleEngineSelection:
+    selected_engine: str | None
+    paused_required: tuple[str, ...]
 
-    Falls back to the default (claude for both design and implementation) when unreadable.
-    """
+
+def _quota_snapshot(quota_path: Path | None = None) -> QuotaSnapshot:
+    resolved = quota_path or QUOTA_STATE_PATH
+    return QuotaGate(state_path=resolved, pause_ttl_seconds=None).snapshot()
+
+
+def _paused_engine_names(snapshot: QuotaSnapshot) -> frozenset[str]:
+    return frozenset(
+        name for name, eng in snapshot.engines.items() if eng.status == "paused"
+    )
+
+
+def _read_engine_state_raw(engine_state_path: Path | None = None) -> dict[str, Any] | None:
     path = engine_state_path or ENGINE_STATE_PATH
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except (OSError, yaml.YAMLError):
-        return dict(_DEFAULT_ROLE_ENGINES)
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _explicit_engine_for_role(state_data: dict[str, Any] | None, role: str) -> str | None:
+    if state_data is None:
+        return None
+    value = state_data.get(role)
+    if not isinstance(value, dict):
+        return None
+    engine = value.get("engine")
+    if not isinstance(engine, str) or not engine.strip():
+        return None
+    return engine.strip()
+
+
+def _role_engine_selection(
+    role: str,
+    *,
+    quota_path: Path | None = None,
+    engine_state_path: Path | None = None,
+    snapshot: QuotaSnapshot | None = None,
+) -> RoleEngineSelection:
+    """Pick the queue dispatch engine for ``role`` from config route, state pin, and quota."""
+    engines_cfg = get_config().engines
+    role_cfg = engines_cfg[role]
+    heavy = role_cfg.heavy
+    route_engines = tuple(engine for engine, _ in heavy)
+
+    snap = snapshot or _quota_snapshot(quota_path)
+    paused = _paused_engine_names(snap)
+    state_data = _read_engine_state_raw(engine_state_path)
+    explicit = _explicit_engine_for_role(state_data, role)
+
+    if explicit is not None:
+        if explicit in paused:
+            return RoleEngineSelection(explicit, (explicit,))
+        return RoleEngineSelection(explicit, ())
+
+    first_eng, first_mod = heavy[0]
+    route = build_route(
+        heavy=heavy,
+        light=role_cfg.light,
+        selected_engine=first_eng,
+        selected_model=first_mod,
+        selected_light_model=None,
+        tier=None,
+        paused=paused,
+    )
+    if route:
+        return RoleEngineSelection(route[0][0], ())
+    return RoleEngineSelection(None, route_engines)
+
+
+def _required_engines(
+    engine_state_path: Path | None = None,
+    quota_path: Path | None = None,
+) -> dict[str, str]:
+    snap = _quota_snapshot(quota_path)
     result: dict[str, str] = {}
-    for role, default in _DEFAULT_ROLE_ENGINES.items():
-        value = data.get(role) if isinstance(data, dict) else None
-        engine = value.get("engine") if isinstance(value, dict) else None
-        result[role] = str(engine) if engine else default
+    for role in get_config().engines:
+        sel = _role_engine_selection(
+            role,
+            engine_state_path=engine_state_path,
+            quota_path=quota_path,
+            snapshot=snap,
+        )
+        if sel.selected_engine is not None:
+            result[role] = sel.selected_engine
     return result
 
 
-def _resolve_engine(phase: str, engine_state_path: Path | None = None) -> str:
+def _resolve_engine(
+    phase: str,
+    engine_state_path: Path | None = None,
+    quota_path: Path | None = None,
+) -> str:
     role = _phase_role_map()[phase]
-    return _required_engines(engine_state_path)[role]
+    sel = _role_engine_selection(
+        role, engine_state_path=engine_state_path, quota_path=quota_path
+    )
+    if sel.selected_engine is None:
+        raise RuntimeError(f"no available engine for role {role}")
+    return sel.selected_engine
 
 
 def _serial_concurrency() -> bool:
@@ -1184,24 +1269,35 @@ def _required_engines_paused(
     engine_state_path: Path | None = None,
     role: str | None = None,
 ) -> list[str]:
-    """Return paused engines among those required for dispatch (quota state only)."""
-    resolved_quota = quota_path or QUOTA_STATE_PATH
-    snapshot = QuotaGate(state_path=resolved_quota).snapshot()
+    """Return engines that block dispatch for the given role(s) (quota + route selection)."""
+    snapshot = _quota_snapshot(quota_path)
     if not snapshot.engines:
         return []
 
-    role_map = _required_engines(engine_state_path)
     if role is not None:
-        engine_name = role_map.get(role)
-        required = {engine_name} if engine_name else set()
-    else:
-        required = set(role_map.values())
+        sel = _role_engine_selection(
+            role,
+            quota_path=quota_path,
+            engine_state_path=engine_state_path,
+            snapshot=snapshot,
+        )
+        return list(sel.paused_required)
 
-    paused: set[str] = set()
-    for name, engine in snapshot.engines.items():
-        if name in required and engine.status == "paused":
-            paused.add(name)
-    return sorted(paused)
+    blocked: list[str] = []
+    seen: set[str] = set()
+    for role_name in get_config().engines:
+        sel = _role_engine_selection(
+            role_name,
+            quota_path=quota_path,
+            engine_state_path=engine_state_path,
+            snapshot=snapshot,
+        )
+        for engine_name in sel.paused_required:
+            if engine_name in seen:
+                continue
+            seen.add(engine_name)
+            blocked.append(engine_name)
+    return blocked
 
 
 def _all_engines_paused(quota_path: Path | None = None) -> bool:

@@ -6,7 +6,6 @@ import argparse
 import json
 import re
 from datetime import datetime
-from pathlib import Path
 
 import pytest
 
@@ -110,10 +109,34 @@ class TestCLI:
 
 def _write_quota(path, engines: dict[str, str]) -> None:
     import json as _json
+
+    observed_at = "2026-09-10T09:19:19.749925+00:00"
+    engine_payloads: dict[str, dict] = {}
+    for name, st in engines.items():
+        payload: dict = {
+            "status": st,
+            "observed_at": observed_at,
+            "reason": "t",
+            "resume_at": None,
+        }
+        if st == "paused":
+            payload["sources"] = [
+                {
+                    "kind": "budget",
+                    "reason": "t",
+                    "until": None,
+                    "set_by": "t",
+                    "observed_at": observed_at,
+                    "available": False,
+                }
+            ]
+        engine_payloads[name] = payload
     payload = {
-        "schema_version": 1, "deferred_tasks": {}, "draining_engines": {}, "running_tasks": {},
-        "engines": {name: {"status": st, "observed_at": "2026-09-04T00:00:00+00:00", "reason": "t", "resume_at": None}
-                    for name, st in engines.items()},
+        "schema_version": 1,
+        "deferred_tasks": {},
+        "draining_engines": {},
+        "running_tasks": {},
+        "engines": engine_payloads,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_json.dumps(payload), encoding="utf-8")
@@ -151,13 +174,6 @@ def test_required_engines_paused_empty_when_no_engines(tmp_path):
     assert qmod._required_engines_paused(q, e) == []
 
 
-def test_required_engines_defaults_when_state_missing(tmp_path):
-    from issuesmith import queue as qmod
-    q = tmp_path / "quota.json"
-    _write_quota(q, {"claude": "paused"})
-    assert qmod._required_engines_paused(q, tmp_path / "missing.yml") == ["claude"]
-
-
 def test_required_engines_paused_same_path_no_duplicate(tmp_path, monkeypatch):
     """AC-5: same path → one snapshot and no duplicate engine names."""
     from ghdag.quota import QuotaGate
@@ -181,24 +197,24 @@ def test_required_engines_paused_same_path_no_duplicate(tmp_path, monkeypatch):
     assert snap_count["n"] == 1
 
 
-_FIXTURES = Path(__file__).resolve().parent / "fixtures"
-_QUOTA_CLAUDE_PAUSED = _FIXTURES / "quota_claude_paused_no_resume.json"
-_ENGINE_DESIGN_CLAUDE = _FIXTURES / "engine_state_design_claude_impl_cursor.yml"
-
-
 class TestRoleScopedPausedDispatch:
     """AC-4: claude paused with resume_at=null still allows develop(cursor) (#3091)."""
 
     def test_status_shows_role_in_paused_wait_reason(self, tmp_path, monkeypatch, capsys):
         from issuesmith import queue as qmod
 
+        quota_path = tmp_path / "quota.json"
+        engine_path = tmp_path / "engine.yml"
+        _write_quota(quota_path, {"claude": "paused"})
+        _write_engine_state(engine_path, "claude", "cursor")
+
         store = _store(tmp_path)
         store.enqueue(
             issue=3086, phase="draft", source="skill", actor_kind="human",
             priority="normal", requested_by=["alice"], requested_at=_NOW,
         )
-        monkeypatch.setattr(qmod, "QUOTA_STATE_PATH", _QUOTA_CLAUDE_PAUSED)
-        monkeypatch.setattr(qmod, "ENGINE_STATE_PATH", _ENGINE_DESIGN_CLAUDE)
+        monkeypatch.setattr(qmod, "QUOTA_STATE_PATH", quota_path)
+        monkeypatch.setattr(qmod, "ENGINE_STATE_PATH", engine_path)
         monkeypatch.setattr(
             qmod,
             "get_forge",
