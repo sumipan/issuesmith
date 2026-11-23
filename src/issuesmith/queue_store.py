@@ -813,8 +813,8 @@ class QueueStore:
         """
         with self.lock():
             state = self._load_state_unlocked()
-            completed = set(state.get("completed_request_ids") or [])
-            requests = self._read_requests_unlocked(completed)
+            completed_ids = set(state.get("completed_request_ids") or [])
+            requests = self._read_requests_unlocked(completed_ids)
             dequeued: list[str] = []
             changed = False
 
