@@ -186,6 +186,7 @@ class DispatchResult:
     reason: str = ""
     # Every request started in this tick; issue / label / request_id mirror the first one.
     started: tuple[DispatchStarted, ...] = ()
+    pruned: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -2270,6 +2271,11 @@ def _dispatch_result_reason_from_plan(
     return "no dispatchable request"
 
 
+def _pruned_phase_message(pruned: tuple[tuple[str, str], ...]) -> str:
+    phases = ", ".join(sorted({phase for _, phase in pruned}))
+    return f"queue: pruned {len(pruned)} request(s) with unknown phase: {phases}"
+
+
 def dispatch_one(
     now: datetime | None = None,
     client: ForgePort | None = None,
@@ -2281,6 +2287,7 @@ def dispatch_one(
 ) -> DispatchResult:
     now = now or _now_jst()
     store = store or QueueStore()
+    pruned: tuple[tuple[str, str], ...] = tuple(store.prune_unknown_phase_requests())
     # One tick = one read per Issue / one open-issue list (#3759).
     client = _TickCachedForge(client or get_forge(repo=REPO))
     start, end, idle_minutes = seed_window(seed_path)
@@ -2291,7 +2298,7 @@ def dispatch_one(
 
     brake = _github_api_brake_reason(now)
     if brake:
-        return DispatchResult(dispatched=False, reason=brake)
+        return DispatchResult(dispatched=False, reason=brake, pruned=pruned)
 
     advance_milestone_chains(store, client, get_config())
 
@@ -2489,7 +2496,7 @@ def dispatch_one(
             snap = store.snapshot()
 
     if not snap.active_order:
-        return DispatchResult(False, reason="empty queue")
+        return DispatchResult(False, reason="empty queue", pruned=pruned)
 
     with store.dispatch_lock():
         _release_finished_in_flight(store, client, open_issues)
@@ -2497,7 +2504,9 @@ def dispatch_one(
 
         global_blocks = _global_blocks(snap)
         if global_blocks:
-            return DispatchResult(False, reason=_block_wait_detail(global_blocks))
+            return DispatchResult(
+                False, reason=_block_wait_detail(global_blocks), pruned=pruned
+            )
             # Non-"all" scopes are checked per-request in the dispatch loop below.
 
         # AC-2: re-register impl-phase running Issues missing from in_flight before
@@ -2507,7 +2516,7 @@ def dispatch_one(
             snap = store.snapshot()
 
         if not _dispatch_pipeline_ready(snap, idle_minutes, now):
-            return DispatchResult(False, reason="pipeline not idle")
+            return DispatchResult(False, reason="pipeline not idle", pruned=pruned)
 
         queue_plan = _plan_with_window(
             store,
@@ -2527,13 +2536,15 @@ def dispatch_one(
                 request_id=first.request_id,
                 reason="dispatched",
                 started=tuple(started),
+                pruned=pruned,
             )
         return DispatchResult(
             False,
             reason=_dispatch_result_reason_from_plan(queue_plan, started),
+            pruned=pruned,
         )
 
-    return DispatchResult(False, reason="no dispatchable request")
+    return DispatchResult(False, reason="no dispatchable request", pruned=pruned)
 
 
 def _cmd_enqueue(args: argparse.Namespace) -> int:
@@ -2575,13 +2586,9 @@ def _cmd_tick(args: argparse.Namespace) -> int:
         state_path=Path(args.state_path) if getattr(args, "state_path", None) else None,
         lock_path=Path(args.lock_path) if getattr(args, "lock_path", None) else None,
     )
-    pruned = store.prune_unknown_phase_requests()
-    if pruned:
-        phases = ", ".join(sorted({phase for _, phase in pruned}))
-        print(
-            f"queue: pruned {len(pruned)} request(s) with unknown phase: {phases}"
-        )
     result = dispatch_one(store=store, seed_path=Path(args.seed) if getattr(args, "seed", None) else None)
+    if result.pruned:
+        print(_pruned_phase_message(result.pruned))
     if result.dispatched:
         for item in result.started or (
             DispatchStarted(result.issue or 0, result.label or "", result.request_id or "", ""),
