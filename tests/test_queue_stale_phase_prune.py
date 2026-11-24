@@ -212,11 +212,45 @@ def test_read_suppresses_only_unknown_phase_warning(
     )
 
 
-def test_tick_prunes_once_and_reports_sorted_phases(
-    tmp_path: Path, no_merge_config: None, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+def test_dispatch_one_prunes_unknown_phase_lines(
+    tmp_path: Path,
+    no_merge_config: None,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """refs #7878: inactive stale-phase lines are archived when dispatch_one returns early."""
     from issuesmith import queue as qmod
-    from issuesmith.queue import DispatchResult
+
+    store = _store(tmp_path)
+    store.queue_path.parent.mkdir(parents=True, exist_ok=True)
+    store.queue_path.write_text(_queue_line(request_id=_RID_A, phase="merge") + "\n", encoding="utf-8")
+
+    monkeypatch.setattr(qmod, "_github_api_brake_reason", lambda _now: "api brake active")
+
+    result = qmod.dispatch_one(store=store, skip_seed=True)
+
+    assert result.dispatched is False
+    assert result.reason == "api brake active"
+    assert result.pruned == ((_RID_A, "merge"),)
+    assert store.queue_path.read_text(encoding="utf-8") == ""
+    archive = store.queue_path.with_name("queue.pruned.jsonl")
+    archived = archive.read_text(encoding="utf-8").strip().splitlines()
+    assert len(archived) == 1
+    assert json.loads(archived[0])["request_id"] == _RID_A
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "queue: pruned" not in captured.err
+
+
+def test_cmd_tick_reports_pruned_from_dispatch_result(
+    tmp_path: Path,
+    no_merge_config: None,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """refs #7878: queue tick prints pruned phases once per tick from DispatchResult."""
+    from issuesmith import queue as qmod
+    from issuesmith.queue_store import QueueStore
 
     store = _store(tmp_path)
     store.queue_path.parent.mkdir(parents=True, exist_ok=True)
@@ -226,10 +260,16 @@ def test_tick_prunes_once_and_reports_sorted_phases(
     ]
     store.queue_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    def fake_dispatch_one(**_kwargs: object) -> DispatchResult:
-        return DispatchResult(False, reason="empty queue")
+    monkeypatch.setattr(qmod, "_github_api_brake_reason", lambda _now: "api brake active")
+    prune_calls: list[object] = []
+    original_prune = QueueStore.prune_unknown_phase_requests
 
-    monkeypatch.setattr(qmod, "dispatch_one", fake_dispatch_one)
+    def counting_prune(self: QueueStore, **kwargs: object) -> list[tuple[str, str]]:
+        prune_calls.append(None)
+        return original_prune(self, **kwargs)
+
+    monkeypatch.setattr(QueueStore, "prune_unknown_phase_requests", counting_prune)
+
     argv = [
         "--queue-path",
         str(store.queue_path),
@@ -243,15 +283,17 @@ def test_tick_prunes_once_and_reports_sorted_phases(
     code = qmod.main(argv)
     first = capsys.readouterr()
     assert code == 0
+    assert len(prune_calls) == 1
     out_lines = [line for line in first.out.splitlines() if line.strip()]
     assert out_lines[0] == (
         "queue: pruned 2 request(s) with unknown phase: merge, retired"
     )
-    assert out_lines[-1] == "no dispatch: empty queue"
+    assert out_lines[-1] == "no dispatch: api brake active"
     assert first.err == ""
 
     code = qmod.main(argv)
     second = capsys.readouterr()
     assert code == 0
+    assert len(prune_calls) == 2
     assert "queue: pruned" not in second.out
-    assert second.out.strip() == "no dispatch: empty queue"
+    assert second.out.strip() == "no dispatch: api brake active"
