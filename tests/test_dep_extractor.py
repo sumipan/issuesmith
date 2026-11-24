@@ -155,6 +155,93 @@ def test_open_dependency_blocks():
     assert result.blocking_deps[0].has_terminal_label is False
 
 
+def _closed_dep_without_merge_done_mock():
+    return {
+        "state": "CLOSED",
+        "title": "legacy closed",
+        "labels": [{"name": "issuesmith:develop-done"}],
+    }
+
+
+def _cross_ref_event(
+    pr_number: int,
+    *,
+    full_name: str | None = None,
+    repository_url: str | None = None,
+) -> dict:
+    issue: dict = {
+        "number": pr_number,
+        "pull_request": {"url": "..."},
+    }
+    if full_name is not None:
+        issue["repository"] = {"full_name": full_name}
+    if repository_url is not None:
+        issue["repository_url"] = repository_url
+    return {
+        "event": "cross-referenced",
+        "source": {"issue": issue},
+    }
+
+
+def test_rescue_pr_get_error_returns_none():
+    """Issue #7951 AC1 — pr_get failure must not abort check_dependencies."""
+    client = MagicMock()
+    client.issue_get = _mock_issue_get({600: _closed_dep_without_merge_done_mock()})
+    client.issue_timeline.return_value = [_cross_ref_event(42)]
+    client.pr_get.side_effect = RuntimeError("not found")
+
+    result = check_dependencies([600], client=client)
+    assert result.decision == "BLOCK"
+    assert result.dep_statuses[0].rescue_pr is None
+
+
+def test_rescue_timeline_error_returns_none():
+    """Issue #7951 AC2 — issue_timeline failure must not call pr_get."""
+    client = MagicMock()
+    client.issue_get = _mock_issue_get({600: _closed_dep_without_merge_done_mock()})
+    client.issue_timeline.side_effect = RuntimeError("timeline unavailable")
+
+    result = check_dependencies([600], client=client)
+    assert result.decision == "BLOCK"
+    assert result.dep_statuses[0].rescue_pr is None
+    client.pr_get.assert_not_called()
+
+
+def test_rescue_same_repo_merged_pr_passes():
+    """Issue #7951 AC3 — same-repo merged cross-reference satisfies dependency."""
+    client = MagicMock()
+    client.repo = "sumipan/issuesmith"
+    client.issue_get = _mock_issue_get({600: _closed_dep_without_merge_done_mock()})
+    client.issue_timeline.return_value = [
+        _cross_ref_event(42, full_name="sumipan/issuesmith")
+    ]
+    client.pr_get.return_value = {
+        "merged": True,
+        "merged_at": "2026-01-01T00:00:00Z",
+        "state": "CLOSED",
+    }
+
+    result = check_dependencies([600], client=client)
+    assert result.decision == "PASS"
+    assert result.dep_statuses[0].rescue_pr == 42
+    client.pr_get.assert_called_once_with(42)
+
+
+def test_rescue_other_repo_pr_is_ignored():
+    """Issue #7951 AC4 — cross-repo PR refs must not be treated as rescue candidates."""
+    client = MagicMock()
+    client.repo = "sumipan/issuesmith"
+    client.issue_get = _mock_issue_get({600: _closed_dep_without_merge_done_mock()})
+    client.issue_timeline.return_value = [
+        _cross_ref_event(613, full_name="sumipan/nexus")
+    ]
+
+    result = check_dependencies([600], client=client)
+    assert result.decision == "BLOCK"
+    assert result.dep_statuses[0].rescue_pr is None
+    client.pr_get.assert_not_called()
+
+
 def test_rescue_path_merged_pr_passes():
     # Without issuesmith management (issuesmith: label other than merge-done),
     # F2's non-issuesmith exempt absorbs the case and the rescue path cannot be tested

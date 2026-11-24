@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import asdict, dataclass, field
 from functools import lru_cache
@@ -219,22 +220,64 @@ def _is_exempt(title: str, labels: list[dict]) -> bool:
     return False
 
 
+def _cross_ref_pr_repo(source_issue: dict) -> str | None:
+    """Return ``owner/repo`` for a cross-referenced PR issue, when known."""
+    repo = source_issue.get("repository") or {}
+    full_name = repo.get("full_name")
+    if isinstance(full_name, str):
+        return full_name
+    url = source_issue.get("repository_url")
+    if isinstance(url, str):
+        parts = url.rstrip("/").split("/")
+        if len(parts) >= 2:
+            return f"{parts[-2]}/{parts[-1]}"
+    return None
+
+
 def _find_rescue_pr(client: ForgePort, issue_number: int) -> int | None:
-    timeline = client.issue_timeline(issue_number)
+    log = logging.getLogger(__name__)
+    try:
+        timeline = client.issue_timeline(issue_number)
+    except Exception as exc:
+        log.warning(
+            "rescue pr: issue_timeline failed for #%s: %s",
+            issue_number,
+            exc,
+        )
+        return None
+    client_repo = client.repo
     pr_numbers: list[int] = []
     for event in timeline:
         if event.get("event") != "cross-referenced":
             continue
         source_issue = (event.get("source") or {}).get("issue") or {}
-        if source_issue.get("pull_request") is not None:
-            number = source_issue.get("number")
-            if isinstance(number, int):
-                pr_numbers.append(number)
+        if source_issue.get("pull_request") is None:
+            continue
+        number = source_issue.get("number")
+        if not isinstance(number, int):
+            continue
+        pr_repo = _cross_ref_pr_repo(source_issue)
+        if (
+            isinstance(client_repo, str)
+            and isinstance(pr_repo, str)
+            and client_repo.casefold() != pr_repo.casefold()
+        ):
+            continue
+        pr_numbers.append(number)
     if not pr_numbers:
         return None
 
     pr_number = pr_numbers[-1]
-    detail = client.pr_get(pr_number)
+    try:
+        detail = client.pr_get(pr_number)
+    except Exception as exc:
+        log.warning(
+            "rescue pr: pr_get failed for issue #%s pr #%s: %s",
+            issue_number,
+            pr_number,
+            exc,
+        )
+        return None
     if detail.get("merged") or detail.get("merged_at") or detail.get("mergedAt"):
         return pr_number
     if str(detail.get("state") or "").upper() == "MERGED":
