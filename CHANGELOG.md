@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.209.4 - 2026-11-25
+
+### Fixed
+
+- dep_extractor: avoid queue tick crash on rescue PR lookup
+
 ## 0.209.3 - 2026-11-24
 
 ### Fixed
