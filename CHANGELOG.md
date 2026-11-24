@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.209.3 - 2026-11-24
+
+### Fixed
+
+- queue: prune stale phases inside dispatch_one
+
 ## 0.209.2 - 2026-11-24
 
 ### Changed
