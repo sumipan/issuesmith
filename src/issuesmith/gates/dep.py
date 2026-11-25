@@ -34,7 +34,7 @@ def check_deps(
         refs = ", ".join(f"#{n}" for n in result.unparsed_refs)
         return Verdict(passed=False, reasons=[f"{UNPARSED_DEPENDENCY_SECTION}: {refs}"])
     reasons = [
-        f"#{s.issue} state={s.state} has_merge_done={s.has_merge_done}"
+        f"#{s.issue} state={s.state} outcome={s.outcome}"
         for s in result.blocking_deps
     ]
     return Verdict(passed=False, reasons=reasons)

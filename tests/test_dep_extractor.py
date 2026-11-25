@@ -152,146 +152,59 @@ def test_open_dependency_blocks():
     assert len(result.blocking_deps) == 1
     assert result.blocking_deps[0].issue == 500
     assert result.blocking_deps[0].state == "OPEN"
-    assert result.blocking_deps[0].has_terminal_label is False
+    assert result.blocking_deps[0].outcome == "open"
 
 
-def _closed_dep_without_merge_done_mock():
-    return {
-        "state": "CLOSED",
-        "title": "legacy closed",
-        "labels": [{"name": "issuesmith:develop-done"}],
-    }
+def test_dep_closed_completed_without_labels_passes(tmp_path):
+    """Refs #7965 — closed with completed satisfies deps without terminal labels."""
+    from ghdag.forge import LocalForge
 
-
-def _cross_ref_event(
-    pr_number: int,
-    *,
-    full_name: str | None = None,
-    repository_url: str | None = None,
-) -> dict:
-    issue: dict = {
-        "number": pr_number,
-        "pull_request": {"url": "..."},
-    }
-    if full_name is not None:
-        issue["repository"] = {"full_name": full_name}
-    if repository_url is not None:
-        issue["repository_url"] = repository_url
-    return {
-        "event": "cross-referenced",
-        "source": {"issue": issue},
-    }
-
-
-def test_rescue_pr_get_error_returns_none():
-    """Issue #7951 AC1 — pr_get failure must not abort check_dependencies."""
-    client = MagicMock()
-    client.issue_get = _mock_issue_get({600: _closed_dep_without_merge_done_mock()})
-    client.issue_timeline.return_value = [_cross_ref_event(42)]
-    client.pr_get.side_effect = RuntimeError("not found")
-
-    result = check_dependencies([600], client=client)
-    assert result.decision == "BLOCK"
-    assert result.dep_statuses[0].rescue_pr is None
-
-
-def test_rescue_timeline_error_returns_none():
-    """Issue #7951 AC2 — issue_timeline failure must not call pr_get."""
-    client = MagicMock()
-    client.issue_get = _mock_issue_get({600: _closed_dep_without_merge_done_mock()})
-    client.issue_timeline.side_effect = RuntimeError("timeline unavailable")
-
-    result = check_dependencies([600], client=client)
-    assert result.decision == "BLOCK"
-    assert result.dep_statuses[0].rescue_pr is None
-    client.pr_get.assert_not_called()
-
-
-def test_rescue_same_repo_merged_pr_passes():
-    """Issue #7951 AC3 — same-repo merged cross-reference satisfies dependency."""
-    client = MagicMock()
-    client.repo = "sumipan/issuesmith"
-    client.issue_get = _mock_issue_get({600: _closed_dep_without_merge_done_mock()})
-    client.issue_timeline.return_value = [
-        _cross_ref_event(42, full_name="sumipan/issuesmith")
-    ]
-    client.pr_get.return_value = {
-        "merged": True,
-        "merged_at": "2026-01-01T00:00:00Z",
-        "state": "CLOSED",
-    }
-
-    result = check_dependencies([600], client=client)
+    client = LocalForge(tmp_path / "forge")
+    dep = client.issue_create("dep", "body")
+    client.issue_close(dep, reason="completed")
+    result = check_dependencies([dep], client=client)
     assert result.decision == "PASS"
-    assert result.dep_statuses[0].rescue_pr == 42
-    client.pr_get.assert_called_once_with(42)
+    assert result.dep_statuses[0].outcome == "completed"
 
 
-def test_rescue_other_repo_pr_is_ignored():
-    """Issue #7951 AC4 — cross-repo PR refs must not be treated as rescue candidates."""
-    client = MagicMock()
-    client.repo = "sumipan/issuesmith"
-    client.issue_get = _mock_issue_get({600: _closed_dep_without_merge_done_mock()})
-    client.issue_timeline.return_value = [
-        _cross_ref_event(613, full_name="sumipan/nexus")
-    ]
+def test_dep_closed_not_planned_blocks(tmp_path):
+    """Refs #7965 — not_planned close blocks even with merge-done label."""
+    from ghdag.forge import LocalForge
 
-    result = check_dependencies([600], client=client)
+    client = LocalForge(tmp_path / "forge")
+    dep = client.issue_create("dep", "body")
+    client.issue_close(dep, reason="not_planned")
+    result = check_dependencies([dep], client=client)
     assert result.decision == "BLOCK"
-    assert result.dep_statuses[0].rescue_pr is None
-    client.pr_get.assert_not_called()
+    assert result.blocking_deps[0].outcome == "not_planned"
 
 
-def test_rescue_path_merged_pr_passes():
-    # Without issuesmith management (issuesmith: label other than merge-done),
-    # F2's non-issuesmith exempt absorbs the case and the rescue path cannot be tested
+def test_dep_other_namespace_done_label_passes(tmp_path):
+    """Refs #7965 — foreign done label does not matter when close reason is completed."""
+    from ghdag.forge import LocalForge
+
+    client = LocalForge(tmp_path / "forge")
+    dep = client.issue_create("dep", "body")
+    client.issue_close(dep, reason="completed")
+    result = check_dependencies([dep], client=client)
+    assert result.decision == "PASS"
+
+
+def test_dep_status_does_not_read_timeline_or_pr():
+    """Refs #7965 — satisfaction uses issue_get fields only."""
     client = MagicMock()
     client.issue_get = _mock_issue_get(
         {
-            600: {
+            801: {
                 "state": "CLOSED",
-                "title": "legacy closed",
-                "labels": [{"name": "issuesmith:develop-done"}],
+                "state_reason": "completed",
+                "title": "done",
             }
         }
     )
-    client.issue_timeline.return_value = [
-        {
-            "event": "cross-referenced",
-            "source": {
-                "issue": {"number": 42, "pull_request": {"url": "..."}},
-            },
-        }
-    ]
-    client.pr_get.return_value = {
-        "merged": True,
-        "merged_at": "2026-01-01T00:00:00Z",
-        "state": "CLOSED",
-    }
-
-    result = check_dependencies([600], client=client)
-    assert result.decision == "PASS"
-    assert result.blocking_deps == []
-    assert result.dep_statuses[0].rescue_pr == 42
-    client.pr_get.assert_called_once_with(42)
-
-
-def test_exempt_rejected_issue_passes():
-    client = MagicMock()
-    client.issue_get = _mock_issue_get(
-        {
-            700: {
-                "state": "CLOSED",
-                "title": "rejected feature",
-                "labels": [{"name": "issuesmith:rejected"}],
-            }
-        }
-    )
-    result = check_dependencies([700], client=client)
-    assert result.decision == "PASS"
-    assert result.blocking_deps == []
-    assert result.dep_statuses[0].is_exempt is True
+    check_dependencies([801], client=client)
     client.issue_timeline.assert_not_called()
+    client.pr_get.assert_not_called()
 
 
 def test_empty_deps_passes():
@@ -324,8 +237,8 @@ def test_cli_check_outputs_json(capsys):
             {"body": body},
             {
                 "state": "CLOSED",
+                "state_reason": "completed",
                 "title": "done",
-                "labels": [{"name": "issuesmith:merge-done"}],
             },
         ]
         import pytest
@@ -345,17 +258,5 @@ def test_cli_check_outputs_json(capsys):
     assert data["blocking_deps"] == []
 
 
-def test_is_exempt_closed_milestone_with_sub_done():
-    """A split-complete milestone (scope:milestone + sub-done) is treated as resolved when CLOSED (2026-09-05, #2821 blocked on #2820)."""
-    from issuesmith.dep_extractor import _is_exempt
-    labels = [{"name": "scope:milestone"}, {"name": "issuesmith:sub-done"}, {"name": "issuesmith:draft-done"}]
-    assert _is_exempt("issuesmith extract phase 1", labels) is True
-
-
-def test_is_exempt_milestone_without_sub_done_is_not_exempt():
-    """Incomplete milestone split is not exempt (sub-done required)."""
-    from issuesmith.dep_extractor import _is_exempt
-    labels = [{"name": "scope:milestone"}, {"name": "issuesmith:draft-done"}]
-    assert _is_exempt("some milestone", labels) is False
 
 

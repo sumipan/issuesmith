@@ -42,11 +42,19 @@ def _dag_states_for(issue: int, status: str) -> dict[int, DagState]:
     return {issue: DagState(issue=issue, key=key, status=status)}
 
 
-def _closed_draft_done(issue: int, extra_labels: list[str] | None = None) -> dict:
+def _closed_draft_done(
+    issue: int,
+    extra_labels: list[str] | None = None,
+    *,
+    state_reason: str | None = "completed",
+) -> dict:
     labels = [{"name": "issuesmith:draft-done"}]
     for lab in extra_labels or []:
         labels.append({"name": lab})
-    return {"state": "CLOSED", "labels": labels, "body": _BODY_TESTS}
+    data = {"state": "CLOSED", "labels": labels, "body": _BODY_TESTS}
+    if state_reason is not None:
+        data["state_reason"] = state_reason
+    return data
 
 
 def test_release_closed_draft_done_when_no_dag_entry(tmp_path, monkeypatch):
@@ -85,18 +93,35 @@ def test_load_dag_states_error_fail_closed(tmp_path, monkeypatch):
     assert qmod._in_flight_should_release(client, entry) is False
 
 
-def test_closed_non_terminal_release_logs_stderr(tmp_path, monkeypatch, capsys):
+def test_closed_release_follows_dag_not_labels(tmp_path, monkeypatch):
+    """Refs #7965 — label terminal close still held while DAG is running."""
     from issuesmith import queue as qmod
+    from issuesmith.config import get_config
 
+    terminal = next(iter(get_config().terminal_labels))
     entry = {"issue": 4819, "engine": "cursor", "role": "implementation"}
-    client = _ListIssuesClient({4819: _closed_draft_done(4819)})
+    client = _ListIssuesClient(
+        {4819: _closed_draft_done(4819, extra_labels=[terminal])}
+    )
     monkeypatch.setattr(
         "issuesmith.observe.dag_state.load_dag_states",
-        lambda *_a, **_k: _dag_states_for(4819, "succeeded"),
+        lambda *_a, **_k: _dag_states_for(4819, "running"),
     )
-    assert qmod._in_flight_should_release(client, entry) is True
-    assert capsys.readouterr().err.strip() == (
-        "[queue] in_flight released: #4819 closed without terminal label"
+    assert qmod._in_flight_should_release(client, entry) is False
+
+    client_not_planned = _ListIssuesClient(
+        {4820: _closed_draft_done(4820, state_reason="not_planned", extra_labels=[])}
+    )
+    monkeypatch.setattr(
+        "issuesmith.observe.dag_state.load_dag_states",
+        lambda *_a, **_k: {},
+    )
+    assert (
+        qmod._in_flight_should_release(
+            client_not_planned,
+            {"issue": 4820, "engine": "cursor", "role": "implementation"},
+        )
+        is True
     )
 
 

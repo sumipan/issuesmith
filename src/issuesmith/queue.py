@@ -29,6 +29,7 @@ from issuesmith.gate_rules.scope_coupling import (
     format_deletion_references,
 )
 from issuesmith.gates.dep import dependents_of, on_dep_merge_done
+from issuesmith.issue_outcome import issue_outcome
 from issuesmith.milestone import advance_milestone_chains
 from issuesmith.queue_store import (
     DEFAULT_NIGHT_STATE_PATH,
@@ -642,15 +643,6 @@ class _TickCachedForge:
         return {lab for lab in params.get("labels", "").split(",") if lab}
 
 
-def _issue_state_is_terminal(issue: dict[str, Any]) -> bool:
-    labels = label_names(issue)
-    state = str(issue.get("state", "")).upper()
-    terminal = set(get_config().terminal_labels)
-    return state == "CLOSED" and (
-        bool(labels & terminal) or bool(labels & get_terminal_without_merge())
-    )
-
-
 def _issue_target_meta(issue: dict[str, Any]) -> tuple[str, tuple[str, ...]]:
     """Return (target_repo, allow_paths) from issue body YAML."""
     meta = parse_frontmatter_fields(str(issue.get("body") or ""))
@@ -686,8 +678,7 @@ _ISSUE_REF_IN_TEXT_RE = re.compile(r"(?i)\b(?:closes|refs)\s+#(\d+)(?!\d)")
 
 
 def _issue_excluded_from_open_pr_occupancy(issue: dict[str, Any]) -> bool:
-    state = str(issue.get("state", "")).upper()
-    if state == "CLOSED":
+    if issue_outcome(issue) != "open":
         return True
     labels = label_names(issue)
     terminal = set(get_config().terminal_labels)
@@ -930,14 +921,17 @@ def _in_flight_should_release(
         return False
     if issue is None:
         try:
-            issue = client.issue_get(issue_num, fields=["state", "labels"])
+            issue = client.issue_get(
+                issue_num, fields=["state", "state_reason", "labels"]
+            )
         except Exception:
             return False
-    if _issue_state_is_terminal(issue):
-        return True
-    if str(issue.get("state", "")).upper() == "CLOSED" and not _issue_dag_live(issue_num):
+    outcome = issue_outcome(issue)
+    if outcome != "open":
+        if _issue_dag_live(issue_num):
+            return False
         print(
-            f"[queue] in_flight released: #{issue_num} closed without terminal label",
+            f"[queue] in_flight released: #{issue_num} closed ({outcome})",
             file=sys.stderr,
         )
         return True
