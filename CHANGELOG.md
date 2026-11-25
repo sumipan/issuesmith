@@ -7,6 +7,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.210.0 - 2026-11-25
+
+### Added
+
+- merge: write machine-readable result comment before closing issue
+
+### Fixed
+
+- repair: avoid exact version assert in bump merge test (#7964)
+
 ## 0.209.6 - 2026-11-25
 
 ### Fixed
