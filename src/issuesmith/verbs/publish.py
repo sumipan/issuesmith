@@ -15,9 +15,9 @@ from issuesmith.bump_commits import (
 )
 from issuesmith.ops.publish import (
     PublishResult,
-    _build_pr_metadata,
-    _parse_allow_paths,
     _push_branch,
+    build_pr_metadata,
+    parse_publish_allow_paths,
     publish,
     run_version_bump,
 )
@@ -259,7 +259,7 @@ def pr_title_and_body(
     issue_repo: str,
 ) -> tuple[str, str]:
     """Return PR title and body using the same language-pack keys as ops publish."""
-    return _build_pr_metadata(issue_number, repo, issue_repo)
+    return build_pr_metadata(issue_number, repo, issue_repo)
 
 
 def publish_pr(
@@ -274,7 +274,7 @@ def publish_pr(
 ) -> PublishResult:
     """Push branch and open or reuse a PR via ops.publish (verb boundary)."""
     worktree = Path(worktree)
-    paths = _parse_allow_paths(allow_paths if allow_paths.strip() else None)
+    paths = parse_publish_allow_paths(allow_paths if allow_paths.strip() else None)
     try:
         return publish(
             issue_number=issue_number,
