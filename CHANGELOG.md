@@ -7,6 +7,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.211.0 - 2026-11-25
+
+### Added
+
+- outcome: unify issue completion on state_reason (#7965)
+
+### Fixed
+
+- repair: document issue_outcome in README Architecture (#7965)
+
 ## 0.210.0 - 2026-11-25
 
 ### Added
