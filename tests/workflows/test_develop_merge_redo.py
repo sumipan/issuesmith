@@ -113,6 +113,42 @@ def test_no_diff_cleanup_failure_returns_broken_andon(tmp_path: Path, monkeypatc
     assert "cleanup failed" in result.andon.summary
 
 
+def test_no_diff_resume_closes_after_worktree_was_removed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A recorded no-diff result resumes cleanup and close without the worktree."""
+    removed_worktree = tmp_path / "removed-worktree"
+    client = MagicMock()
+    cleanup_calls: list[Path] = []
+    close_calls: list[int] = []
+    monkeypatch.setattr(develop_merge, "get_forge", lambda **_k: client)
+    monkeypatch.setattr(
+        develop_merge,
+        "read_result",
+        lambda *_a, **_k: {"pr": "-", "merge_commit": "-", "version": "-"},
+    )
+    monkeypatch.setattr(
+        develop_merge,
+        "cleanup_worktrees",
+        lambda root, *_a, **_k: cleanup_calls.append(root),
+    )
+    monkeypatch.setattr(develop_merge, "cleanup_branches", lambda *_a, **_k: None)
+    monkeypatch.setattr(develop_merge, "close_issue", lambda _client, issue: close_calls.append(issue))
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        develop_merge,
+        "get_config",
+        lambda: SimpleNamespace(
+            host_is_repo_checkout=True,
+            root=tmp_path,
+        ),
+    )
+    result = develop_merge.run(_ctx(removed_worktree), StepConfig())
+    assert result.status == "done"
+    assert result.markers == ["MERGE_DONE"]
+    assert cleanup_calls == [tmp_path]
+    assert close_calls == [99]
+
+
 def test_no_pr_rebase_conflict_redoes_step_then_merges(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Refs sumipan/nexus#8023 AC9."""
     calls: list[int] = []

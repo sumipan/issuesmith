@@ -24,6 +24,7 @@ from issuesmith.verbs import (
     merge_state,
     pr_title_and_body,
     publish_branch,
+    read_result,
     rebump_onto_base,
     write_result,
 )
@@ -556,7 +557,7 @@ def _cleanup_and_close_issue(
                 target_clone_path=clone,
             )
         else:
-            repo_root = _git_toplevel(worktree)
+            repo_root = _git_toplevel(worktree) if worktree.exists() else get_config().root
             cleanup_worktrees(repo_root, ctx.issue_number)
             cleanup_branches(repo_root, ctx.issue_number)
         close_issue(issue_client, issue)
@@ -797,6 +798,29 @@ def run(ctx: StepContext, step: StepConfig) -> StepResult:
     pr_repo = ctx.target_repo.strip() if cross else issue_repo
     issue = int(ctx.issue_number)
     issue_client = get_forge(repo=issue_repo)
+    if not worktree.exists():
+        try:
+            existing_result = read_result(issue_client, issue)
+        except Exception as exc:  # noqa: BLE001
+            return StepResult(
+                status="andon",
+                andon=Andon(kind="broken", summary=f"merge: could not read existing result: {exc}"),
+            )
+        if existing_result is None or any(existing_result.get(key) != "-" for key in ("pr", "merge_commit", "version")):
+            return StepResult(
+                status="andon",
+                andon=Andon(kind="broken", summary=f"merge: worktree does not exist: {worktree}"),
+            )
+        err = _cleanup_and_close_issue(
+            ctx,
+            worktree,
+            issue_client=issue_client,
+            issue=issue,
+            cross=cross,
+        )
+        if err is not None:
+            return err
+        return StepResult(status="done", markers=["MERGE_DONE"], irreversible=True)
     target_repo = ctx.target_repo.strip()
     use_no_pr = get_config().merges_without_pr(target_repo)
     branch = ctx.branch.strip()
