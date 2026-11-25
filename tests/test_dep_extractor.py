@@ -172,7 +172,7 @@ def test_dep_closed_not_planned_blocks(tmp_path):
     from ghdag.forge import LocalForge
 
     client = LocalForge(tmp_path / "forge")
-    dep = client.issue_create("dep", "body")
+    dep = client.issue_create("dep", "body", labels=["issuesmith:merge-done"])
     client.issue_close(dep, reason="not_planned")
     result = check_dependencies([dep], client=client)
     assert result.decision == "BLOCK"
@@ -184,7 +184,7 @@ def test_dep_other_namespace_done_label_passes(tmp_path):
     from ghdag.forge import LocalForge
 
     client = LocalForge(tmp_path / "forge")
-    dep = client.issue_create("dep", "body")
+    dep = client.issue_create("dep", "body", labels=["otherline:merge-done"])
     client.issue_close(dep, reason="completed")
     result = check_dependencies([dep], client=client)
     assert result.decision == "PASS"
