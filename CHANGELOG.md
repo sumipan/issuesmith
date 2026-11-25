@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.211.1 - 2026-11-25
+
+### Fixed
+
+- milestone: read child deps only from the dependencies section
+
 ## 0.211.0 - 2026-11-25
 
 ### Added

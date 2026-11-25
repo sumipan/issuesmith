@@ -260,7 +260,9 @@ _EN_MESSAGES: dict[str, str] = {
     "milestone.v4_missing_dep_section": "V4: has dependencies but no ## {dependencies} section",
     "milestone.v5_dep_self": "V5: dependency points to the parent Issue itself (#{issue})",
     "milestone.v5_dep_milestone": "V5: dependency points to a scope:milestone Issue (#{issue})",
-    "milestone.v6_dep_line_unresolved": "V6: dependency line does not carry #{issue}",
+    "milestone.v6_dep_section_unresolved": (
+        "V6: dependencies section does not carry #{issue}"
+    ),
     # milestone (child Issue body written by SUB1)
     "milestone.child_from_parent_ac": "- [ ] (from parent)",
     "milestone.child_cross_repo_note": (

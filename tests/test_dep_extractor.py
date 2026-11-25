@@ -14,8 +14,9 @@ from issuesmith.dep_extractor import (
 from issuesmith.language import EN
 
 # Inline labels come from the language pack (the tests run with the EN vocabulary).
-_DEP_PREFIX = EN.sub_plan_columns[4]
+_DEP_COL = EN.sub_plan_columns[4]
 _PARENT_PREFIX = EN.parent_issue_label
+_DEPS_HEADING = EN.sections["dependencies"]
 
 # --- extract_dependencies ---
 
@@ -26,10 +27,10 @@ def test_no_dependency_section_returns_empty():
     assert extract_dependencies(body) == []
 
 
-def test_dependency_prefix_line_without_h2():
-    # ASCII fixture data.
-    body = f"{_DEP_PREFIX}: #200, #201\n"
-    assert extract_dependencies(body) == [200, 201]
+def test_inline_depends_on_line_is_not_a_dependency():
+    # Refs sumipan/nexus#8000 — inline plan column line alone is not a declaration.
+    body = f"{_DEP_COL}: #200, #201\n"
+    assert extract_dependencies(body) == []
 
 
 def test_parent_issue_line_excluded():
@@ -78,10 +79,14 @@ def test_unparsed_refs_reports_prose_mentions_next_to_declared():
     assert unparsed_dependency_refs(body) == [302]
 
 
-def test_unparsed_refs_ignores_refs_declared_by_prefix_line():
-    # ASCII fixture data.
-    body = f"{_DEP_PREFIX}: #300\n\n## Dependencies\n\nsee #300 above\n"
-    assert unparsed_dependency_refs(body) == []
+def test_unparsed_refs_reports_section_mention_with_inline_line():
+    # Refs sumipan/nexus#8000 — prose in section is unparsed even with a legacy inline line.
+    body = (
+        f"{_DEP_COL}: #300\n\n"
+        f"## {_DEPS_HEADING}\n\nmentions #300 and #301\n"
+    )
+    assert extract_dependencies(body) == []
+    assert unparsed_dependency_refs(body) == [300, 301]
 
 
 def test_unparsed_refs_ignores_mention_of_own_parent():
@@ -124,12 +129,6 @@ def test_unparsed_refs_ignores_parent_child_lines_and_code_blocks():
         "```\n#2\n```\n"
     )
     assert unparsed_dependency_refs(body) == []
-
-
-def test_dep_prefix_line_unaffected():
-    # ASCII fixture data.
-    body = f"{_DEP_PREFIX}: #500, #501\n"
-    assert extract_dependencies(body) == [500, 501]
 
 
 # --- check_dependencies ---

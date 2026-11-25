@@ -30,11 +30,6 @@ def _label_number_re(label: str) -> re.Pattern[str]:
     return re.compile(rf"^{re.escape(label)}:\s*#(\d+)", re.MULTILINE)
 
 
-@lru_cache(maxsize=8)
-def _label_value_re(label: str) -> re.Pattern[str]:
-    return re.compile(rf"^{re.escape(label)}:\s+(.+)$")
-
-
 def _parent_issue_re() -> re.Pattern[str]:
     """``<parent_issue_label>: `` line (the language pack's parent label)."""
     return _label_line_re(get_config().language.parent_issue_label)
@@ -47,11 +42,6 @@ def _parent_number_re() -> re.Pattern[str]:
 
 def _child_issue_re() -> re.Pattern[str]:
     return _label_line_re(_CHILD_ISSUE_LABEL)
-
-
-def _dep_prefix_re() -> re.Pattern[str]:
-    """Inline ``<depends-on column>: #N, ...`` line SUB1 writes into a child body."""
-    return _label_value_re(get_config().language.sub_plan_columns[4])
 
 
 @dataclass
@@ -133,14 +123,6 @@ def extract_dependencies(body: str) -> list[int]:
         section = get_section(body, deps_heading) or ""
         deps.update(_section_dependencies(section))
 
-    dep_prefix = _dep_prefix_re()
-    for line in _iter_scannable_lines(body):
-        if _is_excluded_line(line):
-            continue
-        match = dep_prefix.match(line)
-        if match:
-            deps.update(_extract_issue_numbers(match.group(1)))
-
     return sorted(deps)
 
 
@@ -156,13 +138,6 @@ def unparsed_dependency_refs(body: str, *, self_issue: int | None = None) -> lis
         return []
     section = get_section(body, deps_heading) or ""
     declared = _section_dependencies(section)
-    dep_prefix = _dep_prefix_re()
-    for line in _iter_scannable_lines(body):
-        if _is_excluded_line(line):
-            continue
-        match = dep_prefix.match(line)
-        if match:
-            declared.update(_extract_issue_numbers(match.group(1)))
     mentioned: set[int] = set()
     for line in _iter_scannable_lines(section):
         if _is_excluded_line(line):
