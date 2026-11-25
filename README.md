@@ -592,7 +592,7 @@ When the host environment that runs the pipeline differs from the target reposit
 
 #### `paths` keys
 
-Relative to the config file directory: `queue` `jobs/issuesmith-queue.jsonl`, `queue_state` `logs/issuesmith-queue-state.json`, `queue_lock` `logs/issuesmith-queue.lock`, `triage_log` `jobs/issuesmith-triage.jsonl`, `seed` `configs/night-queue.yaml`, `night_state` `logs/night-queue-state.json`, `exec_jsonl` `jobs/exec.jsonl`, `done_dir` `jobs/done`, `quota_state` `jobs/quota-gate.json`, `metrics` `jobs/metrics.jsonl`, `worktrees_dir` `.claude/worktrees`, `external_dir` `.claude/external`, `workflow` `workflows/issuesmith.yml`, `template_dir` `workflows/issuesmith`, `engine_state` `.pipeline-state/issuesmith-engine.yml`, `lanes` (unset; the ledger read by the `lanes` command).
+Relative to the config file directory: `queue` `jobs/issuesmith-queue.jsonl`, `queue_state` `logs/issuesmith-queue-state.json`, `queue_lock` `logs/issuesmith-queue.lock`, `triage_log` `jobs/issuesmith-triage.jsonl`, `seed` `configs/night-queue.yaml`, `night_state` `logs/night-queue-state.json`, `exec_jsonl` `jobs/exec.jsonl`, `done_dir` `jobs/done`, `quota_state` `jobs/quota-gate.json`, `metrics` `jobs/metrics.jsonl`, `worktrees_dir` `.claude/worktrees`, `external_dir` `.claude/external`, `workflow` `workflows/issuesmith.yml`, `template_dir` `workflows/issuesmith`, `engine_state` `.pipeline-state/issuesmith-engine.yml`, `lanes` (unset; the ledger read by the `lanes` command), `concurrency` (unset; a file whose `default` / `per_engine` / `strict_order` / `max_dispatch_per_tick` override the `concurrency` section, per engine for `per_engine`; a missing file is ignored).
 
 #### `merge` keys
 
