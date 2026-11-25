@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
-from issuesmith.config import get_config, load_config, reset_config_cache
+from issuesmith.config import ConfigError, get_config, load_config, reset_config_cache
 from issuesmith.ops import dispatch as dispatch_mod
 
 
@@ -199,6 +199,77 @@ def test_registered_step_missing_run_raises_andon(tmp_path, monkeypatch):
     assert result.andon is not None
     assert "has no run()" in result.andon.summary
     assert "no-run-step" in result.andon.summary
+
+
+def test_redo_on_conflict_accepts_forward_module_step_reference(tmp_path, monkeypatch):
+    """Refs sumipan/nexus#8023 AC15."""
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "repo": "example/app",
+            "steps": {
+                "merge": {
+                    "module": "issuesmith.lines.develop.merge",
+                    "redo_on_conflict": "pin",
+                },
+                "pin": {"module": "issuesmith.lines.develop.pin"},
+            },
+        },
+    )
+    cfg = load_config()
+    assert cfg.steps["merge"].redo_on_conflict == "pin"
+
+
+def test_redo_on_conflict_rejects_invalid_values_and_references(tmp_path, monkeypatch):
+    """Refs sumipan/nexus#8023 AC16."""
+    base = {"repo": "example/app"}
+
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {**base, "steps": {"m": {"module": "x", "redo_on_conflict": 3}}},
+    )
+    with pytest.raises(ConfigError, match="redo_on_conflict"):
+        load_config()
+
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {**base, "steps": {"m": {"module": "x", "redo_on_conflict": ""}}},
+    )
+    with pytest.raises(ConfigError, match="redo_on_conflict"):
+        load_config()
+
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {**base, "steps": {"m": {"module": "x", "redo_on_conflict": "nope"}}},
+    )
+    with pytest.raises(ConfigError, match="nope"):
+        load_config()
+
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {
+            **base,
+            "steps": {
+                "m": {"module": "x", "redo_on_conflict": "llm"},
+                "llm": {"template": "t.md"},
+            },
+        },
+    )
+    with pytest.raises(ConfigError, match="no module"):
+        load_config()
+
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {**base, "steps": {"m": {"module": "x", "redo_on_conflict": "m"}}},
+    )
+    with pytest.raises(ConfigError, match="must not reference itself"):
+        load_config()
 
 
 def test_step_without_module_returns_andon_broken(tmp_path, monkeypatch):
