@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.213.0 - 2026-11-26
+
+### Fixed
+
+- version-bump: stop syncing README on publish bump (#8016)
+
 ## 0.212.0 - 2026-11-25
 
 ### Added
