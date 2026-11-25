@@ -301,7 +301,7 @@ Supported Python imports are limited to seven modules (`issuesmith.__all__` is e
 | Module | Symbols |
 |---|---|
 | `issuesmith.contract` | `StepContext`, `StepResult`, `StepConfig`, `Andon`, `RetrySignal`, `RetryReason`, `parse_issue_metadata`, `validate_issue_metadata`, `MetadataViolation` |
-| `issuesmith.verbs` | `AcceptanceError`, `AcceptanceVerdict`, `ReviewFacts`, `ChildPlan`, `ChildPlanEntry`, `ChildPlanError`, `WorktreeError`, `block_design_only_issue`, `check_acceptance`, `check_contract`, `cleanup_branches`, `cleanup_worktrees`, `close_issue`, `create_child`, `ensure_base_included`, `exec_file`, `extract_contract`, `find_pr`, `map_step_result`, `merge_pr`, `merge_state`, `OrderRun`, `plan_children`, `pre_llm_violations`, `prepare_worktree`, `RebumpResult`, `publish_branch`, `rebump_onto_base`, `resolve`, `resolve_base_ref`, `route`, `review_tier`, `run_guarded`, `run_order`, `run_verified`, `unchecked_acceptance_count`, `validate_children`, `widen_allow_paths` |
+| `issuesmith.verbs` | `AcceptanceError`, `AcceptanceVerdict`, `ReviewFacts`, `ChildPlan`, `ChildPlanEntry`, `ChildPlanError`, `WorktreeError`, `block_design_only_issue`, `check_acceptance`, `check_contract`, `cleanup_branches`, `cleanup_worktrees`, `close_issue`, `create_child`, `ensure_base_included`, `exec_file`, `extract_contract`, `find_pr`, `map_step_result`, `merge_pr`, `merge_state`, `OrderRun`, `plan_children`, `pre_llm_violations`, `prepare_worktree`, `read_result`, `RebumpResult`, `publish_branch`, `rebump_onto_base`, `resolve`, `resolve_base_ref`, `route`, `review_tier`, `run_guarded`, `run_order`, `run_verified`, `unchecked_acceptance_count`, `validate_children`, `widen_allow_paths`, `write_result` |
 | `issuesmith.gates` | `Verdict`, `GateBuildContext`, `GateBuildError`, `GateEntry`, `RequiresGate`, `GATE_REGISTRY`, `NON_REPAIRABLE_RULE_IDS`, `is_non_repairable_rule_id`, `resolve_gate`, `validate_step_requires`, `check_scope`, `check_pr_scope`, `check_ac_complete`, `check_deps`, `Violation`, `Gate`, `PreconditionContext`, `normalize_allow_path`, `external_target_state` |
 | `issuesmith.config` | `get_config`, `load_config`, `IssuesmithConfig`, `LanguagePack` |
 | `issuesmith.andon` | `Andon`, `AndonSink`, `AutoAnswerPlan`, `raise_andon`, `list_open`, `list_open_records`, `answer`, `from_comment`, `to_comment`, `plan_auto_answers`, `apply_auto_answers` |
@@ -432,7 +432,7 @@ ghdag's `WorkflowDispatcher` drives workflow timing: label polling, DAG edges, a
 | `issuesmith/verbs/__init__.py` | issuesmith.verbs — public verb API extracted from step implementations. |
 | `issuesmith/verbs/acceptance.py` | Acceptance verbs — gate checks, contract, and review tier. |
 | `issuesmith/verbs/children.py` | Child-issue verbs — split plan, create, validate, allow_paths widen. |
-| `issuesmith/verbs/finalize.py` | cleanup_worktrees / cleanup_branches / close_issue verbs. |
+| `issuesmith/verbs/finalize.py` | cleanup_worktrees / cleanup_branches / close_issue / write_result / read_result verbs. |
 | `issuesmith/verbs/merge.py` | find_pr / merge_state / merge_pr verbs — public extraction from issuesmith.merge. |
 | `issuesmith/verbs/publish.py` | publish_branch verb — public extraction from ops.publish. |
 | `issuesmith/verbs/worktree.py` | prepare_worktree verb — public worktree orchestration. |

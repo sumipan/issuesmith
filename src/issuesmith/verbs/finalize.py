@@ -1,4 +1,4 @@
-"""cleanup_worktrees / cleanup_branches / close_issue verbs."""
+"""cleanup_worktrees / cleanup_branches / close_issue / merge result verbs."""
 
 from __future__ import annotations
 
@@ -108,4 +108,70 @@ def close_issue(client: ForgePort, issue_number: int) -> None:
     _close_issue_if_open(client, issue_number)
 
 
-__all__ = ["cleanup_worktrees", "cleanup_branches", "close_issue"]
+RESULT_MARKER = "<!-- issuesmith:result -->"
+
+
+def _comment_has_result_marker(body: str) -> bool:
+    return body.lstrip().startswith(RESULT_MARKER)
+
+
+def _result_value(value: str) -> str:
+    return value if value else "-"
+
+
+def write_result(
+    client: ForgePort,
+    issue_number: int,
+    *,
+    target_repo: str,
+    pr: str,
+    merge_commit: str,
+    version: str,
+) -> bool:
+    """Write the machine-readable merge result comment, or skip if one exists."""
+    for comment in client.get_issue_comments(issue_number):
+        body = str(comment.get("body") or "")
+        if _comment_has_result_marker(body):
+            return False
+    body = "\n".join(
+        [
+            RESULT_MARKER,
+            f"target_repo: {_result_value(target_repo)}",
+            f"pr: {_result_value(pr)}",
+            f"merge_commit: {_result_value(merge_commit)}",
+            f"version: {_result_value(version)}",
+        ]
+    )
+    client.issue_comment(issue_number, body)
+    return True
+
+
+def read_result(client: ForgePort, issue_number: int) -> dict[str, str] | None:
+    """Parse the merge result comment for *issue_number*, if present."""
+    for comment in client.get_issue_comments(issue_number):
+        body = str(comment.get("body") or "")
+        if not _comment_has_result_marker(body):
+            continue
+        saw_marker = False
+        result: dict[str, str] = {}
+        for line in body.splitlines():
+            if line.lstrip().startswith(RESULT_MARKER):
+                saw_marker = True
+                continue
+            if not saw_marker:
+                continue
+            if ": " not in line:
+                continue
+            key, value = line.split(": ", 1)
+            result[key] = value
+        return result
+    return None
+
+
+__all__ = [
+    "cleanup_worktrees",
+    "cleanup_branches",
+    "close_issue",
+    "read_result",
+    "write_result",
+]

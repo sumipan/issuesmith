@@ -2927,3 +2927,215 @@ def test_merge_step_retries_merge_after_base_modified(
     assert result.status == "done"
     assert merge_calls == [1, 1]
     assert rebump_calls == []
+
+
+def _result_comment_lines(comments: list[str]) -> list[str] | None:
+    from issuesmith.verbs.finalize import RESULT_MARKER
+
+    for body in comments:
+        if body.lstrip().startswith(RESULT_MARKER):
+            return body.splitlines()
+    return None
+
+
+def _merge_step_ctx(worktree: Path, issue_number: str) -> StepContext:
+    return StepContext(
+        issue_number=issue_number,
+        base_branch="main",
+        handler_name="develop",
+        is_cross_repo="false",
+        target_clone_path="",
+        source="",
+        workflow_name="issuesmith",
+        m1_result_filename="",
+        m1r_result_filename="",
+        worktree_path=str(worktree),
+        branch=f"feat/issue-{issue_number}-test",
+    )
+
+
+def test_merge_step_writes_result_comment(host_env) -> None:
+    """Refs #7964 — merge step writes the issuesmith result marker comment."""
+    from issuesmith.verbs.finalize import RESULT_MARKER, read_result
+
+    host, client, env, slug = host_env
+    number = client.issue_create("result comment", _issue_body())
+    client.issue_update(number, labels_add=["issuesmith:develop-ready"])
+    outcome = _run_until(client, number, env, host, expect_done=True, max_rounds=60)
+    assert outcome == "done"
+    lines = _result_comment_lines(_issue_comments(client, number))
+    assert lines is not None
+    assert lines[0].strip() == RESULT_MARKER
+    assert lines[1].startswith("target_repo: ")
+    assert lines[2].startswith("pr: ")
+    assert lines[3].startswith("merge_commit: ")
+    assert lines[4].startswith("version: ")
+    parsed = read_result(client, number)
+    assert parsed is not None
+    assert parsed["target_repo"] == slug
+    assert parsed["pr"].startswith("https://")
+
+
+def test_merge_step_result_comment_not_duplicated_on_rerun(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refs #7964 — rerunning merge does not duplicate the result comment."""
+    from ghdag.forge import LocalForge
+
+    from issuesmith.lines.develop import merge as develop_merge
+    from issuesmith.verbs.finalize import RESULT_MARKER
+
+    forge = LocalForge(tmp_path / "forge")
+    number = forge.issue_create("rerun", "b")
+    worktree = tmp_path / "wt"
+    _patch_merge_run_stubs(monkeypatch, develop_merge, worktree)
+    monkeypatch.setattr(develop_merge, "get_forge", lambda **_k: forge)
+    monkeypatch.setattr(develop_merge, "merge_state", lambda *_a, **_k: {"mergeable": "MERGEABLE"})
+    monkeypatch.setattr(develop_merge, "merge_pr", lambda *_a, **_k: None)
+    monkeypatch.setattr(develop_merge, "_result_pr_url", lambda *_a, **_k: "https://example/pull/1")
+    monkeypatch.setattr(develop_merge, "_result_merge_commit_after_pr", lambda *_a, **_k: "abc")
+    monkeypatch.setattr(develop_merge, "_result_version", lambda *_a, **_k: "1.0.0")
+    ctx = _merge_step_ctx(worktree, str(number))
+    assert develop_merge.run(ctx, StepConfig()).status == "done"
+    assert develop_merge.run(ctx, StepConfig()).status == "done"
+    marked = [
+        body
+        for body in _issue_comments(forge, number)
+        if body.lstrip().startswith(RESULT_MARKER)
+    ]
+    assert len(marked) == 1
+
+
+def test_merge_step_writes_result_before_close(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refs #7964 — result comment is posted while the issue is still open."""
+    from ghdag.forge import LocalForge
+
+    from issuesmith.lines.develop import merge as develop_merge
+
+    forge = LocalForge(tmp_path / "forge")
+    number = forge.issue_create("order", "b")
+    states: list[str] = []
+    real_comment = forge.issue_comment
+
+    def tracking_comment(issue: int, body: str):
+        states.append(forge.issue_get(issue, fields=["state"])["state"])
+        return real_comment(issue, body)
+
+    forge.issue_comment = tracking_comment  # type: ignore[method-assign]
+    worktree = tmp_path / "wt"
+    _patch_merge_run_stubs(monkeypatch, develop_merge, worktree)
+    monkeypatch.setattr(develop_merge, "get_forge", lambda **_k: forge)
+    monkeypatch.setattr(develop_merge, "merge_state", lambda *_a, **_k: {"mergeable": "MERGEABLE"})
+    monkeypatch.setattr(develop_merge, "merge_pr", lambda *_a, **_k: None)
+    monkeypatch.setattr(develop_merge, "_result_pr_url", lambda *_a, **_k: "-")
+    monkeypatch.setattr(develop_merge, "_result_merge_commit_after_pr", lambda *_a, **_k: "-")
+    monkeypatch.setattr(develop_merge, "_result_version", lambda *_a, **_k: "-")
+    ctx = _merge_step_ctx(worktree, str(number))
+    assert develop_merge.run(ctx, StepConfig()).status == "done"
+    assert states == ["OPEN"]
+
+
+def test_merge_step_closes_when_result_comment_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refs #7964 — merge still closes the issue when write_result raises."""
+    from issuesmith.lines.develop import merge as develop_merge
+
+    closed: list[int] = []
+    worktree = tmp_path / "wt"
+    _patch_merge_run_stubs(monkeypatch, develop_merge, worktree)
+    monkeypatch.setattr(develop_merge, "merge_state", lambda *_a, **_k: {"mergeable": "MERGEABLE"})
+    monkeypatch.setattr(develop_merge, "merge_pr", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        develop_merge,
+        "write_result",
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("fail")),
+    )
+    monkeypatch.setattr(develop_merge, "close_issue", lambda _c, n: closed.append(n))
+    ctx = _merge_step_ctx(worktree, "7964")
+    result = develop_merge.run(ctx, StepConfig())
+    assert result.status == "done"
+    assert result.markers == ["MERGE_DONE"]
+    assert closed == [7964]
+
+
+def test_no_pr_target_writes_result_comment(no_pr_target_env) -> None:
+    """Refs #7964 — no-PR merge writes result with dash pr and base SHA."""
+    from issuesmith.verbs.finalize import read_result
+
+    host, client, env, target_slug, origin, *_rest = no_pr_target_env
+    number = client.issue_create("no pr result", _cross_repo_issue_body(target_slug))
+    client.issue_update(number, labels_add=["issuesmith:develop-ready"])
+    outcome = _run_until(client, number, env, host, expect_done=True)
+    assert outcome == "done"
+    main_after = _git(origin, "rev-parse", "main").stdout.strip()
+    parsed = read_result(client, number)
+    assert parsed is not None
+    assert parsed["pr"] == "-"
+    assert parsed["merge_commit"] == main_after
+
+
+def test_merge_step_result_version_from_bump_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refs #7964 — version line reflects publish bump commit or dash."""
+    from ghdag.forge import LocalForge
+
+    from issuesmith.lines.develop import merge as develop_merge
+    from issuesmith.verbs.finalize import read_result
+
+    def _run_merge_with_bump(worktree: Path, forge: LocalForge, number: int) -> dict[str, str] | None:
+        _patch_merge_run_stubs(monkeypatch, develop_merge, worktree)
+        monkeypatch.setattr(develop_merge, "get_forge", lambda **_k: forge)
+        monkeypatch.setattr(develop_merge, "merge_state", lambda *_a, **_k: {"mergeable": "MERGEABLE"})
+        monkeypatch.setattr(develop_merge, "merge_pr", lambda *_a, **_k: None)
+        monkeypatch.setattr(develop_merge, "_result_pr_url", lambda *_a, **_k: "-")
+        monkeypatch.setattr(develop_merge, "_result_merge_commit_after_pr", lambda *_a, **_k: "-")
+        ctx = _merge_step_ctx(worktree, str(number))
+        assert develop_merge.run(ctx, StepConfig()).status == "done"
+        return read_result(forge, number)
+
+    def _init_worktree_with_origin(parent: Path) -> Path:
+        parent.mkdir(parents=True, exist_ok=True)
+        bare = parent / "origin.git"
+        worktree = parent / "wt"
+        worktree.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "main", str(worktree)], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(worktree), "config", "user.email", "t@example.com"], check=True)
+        subprocess.run(["git", "-C", str(worktree), "config", "user.name", "T"], check=True)
+        (worktree / "f.txt").write_text("x\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(worktree), "add", "f.txt"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(worktree), "commit", "-m", "init"], check=True, capture_output=True)
+        subprocess.run(["git", "init", "--bare", "-q", str(bare)], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(worktree), "remote", "add", "origin", str(bare)], check=True)
+        subprocess.run(["git", "-C", str(worktree), "push", "-u", "origin", "main"], check=True, capture_output=True)
+        return worktree
+
+    forge = LocalForge(tmp_path / "forge-bump")
+    bump_issue = forge.issue_create("bump", "b")
+    bump_wt = _init_worktree_with_origin(tmp_path / "bump")
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(bump_wt),
+            "commit",
+            "--allow-empty",
+            "-m",
+            f"{BUMP_SUBJECT_PREFIX}9.9.9",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    with_bump = _run_merge_with_bump(bump_wt, forge, bump_issue)
+    assert with_bump is not None
+    assert with_bump["version"] == "9.9.9"
+
+    forge_plain = LocalForge(tmp_path / "forge-plain")
+    plain_issue = forge_plain.issue_create("plain", "b")
+    plain_wt = _init_worktree_with_origin(tmp_path / "plain")
+    without_bump = _run_merge_with_bump(plain_wt, forge_plain, plain_issue)
+    assert without_bump is not None
+    assert without_bump["version"] == "-"
