@@ -647,8 +647,44 @@ class _QueueAfterFakeClient:
         return []
 
 
+def test_enqueue_parser_rejects_after(capsys):
+    """AC1 (#7963): queue enqueue rejects --after (exit 2) and --help omits it."""
+    from issuesmith import queue as qmod
+
+    parser = qmod.build_parser()
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(
+            [
+                "enqueue",
+                "--issue",
+                "1",
+                "--phase",
+                "draft",
+                "--source",
+                "skill",
+                "--actor-kind",
+                "human",
+                "--priority",
+                "normal",
+                "--requested-by",
+                "a",
+                "--after",
+                "5",
+            ]
+        )
+    assert exc.value.code == 2
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit) as help_exc:
+        qmod.build_parser().parse_args(["enqueue", "--help"])
+    assert help_exc.value.code == 0
+    help_out = capsys.readouterr().out
+    assert "--requested-by" in help_out
+    assert "--after" not in help_out
+
+
 def test_enqueue_cli_rejects_after_option(issuesmith_config):
-    """#7963: queue enqueue does not accept --after."""
+    """#7963: the queue CLI process exits non-zero on --after."""
     proc = _run_queue(
         "enqueue",
         "--issue",
@@ -667,12 +703,12 @@ def test_enqueue_cli_rejects_after_option(issuesmith_config):
         "99",
         env={"ISSUESMITH_CONFIG": str(issuesmith_config)},
     )
-    assert proc.returncode != 0
+    assert proc.returncode == 2
     assert "unrecognized arguments" in proc.stderr or "unrecognized arguments" in proc.stdout
 
 
-def test_plan_ignores_legacy_request_meta_after(tmp_path, monkeypatch, issuesmith_config):
-    """#7963: legacy request_meta.after no longer blocks dispatch planning."""
+def test_plan_ignores_legacy_after_meta(tmp_path, monkeypatch, issuesmith_config):
+    """AC2 (#7963): legacy request_meta.after no longer blocks dispatch planning."""
     _patch_dispatch(tmp_path, monkeypatch, issuesmith_config)
     from issuesmith import queue as qmod
 
@@ -706,7 +742,7 @@ def test_plan_ignores_legacy_request_meta_after(tmp_path, monkeypatch, issuesmit
     assert entry.reason != "after_deps"
 
 
-def test_status_reads_legacy_after_without_blocked_on(
+def test_status_reads_legacy_after_meta_with_client(
     tmp_path, monkeypatch, capsys, issuesmith_config
 ):
     """#7963: status tolerates legacy after meta without surfacing blocked_on."""
@@ -735,6 +771,46 @@ def test_status_reads_legacy_after_without_blocked_on(
     monkeypatch.setattr(
         qmod, "get_forge", lambda **k: _QueueAfterFakeClient({50: {"body": _VALID_BODY}})
     )
+    args = argparse.Namespace(
+        queue_path=str(store.queue_path),
+        state_path=str(store.state_path),
+        lock_path=str(store.lock_path),
+    )
+    code = qmod._cmd_status(args)
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "issue=#50" in out
+    assert "blocked_on" not in out
+
+
+def test_status_reads_legacy_after_meta(tmp_path, monkeypatch, capsys, issuesmith_config):
+    """AC3 (#7963): status without a forge client ignores legacy after meta."""
+    import argparse
+
+    _patch_dispatch(tmp_path, monkeypatch, issuesmith_config)
+    from issuesmith import queue as qmod
+
+    store = _store(tmp_path)
+    result = store.enqueue(
+        issue=50,
+        phase="draft",
+        source="skill",
+        actor_kind="human",
+        priority="normal",
+        requested_by=["alice"],
+        requested_at=_QUEUE_AFTER_NOW,
+    )
+    with store.lock():
+        state = store._load_state_unlocked()
+        meta = dict(state.get("request_meta") or {})
+        meta[result.request_id] = {"after": [99]}
+        state["request_meta"] = meta
+        store._save_state_unlocked(state)
+
+    def _no_forge(**_kwargs):
+        raise RuntimeError("no forge in test")
+
+    monkeypatch.setattr(qmod, "get_forge", _no_forge)
     args = argparse.Namespace(
         queue_path=str(store.queue_path),
         state_path=str(store.state_path),
