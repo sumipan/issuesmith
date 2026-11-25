@@ -123,7 +123,7 @@ def select_workflow(ledger: Ledger, namespace: str) -> Ledger:
 
     else:
 
-        def keep(_number: int) -> bool:
+        def keep(number: int) -> bool:
             return False
 
     def filter_list(numbers: list[int]) -> list[int]:
