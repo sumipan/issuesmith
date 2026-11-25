@@ -79,7 +79,7 @@ def test_load_ledger_normalizes_workflows(tmp_path: Path):
             {
                 "default_workflow": "factory",
                 "workflows": {
-                    "docs": [2, "3", 3, 0, -1, True, "bad"],
+                    "docs": [2, "3", 3, 2.5, 0, -1, True, "bad"],
                     "ignored": 4,
                 },
                 "lanes": {},
@@ -93,27 +93,28 @@ def test_load_ledger_normalizes_workflows(tmp_path: Path):
 
 
 @pytest.mark.parametrize(
-    "body,needle",
+    "body,needles",
     [
         (
             {"default_workflow": "issuesmith", "workflows": {"issuesmith": [1]}, "lanes": {}},
-            "issuesmith",
+            ("issuesmith", "#1"),
         ),
         (
             {"workflows": {"alpha": [1], "beta": [1]}, "lanes": {}},
-            "1",
+            ("alpha", "beta", "#1"),
         ),
     ],
 )
 def test_load_ledger_rejects_ambiguous_workflow_ownership(
-    tmp_path: Path, body: dict, needle: str
+    tmp_path: Path, body: dict, needles: tuple[str, ...]
 ):
     """Refs #8043 AC6."""
     path = tmp_path / "lanes.yaml"
     path.write_text(yaml.safe_dump(body), encoding="utf-8")
     with pytest.raises(ConfigError) as exc:
         load_ledger(path)
-    assert needle in str(exc.value)
+    for needle in needles:
+        assert needle in str(exc.value)
 
 
 def _factory_lanes_cli_env(tmp_path: Path, monkeypatch) -> Path:

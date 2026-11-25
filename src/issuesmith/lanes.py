@@ -61,6 +61,8 @@ def _normalize_workflow_issue_list(values: Any) -> list[int]:
     for item in values:
         if isinstance(item, bool):
             continue
+        if not isinstance(item, (int, str)):
+            continue
         try:
             number = int(item)
         except (TypeError, ValueError):
@@ -85,9 +87,11 @@ def _load_workflows(raw: Mapping[str, Any]) -> dict[str, list[int]]:
 
 def _validate_workflow_ownership(default_workflow: str, workflows: dict[str, list[int]]) -> None:
     if default_workflow in workflows:
+        issue_numbers = ", ".join(f"#{number}" for number in workflows[default_workflow])
         raise ConfigError(
             "lanes ledger workflows: "
-            f"key {default_workflow!r} conflicts with default_workflow"
+            f"workflow {default_workflow!r} conflicts with default_workflow; "
+            f"issues: {issue_numbers or 'none'}"
         )
     owner: dict[int, str] = {}
     for workflow, numbers in workflows.items():
