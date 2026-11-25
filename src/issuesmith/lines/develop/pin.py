@@ -6,6 +6,7 @@ import ast
 import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import tomllib
@@ -16,14 +17,12 @@ from issuesmith.config import StepConfig, get_config
 from issuesmith.contract import Andon, StepContext, StepResult
 from issuesmith.forge import get_forge
 
-_TITLE_RE = re.compile(
-    r"^.+:\s+bump\s+(?P<package>[A-Za-z0-9_.-]+)\s+to\s+\S+$"
-)
-_DEP_RE = re.compile(
-    r"^(?P<pkg>[A-Za-z0-9_.-]+)(?:\[[^\]]*\])?\s+@\s+"
-    r"(?P<spec>git\+[^@]+)@(?P<tag>v?\d+\.\d+\.\d+)$"
-)
+_TITLE_RE = re.compile(r"^.+:\s+bump\s+(?P<package>[A-Za-z0-9_.-]+)\s+to\s+\S+$")
+_REQUIREMENT_NAME_RE = re.compile(r"^(?P<pkg>[A-Za-z0-9_.-]+)(?:\[[^\]]*\])?(?=\s*(?:@|[<>=!~;]|$))")
+_GIT_PIN_PREFIX_RE = re.compile(r"^(?P<pkg>[A-Za-z0-9_.-]+)(?:\[[^\]]*\])?\s+@\s+(?P<spec>git\+.+)$")
+_STABLE_TAG_RE = re.compile(r"v?\d+\.\d+\.\d+")
 _TAG_LINE_RE = re.compile(r"^([0-9a-f]{40}|.+\^?)\trefs/tags/(v?\d+\.\d+\.\d+)(\^\{\})?$")
+_NON_LITERAL = object()
 
 
 def _worktree(ctx: StepContext) -> Path:
@@ -85,28 +84,44 @@ def _find_dependency_line(
     package_norm: str,
 ) -> tuple[str | None, str | None, str | None]:
     """Return (line, pkg, tag) for exactly one matching git URL pin, else Nones."""
-    matches: list[tuple[str, str, str]] = []
+    package_matches: list[str] = []
     for line in deps:
         if not isinstance(line, str):
             continue
         stripped = line.strip()
-        m = _DEP_RE.match(stripped)
-        if not m:
+        name_match = _REQUIREMENT_NAME_RE.match(stripped)
+        if not name_match:
             continue
-        pkg = m.group("pkg")
-        if _normalize_package(pkg) != package_norm:
+        if _normalize_package(name_match.group("pkg")) != package_norm:
             continue
-        matches.append((stripped, pkg, m.group("tag")))
-    if len(matches) != 1:
+        package_matches.append(line)
+    if len(package_matches) != 1:
         return None, None, None
-    return matches[0]
+
+    line = package_matches[0]
+    try:
+        prefix, tag = line.strip().rsplit("@", 1)
+    except ValueError:
+        return None, None, None
+    if not _STABLE_TAG_RE.fullmatch(tag):
+        return None, None, None
+    pin_match = _GIT_PIN_PREFIX_RE.fullmatch(prefix)
+    if not pin_match:
+        return None, None, None
+    return line, pin_match.group("pkg"), tag
 
 
 def _repo_url_from_dep_line(line: str) -> str | None:
-    m = _DEP_RE.match(line.strip())
-    if not m:
+    try:
+        prefix, tag = line.strip().rsplit("@", 1)
+    except ValueError:
         return None
-    spec = m.group("spec")
+    if not _STABLE_TAG_RE.fullmatch(tag):
+        return None
+    match = _GIT_PIN_PREFIX_RE.fullmatch(prefix)
+    if not match:
+        return None
+    spec = match.group("spec")
     if not spec.startswith("git+"):
         return None
     return spec[4:]
@@ -153,23 +168,28 @@ def _replace_tag_in_line(line: str, new_tag: str) -> str:
     return f"{prefix}@{new_tag}"
 
 
-def _language_pack_path(worktree: Path) -> Path | None:
+def _language_pack_path(worktree: Path) -> tuple[Path | None, str | None]:
     cfg_path = worktree / "issuesmith.yaml"
     if not cfg_path.is_file():
-        return None
+        return None, None
     try:
         data = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError):
-        return None
+        return None, None
     if not isinstance(data, dict):
-        return None
+        return None, None
     pack = data.get("language_pack")
     if not isinstance(pack, str) or not pack.strip():
-        return None
+        return None, None
     rel = Path(pack.strip())
     if rel.is_absolute():
-        return rel
-    return worktree / rel
+        return None, "language_pack must be relative to the worktree"
+    resolved = (worktree / rel).resolve()
+    try:
+        resolved.relative_to(worktree.resolve())
+    except ValueError:
+        return None, "language_pack must stay within the worktree"
+    return resolved, None
 
 
 def _language_pack_fields_from_upstream(
@@ -224,7 +244,7 @@ def _language_pack_fields_from_upstream(
                                     try:
                                         en_values[kw.arg] = ast.literal_eval(kw.value)
                                     except (ValueError, SyntaxError):
-                                        return None, f"non-literal EN field {kw.arg!r}"
+                                        en_values[kw.arg] = _NON_LITERAL
     if not fields:
         return None, "LanguagePack fields not found"
     ordered: dict[str, object] = {}
@@ -250,12 +270,15 @@ def _sync_language_pack_file(
     en_fields: dict[str, object],
     tag: str,
 ) -> str | None:
-    if pack_path.is_file():
-        existing_text = pack_path.read_text(encoding="utf-8")
-        existing = yaml.safe_load(existing_text) or {}
-    else:
-        existing_text = ""
-        existing = {}
+    try:
+        if pack_path.is_file():
+            existing_text = pack_path.read_text(encoding="utf-8")
+            existing = yaml.safe_load(existing_text) or {}
+        else:
+            existing_text = ""
+            existing = {}
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        return f"could not read language pack: {exc}"
     if not isinstance(existing, dict):
         return "language pack root must be a mapping"
     new_keys = [k for k in en_fields if k not in existing]
@@ -272,15 +295,16 @@ def _sync_language_pack_file(
         if key not in new_keys:
             continue
         value = en_fields[key]
-        try:
-            ast.literal_eval(repr(value))
-        except (ValueError, SyntaxError):
+        if value is _NON_LITERAL:
             return "non-literal default"
         out_parts.append(f"# English default (added in issuesmith {tag})\n")
         out_parts.append(yaml.safe_dump({key: value}, allow_unicode=True))
-    pack_path.parent.mkdir(parents=True, exist_ok=True)
-    pack_path.write_text("".join(out_parts), encoding="utf-8")
-    loaded = yaml.safe_load(pack_path.read_text(encoding="utf-8"))
+    try:
+        pack_path.parent.mkdir(parents=True, exist_ok=True)
+        pack_path.write_text("".join(out_parts), encoding="utf-8")
+        loaded = yaml.safe_load(pack_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        return f"could not write language pack: {exc}"
     if not isinstance(loaded, dict):
         return "language pack invalid after edit"
     if tuple(loaded.keys()) != tuple(en_fields.keys()):
@@ -352,15 +376,17 @@ def run(ctx: StepContext, step: StepConfig) -> StepResult:
 
     paths_to_add = ["pyproject.toml"]
     if package_norm == "issuesmith":
-        pack_path = _language_pack_path(worktree)
+        pack_path, pack_path_err = _language_pack_path(worktree)
+        if pack_path_err:
+            _reset_tracked_to_base(worktree, base)
+            return _andon("broken", "pin.language_pack_invalid", pack_path_err)
         if pack_path is not None:
-            scratch = worktree / ".issuesmith-pin-fetch"
-            scratch.mkdir(exist_ok=True)
-            fields, lang_err = _language_pack_fields_from_upstream(
-                repo_url,
-                chosen_tag,
-                scratch=scratch,
-            )
+            with tempfile.TemporaryDirectory(prefix=".issuesmith-pin-", dir=worktree) as scratch_raw:
+                fields, lang_err = _language_pack_fields_from_upstream(
+                    repo_url,
+                    chosen_tag,
+                    scratch=Path(scratch_raw),
+                )
             if fields is None:
                 _reset_tracked_to_base(worktree, base)
                 if lang_err and "non-literal" in lang_err:
@@ -388,10 +414,7 @@ def run(ctx: StepContext, step: StepConfig) -> StepResult:
             if sync_err:
                 _reset_tracked_to_base(worktree, base)
                 return _andon("broken", "pin.language_pack_invalid", sync_err)
-            if pack_path.is_relative_to(worktree):
-                paths_to_add.append(str(pack_path.relative_to(worktree)))
-            else:
-                paths_to_add.append(str(pack_path))
+            paths_to_add.append(str(pack_path.relative_to(worktree.resolve())))
 
     add = _git(worktree, "add", "--", *paths_to_add)
     if add.returncode != 0:

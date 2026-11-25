@@ -24,7 +24,6 @@ from issuesmith.verbs import (
     merge_state,
     pr_title_and_body,
     publish_branch,
-    read_result,
     rebump_onto_base,
     write_result,
 )
@@ -144,11 +143,7 @@ def _merge_without_pr(worktree: Path, base: str, *, attempts: int = 3) -> tuple[
         rebase = _git(worktree, "rebase", f"origin/{base}")
         if rebase.returncode != 0:
             conflict_proc = _git(worktree, "diff", "--name-only", "--diff-filter=U")
-            files = [
-                line.strip()
-                for line in (conflict_proc.stdout or "").splitlines()
-                if line.strip()
-            ]
+            files = [line.strip() for line in (conflict_proc.stdout or "").splitlines() if line.strip()]
             _git(worktree, "rebase", "--abort")
             if not files:
                 detail = (rebase.stderr or rebase.stdout or "").strip()
@@ -250,9 +245,7 @@ def _mergeable_blocked(state: dict) -> bool:
     return mergeable in _BLOCKED_MERGEABLE
 
 
-def _resolve_unknown_merge_state(
-    worktree: Path, base: str, branch: str
-) -> tuple[dict | None, StepResult | None]:
+def _resolve_unknown_merge_state(worktree: Path, base: str, branch: str) -> tuple[dict | None, StepResult | None]:
     verify = verify_local_merge(str(worktree), base, branch)
     if verify.result == "SKIPPED":
         return None, StepResult(
@@ -305,7 +298,7 @@ def _merge_via_pr(
             merge_pr(pr_client, pr_repo, pr)
         except Exception as exc:  # noqa: BLE001
             msg = str(exc)
-            if ("405" in msg or "Base branch was modified" in msg):
+            if "405" in msg or "Base branch was modified" in msg:
                 if tries >= rebump_max:
                     return _blocked_andon(
                         pr,
@@ -406,16 +399,22 @@ def _emit_merge_result(
 
 
 def _commits_ahead(worktree: Path, base: str) -> int | None:
+    # Some callers exercise merge policy against an in-memory/local-only repository.
+    # There is no remote state to compare in that legacy mode, so retain the normal
+    # merge path.  Once origin exists, every fetch/count failure is fatal.
+    remote = _git(worktree, "remote", "get-url", "origin")
+    if remote.returncode != 0:
+        return 1
     fetch = _git(worktree, "fetch", "origin", base)
     if fetch.returncode != 0:
-        return 1
+        return None
     proc = _git(worktree, "rev-list", "--count", f"origin/{base}..HEAD")
     if proc.returncode != 0:
-        return 1
+        return None
     try:
         return int(proc.stdout.strip())
     except ValueError:
-        return 1
+        return None
 
 
 def _remote_branch_sha(worktree: Path, branch: str) -> str | None:
@@ -547,24 +546,27 @@ def _cleanup_and_close_issue(
     issue: int,
     cross: bool,
 ) -> StepResult | None:
-    if cross:
-        clone = _target_clone(ctx)
-        cleanup_worktrees(
-            get_config().root,
-            ctx.issue_number,
-            is_cross_repo=True,
-            target_clone_path=clone,
-        )
-    else:
-        repo_root = _git_toplevel(worktree)
-        cleanup_worktrees(repo_root, ctx.issue_number)
-        cleanup_branches(repo_root, ctx.issue_number)
     try:
+        if cross:
+            clone = _target_clone(ctx)
+            cleanup_worktrees(
+                get_config().root,
+                ctx.issue_number,
+                is_cross_repo=True,
+                target_clone_path=clone,
+            )
+        else:
+            repo_root = _git_toplevel(worktree)
+            cleanup_worktrees(repo_root, ctx.issue_number)
+            cleanup_branches(repo_root, ctx.issue_number)
         close_issue(issue_client, issue)
     except Exception as exc:  # noqa: BLE001
         return StepResult(
             status="andon",
-            andon=Andon(kind="broken", summary=f"merge: could not close issue: {exc}"),
+            andon=Andon(
+                kind="broken",
+                summary=f"merge: could not clean up or close issue: {exc}",
+            ),
         )
     return None
 
@@ -578,7 +580,6 @@ def _complete_no_diff_merge(
     issue_repo: str,
     cross: bool,
 ) -> StepResult:
-    _ = read_result(issue_client, issue)
     try:
         write_result(
             issue_client,
@@ -593,9 +594,7 @@ def _complete_no_diff_merge(
             status="andon",
             andon=Andon(kind="broken", summary=f"merge: could not write result: {exc}"),
         )
-    err = _cleanup_and_close_issue(
-        ctx, worktree, issue_client=issue_client, issue=issue, cross=cross
-    )
+    err = _cleanup_and_close_issue(ctx, worktree, issue_client=issue_client, issue=issue, cross=cross)
     if err is not None:
         return err
     return StepResult(status="done", markers=["MERGE_DONE"], irreversible=True)
@@ -643,9 +642,7 @@ def _merge_without_pr_flow(
             andon=Andon(
                 kind="blocked",
                 rule_id="merge.push_rejected",
-                summary=(
-                    f"push to origin/{base} was rejected 3 times: {exc.detail}"
-                ),
+                summary=(f"push to origin/{base} was rejected 3 times: {exc.detail}"),
             ),
         )
     except Exception as exc:  # noqa: BLE001
@@ -657,9 +654,7 @@ def _merge_without_pr_flow(
     stat_proc = _git(worktree, "diff", "--stat", f"{old_sha}..{new_sha}")
     stat_block = (stat_proc.stdout or "").strip() or "(no changes)"
     comment_body = (
-        f"Merged into `{base}` of `{target_repo}` without a pull request: "
-        f"`{new_sha}`\n\n"
-        f"```\n{stat_block}\n```\n"
+        f"Merged into `{base}` of `{target_repo}` without a pull request: `{new_sha}`\n\n```\n{stat_block}\n```\n"
     )
     try:
         issue_client.issue_comment(issue, comment_body)
@@ -729,9 +724,7 @@ def _merge_pr_path(
             )
 
     create_url = ""
-    pr = _locate_pr(
-        pr_client, pr_repo, branch, issue, match_issue_in_title=match_title
-    )
+    pr = _locate_pr(pr_client, pr_repo, branch, issue, match_issue_in_title=match_title)
     if pr is None:
         title, body = pr_title_and_body(issue, pr_repo, issue_repo)
         try:
@@ -763,9 +756,7 @@ def _merge_pr_path(
                 andon=Andon(kind="broken", summary="PR not found after create"),
             )
 
-    merge_result = _merge_via_pr(
-        worktree, pr_client, pr_repo, pr, branch, base
-    )
+    merge_result = _merge_via_pr(worktree, pr_client, pr_repo, pr, branch, base)
     if merge_result is not None:
         return merge_result
 
@@ -854,9 +845,6 @@ def run(ctx: StepContext, step: StepConfig) -> StepResult:
                 cross=cross,
             )
 
-        if step.redo_on_conflict and not use_no_pr and branch_lease_sha is None:
-            branch_lease_sha = _remote_branch_sha(worktree, branch)
-
         if use_no_pr:
             result = _merge_without_pr_flow(
                 ctx,
@@ -888,6 +876,18 @@ def run(ctx: StepContext, step: StepConfig) -> StepResult:
         if redo_count >= _REDO_MAX:
             return _append_redo_exhausted(result)
 
+        if not use_no_pr:
+            branch_lease_sha = _remote_branch_sha(worktree, branch)
+            if branch_lease_sha is None:
+                return StepResult(
+                    status="andon",
+                    andon=Andon(
+                        kind="broken",
+                        rule_id="merge.redo_failed",
+                        summary=f"could not fetch origin/{branch} before redo",
+                    ),
+                )
+
         prep_err = _prepare_redo(worktree, base)
         if prep_err:
             return StepResult(
@@ -902,5 +902,3 @@ def run(ctx: StepContext, step: StepConfig) -> StepResult:
         if redo_result.status != "done":
             return redo_result
         redo_count += 1
-        if not use_no_pr:
-            branch_lease_sha = _remote_branch_sha(worktree, branch)

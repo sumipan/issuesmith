@@ -40,9 +40,7 @@ def _ctx(worktree: Path, *, branch: str = "feat/x") -> StepContext:
     )
 
 
-def test_merge_without_commits_closes_without_push_or_pr(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_merge_without_commits_closes_without_push_or_pr(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Refs sumipan/nexus#8023 AC8."""
     worktree = tmp_path / "wt"
     subprocess.run(["git", "init", "-q", "-b", "main", str(worktree)], check=True, capture_output=True)
@@ -62,7 +60,6 @@ def test_merge_without_commits_closes_without_push_or_pr(
     monkeypatch.setattr(develop_merge, "cleanup_branches", lambda *_a, **_k: None)
     monkeypatch.setattr(develop_merge, "close_issue", lambda *_a, **_k: None)
     monkeypatch.setattr(develop_merge, "write_result", lambda *_a, **_k: True)
-    monkeypatch.setattr(develop_merge, "read_result", lambda *_a, **_k: None)
     from types import SimpleNamespace
 
     from issuesmith.config import get_config
@@ -85,9 +82,38 @@ def test_merge_without_commits_closes_without_push_or_pr(
     assert publish_calls == []
 
 
-def test_no_pr_rebase_conflict_redoes_step_then_merges(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_commits_ahead_reports_fetch_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    remote = subprocess.CompletedProcess(["git"], 0, "origin.git\n", "")
+    failed = subprocess.CompletedProcess(["git"], 1, "", "fetch failed")
+    calls = iter([remote, failed])
+    monkeypatch.setattr(develop_merge, "_git", lambda *_a, **_k: next(calls))
+    assert develop_merge._commits_ahead(Path("."), "main") is None
+
+
+def test_no_diff_cleanup_failure_returns_broken_andon(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client = MagicMock()
+    monkeypatch.setattr(develop_merge, "write_result", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        develop_merge,
+        "cleanup_worktrees",
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("cleanup failed")),
+    )
+    monkeypatch.setattr(develop_merge, "_git_toplevel", lambda _w: tmp_path)
+    result = develop_merge._complete_no_diff_merge(
+        _ctx(tmp_path),
+        tmp_path,
+        issue_client=client,
+        issue=99,
+        issue_repo="o/r",
+        cross=False,
+    )
+    assert result.status == "andon"
+    assert result.andon is not None
+    assert result.andon.kind == "broken"
+    assert "cleanup failed" in result.andon.summary
+
+
+def test_no_pr_rebase_conflict_redoes_step_then_merges(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Refs sumipan/nexus#8023 AC9."""
     calls: list[int] = []
 
@@ -104,7 +130,9 @@ def test_no_pr_rebase_conflict_redoes_step_then_merges(
     monkeypatch.setattr(develop_merge, "_bump_before_publish", lambda *_a, **_k: "")
     monkeypatch.setattr(develop_merge, "_commits_ahead", lambda *_a, **_k: 1)
     monkeypatch.setattr(develop_merge, "_prepare_redo", lambda *_a, **_k: None)
-    monkeypatch.setattr(develop_merge, "_invoke_redo_step", lambda *_a, **_k: StepResult(status="done", markers=["PIN_DONE"]))
+    monkeypatch.setattr(
+        develop_merge, "_invoke_redo_step", lambda *_a, **_k: StepResult(status="done", markers=["PIN_DONE"])
+    )
     monkeypatch.setattr(develop_merge, "_merge_without_pr_flow", fake_flow)
     from types import SimpleNamespace
 
@@ -132,9 +160,7 @@ def test_no_pr_rebase_conflict_redoes_step_then_merges(
     assert len(calls) == 2
 
 
-def test_no_pr_push_rejection_redoes_step_then_merges(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_no_pr_push_rejection_redoes_step_then_merges(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Refs sumipan/nexus#8023 AC10."""
     calls: list[int] = []
 
@@ -177,9 +203,7 @@ def test_no_pr_push_rejection_redoes_step_then_merges(
     assert len(calls) == 2
 
 
-def test_pr_conflict_redoes_step_and_force_pushes_with_lease(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_pr_conflict_redoes_step_and_force_pushes_with_lease(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Refs sumipan/nexus#8023 AC11."""
     pushed: list[str] = []
 
@@ -223,9 +247,7 @@ def test_pr_conflict_redoes_step_and_force_pushes_with_lease(
     assert pushed == ["deadbeef"]
 
 
-def test_merge_propagates_non_done_redo_result(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_merge_propagates_non_done_redo_result(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Refs sumipan/nexus#8023 AC12."""
     andon = Andon(kind="decision", rule_id="pin.title_format", summary="bad title")
     redo_result = StepResult(status="andon", andon=andon)
@@ -302,9 +324,7 @@ def test_merge_stops_after_two_redos(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert "redo attempts=2" in result.andon.summary
 
 
-def test_merge_without_redo_keeps_existing_andon(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_merge_without_redo_keeps_existing_andon(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Refs sumipan/nexus#8023 AC14."""
     blocked = StepResult(
         status="andon",

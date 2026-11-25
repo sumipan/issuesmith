@@ -81,9 +81,7 @@ def _pin_ctx(worktree: Path, issue_number: str) -> StepContext:
     )
 
 
-def test_pin_rewrites_only_url_tag_and_commits_latest(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_pin_rewrites_only_url_tag_and_commits_latest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Refs sumipan/nexus#8023 AC1."""
     from ghdag.forge import LocalForge
 
@@ -121,9 +119,7 @@ def test_pin_current_makes_no_commit(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert before == after
 
 
-def test_pin_rejects_invalid_title_without_changes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_pin_rejects_invalid_title_without_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Refs sumipan/nexus#8023 AC3."""
     from ghdag.forge import LocalForge
 
@@ -142,9 +138,7 @@ def test_pin_rejects_invalid_title_without_changes(
     assert worktree.joinpath("pyproject.toml").read_text(encoding="utf-8") == before
 
 
-def test_pin_rejects_unsupported_or_ambiguous_requirement(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_pin_rejects_unsupported_or_ambiguous_requirement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Refs sumipan/nexus#8023 AC4."""
     from ghdag.forge import LocalForge
 
@@ -165,9 +159,22 @@ def test_pin_rejects_unsupported_or_ambiguous_requirement(
     assert result.andon.rule_id == "pin.unsupported_requirement"
 
 
-def test_pin_reports_tag_fetch_failure_without_changes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_pin_rejects_duplicate_normalized_package_with_mixed_requirement_types() -> None:
+    deps = [
+        "lib.foo>=1.0.0",
+        "lib-foo @ git+ssh://git@example.test/o/r.git@v1.0.0",
+    ]
+    assert develop_pin._find_dependency_line(deps, "lib-foo") == (None, None, None)
+
+
+def test_pin_parses_ssh_userinfo_by_splitting_tag_from_the_right() -> None:
+    dep = "libfoo[cli] @ git+ssh://git@example.test/o/r.git@v1.2.3"
+    line, package, tag = develop_pin._find_dependency_line([dep], "libfoo")
+    assert (line, package, tag) == (dep, "libfoo", "v1.2.3")
+    assert develop_pin._repo_url_from_dep_line(dep) == "ssh://git@example.test/o/r.git"
+
+
+def test_pin_reports_tag_fetch_failure_without_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Refs sumipan/nexus#8023 AC5."""
     from ghdag.forge import LocalForge
 
@@ -183,9 +190,7 @@ def test_pin_reports_tag_fetch_failure_without_changes(
     assert result.andon.rule_id == "pin.tags_fetch_failed"
 
 
-def test_pin_syncs_language_pack_preserving_existing_blocks(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_pin_syncs_language_pack_preserving_existing_blocks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Refs sumipan/nexus#8023 AC6."""
     from ghdag.forge import LocalForge
 
@@ -226,21 +231,21 @@ def test_pin_syncs_language_pack_preserving_existing_blocks(
     assert "# keep this comment" in after_pack
     assert before_pack.splitlines()[0] in after_pack
     assert "extra_word" in after_pack
+    assert not worktree.joinpath(".issuesmith-pin-fetch").exists()
 
 
-def test_pin_rejects_nonliteral_language_default_atomically(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_pin_rejects_nonliteral_language_default_atomically(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Refs sumipan/nexus#8023 AC7."""
     from ghdag.forge import LocalForge
 
     language_src = (
         "from dataclasses import dataclass\n"
-        "def factory():\n    return {}\n"
+        "def factory():\n    return 'generated'\n"
         "@dataclass(frozen=True)\n"
         "class LanguagePack:\n"
         "    sections: dict\n"
-        "EN = LanguagePack(sections=factory())\n"
+        "    generated: str\n"
+        "EN = LanguagePack(sections={}, generated=factory())\n"
     )
     up = _init_upstream(
         tmp_path,
@@ -271,9 +276,7 @@ def test_pin_rejects_nonliteral_language_default_atomically(
     assert "@v0.3.0" not in pyproject
 
 
-def test_pin_reports_invalid_pyproject_without_partial_changes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_pin_reports_invalid_pyproject_without_partial_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Refs sumipan/nexus#8023 AC17."""
     from ghdag.forge import LocalForge
 
