@@ -32,7 +32,13 @@ from issuesmith.verbs.children import (
     validate_children,
     widen_allow_paths,
 )
-from issuesmith.verbs.finalize import cleanup_branches, cleanup_worktrees, close_issue
+from issuesmith.verbs.finalize import (
+    cleanup_branches,
+    cleanup_worktrees,
+    close_issue,
+    read_result,
+    write_result,
+)
 from issuesmith.verbs.merge import find_pr, merge_pr, merge_state
 from issuesmith.verbs.publish import RebumpResult, publish_branch, rebump_onto_base
 from issuesmith.verbs.worktree import (
@@ -57,6 +63,7 @@ __all__ = [
     "cleanup_branches",
     "cleanup_worktrees",
     "close_issue",
+    "read_result",
     "create_child",
     "ensure_base_included",
     "exec_file",
@@ -82,4 +89,5 @@ __all__ = [
     "unchecked_acceptance_count",
     "validate_children",
     "widen_allow_paths",
+    "write_result",
 ]

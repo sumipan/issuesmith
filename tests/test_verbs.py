@@ -163,6 +163,59 @@ def test_all_verbs_are_importable() -> None:
         assert hasattr(verbs, name), f"missing: {name}"
 
 
+def test_read_result_returns_fields_or_none(tmp_path: Path) -> None:
+    """Refs #7964 — read_result parses the result marker comment."""
+    from ghdag.forge import LocalForge
+
+    from issuesmith.verbs.finalize import read_result, write_result
+
+    client = LocalForge(tmp_path / "forge")
+    number = client.issue_create("t", "b")
+    assert read_result(client, number) is None
+    write_result(
+        client,
+        number,
+        target_repo="o/r",
+        pr="https://github.com/o/r/pull/1",
+        merge_commit="abc",
+        version="1.2.3",
+    )
+    assert read_result(client, number) == {
+        "target_repo": "o/r",
+        "pr": "https://github.com/o/r/pull/1",
+        "merge_commit": "abc",
+        "version": "1.2.3",
+    }
+
+
+def test_write_result_skips_when_marker_exists(tmp_path: Path) -> None:
+    """Refs #7964 — write_result is idempotent when a result comment exists."""
+    from ghdag.forge import LocalForge
+
+    from issuesmith.verbs.finalize import write_result
+
+    client = LocalForge(tmp_path / "forge")
+    number = client.issue_create("t", "b")
+    assert write_result(
+        client,
+        number,
+        target_repo="o/r",
+        pr="-",
+        merge_commit="-",
+        version="-",
+    ) is True
+    calls = len(client.get_issue_comments(number))
+    assert write_result(
+        client,
+        number,
+        target_repo="other",
+        pr="x",
+        merge_commit="y",
+        version="z",
+    ) is False
+    assert len(client.get_issue_comments(number)) == calls
+
+
 def test_close_issue_sets_completed(tmp_path: Path) -> None:
     """Refs #7962 — develop-line finalize close uses completed state_reason."""
     from ghdag.forge import LocalForge

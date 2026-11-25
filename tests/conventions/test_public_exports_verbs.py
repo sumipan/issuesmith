@@ -40,6 +40,7 @@ VERBS_PUBLIC_NAMES = frozenset(
         "cleanup_branches",
         "cleanup_worktrees",
         "close_issue",
+        "read_result",
         "create_child",
         "ensure_base_included",
         "exec_file",
@@ -65,6 +66,7 @@ VERBS_PUBLIC_NAMES = frozenset(
         "unchecked_acceptance_count",
         "validate_children",
         "widen_allow_paths",
+        "write_result",
     }
 )
 

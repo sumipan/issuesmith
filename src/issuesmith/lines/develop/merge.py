@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from issuesmith.verbs import (
     merge_state,
     publish_branch,
     rebump_onto_base,
+    write_result,
 )
 from issuesmith.version_policy import resolve_policy, run_bump
 
@@ -333,6 +335,71 @@ def _blocked_andon(pr: int, state: dict, extra: str = "") -> StepResult:
     )
 
 
+def _result_target_repo(ctx: StepContext, issue_repo: str) -> str:
+    target = ctx.target_repo.strip()
+    return target or issue_repo
+
+
+def _result_version(worktree: Path, base: str) -> str:
+    try:
+        versions = bump_versions_in_range(worktree, base)
+    except BumpCommitsError:
+        return "-"
+    return versions[0] if versions else "-"
+
+
+def _result_merge_commit_after_pr(worktree: Path, base: str) -> str:
+    head_proc = _git(worktree, "rev-parse", "HEAD")
+    if head_proc.returncode != 0:
+        return "-"
+    head_sha = head_proc.stdout.strip()
+    fetch = _git(worktree, "fetch", "origin", base)
+    if fetch.returncode != 0:
+        return "-"
+    rev_proc = _git(
+        worktree,
+        "rev-list",
+        "--first-parent",
+        "--ancestry-path",
+        f"{head_sha}..origin/{base}",
+    )
+    if rev_proc.returncode != 0:
+        return "-"
+    lines = [line.strip() for line in (rev_proc.stdout or "").splitlines() if line.strip()]
+    return lines[-1] if lines else "-"
+
+
+def _result_pr_url(pr_client, pr_repo: str, pr: int) -> str:
+    try:
+        data = pr_client.pr_get(pr, repo=pr_repo)
+        url = str(data.get("url") or data.get("html_url") or "").strip()
+        return url or "-"
+    except Exception:  # noqa: BLE001
+        return "-"
+
+
+def _emit_merge_result(
+    issue_client,
+    issue: int,
+    *,
+    target_repo: str,
+    pr: str,
+    merge_commit: str,
+    version: str,
+) -> None:
+    try:
+        write_result(
+            issue_client,
+            issue,
+            target_repo=target_repo,
+            pr=pr,
+            merge_commit=merge_commit,
+            version=version,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"merge: could not write result comment: {exc}", file=sys.stderr)
+
+
 def _git_toplevel(worktree: Path) -> Path:
     proc = subprocess.run(
         ["git", "-C", str(worktree), "rev-parse", "--show-toplevel"],
@@ -366,6 +433,7 @@ def _merge_without_pr_flow(
                 summary=f"version bump failed: {bump_err}",
             ),
         )
+    version = _result_version(worktree, base)
     try:
         old_sha, new_sha = _merge_without_pr(worktree, base)
     except _RebaseConflict as exc:
@@ -422,6 +490,14 @@ def _merge_without_pr_flow(
         repo_root = _git_toplevel(worktree)
         cleanup_worktrees(repo_root, ctx.issue_number)
         cleanup_branches(repo_root, ctx.issue_number)
+    _emit_merge_result(
+        issue_client,
+        issue,
+        target_repo=_result_target_repo(ctx, issue_repo),
+        pr="-",
+        merge_commit=new_sha,
+        version=version,
+    )
     close_issue(issue_client, issue)
     return StepResult(status="done", markers=["MERGE_DONE"], irreversible=True)
 
@@ -527,6 +603,10 @@ def run(ctx: StepContext, step: StepConfig) -> StepResult:
     if merge_result is not None:
         return merge_result
 
+    version = _result_version(worktree, base)
+    merge_commit = _result_merge_commit_after_pr(worktree, base)
+    pr_url = _result_pr_url(pr_client, pr_repo, pr)
+
     if cross:
         clone = _target_clone(ctx)
         cleanup_worktrees(
@@ -539,5 +619,13 @@ def run(ctx: StepContext, step: StepConfig) -> StepResult:
         repo_root = _git_toplevel(worktree)
         cleanup_worktrees(repo_root, ctx.issue_number)
         cleanup_branches(repo_root, ctx.issue_number)
+    _emit_merge_result(
+        issue_client,
+        issue,
+        target_repo=_result_target_repo(ctx, issue_repo),
+        pr=pr_url,
+        merge_commit=merge_commit,
+        version=version,
+    )
     close_issue(issue_client, issue)
     return StepResult(status="done", markers=["MERGE_DONE"], irreversible=True)
