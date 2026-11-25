@@ -183,6 +183,14 @@ def test_custom_pack_from_yaml_gives_same_rows_deps_and_structure(tmp_path, monk
         _normalize(c, EN) for c in expected["children"]
     ]
     assert "## X Dependencies\n\nnil\n" in actual["children"][0]
+    for child in actual["children"]:
+        assert not any(
+            line.startswith(f"{custom.sub_plan_columns[4]}:") for line in child.splitlines()
+        )
+    for child in expected["children"]:
+        assert not any(
+            line.startswith(f"{EN.sub_plan_columns[4]}:") for line in child.splitlines()
+        )
     assert "## X Dependencies\n\n| No | Needs | Status |\n" in actual["children"][1]
 
 
