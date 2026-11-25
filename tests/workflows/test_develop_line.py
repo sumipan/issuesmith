@@ -3116,6 +3116,7 @@ def test_merge_step_result_version_from_bump_commit(
     forge = LocalForge(tmp_path / "forge-bump")
     bump_issue = forge.issue_create("bump", "b")
     bump_wt = _init_worktree_with_origin(tmp_path / "bump")
+    bump_version = "9.9.9"
     subprocess.run(
         [
             "git",
@@ -3124,14 +3125,14 @@ def test_merge_step_result_version_from_bump_commit(
             "commit",
             "--allow-empty",
             "-m",
-            f"{BUMP_SUBJECT_PREFIX}9.9.9",
+            f"{BUMP_SUBJECT_PREFIX}{bump_version}",
         ],
         check=True,
         capture_output=True,
     )
     with_bump = _run_merge_with_bump(bump_wt, forge, bump_issue)
     assert with_bump is not None
-    assert with_bump["version"] == "9.9.9"
+    assert with_bump["version"] == bump_version
 
     forge_plain = LocalForge(tmp_path / "forge-plain")
     plain_issue = forge_plain.issue_create("plain", "b")
