@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.215.0 - 2026-11-26
+
+### Added
+
+- pins: remove requires_pins and pins_landed waiting
+
 ## 0.214.0 - 2026-11-26
 
 ### Added
