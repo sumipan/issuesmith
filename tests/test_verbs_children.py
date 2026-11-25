@@ -8,6 +8,7 @@ import yaml
 
 import issuesmith.config as config_module
 from issuesmith.config import get_config, reset_config_cache
+from issuesmith.dep_extractor import extract_dependencies
 from issuesmith.language import EN
 from issuesmith.verbs import children as vchildren
 
@@ -126,6 +127,31 @@ def test_create_children_sequential_from_single_plan(local_client) -> None:
     assert len(local_client.list_sub_issues(parent)) == 2
     second_body = str(local_client.issue_get(second, fields=["body"])["body"])
     assert f"#{first}" in second_body
+    assert extract_dependencies(second_body) == [first]
+
+
+def test_plan_children_rejects_dependency_without_issue_ref(local_client) -> None:
+    """Refs sumipan/nexus#8000 — prose-only plan dep fails before child creation."""
+    lang = EN
+    s = lang.sections
+    body = (
+        f"```yaml\ntarget_repo: {_REPO}\nbase_branch: main\n```\n\n"
+        f"## {s['design']}\n\n"
+        f"#### {lang.sub_header_prefix}1: part 1\n\n"
+        f"**{lang.sub_design_subsections[2]}**:\n"
+        f"| {lang.change_table_columns[0]} | {lang.change_table_columns[1]} | "
+        f"{lang.change_table_columns[2]} | {lang.change_table_columns[3]} |\n"
+        "|---|---|---|---|\n"
+        f"| `{_REPO}` | `src/a.py` | modify | x |\n\n"
+        f"## {s['acceptance_criteria']}\n\n- [ ] done\n\n"
+        f"## {s['milestone']}\n\n### {s['sub_plan']}\n\n"
+        f"{lang.sub_plan_header}\n|---|---|---|---|---|\n"
+        f"| 1 | blocked part | `{_REPO}` | do a | after review |\n"
+    )
+    parent = _create_parent(local_client, body)
+    with pytest.raises(vchildren.ChildPlanError) as exc:
+        vchildren.plan_children(local_client, parent, repo=_REPO)
+    assert "row 1 (blocked part): dependencies carry no issue ref" in exc.value.violations
 
 
 def test_create_child_raises_when_link_missing_despite_milestone(local_client) -> None:

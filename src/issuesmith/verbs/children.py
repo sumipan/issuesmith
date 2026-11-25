@@ -19,6 +19,7 @@ from issuesmith.body_editor import (
 from issuesmith.config import get_config
 from issuesmith.contract import parse_issue_metadata
 from issuesmith.convert_to_milestone import _ensure_milestone
+from issuesmith.dep_extractor import extract_dependencies
 from issuesmith.forge_api import api_request
 from issuesmith.milestone import (
     Sub1State,
@@ -335,6 +336,12 @@ def plan_children(client: ForgePort, parent_number: int, *, repo: str) -> ChildP
         dep_skip = False
         no_deps = get_config().language.no_deps_word
         if row.dep_raw.strip() and row.dep_raw.strip() != no_deps:
+            if not re.search(r"#\d+", resolved_dep):
+                row_violations.append(
+                    f"row {row.row_num} ({row.title}): dependencies carry no issue ref"
+                )
+                continue
+        if row.dep_raw.strip() and row.dep_raw.strip() != no_deps:
             for match in re.finditer(r"#(\d+)", resolved_dep):
                 issue_num = int(match.group(1))
                 if issue_num > table_row_count:
@@ -429,7 +436,12 @@ def create_child(
         else _restore_deterministic_parts(entry.draft_body, body, dep_heading=dep_heading)
     )
 
-    resolved_dep = _resolved_dep_line(final_body)
+    lang = get_config().language
+    deps = extract_dependencies(final_body)
+    if deps:
+        resolved_dep = ", ".join(f"#{n}" for n in deps)
+    else:
+        resolved_dep = lang.no_deps_word
     supported = get_config().supported_repos
     pre_fail = prevalidate_child_body(
         body=final_body,
@@ -465,16 +477,6 @@ def create_child(
 
     _require_child_linked(client, parent_number, new_number)
     return new_number
-
-
-def _resolved_dep_line(body: str) -> str:
-    lang = get_config().language
-    dep_col = lang.sub_plan_columns[4]
-    dep_line_re = re.compile(rf"^{re.escape(dep_col)}:\s*(.*)$", re.MULTILINE)
-    match = dep_line_re.search(body)
-    if match:
-        return match.group(1).strip()
-    return lang.no_deps_word
 
 
 def validate_children(

@@ -468,20 +468,17 @@ def _dependency_refs_unresolved(body: str) -> list[str]:
 
 
 def check_v6_dependency_refs(body: str, resolved_dep: str) -> list[str]:
-    """Pre-creation V6: dependency table and dependency line carry resolved #NNNN refs."""
+    """Pre-creation V6: dependency section declares resolved #NNNN refs."""
     lang = _lang()
     dep = (resolved_dep or "").strip()
     if not dep or dep == lang.no_deps_word:
         return []
     failures = list(_dependency_refs_unresolved(body))
-    dep_col = lang.sub_plan_columns[4]
-    dep_line_re = re.compile(rf"^{re.escape(dep_col)}:\s*(.*)$", re.MULTILINE)
-    line_match = dep_line_re.search(body)
-    line_text = line_match.group(1) if line_match else ""
+    declared = set(extract_dependencies(body))
     for match in _RESOLVED_ISSUE_REF_RE.finditer(dep):
-        issue_num = match.group(1)
-        if f"#{issue_num}" not in line_text:
-            failures.append(_msg("v6_dep_line_unresolved", issue=issue_num))
+        issue_num = int(match.group(1))
+        if issue_num not in declared:
+            failures.append(_msg("v6_dep_section_unresolved", issue=issue_num))
     return failures
 
 
@@ -1333,7 +1330,7 @@ def _sub1_build_dep_section(
 ) -> str:
     lang = _lang()
     if not resolved_dep or resolved_dep == lang.no_deps_word:
-        return ""
+        return f"## {lang.sections['dependencies']}\n\n{lang.no_deps_word}\n"
     nums = [int(m.group(1)) for m in _SUB1_DEP_REF_RE.finditer(resolved_dep)]
     if not nums:
         return ""
@@ -1427,7 +1424,6 @@ def build_child_body(
         "```",
         "",
         f"{lang.parent_issue_label}: #{parent_number}",
-        f"{lang.sub_plan_columns[4]}: {resolved_dep}",
         "",
     ]
     dep_section = _sub1_build_dep_section(resolved_dep, row_repo=row.repo, client=client)
