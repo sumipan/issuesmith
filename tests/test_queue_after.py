@@ -1,9 +1,9 @@
-"""test_queue_after.py - AC-1 to AC-5: --after CLI option and blocked_on visibility."""
+"""Regression tests for removing queue enqueue --after (#7963)."""
 
 from __future__ import annotations
 
-import argparse
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime
@@ -28,6 +28,15 @@ _VALID_BODY = (
     "allow_paths:\n"
     '  - "tools/**"\n'
     "```\n"
+)
+
+_AFTER_FEATURE_PATTERNS = (
+    re.compile(r"after_deps"),
+    re.compile(r'get\("after"\)'),
+    re.compile(r'\.get\("after"\)'),
+    re.compile(r"add_argument\(\"--after\""),
+    re.compile(r"dispatch_blocked"),
+    re.compile(r"after:\s*list\[int\]"),
 )
 
 
@@ -102,7 +111,7 @@ def _pythonpath() -> str:
     return str(SRC_PATH) + (f":{existing}" if existing else "")
 
 
-def _run_queue(*args: str, tmp_path: Path, env: dict | None = None) -> subprocess.CompletedProcess[str]:
+def _run_queue(*args: str, env: dict | None = None) -> subprocess.CompletedProcess[str]:
     run_env = {**os.environ, "PYTHONPATH": _pythonpath()}
     if env:
         run_env.update(env)
@@ -115,100 +124,8 @@ def _run_queue(*args: str, tmp_path: Path, env: dict | None = None) -> subproces
     )
 
 
-class TestEnqueueAfterStore:
-    """AC-1: --after saves issue numbers in request_meta."""
-
-
-    def test_after_merge_deduplicates(self, tmp_path):
-        store = _store(tmp_path)
-        r1 = store.enqueue(
-            issue=100,
-            phase="draft",
-            source="skill",
-            actor_kind="human",
-            priority="normal",
-            requested_by=["alice"],
-            requested_at=_NOW,
-            after=[200, 300],
-        )
-        store.enqueue(
-            issue=100,
-            phase="draft",
-            source="skill2",
-            actor_kind="human",
-            priority="normal",
-            requested_by=["bob"],
-            requested_at=_NOW,
-            after=[300, 400],
-        )
-        snap = store.snapshot()
-        meta = snap.request_meta.get(r1.request_id) or {}
-        assert meta.get("after") == [200, 300, 400]
-
-
-class _FakeClient:
-    """Minimal fake client for dispatch tests."""
-
-    def __init__(self, issues: dict[int, dict]):
-        self.issues = issues
-        self.updates: list[tuple] = []
-        self.comments: list[tuple] = []
-
-    def issue_get(self, number, fields=None):
-        data = dict(self.issues.get(number, {}))
-        data.setdefault("number", number)
-        data.setdefault("state", "OPEN")
-        data.setdefault("title", "t")
-        data.setdefault("body", _VALID_BODY)
-        data.setdefault("labels", [])
-        return data
-
-    def issue_update(self, number, labels_add=None, labels_remove=None):
-        self.updates.append((number, labels_add))
-        bucket = self.issues.setdefault(number, {"labels": []})
-        names = {lab["name"] if isinstance(lab, dict) else lab for lab in bucket.get("labels", [])}
-        for lab in labels_add or []:
-            names.add(lab)
-        for lab in labels_remove or []:
-            names.discard(lab)
-        bucket["labels"] = [{"name": n} for n in sorted(names)]
-
-    def issue_comment(self, number, body):
-        self.comments.append((number, body))
-
-    def get_issue_comments(self, number):
-        return []
-
-    def list_issues(self, label, state="open"):
-        return []
-
-    def issue_timeline(self, number):
-        return []
-
-    def pr_list(self, *, head=None, state=None, search=None, repo=None, limit=30):
-        return []
-
-    def pr_get(self, number, *, repo=None):
-        raise RuntimeError(f"PR #{number} not found")
-
-    def api_request(self, path, *, method="GET", fields=None, repo=None, paginate=False):
-        if path.startswith("issues"):
-            return [
-                {
-                    "number": n,
-                    "title": d.get("title") or "",
-                    "state": str(d.get("state", "OPEN")).lower(),
-                    "body": d.get("body") or "",
-                    "labels": d.get("labels") or [],
-                }
-                for n, d in self.issues.items()
-                if str(d.get("state", "OPEN")).upper() == "OPEN"
-            ]
-        return []
-
-
 def _patch_dispatch(tmp_path, monkeypatch, issuesmith_config):
-    """Set up dispatch_one environment."""
+    """Set up dispatch/status environment."""
     import issuesmith.config as cfgmod
     import issuesmith.queue as qmod
     import issuesmith.queue_store as qstore
@@ -261,162 +178,158 @@ def _patch_dispatch(tmp_path, monkeypatch, issuesmith_config):
     monkeypatch.setattr(qstore, "_cfg", patched_cfg)
 
 
-class TestDispatchAfterBlocking:
-    """AC-2: after deps block dispatch when unresolved."""
+class _FakeClient:
+    def __init__(self, issues: dict[int, dict] | None = None):
+        self.issues = issues or {}
+
+    def issue_get(self, number, fields=None):
+        data = dict(self.issues.get(number, {}))
+        data.setdefault("number", number)
+        data.setdefault("state", "OPEN")
+        data.setdefault("title", "t")
+        data.setdefault("body", _VALID_BODY)
+        data.setdefault("labels", [])
+        return data
+
+    def issue_update(self, number, labels_add=None, labels_remove=None):
+        pass
+
+    def issue_comment(self, number, body):
+        pass
+
+    def get_issue_comments(self, number):
+        return []
+
+    def list_issues(self, label, state="open"):
+        return []
+
+    def issue_timeline(self, number):
+        return []
+
+    def pr_list(self, *, head=None, state=None, search=None, repo=None, limit=30):
+        return []
+
+    def pr_get(self, number, *, repo=None):
+        raise RuntimeError(f"PR #{number} not found")
+
+    def api_request(self, path, *, method="GET", fields=None, repo=None, paginate=False):
+        if path.startswith("issues"):
+            return [
+                {
+                    "number": n,
+                    "title": d.get("title") or "",
+                    "state": str(d.get("state", "OPEN")).lower(),
+                    "body": d.get("body") or "",
+                    "labels": d.get("labels") or [],
+                }
+                for n, d in self.issues.items()
+                if str(d.get("state", "OPEN")).upper() == "OPEN"
+            ]
+        return []
 
 
-    def test_after_closed_merge_done_dep_allows_dispatch(self, tmp_path, monkeypatch, issuesmith_config):
-        _patch_dispatch(tmp_path, monkeypatch, issuesmith_config)
-        from issuesmith import queue as qmod
-
-        store = _store(tmp_path)
-        store.enqueue(
-            issue=50,
-            phase="draft",
-            source="skill",
-            actor_kind="human",
-            priority="normal",
-            requested_by=["alice"],
-            requested_at=_NOW,
-            after=[99],
-        )
-        store.mark_triaged(store.snapshot().revision)
-        client = _FakeClient(
-            {
-                50: {"state": "OPEN", "labels": [], "body": _VALID_BODY, "title": "main issue"},
-                99: {
-                    "state": "CLOSED",
-                    "labels": [{"name": "issuesmith:merge-done"}],
-                    "body": "",
-                    "title": "dep issue",
-                },
-            }
-        )
-        monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
-        now = datetime(2026, 9, 22, 12, 0, tzinfo=_JST)
-        result = qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
-        assert result.dispatched is True
-        assert result.issue == 50
+def test_enqueue_cli_rejects_after_option(issuesmith_config):
+    """#7963: queue enqueue does not accept --after."""
+    proc = _run_queue(
+        "enqueue",
+        "--issue",
+        "10",
+        "--phase",
+        "draft",
+        "--source",
+        "skill",
+        "--actor-kind",
+        "human",
+        "--priority",
+        "normal",
+        "--requested-by",
+        "alice",
+        "--after",
+        "99",
+        env={"ISSUESMITH_CONFIG": str(issuesmith_config)},
+    )
+    assert proc.returncode != 0
+    assert "unrecognized arguments" in proc.stderr or "unrecognized arguments" in proc.stdout
 
 
-class TestStatusAfterDisplay:
-    """AC-1 (display) and AC-5: status shows blocked_on for after deps."""
+def test_plan_ignores_legacy_request_meta_after(tmp_path, monkeypatch, issuesmith_config):
+    """#7963: legacy request_meta.after no longer blocks dispatch planning."""
+    _patch_dispatch(tmp_path, monkeypatch, issuesmith_config)
+    from issuesmith import queue as qmod
 
-    def test_status_shows_after_list(self, tmp_path, monkeypatch, capsys, issuesmith_config):
-        # AC-1: after=[M, K] visible in queue status
-        _patch_dispatch(tmp_path, monkeypatch, issuesmith_config)
-        from issuesmith import queue as qmod
+    store = _store(tmp_path)
+    result = store.enqueue(
+        issue=50,
+        phase="draft",
+        source="skill",
+        actor_kind="human",
+        priority="normal",
+        requested_by=["alice"],
+        requested_at=_NOW,
+    )
+    with store.lock():
+        state = store._load_state_unlocked()
+        meta = dict(state.get("request_meta") or {})
+        meta[result.request_id] = {"after": [99]}
+        state["request_meta"] = meta
+        store._save_state_unlocked(state)
 
-        store = _store(tmp_path)
-        store.enqueue(
-            issue=50,
-            phase="draft",
-            source="skill",
-            actor_kind="human",
-            priority="normal",
-            requested_by=["alice"],
-            requested_at=_NOW,
-            after=[200, 300],
-        )
+    client = _FakeClient({50: {"state": "OPEN", "labels": [], "body": _VALID_BODY, "title": "main"}})
+    monkeypatch.setattr(qmod, "_dispatch_pipeline_ready", lambda *a, **k: True)
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
 
-        monkeypatch.setattr(qmod, "get_forge", lambda **k: None)
-        args = argparse.Namespace(
-            queue_path=str(store.queue_path),
-            state_path=str(store.state_path),
-            lock_path=str(store.lock_path),
-        )
-        qmod._cmd_status(args)
-        out = capsys.readouterr().out
-        assert "200" in out and "300" in out
-        assert "blocked_on" in out or "after" in out
-
-    def test_status_shows_blocked_on_for_open_dep(self, tmp_path, monkeypatch, capsys, issuesmith_config):
-        # AC-5: blocked_on shown when after dep is OPEN
-        _patch_dispatch(tmp_path, monkeypatch, issuesmith_config)
-        from issuesmith import queue as qmod
-
-        store = _store(tmp_path)
-        store.enqueue(
-            issue=50,
-            phase="draft",
-            source="skill",
-            actor_kind="human",
-            priority="normal",
-            requested_by=["alice"],
-            requested_at=_NOW,
-            after=[99],
-        )
-
-        fake_client = _FakeClient(
-            {
-                50: {"state": "OPEN", "labels": [], "body": _VALID_BODY},
-                99: {"state": "OPEN", "labels": [], "body": "", "title": "dep"},
-            }
-        )
-        monkeypatch.setattr(qmod, "get_forge", lambda **k: fake_client)
-        args = argparse.Namespace(
-            queue_path=str(store.queue_path),
-            state_path=str(store.state_path),
-            lock_path=str(store.lock_path),
-        )
-        qmod._cmd_status(args)
-        out = capsys.readouterr().out
-        assert "blocked_on" in out
-        assert "#99" in out
+    queue_plan = qmod.plan(store, client, now=datetime(2026, 9, 22, 12, 0, tzinfo=_JST))
+    by_id = {e.request_id: e for e in queue_plan.entries}
+    entry = by_id[result.request_id]
+    assert entry.decision == "dispatch"
+    assert entry.reason != "after_deps"
 
 
-class TestDoctorDispatchBlocked:
-    """AC-5: doctor shows dispatch_blocked count."""
+def test_status_reads_legacy_after_without_blocked_on(
+    tmp_path, monkeypatch, capsys, issuesmith_config
+):
+    """#7963: status tolerates legacy after meta without surfacing blocked_on."""
+    import argparse
 
-    def test_doctor_shows_dispatch_blocked_count(self, tmp_path, monkeypatch, capsys, issuesmith_config):
-        _patch_dispatch(tmp_path, monkeypatch, issuesmith_config)
-        from issuesmith import queue as qmod
+    _patch_dispatch(tmp_path, monkeypatch, issuesmith_config)
+    from issuesmith import queue as qmod
 
-        store = _store(tmp_path)
-        store.enqueue(
-            issue=50,
-            phase="draft",
-            source="skill",
-            actor_kind="human",
-            priority="normal",
-            requested_by=["alice"],
-            requested_at=_NOW,
-            after=[99],
-        )
+    store = _store(tmp_path)
+    result = store.enqueue(
+        issue=50,
+        phase="draft",
+        source="skill",
+        actor_kind="human",
+        priority="normal",
+        requested_by=["alice"],
+        requested_at=_NOW,
+    )
+    with store.lock():
+        state = store._load_state_unlocked()
+        meta = dict(state.get("request_meta") or {})
+        meta[result.request_id] = {"after": [200, 300]}
+        state["request_meta"] = meta
+        store._save_state_unlocked(state)
 
-        fake_client = _FakeClient(
-            {
-                50: {"state": "OPEN", "labels": [], "body": _VALID_BODY, "title": "main"},
-                99: {"state": "OPEN", "labels": [], "body": "", "title": "dep"},
-            }
-        )
-        monkeypatch.setattr(qmod, "get_forge", lambda **k: fake_client)
-        monkeypatch.setattr(qmod, "REPO", "sumipan/nexus")
-        args = argparse.Namespace(
-            queue_path=str(store.queue_path),
-            state_path=str(store.state_path),
-            lock_path=str(store.lock_path),
-        )
-        qmod._cmd_doctor(args)
-        out = capsys.readouterr().out
-        assert "dispatch_blocked" in out
-        assert "1" in out
-
-    def test_doctor_no_blocked_still_ok(self, tmp_path, monkeypatch, capsys, issuesmith_config):
-        _patch_dispatch(tmp_path, monkeypatch, issuesmith_config)
-        from issuesmith import queue as qmod
-
-        store = _store(tmp_path)
-        fake_client = _FakeClient({})
-        monkeypatch.setattr(qmod, "get_forge", lambda **k: fake_client)
-        monkeypatch.setattr(qmod, "REPO", "sumipan/nexus")
-        args = argparse.Namespace(
-            queue_path=str(store.queue_path),
-            state_path=str(store.state_path),
-            lock_path=str(store.lock_path),
-        )
-        qmod._cmd_doctor(args)
-        out = capsys.readouterr().out
-        assert "doctor ok" in out
+    monkeypatch.setattr(qmod, "get_forge", lambda **k: _FakeClient({50: {"body": _VALID_BODY}}))
+    args = argparse.Namespace(
+        queue_path=str(store.queue_path),
+        state_path=str(store.state_path),
+        lock_path=str(store.lock_path),
+    )
+    code = qmod._cmd_status(args)
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "issue=#50" in out
+    assert "blocked_on" not in out
 
 
+def test_queue_sources_have_no_after_feature_markers():
+    """#7963: queue modules no longer encode enqueue --after / after_deps."""
+    hits: list[str] = []
+    for rel in ("issuesmith/queue.py", "issuesmith/queue_store.py"):
+        text = (SRC_PATH / rel).read_text(encoding="utf-8")
+        for pattern in _AFTER_FEATURE_PATTERNS:
+            for match in pattern.finditer(text):
+                hits.append(f"{rel}:{match.group(0)}")
+    assert hits == []

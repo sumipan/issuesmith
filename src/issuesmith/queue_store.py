@@ -552,7 +552,6 @@ class QueueStore:
         request_id: str | None = None,
         force: bool = False,
         seed_key: str | None = None,
-        after: list[int] | None = None,
     ) -> EnqueueResult:
         at = requested_at or datetime.now().astimezone().isoformat()
         validate_request_fields(
@@ -603,10 +602,6 @@ class QueueStore:
                     entry["priority"] = new_priority
                     if force:
                         entry["force"] = True
-                    if after:
-                        existing_after = list(entry.get("after") or [])
-                        merged_after = sorted(set(existing_after) | set(after))
-                        entry["after"] = merged_after
                     meta[rid] = entry
                     state["request_meta"] = meta
                     state["revision"] = int(state.get("revision", 0)) + 1
@@ -643,8 +638,6 @@ class QueueStore:
             new_entry: dict[str, Any] = {}
             if force:
                 new_entry["force"] = True
-            if after:
-                new_entry["after"] = sorted(set(after))
             if new_entry:
                 meta[rid] = new_entry
                 state["request_meta"] = meta

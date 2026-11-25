@@ -208,7 +208,7 @@ Global options: `--queue-path`, `--state-path`, `--lock-path`.
 
 | Subcommand | Description |
 |---|---|
-| `queue enqueue --issue N --phase P --source S --actor-kind {human,automation} --priority {high,normal,low} --requested-by X [--force] [--after N]` | Queue an Issue for a configured phase (`--after` is repeatable) |
+| `queue enqueue --issue N --phase P --source S --actor-kind {human,automation} --priority {high,normal,low} --requested-by X [--force]` | Queue an Issue for a configured phase |
 | `queue tick [--seed PATH]` | Triage and dispatch queued requests |
 | `queue status [--json]` | Show queue state including `blocks[]` (scope, kind, reason, until, set_by); `--json` also emits legacy `halt` fields (read-only migration) plus a dispatch `plan` snapshot |
 | `queue doctor [--json]` | Report untracked in-flight Issues |
@@ -290,7 +290,7 @@ LLM steps, `engine run-guarded`, `engine run-verified`, and workflow `dispatch` 
 | `milestone status <parent> --json` | `parent`, `state`, `stage`, `children`, `next`, … |
 | `observe --json` | `list` of observe events |
 | `queue status --json` | queue snapshot plus `plan` entries |
-| `queue doctor --json` | `ok`, `orphan_active_order_ids`, `untracked_running_issues`, `dispatch_blocked` |
+| `queue doctor --json` | `ok`, `orphan_active_order_ids`, `untracked_running_issues` |
 | `queue release --issue N --json` | release result object |
 | `engine show --json` | `state_source`, `roles` (`role` / `engine` / `model` per row) |
 
