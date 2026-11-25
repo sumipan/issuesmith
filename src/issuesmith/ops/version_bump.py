@@ -487,39 +487,6 @@ def fold_unreleased(
     return "".join(lines)
 
 
-def sync_readme_version(text: str, old: str, new: str) -> tuple[str, int]:
-    """Replace ``v<old>`` / `` `<old>` `` / ``version = "<old>"`` with ``<new>`` (#6236, #7245).
-
-    Lines containing ``since v<old>`` are history and stay as-is. Neighbouring digits
-    or dots block a match, so ``0.1.3`` never hits ``0.1.30`` or ``10.1.3``.
-    """
-    esc = re.escape(old)
-    pattern = re.compile(
-        rf"(?<![\w.])(v){esc}(?![\d.]*\d)"
-        rf"|(`){esc}(`)"
-        rf'|(?<![\w.])(version[ \t]*=[ \t]*"){esc}(")'
-    )
-    since = f"since v{old}"
-    count = 0
-    out: list[str] = []
-    for line in text.splitlines(keepends=True):
-        if since in line:
-            out.append(line)
-            continue
-
-        def _sub(m: re.Match[str]) -> str:
-            nonlocal count
-            count += 1
-            if m.group(1):
-                return f"v{new}"
-            if m.group(2) is not None:
-                return f"`{new}`"
-            return f"{m.group(4)}{new}{m.group(5)}"
-
-        out.append(pattern.sub(_sub, line))
-    return "".join(out), count
-
-
 def run_bump(worktree: Path, base: str) -> int:
     pyproject = worktree / "pyproject.toml"
     if not pyproject.is_file():
@@ -568,14 +535,6 @@ def run_bump(worktree: Path, base: str) -> int:
         if folded is not None:
             changelog.write_text(folded, encoding="utf-8")
             to_add.append("CHANGELOG.md")
-    readme = worktree / "README.md"
-    synced = 0
-    if readme.is_file():
-        readme_text = readme.read_text(encoding="utf-8")
-        new_readme, synced = sync_readme_version(readme_text, old_ver, new_ver)
-        if synced:
-            readme.write_text(new_readme, encoding="utf-8")
-            to_add.append("README.md")
     add = _run_git(worktree, "add", *to_add)
     if add.returncode != 0:
         print(add.stderr, file=sys.stderr)
@@ -590,8 +549,6 @@ def run_bump(worktree: Path, base: str) -> int:
         print(f"CHANGELOG_FOLDED: {new_ver}")
     for subject in skipped_subjects:
         print(f"CHANGELOG_SKIPPED_SUBJECT: {subject}")
-    if synced:
-        print(f"README_VERSION_SYNCED: {old_ver} -> {new_ver} ({synced})")
     return 0
 
 
