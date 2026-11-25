@@ -210,6 +210,7 @@ class StepConfig:
     recheck: tuple[str, ...] = ()
     accepts: tuple[str, ...] = ()
     andon_when: tuple[str, ...] = ()
+    redo_on_conflict: str | None = None
     repair: RepairConfig = field(default_factory=RepairConfig)
     review: ReviewConfig | None = None
     tier: TierConfig | None = None
@@ -1148,6 +1149,20 @@ def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
         if "verify" in conf:
             verify = _build_step_verify(conf.get("verify"), str(step_id))
 
+        redo_on_conflict: str | None = None
+        if "redo_on_conflict" in conf:
+            redo_raw = conf["redo_on_conflict"]
+            if not isinstance(redo_raw, str):
+                raise ConfigError(
+                    f"steps.{step_id}.redo_on_conflict must be a non-empty string"
+                )
+            redo_stripped = redo_raw.strip()
+            if not redo_stripped:
+                raise ConfigError(
+                    f"steps.{step_id}.redo_on_conflict must be a non-empty string"
+                )
+            redo_on_conflict = redo_stripped
+
         steps[str(step_id)] = StepConfig(
             module=module,
             template=template,
@@ -1157,12 +1172,35 @@ def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
             recheck=recheck,
             accepts=accepts,
             andon_when=andon_when,
+            redo_on_conflict=redo_on_conflict,
             repair=repair,
             review=review,
             tier=tier,
             verify=verify,
         )
+    _validate_redo_on_conflict_refs(steps)
     return steps
+
+
+def _validate_redo_on_conflict_refs(steps: dict[str, StepConfig]) -> None:
+    for step_id, conf in steps.items():
+        target = conf.redo_on_conflict
+        if target is None:
+            continue
+        if target == step_id:
+            raise ConfigError(
+                f"steps.{step_id}.redo_on_conflict must not reference itself ({target!r})"
+            )
+        target_conf = steps.get(target)
+        if target_conf is None:
+            raise ConfigError(
+                f"steps.{step_id}.redo_on_conflict references unknown step {target!r}"
+            )
+        if not target_conf.module:
+            raise ConfigError(
+                f"steps.{step_id}.redo_on_conflict references step {target!r} "
+                f"with no module"
+            )
 
 
 def _build_forbidden_pr_paths(raw: Any) -> tuple[str, ...]:
