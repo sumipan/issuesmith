@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.209.6 - 2026-11-25
+
+### Fixed
+
+- forge: pass issue close state_reason on all close paths (#7962)
+
 ## 0.209.5 - 2026-11-25
 
 ### Fixed

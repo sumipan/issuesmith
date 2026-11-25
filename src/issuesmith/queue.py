@@ -1824,8 +1824,9 @@ def _apply_terminal(
         except Exception as exc:
             print(f"warning: failed to add rejected label: {exc}", file=sys.stderr)
     if close_issue:
+        close_reason = "not_planned" if add_rejected_label else "completed"
         try:
-            client.issue_close(issue_number)
+            client.issue_close(issue_number, reason=close_reason)
         except Exception as exc:
             print(f"warning: failed to close issue: {exc}", file=sys.stderr)
     store.complete(request_id, decision_kind, extra_meta={"reason": reason})

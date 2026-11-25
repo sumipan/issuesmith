@@ -488,10 +488,10 @@ def run(ctx: StepContext, step: StepConfig) -> StepResult:
     if pr is None:
         if repos_differ:
             title = f"Implement {issue_repo}#{issue}"
-            body = f"Closes {issue_repo}#{issue}"
+            body = f"Refs {issue_repo}#{issue}"
         else:
             title = f"Implement #{issue}"
-            body = f"Closes #{issue}"
+            body = f"Refs #{issue}"
         try:
             create_url = str(
                 pr_client.pr_create(

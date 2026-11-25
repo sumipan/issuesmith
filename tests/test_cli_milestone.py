@@ -210,9 +210,25 @@ class ConsolidateClient:
         issue = self.issues[number]
         issue["labels"] = list(issue["labels"]) + [{"name": n} for n in labels_add or []]
 
-    def issue_close(self, number):
+    def issue_close(self, number, *, reason="completed"):
         self.closed.append(number)
         self.issues[number]["state"] = "CLOSED"
+        self.issues[number]["state_reason"] = reason
+
+
+def test_milestone_consolidate_closes_not_planned(tmp_path, monkeypatch):
+    """Refs #7962 — consolidate close records not_planned state_reason."""
+    from ghdag.forge import LocalForge
+
+    from issuesmith.milestone import milestone_consolidate
+
+    client = LocalForge(tmp_path / "forge")
+    child = client.issue_create("child", "body")
+    into = client.issue_create("into", "body")
+    assert milestone_consolidate(child, into, client=client) == 0
+    got = client.issue_get(child, fields=["state", "state_reason"])
+    assert got["state"] == "CLOSED"
+    assert got["state_reason"] == "not_planned"
 
 
 def test_milestone_consolidate_marks_rejects_and_closes(capsys, monkeypatch):

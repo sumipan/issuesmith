@@ -232,7 +232,7 @@ class TestDispatch:
             def issue_update(self, *a, **k):
                 pass
 
-            def issue_close(self, *a):
+            def issue_close(self, *a, **k):
                 pass
 
         client = Client()

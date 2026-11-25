@@ -1069,7 +1069,10 @@ def test_issue_flows_to_other_target_repo_when_host_is_not_target_checkout(
     assert merged, f"expected merged PR on {target_slug}, got {pulls!r}"
     pr = client.pr_get(int(merged[0]["number"]), repo=target_slug)
     body = str(pr.get("body") or "")
-    assert f"Closes {host_slug}#{number}" in body
+    assert f"Refs {host_slug}#{number}" in body
+    assert "Closes " not in body
+    reason = client.issue_get(number, fields=["state_reason"])["state_reason"]
+    assert reason == "completed"
 
 
 def test_issue_flows_from_ready_to_done_on_local_forge(host_env) -> None:

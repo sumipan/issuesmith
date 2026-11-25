@@ -895,7 +895,7 @@ def advance_milestone_chains(
                 _msg("chain_all_done_closed", children=child_refs),
                 "<!-- issuesmith:milestone-chain:all-done -->",
             )
-            client.issue_close(parent_num)
+            client.issue_close(parent_num, reason="completed")
             store.update_milestone_chain(
                 parent_num,
                 {"notified_all_done": True, "closed_parent": True},
@@ -1157,7 +1157,7 @@ def milestone_consolidate(child: int, into: int, *, client: ForgePort | None = N
     if rejected not in label_names(child_issue):
         client.issue_update(child, labels_add=[rejected], labels_remove=[])
     if str(child_issue.get("state", "")).upper() == "OPEN":
-        client.issue_close(child)
+        client.issue_close(child, reason="not_planned")
     print(f"milestone consolidate: #{child} -> #{into}")
     return 0
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "issuesmith"
-version = "0.209.5"
+version = "0.209.6"
 description = "Suite for agent-first software factories: Issue-to-merge production lines on ghdag"
 readme = "README.md"
 license = "MIT"
@@ -23,7 +23,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-ghdag = ["ghdag>=0.152.2"]
+ghdag = ["ghdag>=0.155.2"]
 dev = [
   "pytest>=7.0.0",
   "pytest-timeout>=2.3.1",
@@ -32,7 +32,7 @@ dev = [
   "ruff>=0.4.0",
   "setuptools>=64",
   "wheel",
-  "ghdag>=0.152.2",
+  "ghdag>=0.155.2",
 ]
 
 [project.scripts]
