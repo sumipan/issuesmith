@@ -382,6 +382,7 @@ ghdag's `WorkflowDispatcher` drives workflow timing: label polling, DAG edges, a
 | `issuesmith/gates/scope.py` | Scope gate — wraps issuesmith.scope_gate to return unified Verdict. |
 | `issuesmith/gates/worktree.py` | Worktree gates: lint, tests, external_leak, base_freshness (#3626), importer_import (#5013), publish_diff (#7031). |
 | `issuesmith/github_api.py` | issuesmith.github_api |
+| `issuesmith/issue_outcome.py` | Classify an Issue as open, completed, or not_planned from ``state`` and ``state_reason`` only. |
 | `issuesmith/lanes.py` | Lane ledger planning: capacity, candidates, enqueue, and patrol report (#4792). |
 | `issuesmith/language.py` | Language packs: host-facing vocabulary and GitHub-posted text. |
 | `issuesmith/lines/__init__.py` | Bundled reference production lines and file extract helpers. |
