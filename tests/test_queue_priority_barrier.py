@@ -23,12 +23,21 @@ def _store(tmp_path: Path) -> QueueStore:
     )
 
 
+_BODY_WITH_OPEN_DEP = (
+    _VALID_BODY
+    + "\n## Dependencies\n\n"
+    + "| # | Issue |\n"
+    + "| --- | --- |\n"
+    + "| 1 | #99 |\n"
+)
+
+
 def _client_for_issues(*issue_numbers: int) -> _ProdShapeClient:
     issues = {
         n: {
             "state": "OPEN",
             "title": "t",
-            "body": _VALID_BODY,
+            "body": _BODY_WITH_OPEN_DEP if n == 100 else _VALID_BODY,
             "labels": [],
         }
         for n in issue_numbers
@@ -38,7 +47,7 @@ def _client_for_issues(*issue_numbers: int) -> _ProdShapeClient:
             "number": n,
             "title": "t",
             "state": "open",
-            "body": _VALID_BODY,
+            "body": _BODY_WITH_OPEN_DEP if n == 100 else _VALID_BODY,
             "labels": [],
         }
         for n in issue_numbers
@@ -51,7 +60,7 @@ def _patch_gates(monkeypatch, qmod):
     monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
 
 
-def _enqueue_high_low_after_deps(store: QueueStore) -> tuple[str, str]:
+def _enqueue_high_low_with_open_body_dep(store: QueueStore) -> tuple[str, str]:
     high = store.enqueue(
         issue=100,
         phase="draft",
@@ -60,7 +69,6 @@ def _enqueue_high_low_after_deps(store: QueueStore) -> tuple[str, str]:
         priority="high",
         requested_by=["alice"],
         requested_at=_NOW,
-        after=[99],
     )
     low = store.enqueue(
         issue=200,
@@ -75,16 +83,19 @@ def _enqueue_high_low_after_deps(store: QueueStore) -> tuple[str, str]:
 
 
 def test_plan_low_waits_with_priority_barrier_while_high_waits(tmp_path, monkeypatch):
-    """AC1: low waits with priority_barrier while high is blocked on after_deps."""
+    """#6254 / #7963: low waits with priority_barrier while high is blocked on precondition."""
     from issuesmith import queue as qmod
 
     store = _store(tmp_path)
-    _, low_rid = _enqueue_high_low_after_deps(store)
+    high_rid, low_rid = _enqueue_high_low_with_open_body_dep(store)
     client = _client_for_issues(99, 100, 200)
     _patch_gates(monkeypatch, qmod)
 
     queue_plan = plan(store, client, now=_PLAN_NOW)
     by_id = {e.request_id: e for e in queue_plan.entries}
+    high_entry = by_id[high_rid]
+    assert high_entry.decision == "wait"
+    assert high_entry.reason == "precondition"
     low_entry = by_id[low_rid]
     assert low_entry.decision == "wait"
     assert low_entry.reason == "priority_barrier"

@@ -22,7 +22,6 @@ from ghdag.quota import QuotaGate, QuotaSnapshot
 
 from issuesmith.cli_errors import ContractParser, fail
 from issuesmith.config import get_config
-from issuesmith.dep_extractor import check_dependencies
 from issuesmith.engine_route import build_route
 from issuesmith.forge_api import api_request
 from issuesmith.gate_rules.scope_coupling import (
@@ -207,7 +206,6 @@ PlanReason = Literal[
     "issue_fetch_failed",
     "decision_pending",
     "precondition",
-    "after_deps",
     "deletion_refs",
     "allow_paths_conflict",
     "pipeline_not_idle",
@@ -2044,16 +2042,6 @@ def _plan_with_window(
             )
             continue
 
-        after_issues = list((snap.request_meta.get(rid) or {}).get("after") or [])
-        if after_issues:
-            after_result = check_dependencies(after_issues, client=client)
-            if after_result.decision == "BLOCK":
-                nums = ", ".join(f"#{n}" for n in after_issues)
-                entries.append(
-                    _plan_wait_entry(req, "after_deps", f"blocked_on: [{nums}]", engine)
-                )
-                continue
-
         impl_phase = _primary_impl_phase_name()
         if impl_phase and req.phase == impl_phase:
             refs = deletion_references_for_body(str(issue.get("body") or ""))
@@ -2562,7 +2550,6 @@ def _cmd_enqueue(args: argparse.Namespace) -> int:
             priority=args.priority,
             requested_by=[args.requested_by],
             force=bool(args.force),
-            after=getattr(args, "after", None) or None,
         )
     except QueueValidationError as exc:
         return fail("INVALID_VALUE", str(exc))
@@ -2687,20 +2674,6 @@ def _cmd_status(args: argparse.Namespace) -> int:
                     f"    waiting: required engine paused: "
                     f"{', '.join(paused_for_role)} (role={role})"
                 )
-        meta = snap.request_meta.get(rid) or {}
-        after_issues = list(meta.get("after") or [])
-        if after_issues and client is not None:
-            try:
-                after_result = check_dependencies(after_issues, client=client)
-                blocking_after = [s.issue for s in after_result.blocking_deps]
-            except Exception:
-                blocking_after = after_issues
-            if blocking_after:
-                nums = ", ".join(f"#{n}" for n in blocking_after)
-                print(f"    blocked_on: [{nums}]")
-        elif after_issues:
-            nums = ", ".join(f"#{n}" for n in after_issues)
-            print(f"    blocked_on: [{nums}]")
         if client is None:
             continue
         try:
@@ -2763,7 +2736,6 @@ def _queue_doctor_payload(args: argparse.Namespace) -> tuple[int, dict[str, Any]
             "ok": False,
             "orphan_active_order_ids": orphan_ids,
             "untracked_running_issues": [],
-            "dispatch_blocked": 0,
         }
         return 1, payload
 
@@ -2776,7 +2748,6 @@ def _queue_doctor_payload(args: argparse.Namespace) -> tuple[int, dict[str, Any]
             "ok": False,
             "orphan_active_order_ids": [],
             "untracked_running_issues": [],
-            "dispatch_blocked": 0,
         }
     try:
         untracked = _find_untracked_running(client, snap)
@@ -2786,7 +2757,6 @@ def _queue_doctor_payload(args: argparse.Namespace) -> tuple[int, dict[str, Any]
             "ok": False,
             "orphan_active_order_ids": [],
             "untracked_running_issues": [],
-            "dispatch_blocked": 0,
         }
     if untracked:
         sorted_untracked = sorted(untracked)
@@ -2794,29 +2764,13 @@ def _queue_doctor_payload(args: argparse.Namespace) -> tuple[int, dict[str, Any]
             "ok": False,
             "orphan_active_order_ids": [],
             "untracked_running_issues": sorted_untracked,
-            "dispatch_blocked": 0,
         }
         return 1, payload
 
-    dispatch_blocked = 0
-    for rid in snap.active_order:
-        req = store.effective_request(snap, rid)
-        if req is None:
-            continue
-        after_issues = list((snap.request_meta.get(rid) or {}).get("after") or [])
-        if not after_issues:
-            continue
-        try:
-            after_result = check_dependencies(after_issues, client=client)
-            if after_result.decision == "BLOCK":
-                dispatch_blocked += 1
-        except Exception:
-            pass
     payload = {
         "ok": True,
         "orphan_active_order_ids": [],
         "untracked_running_issues": [],
-        "dispatch_blocked": dispatch_blocked,
     }
     return 0, payload
 
@@ -2836,9 +2790,6 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         nums = ", ".join(f"#{n}" for n in untracked)
         print(f"untracked running issues: {nums}")
         return code
-    dispatch_blocked = int(payload.get("dispatch_blocked") or 0)
-    if dispatch_blocked:
-        print(f"dispatch_blocked: {dispatch_blocked} requests")
     print("doctor ok: no untracked running issues")
     return code
 
@@ -3084,7 +3035,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_enq.add_argument("--priority", required=True, choices=["high", "normal", "low"])
     p_enq.add_argument("--requested-by", required=True)
     p_enq.add_argument("--force", action="store_true")
-    p_enq.add_argument("--after", type=int, action="append", default=None)
     p_enq.set_defaults(func=_cmd_enqueue)
 
     p_tick = sub.add_parser("tick")

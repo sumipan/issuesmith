@@ -7,6 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.209.5 - 2026-11-25
+
+### Fixed
+
+- queue: drop enqueue --after and request_meta after blocking
+- repair: remove test_queue_after per AC paths_must_not_exist (#7963)
+
 ## 0.209.4 - 2026-11-25
 
 ### Fixed

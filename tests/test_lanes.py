@@ -265,7 +265,7 @@ def test_high_priority_enqueued_first_and_applied_as_high(tmp_path: Path):
 def test_plan_carries_queue_wait_reasons(tmp_path: Path):
     """Issue #7326: queue wait reasons surface in lane plan JSON."""
     entries = (
-        PlanEntry("r1", 10, "develop", "cursor", "wait", "after_deps", "waiting on #9"),
+        PlanEntry("r1", 10, "develop", "cursor", "wait", "precondition", "dependencies not satisfied"),
         PlanEntry("r2", 11, "merge", "cursor", "wait", "engine_paused", "cursor paused"),
         PlanEntry("r3", 12, "draft", "claude", "wait", "slot_full", "no slots"),
         PlanEntry("r4", 0, "", None, "wait", "halt", "halted for maintenance"),
@@ -275,7 +275,7 @@ def test_plan_carries_queue_wait_reasons(tmp_path: Path):
     as_dict = plan_to_dict(lane_plan)
     assert as_dict["halt"] is True
     reasons = {w["issue"]: w["reason"] for w in as_dict["waits"]}
-    assert reasons[10] == "after_deps"
+    assert reasons[10] == "precondition"
     assert reasons[11] == "engine_paused"
     assert reasons[12] == "slot_full"
     kinds = {e["kind"] for e in lane_plan.escalations}
