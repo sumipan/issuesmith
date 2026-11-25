@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 import pytest
 import yaml
 
-from issuesmith.config import load_config, reset_config_cache
+from issuesmith.config import ConfigError, load_config, reset_config_cache
 from issuesmith.queue_store import QueueStore
 from tests.conftest import NEXUS_TEST_PHASES
 
@@ -31,8 +31,6 @@ _MIGRATE_PHASE = {
 _CHAIN_PHASES = []
 for ph in NEXUS_TEST_PHASES:
     item = dict(ph)
-    if item["name"] == "develop":
-        item["advance_when"] = ["deps_terminal", "pins_landed"]
     _CHAIN_PHASES.append(item)
     if item["name"] == "develop":
         _CHAIN_PHASES.append(_MIGRATE_PHASE)
@@ -43,6 +41,27 @@ def _clear_config_cache():
     reset_config_cache()
     yield
     reset_config_cache()
+
+
+def test_unknown_pins_landed_predicate_is_config_error(tmp_path, monkeypatch):
+    """Refs sumipan/issuesmith#8028."""
+    phases = [
+        {
+            "name": "develop",
+            "role": "implementation",
+            "entry_step": "cp2",
+            "handler": "impl",
+            "advance_when": ["pins_landed"],
+        }
+    ]
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "sumipan/nexus", "phases": phases}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    with pytest.raises(ConfigError, match="unknown predicate 'pins_landed'"):
+        load_config()
 
 
 @pytest.fixture

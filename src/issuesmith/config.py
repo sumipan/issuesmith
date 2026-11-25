@@ -25,7 +25,6 @@ class ConfigError(ValueError):
 
 _CONFIG_ENV = "ISSUESMITH_CONFIG"
 _CONFIG_FILENAME = "issuesmith.yaml"
-INSTALLS_ENV = "@env"
 
 
 def _warn_normalized_rule_id(*, field: str, before: str, after: str) -> None:
@@ -424,7 +423,6 @@ class IssuesmithConfig:
     api_brake: ApiBreakConfig = field(default_factory=ApiBreakConfig)
     language: LanguagePack = EN
     label_write_guard: Literal["warn", "enforce"] = "warn"
-    installs: Mapping[str, Path | str] = field(default_factory=dict)
     pin_packages: tuple[str, ...] = ()
     andon: AndonConfig = field(default_factory=AndonConfig)
     path_env_prefixes: tuple[str, ...] = ()
@@ -818,7 +816,6 @@ def _build_phases(raw: Any) -> tuple[PhaseConfig, ...]:
         raise ConfigError("phases must be declared")
     if not isinstance(raw, list):
         raise ValueError("phases must be a list of mappings")
-    import issuesmith.pins  # noqa: F401  (registers pins_landed)
     from issuesmith.preconditions import PRECONDITION_REGISTRY, external_reference_valid
 
     phases: list[PhaseConfig] = []
@@ -1691,11 +1688,9 @@ def _build_observe(
     )
 
 
-def _build_pin_packages(
-    raw: Any, installs: Mapping[str, Path | str]
-) -> tuple[str, ...]:
+def _build_pin_packages(raw: Any) -> tuple[str, ...]:
     if raw is None:
-        return tuple(installs)
+        return ()
     if not isinstance(raw, list):
         raise ConfigError("pin_packages must be a list of package names")
     out: list[str] = []
@@ -1704,22 +1699,6 @@ def _build_pin_packages(
             raise ConfigError(f"pin_packages[{i}] must be a non-empty string")
         out.append(item)
     return tuple(out)
-
-
-def _build_installs(raw: Any, root: Path) -> dict[str, Path | str]:
-    if raw is None:
-        return {}
-    if not isinstance(raw, dict):
-        raise ConfigError("installs must be a mapping")
-    out: dict[str, Path | str] = {}
-    for key, value in raw.items():
-        if not isinstance(value, str):
-            raise ConfigError(f"installs[{key!r}] must be a string path")
-        if value == INSTALLS_ENV:
-            out[str(key)] = INSTALLS_ENV
-        else:
-            out[str(key)] = _abs(root, value)
-    return out
 
 
 def _build_andon(raw: Mapping[str, Any] | None) -> AndonConfig:
@@ -1839,8 +1818,7 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     )
     andon_raw = data.get("andon") if isinstance(data.get("andon"), dict) else None
     language = _build_language(data, root=root.resolve())
-    installs = _build_installs(data.get("installs"), root.resolve())
-    pin_packages = _build_pin_packages(data.get("pin_packages"), installs)
+    pin_packages = _build_pin_packages(data.get("pin_packages"))
     resolved_root = root.resolve()
     paths = _build_paths(paths_raw, resolved_root)
     concurrency_overlay = _load_concurrency_overlay(paths.concurrency)
@@ -1884,7 +1862,6 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         api_brake=_build_api_brake(api_brake_raw),
         language=language,
         label_write_guard=_build_label_write_guard(data.get("label_write_guard")),
-        installs=installs,
         pin_packages=pin_packages,
         andon=_build_andon(andon_raw),
         path_env_prefixes=_build_path_env_prefixes(data.get("path_env_prefixes")),

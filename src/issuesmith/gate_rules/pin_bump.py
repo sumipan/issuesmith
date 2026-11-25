@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
 from pathlib import Path
 
 from issuesmith.config import get_config
@@ -19,27 +18,24 @@ _IDEO_PERIOD = bytes.fromhex("e38082").decode("utf-8")
 _CLAUSE_DELIMS = _IDEO_COMMA + _IDEO_PERIOD + ",;|"
 _CLAUSE_SPLIT = re.compile("[" + re.escape(_CLAUSE_DELIMS) + "]")
 # A clause states a pin change only when it names the pin itself: the word
-# "pin" (pin / pins / pinned / requires_pins) or a direct reference
+# "pin" (pin / pins / pinned) or a direct reference
 # ("<pkg> @ git+...").  A dependency name next to a version number is not
 # enough: designs cite the version they port from or verified against.
 _PIN_WORD = re.compile(r"(?<![A-Za-z])pin(?:s|ned)?(?![A-Za-z])|@\s*git\+", re.IGNORECASE)
 
-_SELF_PIN_NOTE = (
-    " Do not put the target_repo's own package in requires_pins"
-    " (pins_landed reads dependency pins from that repo's pyproject.toml;"
-    " a self pin never lands)."
+_REQUIRES_PINS_REMOVED_HINT = (
+    "requires_pins was removed; open a pin-bump Issue for the dependency, "
+    "list it under ## Dependencies as - #N, and remove requires_pins from the YAML."
 )
 _IN_FEATURE_FIX_HINT = (
-    "pins are raised by the bump workflow; put the required version"
-    " in requires_pins and remove pyproject.toml from allow_paths."
-    + _SELF_PIN_NOTE
+    "Dependency pins are raised by the bump workflow; open a pin-bump Issue "
+    "and list it under ## Dependencies as - #N."
 )
 _IN_FEATURE_FIX_HINT_KEEP_PYPROJECT = (
-    "pins are raised by the bump workflow; put the required version"
-    " in requires_pins and drop the pin change from the design."
-    " Keep pyproject.toml in allow_paths: the change table edits it"
-    " for another reason (for example the repo's own version)."
-    + _SELF_PIN_NOTE
+    "Dependency pins are raised by the bump workflow; open a pin-bump Issue "
+    "and list it under ## Dependencies as - #N. "
+    "Keep pyproject.toml in allow_paths: the change table edits it "
+    "for another reason (for example the repo's own version)."
 )
 
 
@@ -109,18 +105,7 @@ def _change_table_has_pyproject(body: str) -> bool:
     return False
 
 
-def _normalize_pin_version(raw: str) -> str:
-    value = raw.strip()
-    if value[:1].lower() == "v":
-        value = value[1:]
-    return value
-
-
-def _pin_change_lines(
-    body: str,
-    package_names: frozenset[str],
-    required_pins: Mapping[str, object],
-) -> list[str]:
+def _pin_change_lines(body: str, package_names: frozenset[str]) -> list[str]:
     if not package_names:
         return []
     section = _design_section(body)
@@ -137,11 +122,6 @@ def _pin_change_lines(
             for pkg in package_names:
                 if pkg not in clause:
                     continue
-                required = required_pins.get(pkg)
-                if required is not None:
-                    req_norm = _normalize_pin_version(str(required))
-                    if all(_normalize_pin_version(v) == req_norm for v in versions):
-                        continue
                 if not _PIN_WORD.search(clause):
                     continue
                 clause_hit = True
@@ -153,38 +133,25 @@ def _pin_change_lines(
 
 class PinBumpRules:
     def check(self, body: str, labels: list[str]) -> list[Violation]:
-        if any(lab.startswith("bump:") for lab in labels):
-            return []
         try:
             metadata = parse_issue_metadata(body)
         except ValueError:
             return []
 
-        self_package = _self_package(metadata)
-        required = metadata.get("requires_pins") or {}
-        if (
-            isinstance(required, dict)
-            and self_package is not None
-            and self_package in required
-        ):
+        if "requires_pins" in metadata:
             return [
                 Violation(
-                    rule_id="pin_bump.self_requires_pin",
+                    rule_id="pin_bump.requires_pins_removed",
                     severity="fail",
-                    message=(
-                        f"feature Issue lists {self_package} in requires_pins"
-                        " for the same package as target_repo"
-                    ),
+                    message="feature Issue uses removed requires_pins metadata",
                     location=None,
                     auto_fixable=False,
-                    fix_hint=(
-                        f"remove {self_package} from requires_pins;"
-                        " pins_landed reads dependency git pins from"
-                        " target_repo's pyproject.toml, so a pin on the"
-                        " repo's own package cannot land"
-                    ),
+                    fix_hint=_REQUIRES_PINS_REMOVED_HINT,
                 )
             ]
+
+        if any(lab.startswith("bump:") for lab in labels):
+            return []
 
         target_repo = metadata.get("target_repo")
         if isinstance(target_repo, str) and _is_pin_only_issue(body, target_repo):
@@ -194,11 +161,8 @@ class PinBumpRules:
             return []
 
         cfg = get_config()
-        if isinstance(required, dict):
-            pkg_names = frozenset(str(k) for k in required)
-        else:
-            pkg_names = frozenset()
-        package_names = frozenset(cfg.pin_packages) | pkg_names
+        package_names = frozenset(cfg.pin_packages)
+        self_package = _self_package(metadata)
         if self_package is not None:
             package_names = package_names - {self_package}
         base_text = base_pyproject_text(metadata, cfg)
@@ -211,8 +175,7 @@ class PinBumpRules:
                     and lower_bound_version(base_text, pkg) is not None
                 )
             )
-        required_pins = required if isinstance(required, dict) else {}
-        hits = _pin_change_lines(body, package_names, required_pins)
+        hits = _pin_change_lines(body, package_names)
         if not hits:
             return []
 

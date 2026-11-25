@@ -1,22 +1,15 @@
-"""Pin version reading and comparison for requires_pins landing checks."""
+"""Pin version reading from pyproject.toml text."""
 
 from __future__ import annotations
 
 import re
 import subprocess
-from collections.abc import Mapping
-from importlib.metadata import PackageNotFoundError
-from importlib.metadata import version as dist_version
-from pathlib import Path
 from typing import TYPE_CHECKING
 
-from packaging.version import InvalidVersion, Version
-
-from issuesmith.config import INSTALLS_ENV
+from packaging.version import Version
 
 if TYPE_CHECKING:
     from issuesmith.config import IssuesmithConfig
-    from issuesmith.preconditions import PreconditionContext
 
 _URL_PIN_RE = re.compile(
     r"(?P<package>[a-zA-Z0-9_-]+)(?:\[[^\]]*\])?"
@@ -26,31 +19,6 @@ _LOWER_BOUND_RE = re.compile(
     r"(?P<package>[A-Za-z0-9_.-]+)(?:\[[^\]]*\])?"
     r"\s*>=\s*v?(?P<version>\d+\.\d+\.\d+)"
 )
-
-
-def requires_pins(metadata: dict) -> dict[str, Version]:
-    """Return ``{package: Version}`` from issue metadata ``requires_pins``.
-
-    Missing key returns ``{}``. Invalid shape or non-SemVer values raise ``ValueError``.
-    """
-    raw = metadata.get("requires_pins")
-    if raw is None:
-        return {}
-    if not isinstance(raw, dict):
-        raise ValueError("requires_pins must be a mapping")
-    out: dict[str, Version] = {}
-    for key, value in raw.items():
-        pkg = str(key).strip()
-        if not pkg:
-            raise ValueError("requires_pins keys must be non-empty strings")
-        ver_str = str(value).strip()
-        if ver_str.startswith("v"):
-            ver_str = ver_str[1:]
-        try:
-            out[pkg] = Version(ver_str)
-        except InvalidVersion as exc:
-            raise ValueError(f"requires_pins[{pkg!r}]: invalid version {value!r}") from exc
-    return out
 
 
 def url_pin_version(pyproject_text: str, package: str) -> Version | None:
@@ -67,14 +35,6 @@ def lower_bound_version(pyproject_text: str, package: str) -> Version | None:
         if match.group("package") == package:
             return Version(match.group("version"))
     return None
-
-
-def pin_version(pyproject_text: str, package: str) -> Version | None:
-    """Read the effective pin or lower-bound version for ``package``."""
-    url_ver = url_pin_version(pyproject_text, package)
-    if url_ver is not None:
-        return url_ver
-    return lower_bound_version(pyproject_text, package)
 
 
 def base_pyproject_text(metadata: dict, config: IssuesmithConfig) -> str | None:
@@ -94,125 +54,3 @@ def base_pyproject_text(metadata: dict, config: IssuesmithConfig) -> str | None:
     if proc.returncode == 0:
         return proc.stdout
     return None
-
-
-def environment_version(package: str) -> Version | None:
-    """Return the installed distribution version for ``package`` in this process."""
-    try:
-        return Version(dist_version(package))
-    except PackageNotFoundError:
-        return None
-    except InvalidVersion:
-        return None
-
-
-def installed_version(install_dir: Path) -> Version | None:
-    """Return the latest tag version at ``install_dir`` via ``git describe``."""
-    try:
-        proc = subprocess.run(
-            ["git", "-C", str(install_dir), "describe", "--tags", "--abbrev=0"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except OSError:
-        return None
-    if proc.returncode != 0:
-        return None
-    tag = proc.stdout.strip()
-    if not tag:
-        return None
-    if tag.startswith("v"):
-        tag = tag[1:]
-    try:
-        return Version(tag)
-    except InvalidVersion:
-        return None
-
-
-def _fmt_version(ver: Version | None) -> str:
-    return "unknown" if ver is None else f"v{ver}"
-
-
-def unlanded_pins(
-    required: dict[str, Version],
-    base_text: str | None,
-    installs: Mapping[str, Path | str],
-) -> list[str]:
-    """Return human-readable descriptions of pins not yet landed (empty when all ok)."""
-    if not required:
-        return []
-    unlanded: list[str] = []
-    for pkg, req_ver in sorted(required.items()):
-        if base_text is None:
-            base_ver: Version | None = None
-        else:
-            base_ver = pin_version(base_text, pkg)
-        install_spec = installs.get(pkg)
-        if install_spec is not None:
-            if install_spec == INSTALLS_ENV:
-                inst_ver = environment_version(pkg)
-            else:
-                inst_ver = installed_version(Path(install_spec))
-        else:
-            inst_ver = None
-
-        pin_ok = base_ver is not None and base_ver >= req_ver
-        if install_spec is not None:
-            install_ok = inst_ver is not None and inst_ver >= req_ver
-            if pin_ok and install_ok:
-                continue
-        elif pin_ok:
-            continue
-
-        unlanded.append(
-            f"{pkg} v{req_ver} (base={_fmt_version(base_ver)}, "
-            f"installed={_fmt_version(inst_ver)})"
-        )
-    return unlanded
-
-
-def develop_pins_landed(body: str, config: IssuesmithConfig) -> tuple[bool, str]:
-    """Return whether ``requires_pins`` in ``body`` have landed for develop."""
-    from issuesmith.context_hook import parse_issue_metadata
-
-    try:
-        metadata = parse_issue_metadata(body)
-    except ValueError:
-        return True, "ok"
-
-    try:
-        required = requires_pins(metadata)
-    except ValueError as exc:
-        return False, f"invalid requires_pins: {exc}"
-
-    if not required:
-        return True, "ok"
-
-    base_text = base_pyproject_text(metadata, config)
-
-    unlanded = unlanded_pins(required, base_text, config.installs)
-    if not unlanded:
-        return True, "ok"
-
-    def _queue_reason(item: str) -> str:
-        match = re.match(r"^(.+?) (\(.+\))$", item)
-        if match:
-            return f"pin {match.group(1)} not landed {match.group(2)}"
-        return f"pin {item} not landed"
-
-    joined = "; ".join(_queue_reason(item) for item in unlanded)
-    return False, f"dependencies not satisfied: {joined}"
-
-
-def _pins_landed(ctx: PreconditionContext, config: IssuesmithConfig) -> tuple[bool, str]:
-    return develop_pins_landed(str(ctx.issue.get("body") or ""), config)
-
-
-def _register_predicate() -> None:
-    from issuesmith.preconditions import register
-
-    register("pins_landed", _pins_landed)
-
-
-_register_predicate()
