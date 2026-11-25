@@ -614,7 +614,7 @@ def publish(
 
     client = get_forge(repo=repo)
     try:
-        existing = client.pr_list(head=branch, state="all", limit=1)
+        existing = client.pr_list(head=branch, state="open", limit=1)
     except Exception as exc:  # noqa: BLE001 - rate limit / network: report, do not crash (#3767)
         return PublishResult(status="PR_LIST_FAILED", stderr=str(exc), exit_code=1)
     if existing:
@@ -685,15 +685,19 @@ def main(argv: list[str]) -> int:
 
 # Cross-module rebump calls use the public alias; tests may still import ``_ensure_rebased``.
 ensure_rebased = _ensure_rebased
+build_pr_metadata = _build_pr_metadata
+parse_publish_allow_paths = _parse_allow_paths
 
 # The bump helpers are shared with the M1 version_behind_base gate.
 __all__ = [
     "PublishResult",
     "_bump_versions_in_range",
     "_run_version_bump",
+    "build_pr_metadata",
     "continue_rebase_past_changelog",
     "ensure_rebased",
     "main",
+    "parse_publish_allow_paths",
     "publish",
     "run_version_bump",
 ]

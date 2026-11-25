@@ -21,6 +21,7 @@ from issuesmith.verbs import (
     find_pr,
     merge_pr,
     merge_state,
+    pr_title_and_body,
     publish_branch,
     rebump_onto_base,
     write_result,
@@ -562,12 +563,7 @@ def run(ctx: StepContext, step: StepConfig) -> StepResult:
         pr_client, pr_repo, branch, issue, match_issue_in_title=match_title
     )
     if pr is None:
-        if repos_differ:
-            title = f"Implement {issue_repo}#{issue}"
-            body = f"Refs {issue_repo}#{issue}"
-        else:
-            title = f"Implement #{issue}"
-            body = f"Refs #{issue}"
+        title, body = pr_title_and_body(issue, pr_repo, issue_repo)
         try:
             create_url = str(
                 pr_client.pr_create(

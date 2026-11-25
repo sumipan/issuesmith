@@ -7,6 +7,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.212.0 - 2026-11-25
+
+### Added
+
+- develop: add publish step verbs and open-only PR reuse
+
+### Fixed
+
+- repair: expose publish verb helpers and sync README (#8011)
+
 ## 0.211.2 - 2026-11-25
 
 ### Added

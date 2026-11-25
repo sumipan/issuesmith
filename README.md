@@ -9,12 +9,12 @@ The package bundles design and merge gates, a request queue with triage, lane pl
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.211.2-blue)
+![version](https://img.shields.io/badge/version-v0.212.0-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.211.2** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.212.0** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
@@ -23,13 +23,13 @@ The current release is **v0.211.2** (pre-1.0). Public interfaces can change in a
 # the lower bound in pyproject.toml (ghdag>=0.152.2), then install issuesmith.
 pip install "ghdag @ git+https://github.com/sumipan/ghdag.git@v0.152.2"
 
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.211.2"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.212.0"
 ```
 
 Gates, forge access, `observe`, `andon`, `lanes`, and `metrics` import ghdag, so install the `ghdag` extra unless another dependency already provides ghdag. The base install alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.211.2"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.212.0"
 ```
 
 | Item | Value |
@@ -301,7 +301,7 @@ Supported Python imports are limited to seven modules (`issuesmith.__all__` is e
 | Module | Symbols |
 |---|---|
 | `issuesmith.contract` | `StepContext`, `StepResult`, `StepConfig`, `Andon`, `RetrySignal`, `RetryReason`, `parse_issue_metadata`, `validate_issue_metadata`, `MetadataViolation` |
-| `issuesmith.verbs` | `AcceptanceError`, `AcceptanceVerdict`, `ReviewFacts`, `ChildPlan`, `ChildPlanEntry`, `ChildPlanError`, `WorktreeError`, `block_design_only_issue`, `check_acceptance`, `check_contract`, `cleanup_branches`, `cleanup_worktrees`, `close_issue`, `create_child`, `ensure_base_included`, `exec_file`, `extract_contract`, `find_pr`, `map_step_result`, `merge_pr`, `merge_state`, `OrderRun`, `plan_children`, `pre_llm_violations`, `prepare_worktree`, `read_result`, `RebumpResult`, `publish_branch`, `rebump_onto_base`, `resolve`, `resolve_base_ref`, `route`, `review_tier`, `run_guarded`, `run_order`, `run_verified`, `unchecked_acceptance_count`, `validate_children`, `widen_allow_paths`, `write_result` |
+| `issuesmith.verbs` | `AcceptanceError`, `AcceptanceVerdict`, `ReviewFacts`, `ChildPlan`, `ChildPlanEntry`, `ChildPlanError`, `WorktreeError`, `block_design_only_issue`, `check_acceptance`, `check_contract`, `cleanup_branches`, `cleanup_worktrees`, `close_issue`, `create_child`, `ensure_base_included`, `exec_file`, `extract_contract`, `find_pr`, `map_step_result`, `merge_pr`, `merge_state`, `OrderRun`, `plan_children`, `pre_llm_violations`, `prepare_worktree`, `pr_title_and_body`, `PublishResult`, `publish_branch`, `publish_pr`, `read_result`, `RebumpResult`, `rebump_onto_base`, `resolve`, `resolve_base_ref`, `route`, `review_tier`, `run_guarded`, `run_order`, `run_verified`, `unchecked_acceptance_count`, `validate_children`, `widen_allow_paths`, `write_result` |
 | `issuesmith.gates` | `Verdict`, `GateBuildContext`, `GateBuildError`, `GateEntry`, `RequiresGate`, `GATE_REGISTRY`, `NON_REPAIRABLE_RULE_IDS`, `is_non_repairable_rule_id`, `resolve_gate`, `validate_step_requires`, `check_scope`, `check_pr_scope`, `check_ac_complete`, `check_deps`, `Violation`, `Gate`, `PreconditionContext`, `normalize_allow_path`, `external_target_state` |
 | `issuesmith.config` | `get_config`, `load_config`, `IssuesmithConfig`, `LanguagePack` |
 | `issuesmith.andon` | `Andon`, `AndonSink`, `AutoAnswerPlan`, `raise_andon`, `list_open`, `list_open_records`, `answer`, `from_comment`, `to_comment`, `plan_auto_answers`, `apply_auto_answers` |
@@ -326,7 +326,7 @@ issuesmith is pre-1.0 and follows `0.Y.Z`: a `Y` bump may change or remove publi
 
 ### Deprecated API
 
-No symbols are deprecated at **v0.211.2**. Retired interfaces are listed under Deprecated and Removed in [CHANGELOG.md](./CHANGELOG.md); they must not reappear in the CLI or Public API tables above.
+No symbols are deprecated at **v0.212.0**. Retired interfaces are listed under Deprecated and Removed in [CHANGELOG.md](./CHANGELOG.md); they must not reappear in the CLI or Public API tables above.
 
 ## Architecture
 
@@ -390,6 +390,7 @@ ghdag's `WorkflowDispatcher` drives workflow timing: label polling, DAG edges, a
 | `issuesmith/lines/develop/hooks.py` | ghdag runner hooks for the reference develop line (failure record on the Issue). |
 | `issuesmith/lines/develop/implement.py` | Run the implementation LLM for the reference develop line. |
 | `issuesmith/lines/develop/merge.py` | Publish, open or find a PR, merge, and finalize the reference develop line. |
+| `issuesmith/lines/develop/publish.py` | Push branch and open or reuse a PR for the reference develop line. |
 | `issuesmith/lines/develop/prepare.py` | Prepare a git worktree for the reference develop line. |
 | `issuesmith/lines/develop/review.py` | Review step: branch freshness check, then review dispatch via requires. |
 | `issuesmith/lines/develop/verify.py` | Verify step placeholder; gates run via dispatch requires. |

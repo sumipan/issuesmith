@@ -20,8 +20,10 @@ from issuesmith.engine import (
 )
 from issuesmith.gates.worktree import line_has_cjk
 from issuesmith.ops.dispatch import map_step_result as dispatch_map_step_result
+from issuesmith.ops.publish import PublishResult as ops_publish_result
 from issuesmith.verbs import acceptance as acceptance_mod
 from issuesmith.verbs import children as children_mod
+from issuesmith.verbs import publish as publish_mod
 from issuesmith.verbs import worktree as worktree_mod
 from tests.conventions._util import REPO_ROOT
 
@@ -50,7 +52,10 @@ VERBS_PUBLIC_NAMES = frozenset(
         "merge_pr",
         "merge_state",
         "OrderRun",
+        "PublishResult",
         "plan_children",
+        "pr_title_and_body",
+        "publish_pr",
         "pre_llm_violations",
         "prepare_worktree",
         "RebumpResult",
@@ -91,6 +96,9 @@ def test_verbs_public_exports():
     assert issuesmith_verbs.AcceptanceError is acceptance_mod.AcceptanceError
     assert issuesmith_verbs.plan_children is children_mod.plan_children
     assert issuesmith_verbs.ChildPlanError is children_mod.ChildPlanError
+    assert issuesmith_verbs.PublishResult is ops_publish_result
+    assert issuesmith_verbs.publish_pr is publish_mod.publish_pr
+    assert issuesmith_verbs.pr_title_and_body is publish_mod.pr_title_and_body
 
 
 def test_public_api_docs_are_english():

@@ -13,6 +13,7 @@ from issuesmith.engine import (
     run_verified,
 )
 from issuesmith.ops.dispatch import map_step_result
+from issuesmith.ops.publish import PublishResult
 from issuesmith.verbs.acceptance import (
     AcceptanceError,
     AcceptanceVerdict,
@@ -40,7 +41,13 @@ from issuesmith.verbs.finalize import (
     write_result,
 )
 from issuesmith.verbs.merge import find_pr, merge_pr, merge_state
-from issuesmith.verbs.publish import RebumpResult, publish_branch, rebump_onto_base
+from issuesmith.verbs.publish import (
+    RebumpResult,
+    pr_title_and_body,
+    publish_branch,
+    publish_pr,
+    rebump_onto_base,
+)
 from issuesmith.verbs.worktree import (
     WorktreeError,
     block_design_only_issue,
@@ -76,8 +83,11 @@ __all__ = [
     "plan_children",
     "pre_llm_violations",
     "prepare_worktree",
+    "PublishResult",
     "RebumpResult",
+    "pr_title_and_body",
     "publish_branch",
+    "publish_pr",
     "rebump_onto_base",
     "resolve",
     "resolve_base_ref",

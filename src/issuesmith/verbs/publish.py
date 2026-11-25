@@ -13,7 +13,14 @@ from issuesmith.bump_commits import (
     bump_versions_in_range,
     strip_bump_version_lines,
 )
-from issuesmith.ops.publish import _push_branch, run_version_bump
+from issuesmith.ops.publish import (
+    PublishResult,
+    _push_branch,
+    build_pr_metadata,
+    parse_publish_allow_paths,
+    publish,
+    run_version_bump,
+)
 from issuesmith.version_policy import bump_paths, is_bump_only_change
 
 
@@ -246,4 +253,55 @@ def publish_branch(repo_cwd: Path, branch: str, remote: str = "origin") -> None:
         raise RuntimeError(f"git push to {remote} failed: {detail}")
 
 
-__all__ = ["RebumpResult", "publish_branch", "rebump_onto_base"]
+def pr_title_and_body(
+    issue_number: int,
+    repo: str,
+    issue_repo: str,
+) -> tuple[str, str]:
+    """Return PR title and body using the same language-pack keys as ops publish."""
+    return build_pr_metadata(issue_number, repo, issue_repo)
+
+
+def publish_pr(
+    worktree: Path,
+    *,
+    issue_number: int,
+    branch: str,
+    base_branch: str,
+    repo: str,
+    issue_repo: str,
+    allow_paths: str = "",
+) -> PublishResult:
+    """Push branch and open or reuse a PR via ops.publish (verb boundary)."""
+    worktree = Path(worktree)
+    paths = parse_publish_allow_paths(allow_paths if allow_paths.strip() else None)
+    try:
+        return publish(
+            issue_number=issue_number,
+            branch=branch,
+            base_branch=base_branch,
+            worktree=worktree,
+            repo=repo,
+            issue_repo=issue_repo,
+            allow_paths=paths,
+        )
+    except subprocess.CalledProcessError as exc:
+        stderr = ""
+        for stream in (exc.stderr, exc.stdout, str(exc)):
+            if stream and str(stream).strip():
+                stderr = str(stream).strip()
+                break
+        if not stderr:
+            stderr = "git command failed"
+        exit_code = exc.returncode if exc.returncode != 0 else 1
+        return PublishResult(status="GIT_FAILED", stderr=stderr, exit_code=exit_code)
+
+
+__all__ = [
+    "PublishResult",
+    "RebumpResult",
+    "pr_title_and_body",
+    "publish_branch",
+    "publish_pr",
+    "rebump_onto_base",
+]
