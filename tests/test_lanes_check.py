@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+from collections import UserDict
 from dataclasses import fields
 from datetime import datetime, timezone
 from pathlib import Path
@@ -144,11 +145,13 @@ def test_fetch_issue_views_prefers_cache_and_skips_failures():
         forge_calls.append(number)
         if number == 3:
             raise RuntimeError("missing")
-        return {
-            "number": 2,
-            "state": "open",
-            "labels": [{"name": "from-forge"}],
-        }
+        return UserDict(
+            {
+                "number": 2,
+                "state": "open",
+                "labels": [{"name": "from-forge"}],
+            }
+        )
 
     client = MagicMock()
     client.issue_get.side_effect = _issue_get

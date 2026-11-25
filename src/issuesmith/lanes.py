@@ -475,7 +475,7 @@ def fetch_issue_views(
             raw = client.issue_get(number, fields=["number", "state", "labels"])
         except Exception:
             continue
-        if not isinstance(raw, dict):
+        if not isinstance(raw, Mapping):
             continue
         out[number] = _issue_view_from_raw(number, raw)
     return out
