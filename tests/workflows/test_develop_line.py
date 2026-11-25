@@ -2162,6 +2162,156 @@ def test_merge_step_rebumps_once_then_merges(tmp_path: Path, monkeypatch) -> Non
     assert merge_calls == [42]
 
 
+def test_same_repo_merge_uses_publish_metadata(tmp_path: Path, monkeypatch) -> None:
+    """refs sumipan/nexus#8011 — merge pr_create uses publish metadata (same repo)."""
+    from issuesmith.lines.develop import merge as develop_merge
+    from issuesmith.verbs import pr_title_and_body
+
+    worktree = tmp_path / "wt"
+    subprocess.run(
+        ["git", "init", "-q", "-b", "main", str(worktree)],
+        check=True,
+        capture_output=True,
+    )
+    issue = 7
+    pr_repo = "sumipan/nexus"
+    issue_repo = pr_repo
+    title, body = pr_title_and_body(issue, pr_repo, issue_repo)
+    captured: dict[str, str] = {}
+
+    def record_create(*, title: str, body: str, **_kwargs: object) -> str:
+        captured["title"] = title
+        captured["body"] = body
+        return "https://example/pull/1"
+
+    client = MagicMock()
+    client.pr_create = record_create
+    locate = iter([None, 11])
+
+    monkeypatch.setattr(develop_merge, "_commit_gate_autofixes", lambda _w: "")
+    monkeypatch.setattr(develop_merge, "_bump_before_publish", lambda *_a, **_k: "")
+    monkeypatch.setattr(develop_merge, "publish_branch", lambda *_a, **_k: None)
+    monkeypatch.setattr(develop_merge, "_locate_pr", lambda *_a, **_k: next(locate))
+    monkeypatch.setattr(develop_merge, "get_forge", lambda **_k: client)
+    monkeypatch.setattr(develop_merge, "_merge_via_pr", lambda *_a, **_k: None)
+    monkeypatch.setattr(develop_merge, "_result_version", lambda *_a, **_k: "1.0.0")
+    monkeypatch.setattr(develop_merge, "_result_merge_commit_after_pr", lambda *_a, **_k: "sha")
+    monkeypatch.setattr(develop_merge, "_result_pr_url", lambda *_a, **_k: "url")
+    monkeypatch.setattr(develop_merge, "cleanup_worktrees", lambda *_a, **_k: None)
+    monkeypatch.setattr(develop_merge, "cleanup_branches", lambda *_a, **_k: None)
+    monkeypatch.setattr(develop_merge, "write_result", lambda *_a, **_k: None)
+    monkeypatch.setattr(develop_merge, "close_issue", lambda *_a, **_k: None)
+    from types import SimpleNamespace
+
+    lang = get_config().language
+    monkeypatch.setattr(
+        develop_merge,
+        "get_config",
+        lambda: SimpleNamespace(
+            merges_without_pr=lambda _repo: False,
+            host_is_repo_checkout=True,
+            root=Path("."),
+            language=lang,
+            merge=get_config().merge,
+        ),
+    )
+
+    ctx = StepContext(
+        issue_number=str(issue),
+        base_branch="main",
+        handler_name="develop",
+        is_cross_repo="false",
+        target_clone_path="",
+        target_repo=pr_repo,
+        issue_repo=issue_repo,
+        source="",
+        workflow_name="issuesmith",
+        m1_result_filename="",
+        m1r_result_filename="",
+        worktree_path=str(worktree),
+        branch="feat/issue-7-test",
+    )
+    result = develop_merge.run(ctx, StepConfig())
+    assert result.status == "done"
+    assert captured["title"] == title
+    assert captured["body"] == body
+
+
+def test_cross_repo_merge_uses_publish_metadata(tmp_path: Path, monkeypatch) -> None:
+    """refs sumipan/nexus#8011 — merge pr_create uses publish metadata (cross repo)."""
+    from issuesmith.lines.develop import merge as develop_merge
+    from issuesmith.verbs import pr_title_and_body
+
+    worktree = tmp_path / "wt"
+    subprocess.run(
+        ["git", "init", "-q", "-b", "main", str(worktree)],
+        check=True,
+        capture_output=True,
+    )
+    issue = 7
+    pr_repo = "sumipan/issuesmith"
+    issue_repo = "sumipan/nexus"
+    title, body = pr_title_and_body(issue, pr_repo, issue_repo)
+    captured: dict[str, str] = {}
+
+    def record_create(*, title: str, body: str, **_kwargs: object) -> str:
+        captured["title"] = title
+        captured["body"] = body
+        return "https://example/pull/2"
+
+    client = MagicMock()
+    client.pr_create = record_create
+    locate = iter([None, 12])
+
+    monkeypatch.setattr(develop_merge, "_commit_gate_autofixes", lambda _w: "")
+    monkeypatch.setattr(develop_merge, "_bump_before_publish", lambda *_a, **_k: "")
+    monkeypatch.setattr(develop_merge, "publish_branch", lambda *_a, **_k: None)
+    monkeypatch.setattr(develop_merge, "_locate_pr", lambda *_a, **_k: next(locate))
+    monkeypatch.setattr(develop_merge, "get_forge", lambda **_k: client)
+    monkeypatch.setattr(develop_merge, "_merge_via_pr", lambda *_a, **_k: None)
+    monkeypatch.setattr(develop_merge, "_result_version", lambda *_a, **_k: "1.0.0")
+    monkeypatch.setattr(develop_merge, "_result_merge_commit_after_pr", lambda *_a, **_k: "sha")
+    monkeypatch.setattr(develop_merge, "_result_pr_url", lambda *_a, **_k: "url")
+    monkeypatch.setattr(develop_merge, "cleanup_worktrees", lambda *_a, **_k: None)
+    monkeypatch.setattr(develop_merge, "write_result", lambda *_a, **_k: None)
+    monkeypatch.setattr(develop_merge, "close_issue", lambda *_a, **_k: None)
+    from types import SimpleNamespace
+
+    lang = get_config().language
+    monkeypatch.setattr(
+        develop_merge,
+        "get_config",
+        lambda: SimpleNamespace(
+            merges_without_pr=lambda _repo: False,
+            host_is_repo_checkout=False,
+            root=Path("."),
+            language=lang,
+            merge=get_config().merge,
+            paths=get_config().paths,
+        ),
+    )
+
+    ctx = StepContext(
+        issue_number=str(issue),
+        base_branch="main",
+        handler_name="develop",
+        is_cross_repo="true",
+        target_clone_path=".claude/external/issuesmith",
+        target_repo=pr_repo,
+        issue_repo=issue_repo,
+        source="",
+        workflow_name="issuesmith",
+        m1_result_filename="",
+        m1r_result_filename="",
+        worktree_path=str(worktree),
+        branch="feat/issue-7-cross",
+    )
+    result = develop_merge.run(ctx, StepConfig())
+    assert result.status == "done"
+    assert captured["title"] == title
+    assert captured["body"] == body
+
+
 def test_merge_step_andons_when_rebump_not_bump_only(tmp_path: Path, monkeypatch) -> None:
     """refs #7398 AC9: not_bump_only rebump keeps blocked andon without merge."""
     from unittest.mock import MagicMock

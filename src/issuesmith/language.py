@@ -234,6 +234,7 @@ _EN_MESSAGES: dict[str, str] = {
     "publish.pr_title_cross_repo": "Implement {issue_repo}#{issue}",
     "publish.pr_title": "Implement Issue #{issue}",
     "publish.pr_body": "Auto-generated from the P1/P2 result.",
+    "publish.step_failed": "Publish step failed ({status}): {detail}",
     # milestone (parent comments and SUB1 results)
     "milestone.child_no_milestone_no_link": (
         "## Child link error: no milestone and sub-issue link failed\n\n"

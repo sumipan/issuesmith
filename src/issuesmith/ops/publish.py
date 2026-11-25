@@ -614,7 +614,7 @@ def publish(
 
     client = get_forge(repo=repo)
     try:
-        existing = client.pr_list(head=branch, state="all", limit=1)
+        existing = client.pr_list(head=branch, state="open", limit=1)
     except Exception as exc:  # noqa: BLE001 - rate limit / network: report, do not crash (#3767)
         return PublishResult(status="PR_LIST_FAILED", stderr=str(exc), exit_code=1)
     if existing:
