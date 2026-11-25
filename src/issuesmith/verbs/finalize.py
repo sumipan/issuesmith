@@ -59,7 +59,7 @@ def _cleanup_branches(repo_cwd: Path, issue_number: str, *, external: bool = Fal
 def _close_issue_if_open(client: ForgePort, issue_number: int) -> None:
     state = client.issue_get(issue_number, fields=["state"])["state"]
     if state == "OPEN":
-        client.issue_close(issue_number)
+        client.issue_close(issue_number, reason="completed")
         print(f"FINALIZER: closed issue {issue_number}")
     else:
         print(f"FINALIZER: issue {issue_number} already {state} (noop close)")

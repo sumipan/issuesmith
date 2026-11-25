@@ -117,6 +117,7 @@ class FakeClient:
         self.summaries = summaries or {}
         self.posted_comments: list[tuple[int, str]] = []
         self.closed: list[int] = []
+        self.close_reasons: dict[int, str] = {}
         self.label_ops: list[tuple[str, int, object]] = []
         self.sub_issue_links: list[tuple[int, int]] = []
         self.list_sub_issues_calls: list[int] = []
@@ -140,8 +141,9 @@ class FakeClient:
         self.posted_comments.append((number, body))
         self.comments.setdefault(number, []).append({"body": body})
 
-    def issue_close(self, number):
+    def issue_close(self, number, *, reason="completed"):
         self.closed.append(number)
+        self.close_reasons[number] = reason
         if number in self.issues:
             self.issues[number] = dict(self.issues[number])
             self.issues[number]["state"] = "CLOSED"
@@ -266,6 +268,19 @@ class TestChainRules:
         snap = store.snapshot()
         assert snap.active_order == []
 
+
+    def test_auto_close_parent_closes_completed(self, tmp_path):
+        """Refs #7962 — auto_close_parent passes completed to issue_close."""
+        store = _store(tmp_path)
+        store.update_milestone_chain(100, {"stage": "children_validated"})
+        child = _child_issue(101, state="CLOSED", labels=["issuesmith:merge-done"])
+        client = FakeClient(
+            issues={100: _parent_issue(), 101: child},
+            children={1: [child]},
+        )
+        advance_milestone_chains(store, client, _chain_config(auto_close_parent=True))
+        assert client.closed == [100]
+        assert client.close_reasons[100] == "completed"
 
     def test_c4_auto_close_parent_false_keeps_notify_only(self, tmp_path):
         store = _store(tmp_path)

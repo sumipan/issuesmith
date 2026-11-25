@@ -161,3 +161,17 @@ def test_cleanup_worktrees_handles_cross_repo(tmp_path: Path) -> None:
 def test_all_verbs_are_importable() -> None:
     for name in verbs.__all__:
         assert hasattr(verbs, name), f"missing: {name}"
+
+
+def test_close_issue_sets_completed(tmp_path: Path) -> None:
+    """Refs #7962 — develop-line finalize close uses completed state_reason."""
+    from ghdag.forge import LocalForge
+
+    from issuesmith.verbs.finalize import close_issue
+
+    client = LocalForge(tmp_path / "forge")
+    number = client.issue_create("t", "b")
+    close_issue(client, number)
+    got = client.issue_get(number, fields=["state", "state_reason"])
+    assert got["state"] == "CLOSED"
+    assert got["state_reason"] == "completed"

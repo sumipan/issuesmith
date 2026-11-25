@@ -339,6 +339,7 @@ class _ProdShapeClient:
         self.updates: list[tuple] = []
         self.comments: list[tuple] = []
         self.closes: list[int] = []
+        self.close_reasons: dict[int, str] = {}
         self.pr_get_calls: list[int] = []
         self.api_request_calls: list[str] = []
 
@@ -353,8 +354,9 @@ class _ProdShapeClient:
     def issue_comment(self, number, body):
         self.comments.append((number, body))
 
-    def issue_close(self, number):
+    def issue_close(self, number, *, reason="completed"):
         self.closes.append(number)
+        self.close_reasons[number] = reason
 
     def get_issue_comments(self, number):
         return []
@@ -821,6 +823,74 @@ def test_status_reads_legacy_after_meta(tmp_path, monkeypatch, capsys, issuesmit
     assert code == 0
     assert "issue=#50" in out
     assert "blocked_on" not in out
+
+
+def test_apply_terminal_rejected_closes_not_planned(tmp_path: Path) -> None:
+    """Refs #7962 — rejected terminal close records not_planned state_reason."""
+    from ghdag.forge import LocalForge
+
+    from issuesmith import queue as qmod
+
+    store = _store(tmp_path)
+    client = LocalForge(tmp_path / "forge")
+    number = client.issue_create("t", "b")
+    req = store.enqueue(
+        issue=number,
+        phase="draft",
+        source="test",
+        actor_kind="human",
+        priority="normal",
+        requested_by=["alice"],
+        requested_at=_NOW,
+    )
+    qmod._apply_terminal(
+        store,
+        client,
+        req.request_id,
+        number,
+        "rejected",
+        "r",
+        close_issue=True,
+        add_rejected_label=True,
+        comment=False,
+    )
+    got = client.issue_get(number, fields=["state", "state_reason"])
+    assert got["state"] == "CLOSED"
+    assert got["state_reason"] == "not_planned"
+
+
+def test_apply_terminal_without_rejected_closes_completed(tmp_path: Path) -> None:
+    """Refs #7962 — non-rejected terminal close records completed state_reason."""
+    from ghdag.forge import LocalForge
+
+    from issuesmith import queue as qmod
+
+    store = _store(tmp_path)
+    client = LocalForge(tmp_path / "forge")
+    number = client.issue_create("t", "b")
+    req = store.enqueue(
+        issue=number,
+        phase="draft",
+        source="test",
+        actor_kind="human",
+        priority="normal",
+        requested_by=["alice"],
+        requested_at=_NOW,
+    )
+    qmod._apply_terminal(
+        store,
+        client,
+        req.request_id,
+        number,
+        "done",
+        "ok",
+        close_issue=True,
+        add_rejected_label=False,
+        comment=False,
+    )
+    got = client.issue_get(number, fields=["state", "state_reason"])
+    assert got["state"] == "CLOSED"
+    assert got["state_reason"] == "completed"
 
 
 def test_queue_sources_have_no_after_feature_markers():
