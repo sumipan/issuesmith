@@ -104,6 +104,7 @@ class PathsConfig:
     template_dir: Path
     engine_state: Path
     lanes: Path | None = None
+    concurrency: Path | None = None
 
 
 _AUTO_ANSWER_MATCH_KEYS = frozenset({"step", "kind", "rule_id"})
@@ -599,7 +600,80 @@ def _build_paths(raw: Mapping[str, Any] | None, root: Path) -> PathsConfig:
     lanes: Path | None = None
     if raw and raw.get("lanes") is not None:
         lanes = _abs(root, str(raw["lanes"]))
-    return PathsConfig(**resolved, lanes=lanes)
+    concurrency: Path | None = None
+    if raw and raw.get("concurrency") is not None:
+        concurrency = _abs(root, str(raw["concurrency"]))
+    return PathsConfig(**resolved, lanes=lanes, concurrency=concurrency)
+
+
+_CONCURRENCY_OVERLAY_KEYS = frozenset({
+    "default", "per_engine", "strict_order", "max_dispatch_per_tick",
+})
+
+
+def _load_concurrency_overlay(path: Path | None) -> dict[str, Any]:
+    """Read and validate ``paths.concurrency``; return only keys present in the file."""
+    if path is None or not path.is_file():
+        return {}
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise ConfigError(f"paths.concurrency {path}: invalid YAML: {exc}") from exc
+    if raw is None:
+        return {}
+    if not isinstance(raw, Mapping):
+        raise ConfigError(f"paths.concurrency {path}: must be a mapping")
+    unknown = set(raw) - _CONCURRENCY_OVERLAY_KEYS
+    if unknown:
+        raise ConfigError(
+            f"paths.concurrency {path}: unknown keys: {sorted(unknown)}"
+        )
+    out: dict[str, Any] = {}
+    for key, val in raw.items():
+        if key == "per_engine":
+            if not isinstance(val, Mapping):
+                raise ConfigError(
+                    f"paths.concurrency {path}: per_engine must be a mapping"
+                )
+            per_engine: dict[str, int] = {}
+            for eng, limit in val.items():
+                if isinstance(limit, bool) or not isinstance(limit, int):
+                    raise ConfigError(
+                        f"paths.concurrency {path}: per_engine[{eng!r}] must be an integer"
+                    )
+                per_engine[str(eng)] = limit
+            out["per_engine"] = per_engine
+        elif key == "strict_order":
+            if not isinstance(val, bool):
+                raise ConfigError(
+                    f"paths.concurrency {path}: strict_order must be a boolean"
+                )
+            out["strict_order"] = val
+        elif key in ("default", "max_dispatch_per_tick"):
+            if isinstance(val, bool) or not isinstance(val, int):
+                raise ConfigError(
+                    f"paths.concurrency {path}: {key} must be an integer"
+                )
+            out[key] = val
+    return out
+
+
+def _merge_concurrency_yaml(
+    base: Mapping[str, Any], overlay: Mapping[str, Any]
+) -> dict[str, Any]:
+    if not base and not overlay:
+        return {}
+    merged = dict(base)
+    if not overlay:
+        return merged
+    if "per_engine" in overlay:
+        per_engine = dict(merged.get("per_engine") or {})
+        per_engine.update(dict(overlay["per_engine"]))
+        merged["per_engine"] = per_engine
+    for key in ("default", "strict_order", "max_dispatch_per_tick"):
+        if key in overlay:
+            merged[key] = overlay[key]
+    return merged
 
 
 def _build_pause_ttl_sec(raw: Any, role: str) -> int:
@@ -1689,7 +1763,11 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         supported = frozenset(str(x) for x in supported_raw)
     paths_raw = data.get("paths") if isinstance(data.get("paths"), dict) else None
     engines_raw = data.get("engines") if isinstance(data.get("engines"), dict) else None
-    concurrency_raw = data.get("concurrency") if isinstance(data.get("concurrency"), dict) else None
+    concurrency_yaml = (
+        dict(data["concurrency"])
+        if isinstance(data.get("concurrency"), dict)
+        else {}
+    )
     milestone_raw = data.get("milestone_chain") if isinstance(data.get("milestone_chain"), dict) else None
     triage_raw = data.get("triage") if isinstance(data.get("triage"), dict) else None
     steps_raw = data.get("steps") if isinstance(data.get("steps"), dict) else None
@@ -1725,15 +1803,19 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     language = _build_language(data, root=root.resolve())
     installs = _build_installs(data.get("installs"), root.resolve())
     pin_packages = _build_pin_packages(data.get("pin_packages"), installs)
+    resolved_root = root.resolve()
+    paths = _build_paths(paths_raw, resolved_root)
+    concurrency_overlay = _load_concurrency_overlay(paths.concurrency)
+    concurrency_merged = _merge_concurrency_yaml(concurrency_yaml, concurrency_overlay)
     return IssuesmithConfig(
         repo=repo,
         label_namespace=label_namespace,
         timezone=timezone,
         supported_repos=supported,
-        root=root.resolve(),
-        paths=_build_paths(paths_raw, root.resolve()),
+        root=resolved_root,
+        paths=paths,
         engines=_build_engines(engines_raw),
-        concurrency=_build_concurrency(concurrency_raw),
+        concurrency=_build_concurrency(concurrency_merged or None),
         milestone_chain=_build_milestone_chain(milestone_raw),
         triage=_build_triage(triage_raw),
         phases=_build_phases(data.get("phases")),

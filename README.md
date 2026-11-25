@@ -9,12 +9,12 @@ The package bundles design and merge gates, a request queue with triage, lane pl
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.211.1-blue)
+![version](https://img.shields.io/badge/version-v0.211.2-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.211.1** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.211.2** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
@@ -23,13 +23,13 @@ The current release is **v0.211.1** (pre-1.0). Public interfaces can change in a
 # the lower bound in pyproject.toml (ghdag>=0.152.2), then install issuesmith.
 pip install "ghdag @ git+https://github.com/sumipan/ghdag.git@v0.152.2"
 
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.211.1"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.211.2"
 ```
 
 Gates, forge access, `observe`, `andon`, `lanes`, and `metrics` import ghdag, so install the `ghdag` extra unless another dependency already provides ghdag. The base install alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.211.1"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.211.2"
 ```
 
 | Item | Value |
@@ -326,7 +326,7 @@ issuesmith is pre-1.0 and follows `0.Y.Z`: a `Y` bump may change or remove publi
 
 ### Deprecated API
 
-No symbols are deprecated at **v0.211.1**. Retired interfaces are listed under Deprecated and Removed in [CHANGELOG.md](./CHANGELOG.md); they must not reappear in the CLI or Public API tables above.
+No symbols are deprecated at **v0.211.2**. Retired interfaces are listed under Deprecated and Removed in [CHANGELOG.md](./CHANGELOG.md); they must not reappear in the CLI or Public API tables above.
 
 ## Architecture
 
@@ -592,7 +592,7 @@ When the host environment that runs the pipeline differs from the target reposit
 
 #### `paths` keys
 
-Relative to the config file directory: `queue` `jobs/issuesmith-queue.jsonl`, `queue_state` `logs/issuesmith-queue-state.json`, `queue_lock` `logs/issuesmith-queue.lock`, `triage_log` `jobs/issuesmith-triage.jsonl`, `seed` `configs/night-queue.yaml`, `night_state` `logs/night-queue-state.json`, `exec_jsonl` `jobs/exec.jsonl`, `done_dir` `jobs/done`, `quota_state` `jobs/quota-gate.json`, `metrics` `jobs/metrics.jsonl`, `worktrees_dir` `.claude/worktrees`, `external_dir` `.claude/external`, `workflow` `workflows/issuesmith.yml`, `template_dir` `workflows/issuesmith`, `engine_state` `.pipeline-state/issuesmith-engine.yml`, `lanes` (unset; the ledger read by the `lanes` command).
+Relative to the config file directory: `queue` `jobs/issuesmith-queue.jsonl`, `queue_state` `logs/issuesmith-queue-state.json`, `queue_lock` `logs/issuesmith-queue.lock`, `triage_log` `jobs/issuesmith-triage.jsonl`, `seed` `configs/night-queue.yaml`, `night_state` `logs/night-queue-state.json`, `exec_jsonl` `jobs/exec.jsonl`, `done_dir` `jobs/done`, `quota_state` `jobs/quota-gate.json`, `metrics` `jobs/metrics.jsonl`, `worktrees_dir` `.claude/worktrees`, `external_dir` `.claude/external`, `workflow` `workflows/issuesmith.yml`, `template_dir` `workflows/issuesmith`, `engine_state` `.pipeline-state/issuesmith-engine.yml`, `lanes` (unset; the ledger read by the `lanes` command), `concurrency` (unset; a file whose `default` / `per_engine` / `strict_order` / `max_dispatch_per_tick` override the `concurrency` section, per engine for `per_engine`; a missing file is ignored).
 
 #### `merge` keys
 

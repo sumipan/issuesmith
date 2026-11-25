@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.211.2 - 2026-11-25
+
+### Added
+
+- config: load concurrency limits from paths.concurrency overlay
+
 ## 0.211.1 - 2026-11-25
 
 ### Fixed
