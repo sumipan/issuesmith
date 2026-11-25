@@ -125,7 +125,7 @@ _TEST_DECLARATION: dict[str, object] = {
             "role": "implementation",
             "entry_step": "cp2",
             "handler": "impl",
-            "advance_when": ["deps_terminal", "pins_landed"],
+            "advance_when": ["deps_terminal"],
         },
         {
             "name": "merge",

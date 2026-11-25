@@ -125,11 +125,7 @@ def test_5581_recovery_body_fails_change_table_scope(tmp_path, monkeypatch):
             {
                 "repo": "sumipan/nexus",
                 "scope_gate": {"enabled": False},
-                "installs": {
-                    "issuesmith": "/var/tmp/issuesmith",
-                    "ghdag": "/var/tmp/ghdag",
-                    "mltgnt": "/var/tmp/mltgnt",
-                },
+                "pin_packages": ["issuesmith", "ghdag", "mltgnt"],
             }
         ),
         encoding="utf-8",
