@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Mapping
@@ -32,6 +32,8 @@ class Ledger:
     report_since: str = ""
     high: set[int] = field(default_factory=set)
     high_labels: tuple[str, ...] = ()
+    workflows: dict[str, list[int]] = field(default_factory=dict)
+    default_workflow: str = "issuesmith"
 
 
 @dataclass
@@ -51,6 +53,91 @@ class IssueView:
     state: str = "open"
 
 
+def _normalize_workflow_issue_list(values: Any) -> list[int]:
+    if not isinstance(values, list):
+        return []
+    seen: set[int] = set()
+    out: list[int] = []
+    for item in values:
+        if isinstance(item, bool):
+            continue
+        if not isinstance(item, (int, str)):
+            continue
+        try:
+            number = int(item)
+        except (TypeError, ValueError):
+            continue
+        if number <= 0 or number in seen:
+            continue
+        seen.add(number)
+        out.append(number)
+    return out
+
+
+def _load_workflows(raw: Mapping[str, Any]) -> dict[str, list[int]]:
+    workflows_raw = raw.get("workflows") or {}
+    if not isinstance(workflows_raw, dict):
+        return {}
+    return {
+        str(name): _normalize_workflow_issue_list(nums)
+        for name, nums in workflows_raw.items()
+        if isinstance(name, str) and isinstance(nums, list)
+    }
+
+
+def _validate_workflow_ownership(default_workflow: str, workflows: dict[str, list[int]]) -> None:
+    if default_workflow in workflows:
+        issue_numbers = ", ".join(f"#{number}" for number in workflows[default_workflow])
+        raise ConfigError(
+            "lanes ledger workflows: "
+            f"workflow {default_workflow!r} conflicts with default_workflow; "
+            f"issues: {issue_numbers or 'none'}"
+        )
+    owner: dict[int, str] = {}
+    for workflow, numbers in workflows.items():
+        for number in numbers:
+            prior = owner.get(number)
+            if prior is not None:
+                raise ConfigError(
+                    "lanes ledger workflows: "
+                    f"issue #{number} is listed in both {prior!r} and {workflow!r}"
+                )
+            owner[number] = workflow
+
+
+def select_workflow(ledger: Ledger, namespace: str) -> Ledger:
+    if not ledger.workflows:
+        return ledger
+
+    if namespace == ledger.default_workflow:
+        excluded = {n for nums in ledger.workflows.values() for n in nums}
+
+        def keep(number: int) -> bool:
+            return number not in excluded
+
+    elif namespace in ledger.workflows:
+        allowed = set(ledger.workflows[namespace])
+
+        def keep(number: int) -> bool:
+            return number in allowed
+
+    else:
+
+        def keep(number: int) -> bool:
+            return False
+
+    def filter_list(numbers: list[int]) -> list[int]:
+        return [n for n in numbers if keep(n)]
+
+    return replace(
+        ledger,
+        lanes={name: filter_list(nums) for name, nums in ledger.lanes.items()},
+        hold={n for n in ledger.hold if keep(n)},
+        backlog=[n for n in ledger.backlog if keep(n)],
+        high={n for n in ledger.high if keep(n)},
+    )
+
+
 def load_ledger(path: Path, *, default_api_min: int = 800) -> Ledger:
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     if not isinstance(raw, dict):
@@ -61,6 +148,9 @@ def load_ledger(path: Path, *, default_api_min: int = 800) -> Ledger:
         for name, nums in lanes_raw.items()
         if isinstance(nums, list)
     }
+    default_workflow = str(raw.get("default_workflow") or "").strip() or "issuesmith"
+    workflows = _load_workflows(raw)
+    _validate_workflow_ownership(default_workflow, workflows)
     return Ledger(
         lanes=lanes,
         hold={int(x) for x in (raw.get("hold") or [])},
@@ -71,6 +161,8 @@ def load_ledger(path: Path, *, default_api_min: int = 800) -> Ledger:
         report_since=str(raw.get("report_since") or ""),
         high={int(x) for x in (raw.get("high") or [])},
         high_labels=tuple(str(x) for x in (raw.get("high_labels") or [])),
+        workflows=workflows,
+        default_workflow=default_workflow,
     )
 
 

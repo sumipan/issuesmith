@@ -780,6 +780,7 @@ def _cmd_lanes(argv: list[str]) -> int:
         report,
         resolve_report_since,
         save_report_state,
+        select_workflow,
     )
     from issuesmith.queue import plan as queue_plan_fn
     from issuesmith.queue_store import QueueStore
@@ -810,6 +811,8 @@ def _cmd_lanes(argv: list[str]) -> int:
     except ConfigError as exc:
         print(f"lanes: {exc}", file=sys.stderr)
         return 2
+
+    ledger = select_workflow(ledger, cfg.label_namespace)
 
     apply_enqueue = getattr(args, "apply", False)
     as_json = args.json
