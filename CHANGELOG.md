@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.216.0 - 2026-11-26
+
+### Added
+
+- lanes: expose check API and enriched lanes check JSON
+
 ## 0.215.1 - 2026-11-26
 
 ### Fixed

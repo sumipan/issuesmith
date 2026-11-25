@@ -755,13 +755,13 @@ def _lanes_parser() -> ContractParser:
     p_check = sub.add_parser("check")
     p_check.add_argument("--apply", action="store_true")
     p_check.add_argument("--json", action="store_true")
+    p_check.add_argument("--out", metavar="PATH")
     p_report = sub.add_parser("report")
     p_report.add_argument("--json", action="store_true")
     return parser
 
 
 def _cmd_lanes(argv: list[str]) -> int:
-    import re
     from datetime import datetime
 
     from ghdag.forge import get_forge
@@ -769,14 +769,14 @@ def _cmd_lanes(argv: list[str]) -> int:
     from issuesmith.andon import plan_auto_answers
     from issuesmith.config import ConfigError, get_config
     from issuesmith.lanes import (
-        IssueView,
         apply,
+        check,
+        check_to_dict,
         count_merge_done_since,
+        fetch_issue_views,
         ledger_state_path,
         load_ledger,
         load_report_state,
-        plan,
-        plan_to_dict,
         report,
         resolve_report_since,
         save_report_state,
@@ -824,70 +824,36 @@ def _cmd_lanes(argv: list[str]) -> int:
     for nums in ledger.lanes.values():
         issue_numbers.update(nums)
 
-    def _issue_view(num: int, raw: dict[str, Any]) -> IssueView:
-        labels = tuple(
-            str(lab.get("name") if isinstance(lab, dict) else lab)
-            for lab in (raw.get("labels") or [])
-        )
-        body = str(raw.get("body") or "")
-        m = re.search(r"^\s*target_repo:\s*([\w.-]+/[\w.-]+)", body, re.MULTILINE)
-        return IssueView(
-            number=num,
-            labels=labels,
-            state=str(raw.get("state") or "open"),
-            target_repo=m.group(1) if m else "",
-        )
-
-    issues: dict[int, IssueView] = {}
-    for num in issue_numbers:
-        try:
-            raw = client.issue_get(num, fields=["number", "state", "labels", "body"])
-        except Exception:
-            continue
-        if not isinstance(raw, dict):
-            continue
-        issues[num] = _issue_view(num, raw)
-
-    # auto_lanes picks up open issues that are not in the ledger, so list them too.
-    list_all = getattr(client, "list_all_issues", None)
-    if ledger.auto_lanes_enabled and callable(list_all):
-        try:
-            open_raw = list_all(state="open")
-        except Exception:
-            open_raw = []
-        for raw in open_raw or []:
-            if not isinstance(raw, dict) or raw.get("pull_request"):
-                continue
-            number_raw = raw.get("number")
-            if number_raw is None:
-                continue
-            try:
-                num = int(number_raw)
-            except (TypeError, ValueError):
-                continue
-            if num not in issues:
-                issues[num] = _issue_view(num, raw)
+    issues = fetch_issue_views(client, issue_numbers)
 
     queue_plan = None
     if not api_low:
         queue_plan = queue_plan_fn(QueueStore(), client, now=now)
 
-    lane_plan = plan(
+    api_remaining = api_state.remaining if api_state is not None else None
+    role_engine_map = _lanes_role_engine_map(cfg)
+    lane_check = check(
         ledger,
         snapshot,
         issues,
         cfg,
         now,
-        api_low,
-        role_engine_map=_lanes_role_engine_map(cfg),
+        role_engine_map=role_engine_map,
         queue_plan=queue_plan,
+        api_remaining=api_remaining,
+        api_low=api_low,
     )
+    lane_plan = lane_check.plan
 
     if args.subcmd == "check":
-        if apply_enqueue and not api_low:
+        out_path = getattr(args, "out", None)
+        check_payload = check_to_dict(lane_check)
+        if out_path:
+            save_report_state(Path(str(out_path)), check_payload)
+        if apply_enqueue and not api_low and not lane_plan.halt:
             apply(lane_plan, QueueStore())
         if as_json:
-            print(json.dumps(plan_to_dict(lane_plan), ensure_ascii=False))
+            print(json.dumps(check_payload, ensure_ascii=False))
             return 0
         for entry in lane_plan.enqueue:
             print(f"enqueue #{entry['issue']} phase={entry['phase']} lane={entry.get('lane')}")

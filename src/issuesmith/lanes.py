@@ -26,7 +26,6 @@ class Ledger:
     lanes: dict[str, list[int]]
     hold: set[int] = field(default_factory=set)
     backlog: list[int] = field(default_factory=list)
-    auto_lanes_enabled: bool = False
     queued_stale_minutes: int = 30
     api_min_remaining: int = 800
     report_every_minutes: int = 120
@@ -50,7 +49,6 @@ class IssueView:
     number: int
     labels: tuple[str, ...]
     state: str = "open"
-    target_repo: str = ""
 
 
 def load_ledger(path: Path, *, default_api_min: int = 800) -> Ledger:
@@ -63,15 +61,10 @@ def load_ledger(path: Path, *, default_api_min: int = 800) -> Ledger:
         for name, nums in lanes_raw.items()
         if isinstance(nums, list)
     }
-    auto_lanes = raw.get("auto_lanes")
-    auto_enabled = False
-    if isinstance(auto_lanes, dict):
-        auto_enabled = bool(auto_lanes.get("enabled", False))
     return Ledger(
         lanes=lanes,
         hold={int(x) for x in (raw.get("hold") or [])},
         backlog=[int(x) for x in (raw.get("backlog") or [])],
-        auto_lanes_enabled=auto_enabled,
         queued_stale_minutes=int(raw.get("queued_stale_minutes", 30)),
         api_min_remaining=int(raw.get("api_min_remaining", default_api_min)),
         report_every_minutes=int(raw.get("report_every_minutes", 120)),
@@ -253,27 +246,6 @@ def _queue_waits_and_escalations(
     return waits, queue_plan.halt, escalations
 
 
-def _expand_lanes(
-    ledger: Ledger,
-    issues: Mapping[int, IssueView],
-    known: set[int],
-) -> dict[str, list[int]]:
-    if not ledger.auto_lanes_enabled:
-        return dict(ledger.lanes)
-    lanes = {k: list(v) for k, v in ledger.lanes.items()}
-    for number, info in sorted(issues.items(), key=lambda t: t[0]):
-        if number in known:
-            continue
-        if info.state.lower() == "closed":
-            continue
-        repo = info.target_repo
-        if not repo:
-            continue
-        lane = f"auto-{repo.split('/')[-1]}"
-        lanes.setdefault(lane, []).append(number)
-    return lanes
-
-
 def plan(
     ledger: Ledger,
     snapshot: QueueSnapshot,
@@ -338,8 +310,7 @@ def plan(
         lane_plan.slots = slots
         return lane_plan
 
-    known = {n for lane in ledger.lanes.values() for n in lane} | ledger.hold | set(ledger.backlog)
-    lanes = _expand_lanes(ledger, issues, known)
+    lanes = {lane: list(nums) for lane, nums in ledger.lanes.items()}
     in_flight_issues = {int(e.get("issue", 0)) for e in snapshot.in_flight}
     occupied = in_flight_issues | set(queued_map)
 
@@ -466,6 +437,178 @@ def plan_to_dict(plan: LanePlan) -> dict[str, Any]:
         "waits": plan.waits,
         "halt": plan.halt,
     }
+
+
+def _labels_from_raw(raw: Mapping[str, Any]) -> tuple[str, ...]:
+    return tuple(
+        str(lab.get("name") if isinstance(lab, dict) else lab)
+        for lab in (raw.get("labels") or [])
+    )
+
+
+def _issue_view_from_raw(number: int, raw: Mapping[str, Any]) -> IssueView:
+    return IssueView(
+        number=number,
+        labels=_labels_from_raw(raw),
+        state=str(raw.get("state") or "open"),
+    )
+
+
+def fetch_issue_views(
+    client: Any,
+    numbers: Iterable[int],
+    *,
+    cache: Mapping[int, Mapping[str, Any]] | None = None,
+) -> dict[int, IssueView]:
+    """Load issue labels and state for ledger Issue numbers."""
+    out: dict[int, IssueView] = {}
+    for number in sorted({int(n) for n in numbers}):
+        cached = (cache or {}).get(number)
+        if isinstance(cached, Mapping):
+            out[number] = IssueView(
+                number=number,
+                labels=_labels_from_raw(cached),
+                state=str(cached.get("state") or "open"),
+            )
+            continue
+        try:
+            raw = client.issue_get(number, fields=["number", "state", "labels"])
+        except Exception:
+            continue
+        if not isinstance(raw, Mapping):
+            continue
+        out[number] = _issue_view_from_raw(number, raw)
+    return out
+
+
+@dataclass
+class LaneCheck:
+    plan: LanePlan
+    lane_status: dict[str, str]
+    in_flight: list[int]
+    held: list[int]
+    queued: list[int]
+    queued_reasons: dict[int, str]
+    api_remaining: int | None
+    api_low: bool
+    generated_at: str
+
+    @property
+    def has_work(self) -> bool:
+        return bool(self.plan.enqueue or self.plan.escalations or self.api_low)
+
+
+def _snapshot_issue_views(snapshot: QueueSnapshot) -> tuple[list[int], list[int], list[int]]:
+    in_flight: list[int] = []
+    held: list[int] = []
+    for entry in snapshot.in_flight:
+        if not isinstance(entry, dict) or not isinstance(entry.get("issue"), int):
+            continue
+        number = int(entry["issue"])
+        if entry.get("held"):
+            held.append(number)
+        else:
+            in_flight.append(number)
+    queued = [int(req.issue) for req in snapshot.active_requests]
+    return sorted(set(in_flight)), sorted(set(held)), sorted(set(queued))
+
+
+def _lane_status_for_ledger(
+    ledger: Ledger,
+    issues: Mapping[int, IssueView],
+    occupied: set[int],
+    config: IssuesmithConfig,
+) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for lane, numbers in ledger.lanes.items():
+        head: str | None = None
+        for number in numbers:
+            if number in ledger.hold:
+                head = head or f"hold #{number}"
+                continue
+            if number in occupied:
+                head = head or f"busy #{number}"
+                continue
+            info = issues.get(number)
+            if info is None:
+                head = head or f"unknown #{number}"
+                continue
+            status, phase = classify(
+                info.labels, config, closed=info.state.lower() == "closed"
+            )
+            if status == "done":
+                continue
+            if status == "blocked":
+                head = head or f"blocked #{number}"
+                continue
+            if status == "candidate" and phase is not None:
+                head = head or f"ready #{number} ({phase})"
+                continue
+            head = head or f"{status} #{number}"
+        out[lane] = head or "empty"
+    return out
+
+
+def check(
+    ledger: Ledger,
+    snapshot: QueueSnapshot,
+    issues: Mapping[int, IssueView],
+    config: IssuesmithConfig,
+    now: datetime,
+    *,
+    role_engine_map: Mapping[str, str],
+    queue_plan: QueuePlan | None = None,
+    api_remaining: int | None = None,
+    api_low: bool = False,
+) -> LaneCheck:
+    lane_plan = plan(
+        ledger,
+        snapshot,
+        issues,
+        config,
+        now,
+        api_low,
+        role_engine_map=role_engine_map,
+        queue_plan=queue_plan,
+    )
+    in_flight, held, queued = _snapshot_issue_views(snapshot)
+    occupied = set(in_flight) | set(held) | set(queued)
+    queued_reasons: dict[int, str] = {}
+    if queue_plan is not None:
+        queued_set = set(queued)
+        for entry in queue_plan.entries:
+            if entry.issue in queued_set:
+                queued_reasons[entry.issue] = str(entry.detail or "")
+    generated_at = now.astimezone(ZoneInfo(config.timezone)).isoformat()
+    return LaneCheck(
+        plan=lane_plan,
+        lane_status=_lane_status_for_ledger(ledger, issues, occupied, config),
+        in_flight=in_flight,
+        held=held,
+        queued=queued,
+        queued_reasons=queued_reasons,
+        api_remaining=api_remaining,
+        api_low=api_low,
+        generated_at=generated_at,
+    )
+
+
+def check_to_dict(result: LaneCheck) -> dict[str, Any]:
+    payload = plan_to_dict(result.plan)
+    payload.update(
+        {
+            "lane_status": result.lane_status,
+            "in_flight": result.in_flight,
+            "held": result.held,
+            "queued": result.queued,
+            "queued_reasons": {str(k): v for k, v in result.queued_reasons.items()},
+            "api_remaining": result.api_remaining,
+            "api_low": result.api_low,
+            "has_work": result.has_work,
+            "generated_at": result.generated_at,
+        }
+    )
+    return payload
 
 
 def report(
