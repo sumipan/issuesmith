@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import re
 from dataclasses import asdict, dataclass, field
 from functools import lru_cache
@@ -11,12 +10,8 @@ from ghdag.forge import ForgePort, get_forge
 
 from issuesmith.body_editor import count_heading, get_section
 from issuesmith.config import get_config
+from issuesmith.issue_outcome import Outcome, issue_outcome
 
-_REJECTED_LABEL = "issuesmith:rejected"
-_SUB_DONE_LABEL = "issuesmith:sub-done"
-_MILESTONE_LABEL = "scope:milestone"
-_ISSUESMITH_LABEL_PREFIX = "issuesmith:"
-_ANALYSIS_TITLE_PREFIX = "[Failure Analysis]"
 _ISSUE_NUM_RE = re.compile(r"#(\d+)")
 _CHILD_ISSUE_LABEL = "Child issue"
 _TABLE_ROW_RE = re.compile(r"^\|")
@@ -63,14 +58,8 @@ def _dep_prefix_re() -> re.Pattern[str]:
 class DepStatus:
     issue: int
     state: str
-    has_merge_done: bool
-    rescue_pr: int | None
+    outcome: Outcome
     title: str
-    is_exempt: bool
-
-    @property
-    def has_terminal_label(self) -> bool:
-        return self.has_merge_done
 
 
 @dataclass
@@ -189,140 +178,22 @@ def unparsed_dependency_refs(body: str, *, self_issue: int | None = None) -> lis
     return sorted(mentioned - declared)
 
 
-def _has_terminal_label(labels: list[dict], terminal_labels: tuple[str, ...]) -> bool:
-    """Return True if any label in labels matches a terminal_labels entry."""
-    label_names_set = {label.get("name") for label in labels}
-    return bool(label_names_set & set(terminal_labels))
-
-
-def _is_exempt(title: str, labels: list[dict]) -> bool:
-    """Return True when a CLOSED dependency should be treated as satisfied.
-
-    Exempt cases:
-    1. Title starts with ``_ANALYSIS_TITLE_PREFIX`` (analysis issues never get a
-       closing-phase done label)
-    2. Has issuesmith:rejected label
-    3. Has no issuesmith:* labels at all (outside issuesmith lifecycle)
-    4. Is a milestone that finished splitting (scope:milestone + issuesmith:sub-done).
-       Milestones are closed by a human after all sub-issues finish and never get
-       a closing-phase done label themselves (2026-09-05: #2821 was blocked by
-       closed milestone #2820).
-    """
-    if title.startswith(_ANALYSIS_TITLE_PREFIX):
-        return True
-    label_names = [label.get("name") or "" for label in labels]
-    if _REJECTED_LABEL in label_names:
-        return True
-    if _MILESTONE_LABEL in label_names and _SUB_DONE_LABEL in label_names:
-        return True
-    if not any(name.startswith(_ISSUESMITH_LABEL_PREFIX) for name in label_names):
-        return True
-    return False
-
-
-def _cross_ref_pr_repo(source_issue: dict) -> str | None:
-    """Return ``owner/repo`` for a cross-referenced PR issue, when known."""
-    repo = source_issue.get("repository") or {}
-    full_name = repo.get("full_name")
-    if isinstance(full_name, str):
-        return full_name
-    url = source_issue.get("repository_url")
-    if isinstance(url, str):
-        parts = url.rstrip("/").split("/")
-        if len(parts) >= 2:
-            return f"{parts[-2]}/{parts[-1]}"
-    return None
-
-
-def _find_rescue_pr(client: ForgePort, issue_number: int) -> int | None:
-    log = logging.getLogger(__name__)
-    try:
-        timeline = client.issue_timeline(issue_number)
-    except Exception as exc:
-        log.warning(
-            "rescue pr: issue_timeline failed for #%s: %s",
-            issue_number,
-            exc,
-        )
-        return None
-    client_repo = client.repo
-    pr_numbers: list[int] = []
-    for event in timeline:
-        if event.get("event") != "cross-referenced":
-            continue
-        source_issue = (event.get("source") or {}).get("issue") or {}
-        if source_issue.get("pull_request") is None:
-            continue
-        number = source_issue.get("number")
-        if not isinstance(number, int):
-            continue
-        pr_repo = _cross_ref_pr_repo(source_issue)
-        if (
-            isinstance(client_repo, str)
-            and isinstance(pr_repo, str)
-            and client_repo.casefold() != pr_repo.casefold()
-        ):
-            continue
-        pr_numbers.append(number)
-    if not pr_numbers:
-        return None
-
-    pr_number = pr_numbers[-1]
-    try:
-        detail = client.pr_get(pr_number)
-    except Exception as exc:
-        log.warning(
-            "rescue pr: pr_get failed for issue #%s pr #%s: %s",
-            issue_number,
-            pr_number,
-            exc,
-        )
-        return None
-    if detail.get("merged") or detail.get("merged_at") or detail.get("mergedAt"):
-        return pr_number
-    if str(detail.get("state") or "").upper() == "MERGED":
-        return pr_number
-    return None
-
-
 def get_dep_status(client: ForgePort, issue_number: int) -> DepStatus:
-    """Return terminal-label status for a single dependency issue."""
-    data = client.issue_get(issue_number, fields=["state", "labels", "title"])
+    """Return close-outcome status for a single dependency issue."""
+    data = client.issue_get(issue_number, fields=["state", "state_reason", "title"])
     state = data.get("state", "UNKNOWN")
-    labels = data.get("labels") or []
     title = data.get("title") or ""
-    cfg = get_config()
-    terminal_labels = cfg.terminal_labels
-    closing = cfg.closing_phase()
-    if closing is not None:
-        _, _, closing_done = cfg.phase_labels(closing.name)
-        terminal_labels = terminal_labels + (closing_done,)
-    has_merge_done = _has_terminal_label(labels, terminal_labels)
-    is_exempt = _is_exempt(title, labels)
-
-    rescue_pr = None
-    if state == "CLOSED" and not has_merge_done and not is_exempt:
-        rescue_pr = _find_rescue_pr(client, issue_number)
-
+    outcome = issue_outcome(data)
     return DepStatus(
         issue=issue_number,
         state=state,
-        has_merge_done=has_merge_done,
-        rescue_pr=rescue_pr,
+        outcome=outcome,
         title=title,
-        is_exempt=is_exempt,
     )
 
 
 def is_satisfied(status: DepStatus) -> bool:
-    # exempt relaxes "CLOSED needs closing-phase done"; an OPEN dependency is unresolved.
-    if status.state == "CLOSED" and status.is_exempt:
-        return True
-    if status.state == "CLOSED" and status.has_merge_done:
-        return True
-    if status.state == "CLOSED" and status.rescue_pr is not None:
-        return True
-    return False
+    return status.outcome == "completed"
 
 
 def _check_single_dependency(client: ForgePort, issue_number: int) -> DepStatus | None:
@@ -396,5 +267,3 @@ def check_issue(issue_number: int, *, client: ForgePort | None = None) -> DepChe
         client=gh,
         unparsed_refs=unparsed_dependency_refs(body, self_issue=issue_number),
     )
-
-

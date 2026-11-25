@@ -9,12 +9,12 @@ The package bundles design and merge gates, a request queue with triage, lane pl
 ## Status
 
 ![stability](https://img.shields.io/badge/stability-pre--1.0-orange)
-![version](https://img.shields.io/badge/version-v0.210.0-blue)
+![version](https://img.shields.io/badge/version-v0.211.0-blue)
 ![ci](https://github.com/sumipan/issuesmith/actions/workflows/ci.yml/badge.svg?branch=main)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-The current release is **v0.210.0** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
+The current release is **v0.211.0** (pre-1.0). Public interfaces can change in any `0.Y.0` release. Breaking changes are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
@@ -23,13 +23,13 @@ The current release is **v0.210.0** (pre-1.0). Public interfaces can change in a
 # the lower bound in pyproject.toml (ghdag>=0.152.2), then install issuesmith.
 pip install "ghdag @ git+https://github.com/sumipan/ghdag.git@v0.152.2"
 
-pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.210.0"
+pip install "issuesmith[ghdag] @ git+https://github.com/sumipan/issuesmith.git@v0.211.0"
 ```
 
 Gates, forge access, `observe`, `andon`, `lanes`, and `metrics` import ghdag, so install the `ghdag` extra unless another dependency already provides ghdag. The base install alone is:
 
 ```bash
-pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.210.0"
+pip install "issuesmith @ git+https://github.com/sumipan/issuesmith.git@v0.211.0"
 ```
 
 | Item | Value |
@@ -326,7 +326,7 @@ issuesmith is pre-1.0 and follows `0.Y.Z`: a `Y` bump may change or remove publi
 
 ### Deprecated API
 
-No symbols are deprecated at **v0.210.0**. Retired interfaces are listed under Deprecated and Removed in [CHANGELOG.md](./CHANGELOG.md); they must not reappear in the CLI or Public API tables above.
+No symbols are deprecated at **v0.211.0**. Retired interfaces are listed under Deprecated and Removed in [CHANGELOG.md](./CHANGELOG.md); they must not reappear in the CLI or Public API tables above.
 
 ## Architecture
 
@@ -382,6 +382,7 @@ ghdag's `WorkflowDispatcher` drives workflow timing: label polling, DAG edges, a
 | `issuesmith/gates/scope.py` | Scope gate — wraps issuesmith.scope_gate to return unified Verdict. |
 | `issuesmith/gates/worktree.py` | Worktree gates: lint, tests, external_leak, base_freshness (#3626), importer_import (#5013), publish_diff (#7031). |
 | `issuesmith/github_api.py` | issuesmith.github_api |
+| `issuesmith/issue_outcome.py` | Classify an Issue as open, completed, or not_planned from ``state`` and ``state_reason`` only. |
 | `issuesmith/lanes.py` | Lane ledger planning: capacity, candidates, enqueue, and patrol report (#4792). |
 | `issuesmith/language.py` | Language packs: host-facing vocabulary and GitHub-posted text. |
 | `issuesmith/lines/__init__.py` | Bundled reference production lines and file extract helpers. |

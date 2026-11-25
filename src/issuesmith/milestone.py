@@ -29,13 +29,13 @@ from issuesmith.contract import (
 )
 from issuesmith.dep_extractor import check_dependencies, extract_dependencies
 from issuesmith.forge_api import api_request
+from issuesmith.issue_outcome import issue_outcome
 from issuesmith.language import LanguagePack
 from issuesmith.queue_store import QueueSnapshot, QueueStore
 from issuesmith.queue_triage import (
     DONE_LABEL,
     READY_LABEL,
     RUNNING_LABEL,
-    get_terminal_without_merge,
     label_names,
     parse_frontmatter_fields,
 )
@@ -124,19 +124,15 @@ def _closing_done_label() -> str:
 def _classify_child_terminal(client: ForgePort, issue_number: int) -> str:
     """Classify a child Issue for C4: open | merged | closed_without_merge."""
     try:
-        issue = client.issue_get(issue_number, fields=["state", "labels"])
+        issue = client.issue_get(issue_number, fields=["state", "state_reason"])
     except Exception:
         return "open"
-    labels = label_names(issue)
-    state = str(issue.get("state", "")).upper()
-    if state != "CLOSED":
+    outcome = issue_outcome(issue)
+    if outcome == "open":
         return "open"
-    closing_done = _closing_done_label()
-    if closing_done and closing_done in labels:
-        return "merged"
-    if labels & get_terminal_without_merge():
+    if outcome == "not_planned":
         return "closed_without_merge"
-    return "open"
+    return "merged"
 
 
 def _is_pre_dispatch(child: dict[str, Any]) -> bool:

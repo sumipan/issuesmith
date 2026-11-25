@@ -165,8 +165,7 @@ def test_check_deps_returns_verdict_passed_when_no_deps() -> None:
 def test_check_deps_returns_verdict_failed_when_blocked() -> None:
     from issuesmith.dep_extractor import DepCheckResult, DepStatus
 
-    blocker = DepStatus(issue=200, state="OPEN", has_merge_done=False,
-                        rescue_pr=None, title="Dep", is_exempt=False)
+    blocker = DepStatus(issue=200, state="OPEN", outcome="open", title="Dep")
     dep_result = DepCheckResult(
         decision="BLOCK",
         deps_found=[200],

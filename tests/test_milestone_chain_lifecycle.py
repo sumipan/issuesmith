@@ -179,6 +179,28 @@ class TestPreDispatchAndResume:
         assert "#101" not in client.posted_comments[0][1]
 
 
+def test_classify_child_uses_close_reason_not_labels(tmp_path, monkeypatch) -> None:
+    """Refs #7965 — child terminal class follows close reason, not labels."""
+    from issuesmith.milestone import _classify_child_terminal
+
+    completed_child = _child_issue(
+        301, state="CLOSED", labels=[], state_reason="completed"
+    )
+    rejected_child = _child_issue(
+        302,
+        state="CLOSED",
+        labels=[_MERGE_DONE],
+        state_reason="not_planned",
+    )
+    open_child = _child_issue(303, state="OPEN", labels=[])
+    client = FakeClient(
+        issues={301: completed_child, 302: rejected_child, 303: open_child}
+    )
+    assert _classify_child_terminal(client, 301) == "merged"
+    assert _classify_child_terminal(client, 302) == "closed_without_merge"
+    assert _classify_child_terminal(client, 303) == "open"
+
+
 def test_classify_child_develop_done_is_merged_single_develop(tmp_path, monkeypatch) -> None:
     """#7811 AC7."""
     import yaml
@@ -236,11 +258,41 @@ class TestConsolidation:
             f"| 5 | sub five | `sumipan/nexus` | x | {NONE} |\n"
         )
         kids = [
-            _child_issue(201, state="CLOSED", labels=[_MERGE_DONE], title="sub one merged with two"),
-            _child_issue(202, state="CLOSED", labels=[_REJECTED], title="sub two"),
-            _child_issue(203, state="CLOSED", labels=[_MERGE_DONE], title="sub three"),
-            _child_issue(204, state="CLOSED", labels=[_MERGE_DONE], title="sub four"),
-            _child_issue(205, state="CLOSED", labels=[_MERGE_DONE], title="sub five"),
+            _child_issue(
+                201,
+                state="CLOSED",
+                labels=[_MERGE_DONE],
+                title="sub one merged with two",
+                state_reason="completed",
+            ),
+            _child_issue(
+                202,
+                state="CLOSED",
+                labels=[_REJECTED],
+                title="sub two",
+                state_reason="not_planned",
+            ),
+            _child_issue(
+                203,
+                state="CLOSED",
+                labels=[_MERGE_DONE],
+                title="sub three",
+                state_reason="completed",
+            ),
+            _child_issue(
+                204,
+                state="CLOSED",
+                labels=[_MERGE_DONE],
+                title="sub four",
+                state_reason="completed",
+            ),
+            _child_issue(
+                205,
+                state="CLOSED",
+                labels=[_MERGE_DONE],
+                title="sub five",
+                state_reason="completed",
+            ),
         ]
         store = _store(tmp_path)
         store.update_milestone_chain(100, {"stage": "halted", "halted_reason": "validation failed"})
