@@ -292,6 +292,37 @@ def _andon_sort_key(kind: str, step: str) -> int:
     return 3
 
 
+def _active_issue_numbers(cfg: Any) -> set[int]:
+    """Issue numbers that must not receive andon auto-answer (queue + in-flight + live DAG)."""
+    from issuesmith.observe.dag_state import load_dag_states
+    from issuesmith.queue_store import QueueStore
+
+    active: set[int] = set()
+    try:
+        snap = QueueStore().snapshot()
+        for req in snap.active_requests:
+            active.add(req.issue)
+        for entry in snap.in_flight:
+            raw_issue = entry.get("issue")
+            if isinstance(raw_issue, int) and not isinstance(raw_issue, bool) and raw_issue > 0:
+                active.add(raw_issue)
+    except OSError:
+        pass
+
+    try:
+        dag_states = load_dag_states(
+            cfg.paths.exec_jsonl,
+            cfg.paths.done_dir,
+            cfg.paths.done_dir.parent / "running",
+        )
+    except OSError:
+        dag_states = {}
+    for issue, dag in dag_states.items():
+        if dag.status in ("running", "pending"):
+            active.add(issue)
+    return active
+
+
 def _cmd_andon(argv: list[str]) -> int:
     from issuesmith.andon import (
         answer,
@@ -350,8 +381,13 @@ def _cmd_andon(argv: list[str]) -> int:
     if args.subcmd == "auto-answer":
         from issuesmith.config import get_config
 
-        rules = get_config().andon.auto_answer
-        answer_plan = plan_auto_answers(client, rules)
+        cfg = get_config()
+        rules = cfg.andon.auto_answer
+        answer_plan = plan_auto_answers(
+            client,
+            rules,
+            active_issues=_active_issue_numbers(cfg),
+        )
         if args.apply:
             apply_auto_answers(client, answer_plan)
         if args.json:

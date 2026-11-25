@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.215.1 - 2026-11-26
+
+### Fixed
+
+- cli: skip andon auto-answer for queue and live DAG issues
+
 ## 0.215.0 - 2026-11-26
 
 ### Added

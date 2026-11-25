@@ -293,6 +293,194 @@ def test_console_entry_runs_andon_list_json(monkeypatch, capsys):
     assert json.loads(out) == records
 
 
+# ---------------------------------------------------------------------------
+# AC #8044: active issue detection for andon auto-answer
+# ---------------------------------------------------------------------------
+
+
+def _write_exec(exec_path, rows):
+    exec_path.write_text(
+        "\n".join(json.dumps(r) for r in rows) + ("\n" if rows else ""),
+        encoding="utf-8",
+    )
+
+
+def _write_done(done_dir, uuid, content):
+    (done_dir / uuid).write_text(content, encoding="utf-8")
+
+
+def _write_running(running_dir, uuid):
+    (running_dir / f"{uuid}.json").write_text("{}", encoding="utf-8")
+
+
+def _auto_answer_cfg(tmp_path, monkeypatch):
+    import yaml
+
+    from issuesmith.config import reset_config_cache
+
+    queue_dir = tmp_path / "queue"
+    queue_dir.mkdir()
+    done_dir = tmp_path / "done"
+    done_dir.mkdir()
+    (tmp_path / "running").mkdir()
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump(
+            {
+                "repo": "sumipan/issuesmith",
+                "paths": {"exec_jsonl": "exec.jsonl", "done_dir": "done"},
+                "andon": {
+                    "auto_answer": [
+                        {
+                            "name": "cp2_decision",
+                            "match": {"step": "cp2", "kind": "decision"},
+                            "action": "resume",
+                        }
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    monkeypatch.setenv("ISSUESMITH_QUEUE_DIR", str(queue_dir))
+    monkeypatch.setenv("GHDAG_FORGE", "local")
+    monkeypatch.setenv("GHDAG_FORGE_ROOT", str(tmp_path / "forge"))
+    reset_config_cache()
+    return queue_dir, done_dir
+
+
+def test_active_issue_numbers_unions_queue_and_live_dags(tmp_path, monkeypatch):
+    """Refs #8044 AC-1."""
+    from issuesmith.cli import _active_issue_numbers
+    from issuesmith.config import get_config, reset_config_cache
+    from issuesmith.queue_store import QueueStore
+
+    _, done_dir = _auto_answer_cfg(tmp_path, monkeypatch)
+    store = QueueStore()
+    store.enqueue(
+        issue=41,
+        phase="develop",
+        source="test",
+        actor_kind="automation",
+        priority="normal",
+        requested_by=["t"],
+        requested_at="2026-09-26T00:00:00+00:00",
+    )
+    store.add_in_flight(42, "cursor", role="implementation")
+    with store.lock():
+        state = store._load_state_unlocked()
+        state["in_flight"][0]["held"] = {"by": "wf:42:p1:0", "at": "2026-09-26T00:00:00+00:00"}
+        store._save_state_unlocked(state)
+
+    exec_path = tmp_path / "exec.jsonl"
+    running_dir = tmp_path / "running"
+
+    def _dag(issue, uuid, key):
+        return {"uuid": uuid, "idempotency_key": key, "depends": []}
+
+    rows = [
+        _dag(43, "r43", "issuesmith:impl:43"),
+        _dag(44, "p44a", "issuesmith:impl:44"),
+        {"uuid": "p44b", "idempotency_key": "issuesmith:impl:44", "depends": ["p44a"]},
+        _dag(45, "p45a", "issuesmith:impl:45"),
+        {"uuid": "p45b", "idempotency_key": "issuesmith:impl:45", "depends": ["p45a"]},
+        _dag(46, "p46a", "issuesmith:impl:46"),
+        {"uuid": "p46b", "idempotency_key": "issuesmith:impl:46", "depends": ["p46a"]},
+    ]
+    _write_exec(exec_path, rows)
+    _write_running(running_dir, "r43")
+    _write_done(done_dir, "p44a", "0")
+    _write_done(done_dir, "p45a", "0")
+    _write_done(done_dir, "p45b", "DEFERRED")
+    _write_done(done_dir, "p46a", "0")
+    _write_done(done_dir, "p46b", "0")
+
+    cfg = get_config()
+    assert _active_issue_numbers(cfg) == {41, 42, 43, 44}
+    reset_config_cache()
+
+
+def test_auto_answer_skips_active_issue(tmp_path, monkeypatch, capsys):
+    """Refs #8044 AC-2."""
+    from issuesmith.cli import _cmd_andon
+    from issuesmith.config import reset_config_cache
+    from issuesmith.queue_store import QueueStore
+
+    _auto_answer_cfg(tmp_path, monkeypatch)
+    QueueStore().add_in_flight(42, "cursor", role="implementation")
+    andon = _make_andon(andon_id="wf:42:cp2:0", issue=42)
+    client = _fake_client_with_andon(andon)
+    with patch("issuesmith.andon.list_open", return_value=[andon]), patch(
+        "ghdag.forge.get_forge", return_value=client
+    ):
+        assert _cmd_andon(["auto-answer", "--json"]) == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["answers"] == []
+    assert plan["escalations"] == []
+    with (
+        patch("issuesmith.andon.list_open", return_value=[andon]),
+        patch("ghdag.forge.get_forge", return_value=client),
+        patch("issuesmith.andon.answer") as mock_answer,
+    ):
+        assert _cmd_andon(["auto-answer", "--apply"]) == 0
+    mock_answer.assert_not_called()
+    reset_config_cache()
+
+
+def test_auto_answer_answers_idle_issue(tmp_path, monkeypatch, capsys):
+    """Refs #8044 AC-3."""
+    from issuesmith.cli import _cmd_andon
+    from issuesmith.config import reset_config_cache
+
+    _auto_answer_cfg(tmp_path, monkeypatch)
+    andon = _make_andon(andon_id="wf:42:cp2:0", issue=42)
+    client = _fake_client_with_andon(andon)
+    with patch("issuesmith.andon.list_open", return_value=[andon]), patch(
+        "ghdag.forge.get_forge", return_value=client
+    ):
+        assert _cmd_andon(["auto-answer", "--json"]) == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert len(plan["answers"]) == 1
+    assert plan["answers"][0]["issue"] == 42
+    assert plan["answers"][0]["rule"] == "cp2_decision"
+    assert plan["answers"][0]["action"] == "resume"
+    reset_config_cache()
+
+
+def test_active_issue_numbers_treats_unavailable_sources_as_empty(tmp_path, monkeypatch):
+    """Refs #8044 AC-4."""
+    from issuesmith.cli import _active_issue_numbers
+    from issuesmith.config import get_config, reset_config_cache
+    from issuesmith.queue_store import QueueStore
+
+    _auto_answer_cfg(tmp_path, monkeypatch)
+    QueueStore().add_in_flight(7, "cursor")
+    cfg = get_config()
+    assert _active_issue_numbers(cfg) == {7}
+
+    with patch("issuesmith.queue_store.QueueStore") as mock_store_cls:
+        mock_store_cls.return_value.snapshot.side_effect = OSError("queue unreadable")
+        assert _active_issue_numbers(cfg) == set()
+
+    with patch(
+        "issuesmith.observe.dag_state.load_dag_states",
+        side_effect=OSError("dag unreadable"),
+    ):
+        assert _active_issue_numbers(cfg) == {7}
+
+    with (
+        patch("issuesmith.queue_store.QueueStore") as mock_store_cls,
+        patch(
+            "issuesmith.observe.dag_state.load_dag_states",
+            side_effect=OSError("dag unreadable"),
+        ),
+    ):
+        mock_store_cls.return_value.snapshot.side_effect = OSError("queue unreadable")
+        assert _active_issue_numbers(cfg) == set()
+    reset_config_cache()
+
+
 @pytest.mark.parametrize("cmd", ["andon", "labels"])
 def test_module_and_console_entry_agree(cmd, capsys):
     """AC-2 (#6697): -m issuesmith and cli.main share usage for andon and labels."""
