@@ -124,7 +124,7 @@ def _backtick_field_from_lines(body: str, label: str) -> str:
 def parse_records(comment_body: str) -> list[dict[str, object]]:
     """Return failure records from a comment body in document order."""
     blocks = _iter_new_format_blocks(comment_body)
-    if blocks:
+    if _FENCE_OPEN in comment_body:
         records: list[dict[str, object]] = []
         for block in blocks:
             record = _load_new_format_block(block)

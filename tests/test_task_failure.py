@@ -79,3 +79,13 @@ def test_parse_records_ignores_bad_new_format_without_legacy_fallback():
     records = parse_records(body)
     assert len(records) == 1
     assert records[0]["task"] == "good-u"
+
+    unclosed = "\n".join(
+        [
+            COMMENT_MARKER,
+            "- task: `legacy`",
+            "```issuesmith-task-failure",
+            "task: [",
+        ]
+    )
+    assert parse_records(unclosed) == []
