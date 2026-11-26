@@ -83,9 +83,7 @@ def _rule_ids_from_andon(andon: Andon) -> list[str]:
     facts = andon.facts or {}
     rule_ids = facts.get("rule_ids")
     if isinstance(rule_ids, list):
-        out = sorted({str(r) for r in rule_ids if r})
-        if out:
-            return out
+        return sorted({str(r) for r in rule_ids if r})
     if andon.rule_id:
         return [andon.rule_id]
     return []
@@ -95,7 +93,10 @@ def _longest_prefix_cause(rule_id: str, table: list[tuple[str, str]]) -> str | N
     best_len = -1
     best_cause: str | None = None
     for prefix, cause in table:
-        if rule_id == prefix or rule_id.startswith(prefix + "."):
+        matches = rule_id.startswith(prefix) if prefix.endswith(".") else (
+            rule_id == prefix or rule_id.startswith(prefix + ".")
+        )
+        if matches:
             if len(prefix) > best_len:
                 best_len = len(prefix)
                 best_cause = cause
@@ -186,9 +187,7 @@ def answer_actions(andon: Andon, *, prior_reruns: int = 0) -> list[dict[str, Any
             actions.append({**_parse_action_string(resume_default, andon), "source": "default"})
     for opt in andon.options:
         actions.append(_parse_action_string(opt, andon))
-    if not actions:
-        actions.append({**_parse_action_string("reject", andon), "source": "default"})
-    elif not any(a["action"] == "reject" for a in actions):
+    if not andon.options:
         actions.append({**_parse_action_string("reject", andon), "source": "default"})
 
     for entry in actions:
@@ -744,15 +743,12 @@ def andon_record(client: Any, andon_id: str) -> dict[str, Any] | None:
     """Return enriched JSON record for an open andon id."""
     for issue in _iter_open_andon_issues(client):
         comments = list(client.get_issue_comments(issue["number"]))
-        for comment in comments:
-            parsed = from_comment(str(comment.get("body") or ""))
-            if parsed is not None and parsed.id == andon_id:
+        for entry in _fold_open_entries(comments):
+            if entry.andon.id == andon_id:
                 return {
-                    **_enrich_andon_record(
-                        parsed, comments, str(comment.get("created_at") or "")
-                    ),
-                    "raised_at": str(comment.get("created_at") or ""),
-                    "notes": {},
+                    **_enrich_andon_record(entry.andon, comments, entry.raised_at),
+                    "raised_at": entry.raised_at,
+                    "notes": dict(entry.notes),
                 }
     return None
 

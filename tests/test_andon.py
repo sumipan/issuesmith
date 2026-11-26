@@ -482,6 +482,48 @@ def test_issue_design_wins_over_transient_rule_ids():
     assert all(not a["agent_may_answer"] for a in actions)
 
 
+def test_review_prefix_and_explicit_empty_rule_ids():
+    from issuesmith.andon import Andon, classify_cause
+
+    review = Andon(
+        id="wf:1:cp2:0",
+        kind="decision",
+        issue=1,
+        step="cp2",
+        summary="review failed",
+        rule_id="review.cp2.failed",
+    )
+    assert classify_cause(review) == "review_failed"
+
+    explicit_empty = Andon(
+        id="wf:1:p1:0",
+        kind="blocked",
+        issue=1,
+        step="p1",
+        summary="facts take precedence",
+        rule_id="tests.interrupted",
+        facts={"failed_step": "p1", "rule_ids": []},
+    )
+    assert classify_cause(explicit_empty) == "unknown"
+
+
+def test_answer_actions_does_not_invent_reject_for_nonempty_options():
+    from issuesmith.andon import Andon, answer_actions
+
+    andon = Andon(
+        id="wf:1:p1:0",
+        kind="blocked",
+        issue=1,
+        step="p1",
+        summary="",
+        options=["retry_later"],
+    )
+    assert [a["action"] for a in answer_actions(andon)] == [
+        "resume_from_p1",
+        "retry_later",
+    ]
+
+
 @pytest.mark.parametrize(
     ("facts", "expected_cause", "expected_fix"),
     [
@@ -582,5 +624,4 @@ def test_prior_reruns_and_answer_markers(local_client, tmp_path):
     legacy_roundtrip = from_comment(ignore + "\ncause: stale\nfix_kinds: [stale]")
     assert legacy_roundtrip is not None
     assert legacy_roundtrip.facts == second.facts
-
 

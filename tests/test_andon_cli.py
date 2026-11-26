@@ -567,3 +567,33 @@ def test_andon_show_json_not_found():
         with pytest.raises(SystemExit) as exc:
             cli.main(["andon", "show", "missing:1:p1:0", "--json"])
         assert exc.value.code != 0
+
+
+def test_andon_show_json_uses_open_record_with_notes():
+    from issuesmith.andon import Andon, _answer_comment, _note_comment, andon_record
+
+    andon = Andon(
+        id="issuesmith:42:p1:0",
+        kind="blocked",
+        issue=42,
+        step="p1",
+        summary="tests",
+    )
+    client = _fake_client_with_andon(andon)
+    client.get_issue_comments.return_value.append(
+        {"body": _note_comment(andon.id, "owner", "agent"), "created_at": ""}
+    )
+    with patch(
+        "issuesmith.andon._iter_open_andon_issues",
+        return_value=iter([{"number": andon.issue}]),
+    ):
+        assert andon_record(client, andon.id)["notes"] == {"owner": "agent"}
+
+    client.get_issue_comments.return_value.append(
+        {"body": _answer_comment(andon.id, "reject", "human"), "created_at": ""}
+    )
+    with patch(
+        "issuesmith.andon._iter_open_andon_issues",
+        return_value=iter([{"number": andon.issue}]),
+    ):
+        assert andon_record(client, andon.id) is None
