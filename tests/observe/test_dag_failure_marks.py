@@ -233,7 +233,7 @@ def test_reopen_guard_and_not_planned_branch(env):
     assert not any(a.issue == issue_np for a in list_open(client))
 
 
-def test_nearby_pipeline_andon_suppresses_observe_andon(env):
+def test_nearby_pipeline_andon_suppresses_observe_andon(env, monkeypatch):
     store, client, tmp_path = env
     exec_path, done_dir, _running, _quota = _dirs(tmp_path)
     cfg = _patch_cfg(tmp_path, exec_path, done_dir)
@@ -249,6 +249,16 @@ def test_nearby_pipeline_andon_suppresses_observe_andon(env):
         summary="cp1 failed",
     )
     client.issue_comment(issue, to_comment(pipeline))
+    posted_at = fail_time.isoformat().replace("+00:00", "Z")
+    original_comments = client.get_issue_comments
+
+    def _comments_at_tick(issue_num: int) -> list[dict]:
+        return [
+            {**row, "created_at": posted_at}
+            for row in original_comments(issue_num)
+        ]
+
+    monkeypatch.setattr(client, "get_issue_comments", _comments_at_tick)
     later = fail_time + timedelta(seconds=5)
     evts = [
         e
