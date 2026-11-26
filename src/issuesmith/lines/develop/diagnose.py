@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -66,8 +67,8 @@ def _parse_evidence(evidence: str) -> tuple[str | None, str | None]:
 
 def _issue_from_idempotency(key: str) -> int | None:
     parts = key.split(":")
-    if len(parts) >= 3 and parts[-1].isdigit():
-        return int(parts[-1])
+    if len(parts) >= 3 and parts[2].isdigit():
+        return int(parts[2])
     return None
 
 
@@ -261,10 +262,16 @@ def _input_path(done_parent: Path, andon_id: str) -> Path:
 
 
 def _write_input(path: Path, payload: Mapping[str, Any]) -> None:
-    tmp = path.with_suffix(".tmp")
     data = json.dumps(payload, ensure_ascii=False, indent=2)
-    tmp.write_text(data + "\n", encoding="utf-8")
-    os.replace(tmp, path)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(data + "\n")
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
 
 
 def _build_input(
@@ -347,9 +354,9 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
     exec_jsonl = cfg.paths.exec_jsonl
     worktree = _abs_worktree(ctx)
     andon_id = str(record.get("id") or "")
-    input_path = _input_path(cfg.paths.done_dir.parent, andon_id)
 
     try:
+        input_path = _input_path(cfg.paths.done_dir.parent, andon_id)
         payload = _build_input(
             client,
             record,
@@ -369,14 +376,21 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
     role = cfg.andon.diagnose.role
     variables = [f"diagnosis_input={input_path.resolve()}"]
 
-    rc, output = run_guarded_output(
-        role,
-        str(template_path),
-        variables,
-        ["DIAGNOSIS_DONE"],
-        "DIAGNOSIS_FAILED",
-        cwd=worktree,
-    )
+    try:
+        rc, output = run_guarded_output(
+            role,
+            str(template_path),
+            variables,
+            ["DIAGNOSIS_DONE"],
+            "DIAGNOSIS_FAILED",
+            cwd=worktree,
+        )
+    except Exception as exc:
+        try:
+            persist_diagnosis_failure(client, andon_record=record, reason=str(exc))
+        except Exception as inner:
+            print(f"[diagnose] failure terminal failed: {inner}", file=sys.stderr)
+        return StepResult(status="done", markers=["DIAGNOSIS_DONE"])
     if not output.strip():
         sidecar = input_path.with_name(input_path.name + ".out")
         if sidecar.is_file():
@@ -393,7 +407,7 @@ def run(ctx: StepContext, step: StepConfig | None = None) -> StepResult:
         return StepResult(status="done", markers=["DIAGNOSIS_DONE"])
 
     has_done = _diagnosis_status_present(output, "DIAGNOSIS_DONE")
-    if not has_done:
+    if rc != 0 or not has_done:
         tail = (output or "").strip()[-500:]
         return fail(tail or f"engine exit {rc}")
 

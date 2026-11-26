@@ -27,6 +27,7 @@ _PROPOSAL_FENCE = re.compile(
 )
 _ISSUE_MD = "issue.md"
 _REL_PATH_BAD = re.compile(r"(^|/)\.\.(/|$)|^\.\.")
+_MISSING = object()
 
 
 @dataclass
@@ -453,7 +454,7 @@ def _validate_rel_path(path: str) -> None:
 
 
 def _validate_path_list(value: Any, *, field: str) -> list[str]:
-    if value is None:
+    if value is _MISSING:
         return []
     if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
         raise ProposalError(f"{field} must be a list of strings")
@@ -468,65 +469,105 @@ def _issue_lines(issue_body: str) -> list[str]:
     return issue_body.splitlines()
 
 
-def _apply_hunk(lines: list[str], old_start: int, old_count: int, hunk_lines: list[str]) -> None:
-    idx = old_start - 1
+def _apply_hunk(
+    lines: list[str],
+    old_start: int,
+    old_count: int,
+    new_count: int,
+    hunk_lines: list[str],
+) -> int:
+    idx = old_start if old_count == 0 else old_start - 1
+    if idx < 0 or idx > len(lines):
+        raise ProposalError("body_patch hunk range is invalid")
+    old_seen = 0
+    new_seen = 0
     for line in hunk_lines:
         if line.startswith(" "):
             if idx >= len(lines) or lines[idx] != line[1:]:
                 raise ProposalError("body_patch hunk mismatch")
             idx += 1
+            old_seen += 1
+            new_seen += 1
         elif line.startswith("-"):
             if idx >= len(lines) or lines[idx] != line[1:]:
                 raise ProposalError("body_patch hunk mismatch")
             idx += 1
+            old_seen += 1
         elif line.startswith("+"):
-            continue
-        elif line.startswith("\\"):
-            continue
+            new_seen += 1
+        elif line == "\\ No newline at end of file":
+            pass
+        else:
+            raise ProposalError("invalid body_patch hunk line")
+    if old_seen != old_count or new_seen != new_count:
+        raise ProposalError("body_patch hunk count mismatch")
+    return idx
 
 
 def _validate_body_patch(patch: str, issue_body: str) -> None:
     if not isinstance(patch, str) or not patch.strip():
         raise ProposalError("body_patch must be a non-empty string")
     target_files: set[str] = set()
-    hunks: list[tuple[int, int, list[str]]] = []
+    hunks: list[tuple[int, int, int, list[str]]] = []
     current_hunk: list[str] = []
     old_start = 0
     old_count = 0
+    new_count = 0
     in_hunk = False
+    old_headers = 0
+    new_headers = 0
     for line in patch.splitlines():
         if line.startswith("--- ") or line.startswith("+++ "):
             name = line[4:].strip().split("\t", 1)[0]
             if name not in ("issue.md", "a/issue.md", "b/issue.md"):
                 raise ProposalError("body_patch must target issue.md only")
             target_files.add(name.removeprefix("a/").removeprefix("b/"))
+            if line.startswith("--- "):
+                old_headers += 1
+            else:
+                new_headers += 1
             continue
         if line.startswith("@@ "):
             if in_hunk:
-                hunks.append((old_start, old_count, current_hunk))
-            m = re.match(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
+                hunks.append((old_start, old_count, new_count, current_hunk))
+            m = re.fullmatch(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*)?", line)
             if m is None:
                 raise ProposalError("invalid body_patch hunk header")
             old_start = int(m.group(1))
             old_count = int(m.group(2) or "1")
+            new_count = int(m.group(4) or "1")
             current_hunk = []
             in_hunk = True
             continue
         if in_hunk:
             current_hunk.append(line)
     if in_hunk:
-        hunks.append((old_start, old_count, current_hunk))
-    if "issue.md" not in target_files or len(target_files) != 1:
+        hunks.append((old_start, old_count, new_count, current_hunk))
+    if (
+        "issue.md" not in target_files
+        or len(target_files) != 1
+        or old_headers != 1
+        or new_headers != 1
+        or not hunks
+    ):
         raise ProposalError("body_patch must target issue.md only")
     lines = _issue_lines(issue_body)
-    for start, count, hunk in hunks:
-        _apply_hunk(lines, start, count, hunk)
+    previous_end = 0
+    for start, count, added_count, hunk in hunks:
+        position = start if count == 0 else start - 1
+        if position < previous_end:
+            raise ProposalError("body_patch hunks overlap or are out of order")
+        previous_end = _apply_hunk(lines, start, count, added_count, hunk)
 
 
 def _payload_edit_issue(data: Mapping[str, Any], issue_body: str) -> dict[str, Any]:
-    allow_add = _validate_path_list(data.get("allow_paths_add"), field="allow_paths_add")
-    allow_remove = _validate_path_list(data.get("allow_paths_remove"), field="allow_paths_remove")
-    body_patch = data.get("body_patch")
+    allow_add = _validate_path_list(data.get("allow_paths_add", _MISSING), field="allow_paths_add")
+    allow_remove = _validate_path_list(
+        data.get("allow_paths_remove", _MISSING), field="allow_paths_remove"
+    )
+    body_patch = data.get("body_patch", _MISSING)
+    if body_patch is not _MISSING and not isinstance(body_patch, str):
+        raise ProposalError("body_patch must be a string")
     patch_s = body_patch.strip() if isinstance(body_patch, str) else ""
     if not allow_add and not allow_remove and not patch_s:
         raise ProposalError("edit_issue needs a non-empty change")
@@ -568,9 +609,8 @@ def _payload_fix_line(
     if not isinstance(body, str) or not body.strip():
         raise ProposalError("body must be a non-empty string")
     marker = f"<!-- issuesmith-diagnosis: {signature} -->"
-    text = body.rstrip()
-    if marker not in text:
-        text = f"{text}\n{marker}"
+    text = body.replace(marker, "").rstrip()
+    text = f"{text}\n{marker}"
     return {"target_repo": target.strip(), "title": title.strip(), "body": text}
 
 
@@ -589,7 +629,7 @@ def _payload_diagnose(data: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(unknowns, list) or not unknowns:
         raise ProposalError("unknowns must be a non-empty list")
     items = [u.strip() for u in unknowns if isinstance(u, str) and u.strip()]
-    if not items:
+    if len(items) != len(unknowns):
         raise ProposalError("unknowns must be a non-empty list")
     return {"unknowns": items}
 
@@ -603,7 +643,10 @@ def parse_proposal(
     allowed_fix_kinds: list[str] | None = None,
 ) -> Proposal:
     """Parse and validate the last andon-diagnosis block in LLM output."""
-    data = dict(_last_proposal_fence(text))
+    parsed = _last_proposal_fence(text)
+    if not all(isinstance(key, str) for key in parsed):
+        raise ProposalError("proposal keys must be strings")
+    data = dict(parsed)
     summary_raw = data.pop("summary", None)
     fix_kind_raw = data.pop("fix_kind", None)
     if not isinstance(fix_kind_raw, str) or not fix_kind_raw.strip():

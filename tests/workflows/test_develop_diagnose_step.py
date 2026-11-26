@@ -207,6 +207,18 @@ EOF
             echo PIPELINE_STATUS: DIAGNOSIS_FAILED
             exit 1
             ;;
+          done_exit_1)
+            cat <<'EOF' >"$$OUTPUT"
+```andon-diagnosis
+fix_kind: edit_issue
+summary: must not persist
+allow_paths_add:
+  - src/foo.py
+```
+PIPELINE_STATUS: DIAGNOSIS_DONE
+EOF
+            exit 1
+            ;;
         esac
         """
     )
@@ -301,7 +313,7 @@ def test_resolves_result_and_stderr_from_exec_and_audit(tmp_path, monkeypatch):
     exec_row = {
         "uuid": task_uuid,
         "result_path": str(result_file),
-        "idempotency_key": f"issuesmith:p1:{number}",
+        "idempotency_key": f"issuesmith:p1:{number}:2",
         "annotations": {"step_name": "p1"},
     }
     (jobs / "exec.jsonl").write_text(json.dumps(exec_row) + "\n", encoding="utf-8")
@@ -400,6 +412,22 @@ def test_skips_second_llm_run_after_failure(tmp_path, forge_client, monkeypatch)
     develop_diagnose.run(_ctx(tmp_path, number), step)
     count = int((tmp_path / "jobs" / "diagnose" / "diagnose-engine-count.txt").read_text())
     assert count == 1
+
+
+def test_nonzero_engine_exit_with_done_marker_is_failure(tmp_path, forge_client):
+    """A guarded engine failure cannot be promoted by a stale success marker."""
+    _engine_state_dir(tmp_path).joinpath("diagnose-engine-mode.txt").write_text(
+        "done_exit_1", encoding="utf-8"
+    )
+    number = forge_client.issue_create("body", "body")
+    andon = _raise_blocked(forge_client, number, tmp_path / "m.jsonl")
+    from issuesmith.andon import note
+
+    note(forge_client, andon.id, "diagnosis_requested", andon.id)
+    result = develop_diagnose.run(_ctx(tmp_path, number), StepConfig(template="diagnose.md"))
+    assert result.status == "done"
+    record = next(r for r in list_open_records(forge_client) if r["id"] == andon.id)
+    assert record["notes"]["diagnosis"] == "failed"
 
 
 def test_on_proposal_hook_records_payload(tmp_path, monkeypatch):
