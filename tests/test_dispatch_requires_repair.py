@@ -290,3 +290,47 @@ class TestIssueInputViolationAndon:
         raised = _raised_andons(forge)[0]
         assert raised.options == ["resume_from_b1", "split", "reject"]
 
+
+class TestRequiresLoopAndonFacts:
+    """Refs #8075 AC-9 — requires-loop andon facts by stop trigger."""
+
+    def test_gate_error_facts(self):
+        from issuesmith.config import StepConfig
+        from issuesmith.gates import GateBuildError
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        cfg = StepConfig(module="issuesmith.steps.test", requires=("tests",))
+        with (
+            patch(
+                "issuesmith.ops.dispatch._build_requires_gates",
+                side_effect=GateBuildError("missing"),
+            ),
+            patch("issuesmith.ops.dispatch.get_forge") as mock_forge,
+        ):
+            forge = _RecordingForge()
+            mock_forge.return_value = forge
+            rc = run_requires_loop(cfg, "p1", _make_ctx(), repair_count=0)
+        assert rc == 1
+        facts = _raised_andons(forge)[0].facts
+        assert facts["failed_step"] == "p1"
+        assert facts["trigger"] == "gate_error"
+        assert facts["rule_ids"] == []
+
+    def test_non_repairable_facts(self):
+        from issuesmith.config import StepConfig
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        cfg = StepConfig(module="issuesmith.steps.test", requires=("deps",))
+        gate = _fail_gate("deps.unparsed_dependency_section", auto_fixable=False)
+        with (
+            patch("issuesmith.ops.dispatch._build_requires_gates", return_value={"deps": gate}),
+            patch("issuesmith.ops.dispatch.get_forge") as mock_forge,
+            stand_in_repair_step(RepairStepBoundary()),
+        ):
+            forge = _RecordingForge()
+            mock_forge.return_value = forge
+            run_requires_loop(cfg, "p0", _make_ctx())
+        facts = _raised_andons(forge)[0].facts
+        assert facts["trigger"] == "non_repairable"
+        assert facts["rule_ids"] == ["deps.unparsed_dependency_section"]
+

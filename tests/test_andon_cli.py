@@ -508,3 +508,62 @@ def test_module_and_console_entry_agree(cmd, capsys):
     assert mod.returncode == 2
     assert exc.value.code == 2
     assert mod.stderr.strip() == console_err.strip()
+
+
+def test_andon_show_json_matches_list_record():
+    """Refs #8075 AC-6."""
+    import io
+    import sys
+
+    from issuesmith.andon import Andon, list_open_records
+
+    andon = Andon(
+        id="issuesmith:42:p1:0",
+        kind="blocked",
+        issue=42,
+        step="p1",
+        summary="tests",
+        rule_id="tests.interrupted",
+        facts={"failed_step": "p1", "trigger": "step", "rule_ids": ["tests.interrupted"]},
+    )
+    client = _fake_client_with_andon(andon)
+    with patch(
+        "issuesmith.andon._iter_open_andon_issues",
+        return_value=iter([{"number": andon.issue}]),
+    ):
+        records = list_open_records(client)
+    assert len(records) == 1
+    list_record = records[0]
+
+    with patch("ghdag.forge.get_forge", return_value=client), patch(
+        "issuesmith.andon._iter_open_andon_issues",
+        return_value=iter([{"number": andon.issue}]),
+    ):
+        buf = io.StringIO()
+        with patch.object(sys, "stdout", buf):
+            from issuesmith import cli
+
+            with pytest.raises(SystemExit) as exc:
+                cli.main(["andon", "show", andon.id, "--json"])
+            assert exc.value.code == 0
+    show_record = json.loads(buf.getvalue())
+    assert show_record == list_record
+    assert set(show_record) >= {
+        "facts",
+        "cause",
+        "fix_kinds",
+        "prior_reruns",
+        "actions",
+    }
+
+
+def test_andon_show_json_not_found():
+    """Refs #8075 AC-6."""
+    from issuesmith import cli
+
+    client = MagicMock()
+    client.list_issues.return_value = []
+    with patch("ghdag.forge.get_forge", return_value=client):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["andon", "show", "missing:1:p1:0", "--json"])
+        assert exc.value.code != 0

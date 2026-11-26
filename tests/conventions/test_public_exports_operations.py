@@ -20,6 +20,9 @@ ANDON_PUBLIC_NAMES = frozenset(
         "to_comment",
         "plan_auto_answers",
         "apply_auto_answers",
+        "classify_cause",
+        "answer_actions",
+        "andon_record",
     }
 )
 

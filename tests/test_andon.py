@@ -408,3 +408,179 @@ def test_raise_andon_drops_stopped_issue(tmp_path):
     assert snap.in_flight == []
 
 
+# ---------------------------------------------------------------------------
+# Cause classification and answer actions (Issue #8075)
+# ---------------------------------------------------------------------------
+
+
+def test_transient_rule_yields_agent_may_resume():
+    """Refs #8075 AC-1."""
+    from issuesmith.andon import Andon, answer_actions, classify_cause
+
+    andon = Andon(
+        id="wf:1:p1:0",
+        kind="blocked",
+        issue=1,
+        step="p1",
+        summary="interrupted",
+        rule_id="tests.interrupted",
+        options=[],
+    )
+    assert classify_cause(andon) == "transient"
+    actions = answer_actions(andon, prior_reruns=0)
+    assert actions[0]["action"] == "resume_from_p1"
+    assert actions[0]["op"] == "resume"
+    assert actions[0]["force"] is True
+    assert actions[0]["agent_may_answer"] is True
+    assert actions[-1]["action"] == "reject"
+    assert actions[-1]["op"] == "record"
+    assert actions[-1]["agent_may_answer"] is False
+
+
+def test_repair_step_unknown_cause_blocks_agent_resume():
+    """Refs #8075 AC-2."""
+    from issuesmith.andon import Andon, answer_actions, classify_cause, fix_kinds_for
+
+    andon = Andon(
+        id="wf:1:repair:0",
+        kind="decision",
+        issue=1,
+        step="repair",
+        summary="repair gave up",
+        facts={
+            "failed_step": "p1",
+            "trigger": "step",
+            "rule_ids": ["repair.gave_up"],
+        },
+    )
+    assert classify_cause(andon) == "unknown"
+    actions = answer_actions(andon, prior_reruns=0)
+    resume = next(a for a in actions if a["action"] == "resume_from_p1")
+    assert resume["agent_may_answer"] is False
+    assert fix_kinds_for(andon, actions) == ["diagnose"]
+
+
+def test_issue_design_wins_over_transient_rule_ids():
+    """Refs #8075 AC-3."""
+    from issuesmith.andon import Andon, answer_actions, classify_cause, fix_kinds_for
+
+    andon = Andon(
+        id="wf:1:cp2:0",
+        kind="decision",
+        issue=1,
+        step="cp2",
+        summary="scope",
+        facts={
+            "failed_step": "cp2",
+            "trigger": "non_repairable",
+            "rule_ids": ["design_lint.yaml_contract", "tests.interrupted"],
+        },
+    )
+    assert classify_cause(andon) == "issue_design"
+    actions = answer_actions(andon, prior_reruns=0)
+    assert fix_kinds_for(andon, actions) == ["edit_issue"]
+    assert all(not a["agent_may_answer"] for a in actions)
+
+
+@pytest.mark.parametrize(
+    ("facts", "expected_cause", "expected_fix"),
+    [
+        ({"failure_class": "ENGINE_ENVIRONMENT_ERROR"}, "environment", ["clean_env"]),
+        ({"failure_class": "TIMEOUT"}, "transient", None),
+        ({"trigger": "gate_error", "rule_ids": []}, "line_defect", ["fix_line"]),
+    ],
+)
+def test_failure_class_and_gate_trigger(facts, expected_cause, expected_fix):
+    """Refs #8075 AC-4."""
+    from issuesmith.andon import Andon, answer_actions, classify_cause, fix_kinds_for
+
+    base = {"failed_step": "p1", "rule_ids": ["misc.unknown"]}
+    andon = Andon(
+        id="wf:1:p1:0",
+        kind="broken",
+        issue=1,
+        step="p1",
+        summary="s",
+        facts={**base, **facts},
+    )
+    assert classify_cause(andon) == expected_cause
+    actions = answer_actions(andon, prior_reruns=0)
+    if expected_fix is not None:
+        assert fix_kinds_for(andon, actions) == expected_fix
+
+
+def test_prior_reruns_and_answer_markers(local_client, tmp_path):
+    """Refs #8075 AC-5."""
+    from issuesmith.andon import (
+        Andon,
+        answer,
+        from_comment,
+        list_open_records,
+        raise_andon,
+        to_comment,
+    )
+
+    number = local_client.issue_create("ac5", "body")
+    first = Andon(
+        id=f"wf:{number}:p1:0",
+        kind="blocked",
+        issue=number,
+        step="p1",
+        summary="interrupted",
+        rule_id="tests.interrupted",
+        facts={"failed_step": "p1", "trigger": "step", "rule_ids": ["tests.interrupted"]},
+    )
+    raise_andon(local_client, first, metrics_path=tmp_path / "m.jsonl")
+    with patch("issuesmith.andon._call_resume_hook"):
+        answer(
+            local_client,
+            first.id,
+            "resume_from_p1",
+            metrics_path=tmp_path / "m.jsonl",
+            answered_by="agent",
+        )
+    bodies = [str(c.get("body") or "") for c in local_client.get_issue_comments(number)]
+    assert any("<!-- andon-answer-action: resume_from_p1 -->" in b for b in bodies)
+    assert any("<!-- andon-answered-by: agent -->" in b for b in bodies)
+
+    second = Andon(
+        id=f"wf:{number}:p1:1",
+        kind="blocked",
+        issue=number,
+        step="p1",
+        summary="interrupted again",
+        rule_id="tests.interrupted",
+        facts={"failed_step": "p1", "trigger": "step", "rule_ids": ["tests.interrupted"]},
+    )
+    raise_andon(local_client, second, metrics_path=tmp_path / "m.jsonl")
+    bodies = [str(c.get("body") or "") for c in local_client.get_issue_comments(number)]
+    comment_body = next(b for b in reversed(bodies) if "```andon" in b)
+    parsed = from_comment(comment_body)
+    assert parsed is not None
+    assert parsed.facts == second.facts
+    assert "cause:" not in comment_body or "cause" in comment_body
+
+    records = list_open_records(local_client)
+    second_record = next(r for r in records if r["id"] == second.id)
+    assert second_record["prior_reruns"] == 1
+    resume = next(a for a in second_record["actions"] if a["action"] == "resume_from_p1")
+    assert resume["agent_may_answer"] is False
+    assert second_record["fix_kinds"] == ["diagnose"]
+
+    ignore = to_comment(
+        Andon(
+            id="ignore",
+            kind="blocked",
+            issue=1,
+            step="p1",
+            summary="",
+            facts=second.facts,
+            rule_id="tests.interrupted",
+        ),
+        prior_reruns=9,
+    )
+    legacy_roundtrip = from_comment(ignore + "\ncause: stale\nfix_kinds: [stale]")
+    assert legacy_roundtrip is not None
+    assert legacy_roundtrip.facts == second.facts
+
+
