@@ -10,12 +10,12 @@ from ghdag.dag import AuditHooks
 
 from issuesmith.config import get_config
 from issuesmith.forge import get_forge
+from issuesmith.task_failure import COMMENT_MARKER, format_record
 
 if TYPE_CHECKING:
     from ghdag.dag import Task
     from ghdag.metrics import TaskMetrics
 
-COMMENT_MARKER = "<!-- issuesmith-task-failure -->"
 _FENCE = "`" * 3
 _STDERR_TAIL_CHARS = 1500
 _STDERR_TAIL_LINES = 30
@@ -94,6 +94,13 @@ def format_failure_comment(
         f"\n\n`python3 -m issuesmith resume {issue} --from {step} --handler {handler}`"
     )
     body += _recovery_suffix(failure_class)
+    body += "\n\n" + format_record(
+        task_uuid=task_uuid,
+        step=step,
+        returncode=returncode,
+        failure_class=failure_class or "",
+        stderr_tail=tail,
+    )
     return body
 
 

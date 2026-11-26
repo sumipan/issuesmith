@@ -94,6 +94,8 @@ class DagTerminatedEvent(ObserveEvent):
     namespace: str = ""
     result_first_line: str = ""
     failed_at: str = ""
+    failure_class: str = ""
+    stderr_tail: str = ""
     issue_state: str = ""
     state_reason: str | None = None
     closed_at: str | None = None

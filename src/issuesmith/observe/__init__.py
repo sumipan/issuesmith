@@ -617,6 +617,11 @@ def _detect_failure_marks(
         }
         phase = _phase_from_labels(labels, config.label_namespace, config)
         namespace = _namespace_for_key(st.key, config)
+        from issuesmith.task_failure import failure_details_from_comments
+
+        failure_class, stderr_tail = failure_details_from_comments(
+            comments, st.failed_uuid
+        )
 
         event = DagTerminatedEvent(
             issue=issue,
@@ -628,6 +633,8 @@ def _detect_failure_marks(
             namespace=namespace,
             result_first_line=result_line,
             failed_at=failed_at,
+            failure_class=failure_class,
+            stderr_tail=stderr_tail,
             issue_state=state_upper,
             state_reason=str(state_reason) if state_reason is not None else None,
             closed_at=str(closed_at) if closed_at else None,

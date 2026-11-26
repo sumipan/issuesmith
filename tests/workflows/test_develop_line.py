@@ -32,9 +32,11 @@ from issuesmith.lines.develop import prepare as develop_prepare
 from issuesmith.lines.develop.hooks import (
     COMMENT_MARKER,
     DevelopLineHooks,
+    _stderr_tail,
     format_failure_comment,
     parse_line_key,
 )
+from issuesmith.task_failure import parse_records
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _PACKAGE_FILES = _REPO_ROOT / "src" / "issuesmith" / "lines" / "develop" / "files"
@@ -1915,6 +1917,39 @@ def _ensure_issue_number(client, number: int) -> None:
 
 def _comment_count(client, number: int) -> int:
     return len(client.get_issue_comments(number))
+
+
+def test_develop_hooks_machine_readable_record_matches_human_body(develop_hooks_forge) -> None:
+    """Refs #8076 AC4."""
+    client = develop_hooks_forge
+    _ensure_issue_number(client, 42)
+    lines = ["line-%d" % i for i in range(31)]
+    long_stderr = "\n".join(lines + ["x" * 1600])
+    task = SimpleNamespace(
+        idempotency_key="issuesmith:develop:42",
+        annotations={"step_name": "verify"},
+    )
+    metrics = SimpleNamespace(
+        failure_class=FailureClass.TIMEOUT,
+        engine=None,
+        stderr_path=None,
+    )
+    before = _comment_count(client, 42)
+    DevelopLineHooks().on_task_failure("u-hook", task, 1, long_stderr, metrics)
+    assert _comment_count(client, 42) == before + 1
+    body = client.get_issue_comments(42)[-1]["body"]
+    assert COMMENT_MARKER in body
+    assert "python3 -m issuesmith resume 42 --from verify --handler develop" in body
+    assert "RECOVERY:" in body
+    records = parse_records(body)
+    assert len(records) == 1
+    record = records[0]
+    assert record["task"] == "u-hook"
+    assert record["step"] == "verify"
+    assert record["returncode"] == 1
+    assert record["failure_class"] == FailureClass.TIMEOUT.value
+    expected_tail = _stderr_tail(long_stderr)
+    assert record["stderr_tail"] == expected_tail
 
 
 def test_develop_hooks_comments_once_on_line_task_failure(develop_hooks_forge) -> None:

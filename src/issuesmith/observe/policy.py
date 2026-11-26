@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from issuesmith.observe.dag_state import load_dag_states
@@ -57,6 +57,7 @@ class AndonAction:
     # raise the andon once per occurrence. Empty means "one andon per issue".
     key: str = ""
     namespace: str = ""
+    facts: dict[str, Any] = field(default_factory=dict)
 
     @property
     def andon_id(self) -> str:
@@ -151,6 +152,18 @@ def _ledger_patch_reopened(issue: int, step: str) -> ObserveLedgerPatchAction:
     return ObserveLedgerPatchAction(reopened_add=(f"{issue}:{step}",))
 
 
+def _dag_terminated_facts(event: DagTerminatedEvent) -> dict[str, Any]:
+    facts: dict[str, Any] = {
+        "failed_step": event.failed_step,
+        "trigger": "dag_terminated",
+    }
+    if event.failure_class:
+        facts["failure_class"] = event.failure_class
+    if event.stderr_tail:
+        facts["stderr_tail"] = event.stderr_tail
+    return facts
+
+
 def _dag_terminated_andon(event: DagTerminatedEvent, *, reason: str) -> AndonAction:
     return AndonAction(
         kind="blocked",
@@ -159,6 +172,7 @@ def _dag_terminated_andon(event: DagTerminatedEvent, *, reason: str) -> AndonAct
         evidence=f"uuid={event.failed_uuid} result={event.result_path}",
         key=f"dag_terminated:{_strip_generation(event.key)}",
         namespace=event.namespace,
+        facts=_dag_terminated_facts(event),
     )
 
 
@@ -664,6 +678,7 @@ def execute(
                 summary=action.summary,
                 evidence=action.evidence,
                 namespace=action.namespace,
+                facts=dict(action.facts),
             )
             if client is not None and action.issue:
                 try:
