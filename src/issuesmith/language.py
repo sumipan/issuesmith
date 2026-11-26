@@ -181,6 +181,10 @@ _EN_MESSAGES: dict[str, str] = {
     "queue_triage.phase_requires_label": "{phase} phase requires {label} label",
     "queue_triage.phase_excludes_label": "{phase} phase rejects issues with {label} label",
     "queue_triage.missing_yaml": "missing YAML fields: {fields}",
+    "queue_triage.unsupported_repo": (
+        "target_repo {repo} is not supported by this workflow ({namespace}); "
+        "supported repos: {supported}"
+    ),
     # gate_rules/scope_breadth (CP1 autofix note)
     "scope_breadth.autofix_note": (
         "## CP1: allow_paths narrowed automatically\n\n"

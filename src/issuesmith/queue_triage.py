@@ -267,6 +267,22 @@ def deterministic_decision(
                     add_rejected_label=True,
                 )
 
+    target_repo = parse_frontmatter_fields(str(issue.get("body") or "")).get("target_repo")
+    if isinstance(target_repo, str) and target_repo.strip():
+        if target_repo not in cfg.supported_repos:
+            supported = ", ".join(sorted(cfg.supported_repos)) or "(none)"
+            return Decision(
+                kind="rejected",
+                reason=_msg(
+                    "unsupported_repo",
+                    repo=target_repo,
+                    namespace=cfg.label_namespace,
+                    supported=supported,
+                ),
+                comment=True,
+                add_rejected_label=True,
+            )
+
     # force=True: allow redispatch even when the done label is present.
     # This is the path for re-enqueueing, via the suggested `enqueue --force`, an Issue
     # whose phase was sent back to *-done by a CP2 FAIL etc. (regression found 2026-09-04).
