@@ -597,3 +597,105 @@ def test_andon_show_json_uses_open_record_with_notes():
         return_value=iter([{"number": andon.issue}]),
     ):
         assert andon_record(client, andon.id) is None
+
+
+def test_andon_diagnose_cli_dry_run_and_apply_json(tmp_path, monkeypatch):
+    """Refs #8077 AC8."""
+    import io
+    import json as jsonlib
+    import sys
+
+    import yaml
+
+    from issuesmith import cli
+    from issuesmith.andon import Andon, list_open_records, raise_andon
+    from issuesmith.config import reset_config_cache
+
+    cfg_path = tmp_path / "issuesmith.yaml"
+    exec_path = tmp_path / "exec.jsonl"
+    exec_path.write_text("", encoding="utf-8")
+    workflows = tmp_path / "workflows"
+    templates = workflows / "templates"
+    templates.mkdir(parents=True)
+    (templates / "diagnose.md").write_text("diagnose ${issue_number}\n", encoding="utf-8")
+    (workflows / "issuesmith.yml").write_text(
+        """name: issuesmith
+template_dir: templates
+triggers:
+  - label: diagnose-ready
+    handler: diagnose
+handlers:
+  diagnose:
+    steps:
+      - id: diagnose
+        template: diagnose
+        model: claude-sonnet-4-6
+""",
+        encoding="utf-8",
+    )
+    cfg_path.write_text(
+        yaml.safe_dump(
+            {
+                "repo": "example/repo",
+                "andon": {"diagnose": {"enabled": True}},
+                "paths": {"exec_jsonl": str(exec_path)},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    monkeypatch.setenv("GHDAG_FORGE", "local")
+    monkeypatch.setenv("GHDAG_FORGE_ROOT", str(tmp_path / "forge"))
+    monkeypatch.chdir(tmp_path)
+    reset_config_cache()
+
+    from ghdag.forge import get_forge
+
+    client = get_forge()
+    number = client.issue_create("target", "body")
+    andon = Andon(
+        id=f"wf:{number}:p1:0",
+        kind="blocked",
+        issue=number,
+        step="p1",
+        summary="tests",
+        facts={"failed_step": "p1", "trigger": "step", "rule_ids": ["repair.gave_up"]},
+        options=[],
+    )
+    raise_andon(client, andon, metrics_path=tmp_path / "m.jsonl")
+    before_comments = len(client.get_issue_comments(number))
+
+    buf = io.StringIO()
+    with patch.object(sys, "stdout", buf), patch(
+        "ghdag.forge.get_forge", return_value=client
+    ), patch("issuesmith.cli._active_issue_numbers", return_value=set()):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["andon", "diagnose", "--json"])
+        assert exc.value.code == 0
+    dry = jsonlib.loads(buf.getvalue())
+    assert "bundled" in dry and "requested" in dry and "failures" in dry
+    assert len(dry["requested"]) == 1
+    assert len(client.get_issue_comments(number)) == before_comments
+    assert exec_path.read_text(encoding="utf-8") == ""
+
+    buf2 = io.StringIO()
+    with patch.object(sys, "stdout", buf2), patch(
+        "ghdag.forge.get_forge", return_value=client
+    ), patch("issuesmith.cli._active_issue_numbers", return_value=set()):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["andon", "diagnose", "--json", "--apply"])
+        assert exc.value.code == 0
+    records = list_open_records(client)
+    assert records[0]["notes"]["diagnosis_requested"] == andon.id
+    assert len(client.get_issue_comments(number)) > before_comments
+    rows = [jsonlib.loads(line) for line in exec_path.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 1, buf2.getvalue()
+    assert rows[0]["annotations"]["step_name"] == "diagnose"
+    assert rows[0]["idempotency_key"].startswith(f"issuesmith:diagnose:{number}")
+    audit_rows = [
+        jsonlib.loads(line)
+        for line in (tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    redispatch = [row for row in audit_rows if row.get("event_type") == "redispatch"]
+    assert redispatch[0]["reason"] == f"diagnose {andon.id}"
+    reset_config_cache()

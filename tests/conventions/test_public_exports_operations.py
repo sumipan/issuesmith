@@ -21,6 +21,7 @@ ANDON_PUBLIC_NAMES = frozenset(
         "plan_auto_answers",
         "apply_auto_answers",
         "classify_cause",
+        "diagnosis_signature",
         "answer_actions",
         "andon_record",
     }

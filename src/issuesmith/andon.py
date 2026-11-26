@@ -5,11 +5,12 @@ id format: <workflow>:<issue>:<step>:<gen>
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import Any, Callable, Collection, Iterator, Protocol, runtime_checkable
+from typing import Any, Callable, Collection, Iterator, Mapping, Protocol, runtime_checkable
 
 import yaml
 
@@ -145,6 +146,50 @@ def classify_cause(andon: Andon) -> str:
         if agg != "unknown":
             return agg
     return "unknown"
+
+
+def _signature_rule_ids(data: Andon | Mapping[str, Any]) -> str:
+    facts = (
+        data.facts or {}
+        if isinstance(data, Andon)
+        else _normalize_facts(data.get("facts"))
+    )
+    rule_ids = facts.get("rule_ids")
+    if isinstance(rule_ids, list):
+        normalized = sorted({r for r in rule_ids if isinstance(r, str)})
+        if normalized:
+            return ",".join(normalized)
+    rule_id = data.rule_id if isinstance(data, Andon) else data.get("rule_id")
+    if isinstance(rule_id, str):
+        return rule_id
+    return ""
+
+
+def diagnosis_signature(andon: Andon | Mapping[str, Any]) -> str:
+    """Deterministic 12-char hex signature for bundling diagnose candidates."""
+    if isinstance(andon, Andon):
+        cause = classify_cause(andon)
+        facts = andon.facts or {}
+    else:
+        facts = _normalize_facts(andon.get("facts"))
+        rule_id = andon.get("rule_id")
+        proxy = Andon(
+            id="",
+            kind="blocked",
+            issue=0,
+            step="",
+            summary="",
+            rule_id=rule_id if isinstance(rule_id, str) else "",
+            facts=facts,
+        )
+        cause = classify_cause(proxy)
+    failed = facts.get("failed_step")
+    failed_s = failed if isinstance(failed, str) else ""
+    failure_class = facts.get("failure_class")
+    fc_s = failure_class if isinstance(failure_class, str) else ""
+    rule_part = _signature_rule_ids(andon)
+    raw = f"{cause}|{failed_s}|{rule_part}|{fc_s}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
 
 
 def failed_step(andon: Andon) -> str | None:
@@ -981,6 +1026,7 @@ __all__ = [
     "AutoAnswerPlan",
     "answer_actions",
     "classify_cause",
+    "diagnosis_signature",
     "raise_andon",
     "list_open",
     "list_open_records",

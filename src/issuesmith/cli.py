@@ -22,6 +22,7 @@ subcommands:
   answer <andon-id> <action> [--by human|agent]  post answer, remove label, call resume hook
   note <andon-id> --key <key> --value <value>  record a note on an open andon (no label change)
   auto-answer [--apply] [--json]  plan (or apply) configured auto-answer rules
+  diagnose [--apply] [--json]     plan (or apply) deterministic diagnosis bundling / triggers
 """
 
 _USAGE = """\
@@ -280,6 +281,9 @@ def _andon_parser() -> ContractParser:
     p_auto = sub.add_parser("auto-answer")
     p_auto.add_argument("--apply", action="store_true")
     p_auto.add_argument("--json", action="store_true")
+    p_diag = sub.add_parser("diagnose")
+    p_diag.add_argument("--apply", action="store_true")
+    p_diag.add_argument("--json", action="store_true")
     return parser
 
 
@@ -340,7 +344,7 @@ def _cmd_andon(argv: list[str]) -> int:
         return fail(
             "MISSING_ARGUMENT",
             "subcommand required",
-            "subcommands: list, show, answer, note, auto-answer",
+            "subcommands: list, show, answer, note, auto-answer, diagnose",
         )
     parser = _andon_parser()
     if argv[0] in {"-h", "--help"}:
@@ -384,6 +388,58 @@ def _cmd_andon(argv: list[str]) -> int:
         if not matched:
             return fail("NOT_FOUND", f"andon not found: {args.andon_id}")
         print(to_comment(matched[0]))
+        return 0
+
+    if args.subcmd == "diagnose":
+        from datetime import datetime, timezone
+
+        from issuesmith.config import get_config
+        from issuesmith.diagnose import DiagnosePlan, apply_diagnose_plan, plan_diagnoses
+
+        cfg = get_config()
+        settings = cfg.andon.diagnose
+        if not settings.enabled:
+            diagnose_plan = DiagnosePlan()
+        else:
+            records = list_open_records(client)
+            active_issues = _active_issue_numbers(cfg)
+            diagnose_plan = plan_diagnoses(
+                client,
+                records,
+                now=datetime.now(timezone.utc),
+                active_issues=active_issues,
+                settings=settings,
+                ledger_path=cfg.paths.diagnoses,
+            )
+            if args.apply:
+                diagnose_plan = apply_diagnose_plan(
+                    client,
+                    diagnose_plan,
+                    exec_jsonl=cfg.paths.exec_jsonl,
+                )
+        if args.json:
+            payload = {
+                "bundled": diagnose_plan.bundled,
+                "requested": diagnose_plan.requested,
+                "failures": diagnose_plan.failures,
+            }
+            print(json.dumps(payload, ensure_ascii=False))
+            return 0
+        for entry in diagnose_plan.bundled:
+            print(
+                f"bundle {entry.get('andon_id')} issue #{entry.get('issue')} "
+                f"with {entry.get('bundled_with')}"
+            )
+        for entry in diagnose_plan.requested:
+            print(
+                f"request {entry.get('andon_id')} issue #{entry.get('issue')} "
+                f"handler={entry.get('handler')}"
+            )
+        for entry in diagnose_plan.failures:
+            print(
+                f"failure {entry.get('andon_id')} {entry.get('operation')}: "
+                f"{entry.get('error')}"
+            )
         return 0
 
     if args.subcmd == "auto-answer":
