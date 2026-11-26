@@ -63,6 +63,7 @@ _DEFAULT_REL_PATHS: dict[str, str] = {
     "night_state": "logs/night-queue-state.json",
     "exec_jsonl": "jobs/exec.jsonl",
     "done_dir": "jobs/done",
+    "diagnoses": "jobs/issuesmith-diagnoses.jsonl",
     "quota_state": "jobs/quota-gate.json",
     "metrics": "jobs/metrics.jsonl",
     "worktrees_dir": ".claude/worktrees",
@@ -102,6 +103,7 @@ class PathsConfig:
     workflow: Path
     template_dir: Path
     engine_state: Path
+    diagnoses: Path = field(default_factory=lambda: Path("jobs/issuesmith-diagnoses.jsonl"))
     lanes: Path | None = None
     concurrency: Path | None = None
 
@@ -118,10 +120,19 @@ class AutoAnswerRule:
 
 
 @dataclass(frozen=True)
+class AndonDiagnoseConfig:
+    enabled: bool = False
+    step: str = "diagnose"
+    handler: str = "diagnose"
+    reuse_days: int = 7
+
+
+@dataclass(frozen=True)
 class AndonConfig:
     auto_answer: tuple[AutoAnswerRule, ...] = ()
     causes: Mapping[str, str] = field(default_factory=dict)
     auto_rerun_max: int = 1
+    diagnose: AndonDiagnoseConfig = field(default_factory=AndonDiagnoseConfig)
 
 
 @dataclass(frozen=True)
@@ -1733,6 +1744,36 @@ def _build_andon_causes(raw: Any) -> dict[str, str]:
     return out
 
 
+def _build_andon_diagnose(raw: Any) -> AndonDiagnoseConfig:
+    defaults = AndonDiagnoseConfig()
+    if raw is None:
+        return defaults
+    if not isinstance(raw, Mapping):
+        raise ConfigError("andon.diagnose must be a mapping")
+    if "enabled" in raw:
+        enabled_raw = raw["enabled"]
+        if type(enabled_raw) is not bool:
+            raise ConfigError("andon.diagnose.enabled must be a bool")
+        enabled = enabled_raw
+    else:
+        enabled = defaults.enabled
+    step = str(raw.get("step", defaults.step)).strip()
+    if not step:
+        raise ConfigError("andon.diagnose.step must be a non-empty string")
+    handler = str(raw.get("handler", defaults.handler)).strip()
+    if not handler:
+        raise ConfigError("andon.diagnose.handler must be a non-empty string")
+    reuse_raw = raw.get("reuse_days", defaults.reuse_days)
+    if isinstance(reuse_raw, bool) or not isinstance(reuse_raw, int) or reuse_raw < 1:
+        raise ConfigError("andon.diagnose.reuse_days must be an integer >= 1")
+    return AndonDiagnoseConfig(
+        enabled=enabled,
+        step=step,
+        handler=handler,
+        reuse_days=reuse_raw,
+    )
+
+
 def _build_andon_auto_rerun_max(raw: Any) -> int:
     if raw is None:
         return 1
@@ -1748,9 +1789,10 @@ def _build_andon(raw: Mapping[str, Any] | None) -> AndonConfig:
         return AndonConfig()
     causes = _build_andon_causes(raw.get("causes"))
     auto_rerun_max = _build_andon_auto_rerun_max(raw.get("auto_rerun_max"))
+    diagnose = _build_andon_diagnose(raw.get("diagnose"))
     auto_raw = raw.get("auto_answer")
     if auto_raw is None:
-        return AndonConfig(causes=causes, auto_rerun_max=auto_rerun_max)
+        return AndonConfig(causes=causes, auto_rerun_max=auto_rerun_max, diagnose=diagnose)
     if not isinstance(auto_raw, list):
         raise ConfigError("andon.auto_answer must be a list")
     rules: list[AutoAnswerRule] = []
@@ -1799,6 +1841,7 @@ def _build_andon(raw: Mapping[str, Any] | None) -> AndonConfig:
         auto_answer=tuple(rules),
         causes=causes,
         auto_rerun_max=auto_rerun_max,
+        diagnose=diagnose,
     )
 
 
