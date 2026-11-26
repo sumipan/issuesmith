@@ -7,6 +7,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.223.0 - 2026-11-27
+
+### Added
+
+- diagnose: add proposal step and deterministic parsing
+
+### Fixed
+
+- repair: whitelist diagnose step imports in develop line test (#8078)
+
 ## 0.222.0 - 2026-11-26
 
 ### Added

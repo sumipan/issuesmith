@@ -125,6 +125,8 @@ class AndonDiagnoseConfig:
     step: str = "diagnose"
     handler: str = "diagnose"
     reuse_days: int = 7
+    role: str = "design"
+    on_proposal: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1772,11 +1774,37 @@ def _build_andon_diagnose(raw: Any) -> AndonDiagnoseConfig:
     reuse_raw = raw.get("reuse_days", defaults.reuse_days)
     if isinstance(reuse_raw, bool) or not isinstance(reuse_raw, int) or reuse_raw < 1:
         raise ConfigError("andon.diagnose.reuse_days must be an integer >= 1")
+    role_raw = raw.get("role", defaults.role)
+    if not isinstance(role_raw, str):
+        raise ConfigError("andon.diagnose.role must be a non-empty string")
+    role = role_raw.strip()
+    if not role:
+        raise ConfigError("andon.diagnose.role must be a non-empty string")
+    on_proposal: str | None
+    if "on_proposal" not in raw:
+        on_proposal = defaults.on_proposal
+    elif raw["on_proposal"] is None:
+        on_proposal = None
+    else:
+        hook_raw = raw["on_proposal"]
+        if not isinstance(hook_raw, str):
+            raise ConfigError("andon.diagnose.on_proposal must be module:function or null")
+        hook = hook_raw.strip()
+        if not hook:
+            raise ConfigError("andon.diagnose.on_proposal must be module:function or null")
+        if ":" not in hook or hook.count(":") != 1:
+            raise ConfigError("andon.diagnose.on_proposal must be module:function or null")
+        mod, fn = hook.split(":", 1)
+        if not mod.strip() or not fn.strip():
+            raise ConfigError("andon.diagnose.on_proposal must be module:function or null")
+        on_proposal = hook
     return AndonDiagnoseConfig(
         enabled=enabled,
         step=step,
         handler=handler,
         reuse_days=reuse_raw,
+        role=role,
+        on_proposal=on_proposal,
     )
 
 
