@@ -98,7 +98,11 @@ class ObserveSnapshot:
             try:
                 self.comments[issue_num] = client.get_issue_comments(issue_num)
             except Exception:
-                self.comments[issue_num] = []
+                logger.warning(
+                    "observe: failed to read comments for issue #%s",
+                    issue_num,
+                    exc_info=True,
+                )
         return self.comments.get(issue_num)
 
 
@@ -539,7 +543,7 @@ def _closed_reason(issue_data: dict | None) -> str | None:
     reason = issue_data.get("state_reason")
     if reason is None or reason == "":
         return "completed"
-    return str(reason)
+    return str(reason).casefold()
 
 
 def _detect_failure_marks(
@@ -713,7 +717,10 @@ def _detect_unstarted_tasks(
     done_dir, running_dir, quota_dir = _done_dir_paths(config)
     exec_path = config.paths.exec_jsonl
     if not exec_path.exists():
-        return []
+        stale = tuple(uuid for uuid, _ts in snapshot.observe_unstarted_first_seen)
+        if not stale:
+            return []
+        return [ObserveLedgerPatchEvent(unstarted_remove=stale)]
     prefixes = {config.label_namespace}
     for wf in config.observe.workflows:
         prefixes.add(wf.name)
@@ -746,6 +753,15 @@ def _detect_unstarted_tasks(
     ledger_remove: list[str] = []
     events: list[ObserveEvent] = []
     timeout = config.observe.task_timeout_minutes
+
+    latest_uuids = {
+        str(row.get("uuid", ""))
+        for issue, rows in issue_rows.items()
+        for row in rows
+        if row.get("idempotency_key") == issue_last_key[issue]
+        and str(row.get("uuid", ""))
+    }
+    ledger_remove.extend(sorted(set(first_seen_map) - latest_uuids))
 
     for issue in sorted(issue_rows):
         current_key = issue_last_key[issue]
@@ -795,6 +811,7 @@ def _detect_unstarted_tasks(
                 step=step,
                 uuid=uuid,
                 first_seen=first_seen_map[uuid],
+                timeout_at=now.isoformat(),
                 namespace=namespace,
                 issue_state=state_upper,
                 state_reason=issue_data.get("state_reason"),

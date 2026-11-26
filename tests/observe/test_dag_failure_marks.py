@@ -294,6 +294,37 @@ def test_api_budget_defers_failure_without_marking_seen(env):
     assert failed not in store.snapshot().observe_failure_seen
 
 
+def test_comment_read_failure_defers_failure_without_marking_seen(env, monkeypatch):
+    store, client, tmp_path = env
+    exec_path, done_dir, _running, _quota = _dirs(tmp_path)
+    cfg = _patch_cfg(tmp_path, exec_path, done_dir)
+    issue = client.issue_create("read failure", "body")
+    seed_time = _seed(store, client, cfg)
+    fail_time = seed_time + timedelta(seconds=5)
+    failed = _write_failed_main(exec_path, done_dir, issue, when=fail_time)
+    original = client.get_issue_comments
+
+    def _fail(_issue: int) -> list[dict]:
+        raise RuntimeError("temporary forge failure")
+
+    monkeypatch.setattr(client, "get_issue_comments", _fail)
+    later = fail_time + timedelta(seconds=5)
+    assert not [
+        e
+        for e in observe(store.snapshot(), client, cfg, now=later)
+        if isinstance(e, DagTerminatedEvent) and not e.sync_only
+    ]
+    assert failed not in store.snapshot().observe_failure_seen
+
+    monkeypatch.setattr(client, "get_issue_comments", original)
+    retried = [
+        e
+        for e in observe(store.snapshot(), client, cfg, now=later + timedelta(seconds=5))
+        if isinstance(e, DagTerminatedEvent) and not e.sync_only
+    ]
+    assert len(retried) == 1
+
+
 def test_unstarted_timeout_respects_markers_and_dependencies(env):
     store, client, tmp_path = env
     exec_path, done_dir, running_dir, _quota = _dirs(tmp_path)
@@ -321,3 +352,58 @@ def test_unstarted_timeout_respects_markers_and_dependencies(env):
     clear_evts = observe(store.snapshot(), client, cfg, now=t_clear)
     execute(evaluate(clear_evts, cfg.observe), store, sinks=[], client=client)
     assert "d2" not in dict(store.snapshot().observe_unstarted_first_seen)
+
+
+def test_unstarted_ledger_drops_uuid_removed_from_latest_generation(env):
+    store, client, tmp_path = env
+    exec_path, done_dir, _running, _quota = _dirs(tmp_path)
+    cfg = _patch_cfg(tmp_path, exec_path, done_dir)
+    issue = client.issue_create("generation", "body")
+    old_key = f"issuesmith:impl:{issue}:0"
+    exec_path.write_text(
+        json.dumps({"uuid": "old", "idempotency_key": old_key, "depends": []}) + "\n",
+        encoding="utf-8",
+    )
+    seed_time = _seed(store, client, cfg)
+    first_seen_events = observe(
+        store.snapshot(), client, cfg, now=seed_time + timedelta(seconds=5),
+    )
+    execute(evaluate(first_seen_events, cfg.observe), store, sinks=[], client=client)
+    assert "old" in dict(store.snapshot().observe_unstarted_first_seen)
+
+    new_key = f"issuesmith:impl:{issue}:1"
+    with exec_path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"uuid": "new", "idempotency_key": new_key, "depends": []}) + "\n")
+    next_events = observe(
+        store.snapshot(), client, cfg, now=seed_time + timedelta(seconds=10),
+    )
+    execute(evaluate(next_events, cfg.observe), store, sinks=[], client=client)
+    ledger = dict(store.snapshot().observe_unstarted_first_seen)
+    assert "old" not in ledger
+    assert "new" in ledger
+
+
+def test_closed_unstarted_task_comment_uses_timeout_time_and_no_marker(env):
+    store, client, tmp_path = env
+    exec_path, done_dir, _running, _quota = _dirs(tmp_path)
+    cfg = _patch_cfg(tmp_path, exec_path, done_dir)
+    issue = client.issue_create("closed unstarted", "body")
+    client.issue_close(issue, reason="completed")
+    key = f"issuesmith:impl:{issue}"
+    exec_path.write_text(
+        json.dumps({"uuid": "late", "idempotency_key": key, "depends": []}) + "\n",
+        encoding="utf-8",
+    )
+    seed_time = _seed(store, client, cfg)
+    first_seen = seed_time + timedelta(seconds=5)
+    initial_events = observe(store.snapshot(), client, cfg, now=first_seen)
+    execute(evaluate(initial_events, cfg.observe), store, sinks=[], client=client)
+
+    timeout_at = first_seen + timedelta(minutes=2)
+    timeout_events = observe(store.snapshot(), client, cfg, now=timeout_at)
+    execute(evaluate(timeout_events, cfg.observe), store, sinks=[], client=client)
+
+    assert client.issue_get(issue, fields=["state"])["state"] == "OPEN"
+    comment = client.get_issue_comments(issue)[-2]["body"]
+    assert "result_line=no completion marker" in comment
+    assert f"failed_at={timeout_at.isoformat()}" in comment

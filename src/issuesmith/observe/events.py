@@ -137,6 +137,7 @@ class UnstartedTaskEvent(ObserveEvent):
     step: str = ""
     uuid: str = ""
     first_seen: str = ""
+    timeout_at: str = ""
     namespace: str = ""
     issue_state: str = ""
     state_reason: str | None = None

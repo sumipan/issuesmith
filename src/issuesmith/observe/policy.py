@@ -169,6 +169,7 @@ def _evaluate_dag_terminated(event: DagTerminatedEvent, config: "ObserveConfig")
     ns = cfg.label_namespace
     workflow = _workflow_name_from_key(event.key, ns)
     actions: list[Action] = []
+    reopened_patch: ObserveLedgerPatchAction | None = None
     reason = f"DAG {event.key} terminated at step {event.failed_step}"
 
     if event.not_planned:
@@ -217,7 +218,7 @@ def _evaluate_dag_terminated(event: DagTerminatedEvent, config: "ObserveConfig")
         )
         actions.append(IssueCommentAction(issue=event.issue, body=body))
         actions.append(ReopenIssueAction(issue=event.issue))
-        actions.append(_ledger_patch_reopened(event.issue, event.failed_step))
+        reopened_patch = _ledger_patch_reopened(event.issue, event.failed_step)
 
     if not event.suppress_andon and not event.not_planned and not event.reopen_guard:
         summary = reason
@@ -231,6 +232,8 @@ def _evaluate_dag_terminated(event: DagTerminatedEvent, config: "ObserveConfig")
                 summary = f"{reason}; running label removed"
             actions.append(_dag_terminated_andon(event, reason=summary))
 
+    if reopened_patch is not None:
+        actions.append(reopened_patch)
     if event.mark_seen and event.failed_uuid:
         actions.append(_ledger_patch_for_seen(event.failed_uuid))
     return actions
@@ -243,6 +246,7 @@ def _evaluate_unstarted(event: UnstartedTaskEvent, config: "ObserveConfig") -> l
     ns = cfg.label_namespace
     workflow = event.namespace or _workflow_name_from_key(event.key, ns)
     actions: list[Action] = []
+    reopened_patch: ObserveLedgerPatchAction | None = None
 
     if event.not_planned:
         return actions
@@ -264,13 +268,13 @@ def _evaluate_unstarted(event: UnstartedTaskEvent, config: "ObserveConfig") -> l
             workflow=workflow,
             step=event.step,
             uuid=event.uuid,
-            result_line="",
+            result_line="no completion marker",
             closed_at=event.closed_at or "unknown",
-            failed_at=event.first_seen,
+            failed_at=event.timeout_at,
         )
         actions.append(IssueCommentAction(issue=event.issue, body=body))
         actions.append(ReopenIssueAction(issue=event.issue))
-        actions.append(_ledger_patch_reopened(event.issue, event.step))
+        reopened_patch = _ledger_patch_reopened(event.issue, event.step)
 
     summary = cfg.language.message(
         "policy.unstarted_task",
@@ -290,6 +294,8 @@ def _evaluate_unstarted(event: UnstartedTaskEvent, config: "ObserveConfig") -> l
             namespace=event.namespace,
         )
     )
+    if reopened_patch is not None:
+        actions.append(reopened_patch)
     return actions
 
 
