@@ -18,6 +18,8 @@ from issuesmith.observe.events import DagTerminatedEvent, ObserveFailureWatchSee
 from issuesmith.observe.policy import evaluate, execute
 from issuesmith.queue_store import QueueStore
 
+_NOW = datetime(2026, 9, 22, 12, 0, 0, tzinfo=timezone.utc)
+
 
 @pytest.fixture
 def env(tmp_path: Path, monkeypatch):
@@ -66,7 +68,7 @@ def _patch_cfg(tmp_path: Path, exec_path: Path, done_dir: Path):
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return _NOW
 
 
 def _write_failed_main(

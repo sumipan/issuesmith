@@ -20,6 +20,8 @@ from issuesmith.observe.events import DagTerminatedEvent
 from issuesmith.observe.policy import evaluate, execute
 from issuesmith.queue_store import QueueStore
 
+_NOW = datetime(2026, 9, 22, 12, 0, 0, tzinfo=timezone.utc)
+
 
 @pytest.fixture
 def env(tmp_path: Path, monkeypatch):
@@ -66,7 +68,7 @@ def test_observe_releases_failed_dag_from_done_markers(env):
     key = f'issuesmith:impl:{issue_num}'
     patched_cfg = replace(cfg, paths=replace(cfg.paths, exec_jsonl=exec_path, done_dir=done_dir))
     exec_path.write_text('', encoding='utf-8')
-    seed_time = datetime.now(timezone.utc)
+    seed_time = _NOW
     seed_evts = observe(store.snapshot(), client, patched_cfg, now=seed_time)
     execute(evaluate(seed_evts, cfg.observe), store, sinks=[], client=client)
     fail_time = seed_time + timedelta(seconds=5)
