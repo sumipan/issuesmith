@@ -1078,6 +1078,29 @@ def run_requires_loop(
                 return rerun
             return None
 
+    from issuesmith.gates import ENVIRONMENT_RULE_IDS
+
+    env_violation = next(
+        (v for v in result.blocking if v.rule_id in ENVIRONMENT_RULE_IDS),
+        None,
+    )
+    if env_violation is not None:
+        rule_id = env_violation.rule_id
+        full_andon = _FullAndon(
+            id=f"{workflow}:{issue_num}:{step_id}:0",
+            kind="blocked",
+            issue=issue_num,
+            step=step_id,
+            summary=(
+                f"test environment failure in step {step_id}: "
+                f"{rule_id}: {env_violation.message}"
+            ),
+            rule_id=rule_id,
+            options=[f"resume_from_{step_id}"],
+        )
+        _raise_andon(get_forge(), full_andon)
+        return 1
+
     current_fingerprints = frozenset(_violation_fingerprint(v) for v in result.blocking)
     current_rule_ids = frozenset(v.rule_id for v in result.blocking)
     if _initial_blocking_count is None:

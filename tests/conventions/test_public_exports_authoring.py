@@ -53,6 +53,7 @@ GATES_PUBLIC_NAMES = frozenset(
         "RequiresGate",
         "GATE_REGISTRY",
         "NON_REPAIRABLE_RULE_IDS",
+        "ENVIRONMENT_RULE_IDS",
         "is_non_repairable_rule_id",
         "resolve_gate",
         "validate_step_requires",

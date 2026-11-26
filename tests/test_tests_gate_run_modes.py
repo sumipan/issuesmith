@@ -280,5 +280,43 @@ def test_tests_gate_fails_when_python_command_missing(
     violations = TestsGate(tmp_path, base_branch="main").check("", [])
 
     assert len(violations) == 1
-    assert violations[0].rule_id == "tests.collection_error"
+    assert violations[0].rule_id == "tests.environment"
     assert str(missing) in violations[0].message
+
+
+@pytest.mark.parametrize("mode", ["mapped", "full"])
+def test_pytest_timeout_returns_timeout_rule(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str,
+) -> None:
+    """Ref: sumipan/nexus#8074 AC3 — rc 124 is tests.timeout for mapped and full runs."""
+    timeout_msg = "pytest timed out after 1500 s\n"
+    if mode == "mapped":
+        clone = _setup_repo(tmp_path, {
+            "src/foo.py": _FOO,
+            "tests/test_foo.py": _TEST_FOO,
+        })
+        _commit(clone, {"src/foo.py": "def value():\n    return 2\n"})
+        root = clone
+    else:
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_foo.py").write_text("def test_foo():\n    assert True\n")
+        root = tmp_path
+        monkeypatch.setattr(wt, "changed_files", lambda _root, _base: [])
+
+    real = wt._run_pytest
+    call_count = {"n": 0}
+
+    def _fake(r: Path, args: list[str]) -> tuple[int, str]:
+        call_count["n"] += 1
+        if mode == "mapped" and call_count["n"] == 1:
+            return 124, timeout_msg
+        if mode == "full":
+            return 124, timeout_msg
+        return real(r, args)
+
+    monkeypatch.setattr(wt, "_run_pytest", _fake)
+    violations = TestsGate(root, base_branch="main").check("", [])
+
+    assert len(violations) == 1
+    assert violations[0].rule_id == "tests.timeout"
+    assert timeout_msg.strip() in violations[0].message

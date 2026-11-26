@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.219.1 - 2026-11-26
+
+### Fixed
+
+- gates: block repair on test environment failures (#8074)
+
 ## 0.219.0 - 2026-11-26
 
 ### Added

@@ -1241,7 +1241,7 @@ def _execute(
                 returncode=1,
                 stdout="",
                 stderr=str(exc),
-                failure_class=None,
+                failure_class=FailureClass.ENGINE_ENVIRONMENT_ERROR.value,
                 engine_used=selection.engine,
             )
     timeout_sec = _resolve_timeout_sec(role)

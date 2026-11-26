@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -113,6 +114,23 @@ def test_execute_llm_result_timeout_records_metrics(execute_mocks, monkeypatch):
     recorded = execute_mocks["recorded"][-1]
     assert recorded["status"] == "timeout"
     assert recorded["failure_class"] == FailureClass.TIMEOUT.value
+
+
+def test_execute_python_bin_failure_sets_engine_environment_error(
+    execute_mocks, monkeypatch, tmp_path: Path,
+):
+    """Ref: sumipan/nexus#8074 AC7 — venv resolution failure classifies before LLM call."""
+    from issuesmith.worktree_python import WorktreePythonError
+
+    def _raise_bin(_cwd: object) -> None:
+        raise WorktreePythonError("venv missing")
+
+    monkeypatch.setattr("issuesmith.engine.python_bin_for", _raise_bin)
+    proc = _execute("implementation", "prompt", cwd=tmp_path)
+
+    assert proc.returncode == 1
+    assert proc.failure_class == FailureClass.ENGINE_ENVIRONMENT_ERROR.value
+    assert "venv missing" in proc.stderr
 
 
 def test_execute_engine_error_pauses_engine_via_quota_gate(execute_mocks, monkeypatch):

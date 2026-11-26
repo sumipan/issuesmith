@@ -172,6 +172,72 @@ def test_run_pytest_python_root_selects_worktree_not_cwd(
     reset_config_cache()
 
 
+def test_tests_gate_python_bin_command_failure_is_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ref: sumipan/nexus#8074 AC2 — python_bin_command exit 1 -> tests.environment."""
+    from issuesmith.gates.worktree import TestsGate
+
+    origin = tmp_path / "origin"
+    clone = tmp_path / "clone"
+    origin.mkdir()
+    subprocess.run(["git", "init", "-b", "main", str(origin)], capture_output=True, check=False)
+    subprocess.run(
+        ["git", "-C", str(origin), "config", "user.email", "t@t.com"],
+        capture_output=True, check=False,
+    )
+    subprocess.run(
+        ["git", "-C", str(origin), "config", "user.name", "T"],
+        capture_output=True, check=False,
+    )
+    (origin / "tests").mkdir()
+    (origin / "tests" / "test_foo.py").write_text(
+        "def test_foo():\n    assert True\n", encoding="utf-8",
+    )
+    subprocess.run(
+        ["git", "-C", str(origin), "add", "."],
+        capture_output=True, check=False,
+    )
+    subprocess.run(
+        ["git", "-C", str(origin), "commit", "-m", "init"],
+        capture_output=True, check=False,
+    )
+    subprocess.run(["git", "clone", str(origin), str(clone)], capture_output=True, check=False)
+    subprocess.run(
+        ["git", "-C", str(clone), "config", "user.email", "t@t.com"],
+        capture_output=True, check=False,
+    )
+    subprocess.run(
+        ["git", "-C", str(clone), "config", "user.name", "T"],
+        capture_output=True, check=False,
+    )
+    subprocess.run(
+        ["git", "-C", str(clone), "checkout", "-b", "feat"],
+        capture_output=True, check=False,
+    )
+    host = tmp_path / "host"
+    host.mkdir()
+    script = host / "fail"
+    script.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    script.chmod(0o755)
+    cfg_path = host / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({
+            "repo": "example/repo",
+            "tests": {"python_bin_command": [str(script)]},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+
+    violations = TestsGate(clone, base_branch="main").check("", [])
+
+    assert len(violations) == 1
+    assert violations[0].rule_id == "tests.environment"
+    reset_config_cache()
+
+
 def test_run_pytest_python_bin_failure_returns_127(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
