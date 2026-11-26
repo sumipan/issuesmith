@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Collection
 from typing import TYPE_CHECKING
 
 from ghdag.dag import AuditHooks
@@ -18,16 +19,24 @@ COMMENT_MARKER = "<!-- issuesmith-task-failure -->"
 _FENCE = "`" * 3
 _STDERR_TAIL_CHARS = 1500
 _STDERR_TAIL_LINES = 30
+_RECOVERY_TIMEOUT = (
+    "RECOVERY: the step hit the task time limit; split the work or reuse the "
+    "existing worktree branch before re-running"
+)
+_RECOVERY_INTERACTIVE = (
+    "RECOVERY: the engine stopped on a question; fix the non-interactive "
+    "constraints in the order before re-running, and do not switch engines"
+)
 
 
-def parse_line_key(key: object, namespace: str) -> tuple[str, int] | None:
-    """``<namespace>:<handler>:<issue>[:<generation>]`` -> (handler, issue)."""
+def parse_line_key(key: object, namespaces: Collection[str]) -> tuple[str, int] | None:
+    """``<workflow>:<handler>:<issue>[:<generation>]`` -> (handler, issue)."""
     if not isinstance(key, str):
         return None
     parts = key.split(":")
     if len(parts) not in (3, 4):
         return None
-    if parts[0] != namespace:
+    if parts[0] not in namespaces:
         return None
     if not (parts[2].isascii() and parts[2].isdigit()):
         return None
@@ -44,6 +53,14 @@ def _stderr_tail(text: str) -> str:
     return tail
 
 
+def _recovery_suffix(failure_class: str | None) -> str:
+    if failure_class == "TIMEOUT":
+        return f"\n\n{_RECOVERY_TIMEOUT}"
+    if failure_class == "INTERACTIVE_PROMPT":
+        return f"\n\n{_RECOVERY_INTERACTIVE}"
+    return ""
+
+
 def format_failure_comment(
     *,
     issue: int,
@@ -53,13 +70,18 @@ def format_failure_comment(
     returncode: int,
     failure_class: str | None,
     stderr_text: str,
+    engine: str | None,
+    stderr_path: str | None,
 ) -> str:
     fields = [
         f"- step: `{step}`",
         f"- task: `{task_uuid}`",
+        f"- engine: `{engine or '-'}`",
         f"- exit code: `{returncode}`",
         f"- failure class: `{failure_class or '-'}`",
     ]
+    if stderr_path:
+        fields.append(f"- stderr path: `{stderr_path}`")
     body = f"{COMMENT_MARKER}\n## Task failed ({step})\n\n" + "\n".join(fields)
     tail = _stderr_tail(stderr_text)
     if tail:
@@ -71,6 +93,7 @@ def format_failure_comment(
     body += (
         f"\n\n`python3 -m issuesmith resume {issue} --from {step} --handler {handler}`"
     )
+    body += _recovery_suffix(failure_class)
     return body
 
 
@@ -87,11 +110,13 @@ class DevelopLineHooks(AuditHooks):
     ) -> None:
         super().on_task_failure(uuid, task, returncode, stderr_text, metrics)
         try:
-            namespace = get_config().label_namespace
+            config = get_config()
         except Exception as exc:  # noqa: BLE001 — runner must not crash on config errors
             print(f"[develop_hooks] config load failed: {exc}", file=sys.stderr)
             return
-        parsed = parse_line_key(task.idempotency_key, namespace)
+        namespaces = {config.label_namespace}
+        namespaces.update(wf.name for wf in config.observe.workflows)
+        parsed = parse_line_key(task.idempotency_key, namespaces)
         if parsed is None:
             return
         handler, issue = parsed
@@ -106,8 +131,13 @@ class DevelopLineHooks(AuditHooks):
             returncode=returncode,
             failure_class=failure_class,
             stderr_text=stderr_text,
+            engine=metrics.engine,
+            stderr_path=metrics.stderr_path,
         )
         try:
             get_forge().issue_comment(issue, body)
         except Exception as exc:  # noqa: BLE001 — runner must not crash on forge errors
             print(f"[develop_hooks] failure comment failed for #{issue}: {exc}", file=sys.stderr)
+
+
+HOOKS_CLASS = DevelopLineHooks

@@ -19,6 +19,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 from ghdag.forge import get_forge
+from ghdag.io import done as ghdag_done
+from ghdag.metrics import FailureClass
 
 from issuesmith.andon import list_open
 from issuesmith.bump_commits import BUMP_SUBJECT_PREFIX
@@ -27,7 +29,12 @@ from issuesmith.contract import StepContext
 from issuesmith.language import EN
 from issuesmith.lines import LINES, extract_line
 from issuesmith.lines.develop import prepare as develop_prepare
-from issuesmith.lines.develop.hooks import DevelopLineHooks
+from issuesmith.lines.develop.hooks import (
+    COMMENT_MARKER,
+    DevelopLineHooks,
+    format_failure_comment,
+    parse_line_key,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _PACKAGE_FILES = _REPO_ROOT / "src" / "issuesmith" / "lines" / "develop" / "files"
@@ -871,6 +878,7 @@ def _run_dag_once(
     host: Path,
     *,
     timeout_sec: float = _RUNNER_TIMEOUT_SEC,
+    hook_modules: list[str] | None = None,
 ) -> None:
     """Run ``ghdag run`` until every queued task is terminal.
 
@@ -898,18 +906,20 @@ def _run_dag_once(
         "DEVELOP_LINE_TEST_UUIDS": ",".join(uuids),
         "DEVELOP_LINE_TEST_DONE_DIR": str(done_dir),
     }
+    modules = hook_modules or ["develop_line_stop_hooks"]
+    cmd = [
+        "python3",
+        "-m",
+        "ghdag",
+        "run",
+        str(exec_path),
+        "--interval-sec",
+        "0.2",
+    ]
+    for module in modules:
+        cmd.extend(["--hooks", module])
     proc = subprocess.Popen(
-        [
-            "python3",
-            "-m",
-            "ghdag",
-            "run",
-            str(exec_path),
-            "--interval-sec",
-            "0.2",
-            "--hooks",
-            "develop_line_stop_hooks",
-        ],
+        cmd,
         cwd=host,
         env=run_env,
         stdout=subprocess.DEVNULL,
@@ -1916,7 +1926,7 @@ def test_develop_hooks_comments_once_on_line_task_failure(develop_hooks_forge) -
         idempotency_key="issuesmith:develop:42",
         annotations={"step_name": "verify"},
     )
-    metrics = SimpleNamespace(failure_class=None)
+    metrics = SimpleNamespace(failure_class=None, engine=None, stderr_path=None)
     DevelopLineHooks().on_task_failure("task-uuid-1", task, 1, "boom", metrics)
     assert _comment_count(client, 42) == before + 1
     body = client.get_issue_comments(42)[-1]["body"]
@@ -1934,7 +1944,7 @@ def test_develop_hooks_parses_generation_key(develop_hooks_forge) -> None:
         idempotency_key="issuesmith:develop:42:3",
         annotations={"step_name": "implement"},
     )
-    metrics = SimpleNamespace(failure_class=None)
+    metrics = SimpleNamespace(failure_class=None, engine=None, stderr_path=None)
     DevelopLineHooks().on_task_failure("uuid-g", task, 2, "err", metrics)
     assert _comment_count(client, 42) == before + 1
 
@@ -1944,11 +1954,342 @@ def test_develop_hooks_ignores_non_line_task(develop_hooks_forge) -> None:
     _ensure_issue_number(client, 42)
     before = _comment_count(client, 42)
     hooks = DevelopLineHooks()
-    metrics = SimpleNamespace(failure_class=None)
+    metrics = SimpleNamespace(failure_class=None, engine=None, stderr_path=None)
     for key in (None, "other:develop:42", "issuesmith:develop:abc"):
         task = SimpleNamespace(idempotency_key=key, annotations={})
         hooks.on_task_failure("u", task, 1, "x", metrics)
     assert _comment_count(client, 42) == before
+
+
+_DAG_HOOK_METHODS = (
+    "on_task_start",
+    "on_task_success",
+    "on_task_failure",
+    "on_task_rejected",
+    "on_task_dep_failed",
+    "on_task_empty_result",
+    "on_task_cancelled",
+    "on_task_progress",
+    "on_shutdown",
+    "check_rejected",
+    "check_pipeline_status",
+    "check_promote_target",
+)
+
+
+def test_develop_hooks_module_loads_declared_hooks_class() -> None:
+    """Refs sumipan/issuesmith#8061 AC1."""
+    import issuesmith.lines.develop.hooks as hook_mod
+
+    assert hook_mod.HOOKS_CLASS is DevelopLineHooks
+    hooks = hook_mod.HOOKS_CLASS()
+    assert type(hooks).__name__ == "DevelopLineHooks"
+    for name in _DAG_HOOK_METHODS:
+        assert callable(getattr(hooks, name)), name
+
+
+def test_develop_hooks_parse_line_key_accepts_configured_workflows() -> None:
+    """Refs sumipan/issuesmith#8061 AC2."""
+    namespaces = {"issuesmith", "bump"}
+    assert parse_line_key("issuesmith:develop:42", namespaces) == ("develop", 42)
+    assert parse_line_key("bump:bump:43:2", namespaces) == ("bump", 43)
+    assert parse_line_key("factory:develop:42", namespaces) is None
+    assert parse_line_key("issuesmith:develop:ff", namespaces) is None
+    assert parse_line_key("issuesmith:develop", namespaces) is None
+    assert parse_line_key(42, namespaces) is None
+
+
+def test_develop_hooks_comment_includes_engine_and_optional_stderr_path() -> None:
+    """Refs sumipan/issuesmith#8061 AC4."""
+    minimal = format_failure_comment(
+        issue=1,
+        handler="develop",
+        step="verify",
+        task_uuid="u1",
+        returncode=1,
+        failure_class=None,
+        stderr_text="",
+        engine=None,
+        stderr_path=None,
+    )
+    assert "- engine: `-`" in minimal
+    assert "stderr path" not in minimal
+    full = format_failure_comment(
+        issue=1,
+        handler="develop",
+        step="verify",
+        task_uuid="u1",
+        returncode=1,
+        failure_class=None,
+        stderr_text="",
+        engine="codex",
+        stderr_path="stderr/u/run-r0.log",
+    )
+    assert "- engine: `codex`" in full
+    assert "- stderr path: `stderr/u/run-r0.log`" in full
+
+
+def test_develop_hooks_timeout_comment_adds_recovery() -> None:
+    """Refs sumipan/issuesmith#8061 AC5."""
+    body = format_failure_comment(
+        issue=1,
+        handler="develop",
+        step="verify",
+        task_uuid="u1",
+        returncode=124,
+        failure_class=FailureClass.TIMEOUT.value,
+        stderr_text="",
+        engine=None,
+        stderr_path=None,
+    )
+    assert body.count("RECOVERY:") == 1
+    assert "task time limit" in body
+    assert "worktree branch" in body
+
+
+def test_develop_hooks_interactive_prompt_comment_adds_recovery() -> None:
+    """Refs sumipan/issuesmith#8061 AC6."""
+    body = format_failure_comment(
+        issue=1,
+        handler="develop",
+        step="verify",
+        task_uuid="u1",
+        returncode=1,
+        failure_class=FailureClass.INTERACTIVE_PROMPT.value,
+        stderr_text="",
+        engine=None,
+        stderr_path=None,
+    )
+    assert body.count("RECOVERY:") == 1
+    assert "non-interactive" in body
+    assert "do not switch engines" in body
+
+
+def test_develop_hooks_other_failure_omits_recovery() -> None:
+    """Refs sumipan/issuesmith#8061 AC7."""
+    for failure_class in (None, FailureClass.ENGINE_ERROR.value):
+        body = format_failure_comment(
+            issue=1,
+            handler="develop",
+            step="verify",
+            task_uuid="u1",
+            returncode=1,
+            failure_class=failure_class,
+            stderr_text="",
+            engine=None,
+            stderr_path=None,
+        )
+        assert "RECOVERY:" not in body
+
+
+def test_develop_hooks_swallows_forge_error(develop_hooks_forge, monkeypatch, capsys) -> None:
+    """Refs sumipan/issuesmith#8061 AC8."""
+    client = develop_hooks_forge
+    _ensure_issue_number(client, 42)
+    before = _comment_count(client, 42)
+    client.issue_comment = MagicMock(side_effect=RuntimeError("forge-down"))
+    monkeypatch.setattr("issuesmith.lines.develop.hooks.get_forge", lambda: client)
+    task = SimpleNamespace(
+        idempotency_key="issuesmith:develop:42",
+        annotations={"step_name": "verify"},
+    )
+    metrics = SimpleNamespace(failure_class=None, engine=None, stderr_path=None)
+    DevelopLineHooks().on_task_failure("u", task, 1, "stderr", metrics)
+    assert _comment_count(client, 42) == before
+    err = capsys.readouterr().err
+    assert "failure comment failed" in err
+
+
+@pytest.fixture
+def develop_hooks_minimal_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """issuesmith.yaml with label_namespace only (no observe.workflows). Refs #8061 AC9."""
+    forge_root = tmp_path / "forge"
+    forge_root.mkdir()
+    config_path = tmp_path / "issuesmith.yaml"
+    config_path.write_text(
+        yaml.safe_dump({"repo": "example/reference-host", "label_namespace": "issuesmith"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GHDAG_FORGE", "local")
+    monkeypatch.setenv("GHDAG_FORGE_ROOT", str(forge_root))
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(config_path))
+    for key in ("GITHUB_TOKEN", "GH_TOKEN", "GITHUB_REPOSITORIES", "GITHUB_REPOSITORY"):
+        monkeypatch.delenv(key, raising=False)
+    reset_config_cache()
+    client = get_forge()
+    yield client
+    reset_config_cache()
+
+
+def test_develop_hooks_without_observe_workflows_uses_label_namespace(
+    develop_hooks_minimal_config,
+) -> None:
+    """Refs sumipan/issuesmith#8061 AC9."""
+    client = develop_hooks_minimal_config
+    _ensure_issue_number(client, 42)
+    before = _comment_count(client, 42)
+    metrics = SimpleNamespace(failure_class=None, engine="shell", stderr_path=None)
+    DevelopLineHooks().on_task_failure(
+        "u-line",
+        SimpleNamespace(
+            idempotency_key="issuesmith:develop:42",
+            annotations={"step_name": "implement"},
+        ),
+        1,
+        "impl failed",
+        metrics,
+    )
+    DevelopLineHooks().on_task_failure(
+        "u-gen",
+        SimpleNamespace(
+            idempotency_key="issuesmith:develop:42:2",
+            annotations={"step_name": "verify"},
+        ),
+        2,
+        "verify failed",
+        metrics,
+    )
+    hooks = DevelopLineHooks()
+    bad_metrics = SimpleNamespace(failure_class=None, engine=None, stderr_path=None)
+    for key in ("factory:develop:42", "issuesmith:develop:xy"):
+        hooks.on_task_failure(
+            "u-bad",
+            SimpleNamespace(idempotency_key=key, annotations={}),
+            1,
+            "x",
+            bad_metrics,
+        )
+    assert _comment_count(client, 42) == before + 2
+
+
+def _shell_task(
+    host: Path,
+    *,
+    uuid: str,
+    exit_code: int,
+    idempotency_key: str,
+    step_name: str | None = None,
+    result_name: str | None = None,
+) -> dict:
+    jobs = host / "jobs"
+    jobs.mkdir(parents=True, exist_ok=True)
+    order = jobs / f"order-{uuid}.md"
+    if exit_code == 0:
+        order.write_text(f"exec /bin/sh -c 'exit {exit_code}'\n", encoding="utf-8")
+    else:
+        order.write_text(
+            f"exec /bin/sh -c 'echo {uuid} failed >&2; exit {exit_code}'\n",
+            encoding="utf-8",
+        )
+    record: dict = {
+        "uuid": uuid,
+        "command": f"bash -o pipefail {order}",
+        "idempotency_key": idempotency_key,
+    }
+    if result_name is not None:
+        record["result_path"] = f"jobs/{result_name}"
+    annotations: dict[str, str] = {}
+    if step_name is not None:
+        annotations["step_name"] = step_name
+    if annotations:
+        record["annotations"] = annotations
+    return record
+
+
+def test_develop_hooks_cli_routes_failures_to_matching_issues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refs sumipan/issuesmith#8061 AC3."""
+    issue_n = 120
+    issue_m = 121
+    issue_k = 122
+    forge_root = tmp_path / "forge"
+    forge_root.mkdir()
+    host = tmp_path / "host"
+    (host / "jobs" / "done").mkdir(parents=True)
+    config_src = yaml.safe_load((_PACKAGE_FILES / "issuesmith.yaml").read_text(encoding="utf-8"))
+    config_src["observe"] = {"workflows": [{"name": "bump", "label_namespace": "bump"}]}
+    config_path = tmp_path / "issuesmith.yaml"
+    config_path.write_text(yaml.safe_dump(config_src), encoding="utf-8")
+    env = {
+        **os.environ,
+        "PYTHONPATH": f"{_REPO_ROOT / 'src'}{os.pathsep}{os.environ.get('PYTHONPATH', '')}",
+        "GHDAG_FORGE": "local",
+        "GHDAG_FORGE_ROOT": str(forge_root),
+        "ISSUESMITH_CONFIG": str(config_path),
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    env.pop("GITHUB_TOKEN", None)
+    env.pop("GH_TOKEN", None)
+    monkeypatch.setenv("GHDAG_FORGE", "local")
+    monkeypatch.setenv("GHDAG_FORGE_ROOT", str(forge_root))
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(config_path))
+    for key in ("GITHUB_TOKEN", "GH_TOKEN", "GITHUB_REPOSITORIES", "GITHUB_REPOSITORY"):
+        monkeypatch.delenv(key, raising=False)
+    reset_config_cache()
+    client = get_forge()
+    for number in (issue_n, issue_m, issue_k):
+        _ensure_issue_number(client, number)
+    for number in (issue_n, issue_m, issue_k):
+        assert client.issue_get(number, fields=["number"])["number"] == number
+    before_n = _comment_count(client, issue_n)
+    before_m = _comment_count(client, issue_m)
+    before_k = _comment_count(client, issue_k)
+    records = [
+        _shell_task(
+            host,
+            uuid="ac3-ok",
+            exit_code=0,
+            idempotency_key=f"issuesmith:develop:{issue_n}",
+        ),
+        _shell_task(
+            host,
+            uuid="ac3-n-fail",
+            exit_code=1,
+            idempotency_key=f"issuesmith:develop:{issue_n}:2",
+            step_name="verify",
+        ),
+        _shell_task(
+            host,
+            uuid="ac3-m-fail",
+            exit_code=1,
+            idempotency_key=f"bump:bump:{issue_m}",
+            step_name="prepare",
+        ),
+        _shell_task(
+            host,
+            uuid="ac3-k-skip",
+            exit_code=1,
+            idempotency_key=f"other:develop:{issue_k}",
+        ),
+    ]
+    exec_path = host / "jobs" / "exec.jsonl"
+    exec_path.write_text(
+        "\n".join(json.dumps(record) for record in records) + "\n",
+        encoding="utf-8",
+    )
+    _run_dag_once(
+        env,
+        host,
+        hook_modules=[
+            "issuesmith.lines.develop.hooks",
+            "develop_line_stop_hooks",
+        ],
+    )
+    done_dir = host / "jobs" / "done"
+    assert ghdag_done.interpret_done(ghdag_done.read_done_content(done_dir, "ac3-ok")) == "success"
+    for failed in ("ac3-n-fail", "ac3-m-fail", "ac3-k-skip"):
+        assert ghdag_done.interpret_done(ghdag_done.read_done_content(done_dir, failed)) != "success"
+    assert _comment_count(client, issue_n) == before_n + 1
+    assert _comment_count(client, issue_m) == before_m + 1
+    assert _comment_count(client, issue_k) == before_k
+    body_n = client.get_issue_comments(issue_n)[-1]["body"]
+    body_m = client.get_issue_comments(issue_m)[-1]["body"]
+    assert COMMENT_MARKER in body_n
+    assert "stderr/" in body_n
+    assert f"resume {issue_n} --from verify --handler develop" in body_n
+    assert f"resume {issue_m} --from prepare --handler bump" in body_m
+    reset_config_cache()
 
 
 _EXPECTED_EXTRACT_PATHS = frozenset(
