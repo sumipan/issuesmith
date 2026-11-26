@@ -149,15 +149,19 @@ def classify_cause(andon: Andon) -> str:
 
 
 def _signature_rule_ids(data: Andon | Mapping[str, Any]) -> str:
-    if isinstance(data, Andon):
-        return ",".join(_rule_ids_from_andon(data))
-    facts = _normalize_facts(data.get("facts"))
+    facts = (
+        data.facts or {}
+        if isinstance(data, Andon)
+        else _normalize_facts(data.get("facts"))
+    )
     rule_ids = facts.get("rule_ids")
     if isinstance(rule_ids, list):
-        return ",".join(sorted({str(r) for r in rule_ids if r}))
-    rule_id = data.get("rule_id")
-    if rule_id:
-        return str(rule_id)
+        normalized = sorted({r for r in rule_ids if isinstance(r, str)})
+        if normalized:
+            return ",".join(normalized)
+    rule_id = data.rule_id if isinstance(data, Andon) else data.get("rule_id")
+    if isinstance(rule_id, str):
+        return rule_id
     return ""
 
 
@@ -167,8 +171,18 @@ def diagnosis_signature(andon: Andon | Mapping[str, Any]) -> str:
         cause = classify_cause(andon)
         facts = andon.facts or {}
     else:
-        cause = str(andon.get("cause") or "unknown")
         facts = _normalize_facts(andon.get("facts"))
+        rule_id = andon.get("rule_id")
+        proxy = Andon(
+            id="",
+            kind="blocked",
+            issue=0,
+            step="",
+            summary="",
+            rule_id=rule_id if isinstance(rule_id, str) else "",
+            facts=facts,
+        )
+        cause = classify_cause(proxy)
     failed = facts.get("failed_step")
     failed_s = failed if isinstance(failed, str) else ""
     failure_class = facts.get("failure_class")

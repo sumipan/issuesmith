@@ -614,6 +614,25 @@ def test_andon_diagnose_cli_dry_run_and_apply_json(tmp_path, monkeypatch):
     cfg_path = tmp_path / "issuesmith.yaml"
     exec_path = tmp_path / "exec.jsonl"
     exec_path.write_text("", encoding="utf-8")
+    workflows = tmp_path / "workflows"
+    templates = workflows / "templates"
+    templates.mkdir(parents=True)
+    (templates / "diagnose.md").write_text("diagnose ${issue_number}\n", encoding="utf-8")
+    (workflows / "issuesmith.yml").write_text(
+        """name: issuesmith
+template_dir: templates
+triggers:
+  - label: diagnose-ready
+    handler: diagnose
+handlers:
+  diagnose:
+    steps:
+      - id: diagnose
+        template: diagnose
+        model: claude-sonnet-4-6
+""",
+        encoding="utf-8",
+    )
     cfg_path.write_text(
         yaml.safe_dump(
             {
@@ -627,6 +646,7 @@ def test_andon_diagnose_cli_dry_run_and_apply_json(tmp_path, monkeypatch):
     monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
     monkeypatch.setenv("GHDAG_FORGE", "local")
     monkeypatch.setenv("GHDAG_FORGE_ROOT", str(tmp_path / "forge"))
+    monkeypatch.chdir(tmp_path)
     reset_config_cache()
 
     from ghdag.forge import get_forge
@@ -658,17 +678,6 @@ def test_andon_diagnose_cli_dry_run_and_apply_json(tmp_path, monkeypatch):
     assert len(client.get_issue_comments(number)) == before_comments
     assert exec_path.read_text(encoding="utf-8") == ""
 
-    trigger_cmds: list[list[str]] = []
-
-    class _Proc:
-        returncode = 0
-        stdout = ""
-        stderr = ""
-
-    monkeypatch.setattr(
-        "issuesmith.diagnose.subprocess.run",
-        lambda cmd, **kw: trigger_cmds.append(list(cmd)) or _Proc(),
-    )
     buf2 = io.StringIO()
     with patch.object(sys, "stdout", buf2), patch(
         "ghdag.forge.get_forge", return_value=client
@@ -679,6 +688,14 @@ def test_andon_diagnose_cli_dry_run_and_apply_json(tmp_path, monkeypatch):
     records = list_open_records(client)
     assert records[0]["notes"]["diagnosis_requested"] == andon.id
     assert len(client.get_issue_comments(number)) > before_comments
-    assert len(trigger_cmds) == 1
-    assert trigger_cmds[0][trigger_cmds[0].index("--handler") + 1] == "diagnose"
+    rows = [jsonlib.loads(line) for line in exec_path.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 1, buf2.getvalue()
+    assert rows[0]["annotations"]["step_name"] == "diagnose"
+    assert rows[0]["idempotency_key"].startswith(f"issuesmith:diagnose:{number}")
+    audit_rows = [
+        jsonlib.loads(line)
+        for line in (tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    redispatch = [row for row in audit_rows if row.get("event_type") == "redispatch"]
+    assert redispatch[0]["reason"] == f"diagnose {andon.id}"
     reset_config_cache()

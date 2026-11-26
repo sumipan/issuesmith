@@ -43,7 +43,7 @@ def _is_eligible(
     active_issues: set[int],
 ) -> bool:
     actions = record.get("actions") or []
-    if any(a.get("agent_may_answer") for a in actions if isinstance(a, dict)):
+    if any(a.get("agent_may_answer") is True for a in actions if isinstance(a, dict)):
         return False
     notes = record.get("notes") or {}
     if not isinstance(notes, dict):
@@ -171,7 +171,14 @@ def _andon_bundle_candidate(
     ]
     if not candidates:
         return None
-    candidates.sort(key=lambda r: (str(r.get("raised_at") or ""), str(r.get("id") or "")))
+    def sort_key(record: Mapping[str, Any]) -> tuple[datetime, str]:
+        raised_at = _parse_iso_datetime(record.get("raised_at"))
+        return (
+            raised_at or datetime.max.replace(tzinfo=timezone.utc),
+            str(record.get("id") or ""),
+        )
+
+    candidates.sort(key=sort_key)
     chosen = candidates[0]
     ref = f"andon:{chosen['id']}"
     return ref, _fix_kind_from_record(chosen)
@@ -376,13 +383,16 @@ def apply_diagnose_plan(
             )
             continue
         if proc.returncode != 0:
-            tail = (proc.stderr or proc.stdout or "").strip()[-500:]
+            stdout_tail = (proc.stdout or "").strip()[-500:]
+            stderr_tail = (proc.stderr or "").strip()[-500:]
             _append_failure(
                 failures,
                 andon_id=andon_id,
                 operation="trigger",
-                error=tail or f"exit {proc.returncode}",
+                error=stderr_tail or stdout_tail or f"exit {proc.returncode}",
                 returncode=proc.returncode,
+                stdout_tail=stdout_tail,
+                stderr_tail=stderr_tail,
             )
     return replace(plan, failures=failures)
 

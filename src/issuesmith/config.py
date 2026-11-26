@@ -1757,10 +1757,16 @@ def _build_andon_diagnose(raw: Any) -> AndonDiagnoseConfig:
         enabled = enabled_raw
     else:
         enabled = defaults.enabled
-    step = str(raw.get("step", defaults.step)).strip()
+    step_raw = raw.get("step", defaults.step)
+    if not isinstance(step_raw, str):
+        raise ConfigError("andon.diagnose.step must be a non-empty string")
+    step = step_raw.strip()
     if not step:
         raise ConfigError("andon.diagnose.step must be a non-empty string")
-    handler = str(raw.get("handler", defaults.handler)).strip()
+    handler_raw = raw.get("handler", defaults.handler)
+    if not isinstance(handler_raw, str):
+        raise ConfigError("andon.diagnose.handler must be a non-empty string")
+    handler = handler_raw.strip()
     if not handler:
         raise ConfigError("andon.diagnose.handler must be a non-empty string")
     reuse_raw = raw.get("reuse_days", defaults.reuse_days)

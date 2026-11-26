@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from datetime import datetime, timezone
 
 import pytest
@@ -143,6 +142,20 @@ def test_diagnosis_signature_uses_only_normalized_cause_fields():
     )
     assert diagnosis_signature(a) != diagnosis_signature(different_step)
 
+    mapping = {
+        "cause": "unknown",
+        "facts": {
+            "failed_step": "p1",
+            "rule_ids": ["b.rule", 3, "a.rule", "a.rule"],
+            "failure_class": "ENGINE_ERROR",
+        },
+    }
+    assert diagnosis_signature(mapping) == diagnosis_signature(a)
+    mapping["facts"]["rule_ids"] = [3]
+    mapping["rule_id"] = "a.rule"
+    fallback = {**mapping, "facts": {**mapping["facts"], "rule_ids": []}}
+    assert diagnosis_signature(mapping) == diagnosis_signature(fallback)
+
 
 def test_plan_prefers_open_issue_and_lists_issues_once(tmp_path):
     """Refs #8077 AC2."""
@@ -182,7 +195,7 @@ def test_plan_reuses_oldest_diagnosed_open_andon(tmp_path):
         andon_id="wf:9:p1:0",
         issue=9,
         notes={"diagnosis": "bundled:issue#1"},
-        raised_at="2026-11-26T08:00:00+00:00",
+        raised_at="2026-11-26T12:00:00+04:00",
         facts=facts,
     )
     newer = _record(
@@ -285,23 +298,33 @@ def test_apply_request_is_at_most_once_when_trigger_fails(local_client, tmp_path
         signature=signature,
     )
     exec_path = tmp_path / "exec.jsonl"
-    calls: list[list[str]] = []
-
-    class _Proc:
-        returncode = 1
-        stdout = ""
-        stderr = "boom"
-
-    monkeypatch.setattr(
-        subprocess,
-        "run",
-        lambda cmd, **kw: calls.append(list(cmd)) or _Proc(),
+    exec_path.write_text("", encoding="utf-8")
+    workflows = tmp_path / "workflows"
+    templates = workflows / "templates"
+    templates.mkdir(parents=True)
+    (templates / "other.md").write_text("other ${issue_number}\n", encoding="utf-8")
+    (workflows / "issuesmith.yml").write_text(
+        """name: issuesmith
+template_dir: templates
+triggers:
+  - label: other-ready
+    handler: other
+handlers:
+  other:
+    steps:
+      - id: other
+        template: other
+        model: claude-sonnet-4-6
+""",
+        encoding="utf-8",
     )
+    monkeypatch.chdir(tmp_path)
     applied = apply_diagnose_plan(local_client, plan, exec_jsonl=exec_path)
-    assert applied.failures and applied.failures[0]["returncode"] == 1
+    assert applied.failures and applied.failures[0]["returncode"] != 0
+    assert "handler 'diagnose' not found" in applied.failures[0]["stderr_tail"]
     refreshed = list_open_records(local_client)[0]
     assert refreshed["notes"]["diagnosis_requested"] == andon.id
-    assert len(calls) == 1
+    assert exec_path.read_text(encoding="utf-8") == ""
     replan = plan_diagnoses(
         local_client,
         list_open_records(local_client),
@@ -312,6 +335,9 @@ def test_apply_request_is_at_most_once_when_trigger_fails(local_client, tmp_path
     )
     assert replan.bundled == []
     assert replan.requested == []
+    reapplied = apply_diagnose_plan(local_client, replan, exec_jsonl=exec_path)
+    assert reapplied.failures == []
+    assert exec_path.read_text(encoding="utf-8") == ""
 
 
 def test_plan_excludes_auto_answer_diagnose_step_and_active_issue(tmp_path):
@@ -326,17 +352,22 @@ def test_plan_excludes_auto_answer_diagnose_step_and_active_issue(tmp_path):
         facts={"failed_step": "diagnose"},
     )
     active = _record(andon_id="wf:4:p1:0", issue=4)
+    merely_truthy = _record(
+        andon_id="wf:5:p1:0",
+        issue=5,
+        actions=[{"agent_may_answer": 1}],
+    )
     client = IssueListingClient()
     plan = plan_diagnoses(
         client,
-        [auto, diagnose_step, failed_step, active],
+        [auto, diagnose_step, failed_step, active, merely_truthy],
         now=_FIXED_NOW,
         active_issues={4},
         settings=_settings(),
         ledger_path=tmp_path / "ledger.jsonl",
     )
     assert plan.bundled == []
-    assert plan.requested == []
+    assert [entry["andon_id"] for entry in plan.requested] == ["wf:5:p1:0"]
 
 
 class DiagnosePlanShim:
