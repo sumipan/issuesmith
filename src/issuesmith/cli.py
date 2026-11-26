@@ -399,11 +399,11 @@ def _cmd_andon(argv: list[str]) -> int:
         cfg = get_config()
         settings = cfg.andon.diagnose
         if not settings.enabled:
-            answer_plan = DiagnosePlan()
+            diagnose_plan = DiagnosePlan()
         else:
             records = list_open_records(client)
             active_issues = _active_issue_numbers(cfg)
-            answer_plan = plan_diagnoses(
+            diagnose_plan = plan_diagnoses(
                 client,
                 records,
                 now=datetime.now(timezone.utc),
@@ -412,30 +412,30 @@ def _cmd_andon(argv: list[str]) -> int:
                 ledger_path=cfg.paths.diagnoses,
             )
             if args.apply:
-                answer_plan = apply_diagnose_plan(
+                diagnose_plan = apply_diagnose_plan(
                     client,
-                    answer_plan,
+                    diagnose_plan,
                     exec_jsonl=cfg.paths.exec_jsonl,
                 )
         if args.json:
             payload = {
-                "bundled": answer_plan.bundled,
-                "requested": answer_plan.requested,
-                "failures": answer_plan.failures,
+                "bundled": diagnose_plan.bundled,
+                "requested": diagnose_plan.requested,
+                "failures": diagnose_plan.failures,
             }
             print(json.dumps(payload, ensure_ascii=False))
             return 0
-        for entry in answer_plan.bundled:
+        for entry in diagnose_plan.bundled:
             print(
                 f"bundle {entry.get('andon_id')} issue #{entry.get('issue')} "
                 f"with {entry.get('bundled_with')}"
             )
-        for entry in answer_plan.requested:
+        for entry in diagnose_plan.requested:
             print(
                 f"request {entry.get('andon_id')} issue #{entry.get('issue')} "
                 f"handler={entry.get('handler')}"
             )
-        for entry in answer_plan.failures:
+        for entry in diagnose_plan.failures:
             print(
                 f"failure {entry.get('andon_id')} {entry.get('operation')}: "
                 f"{entry.get('error')}"

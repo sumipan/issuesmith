@@ -50,7 +50,8 @@ def _is_eligible(
         notes = {}
     if "diagnosis" in notes or "diagnosis_requested" in notes:
         return False
-    facts = record.get("facts") if isinstance(record.get("facts"), dict) else {}
+    facts_value = record.get("facts")
+    facts: Mapping[str, Any] = facts_value if isinstance(facts_value, Mapping) else {}
     failed_step = _failed_step_str(facts)
     step = str(record.get("step") or "")
     if failed_step == settings.step or step == settings.step:
@@ -129,7 +130,8 @@ def _ledger_candidate(
             continue
         if dt > now or dt < cutoff:
             continue
-        fix_kind = row.get("fix_kind") if isinstance(row.get("fix_kind"), str) else ""
+        fix_kind_value = row.get("fix_kind")
+        fix_kind = fix_kind_value if isinstance(fix_kind_value, str) else ""
         if best is None or dt > best[0]:
             best = (dt, andon_id, fix_kind)
     if best is None:
