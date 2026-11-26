@@ -86,17 +86,6 @@ def test_wsl_develop_running_sets_phase(env):
     assert events[0].phase == 'develop'
     assert events[0].namespace == 'wsl'
 
-def test_closed_issue_or_no_running_label_skips(env):
-    store, client, tmp_path = env
-    exec_path, done_dir, _running = _dirs(tmp_path)
-    cfg = _cfg_with_paths(tmp_path, exec_path, done_dir)
-    issue_num = client.issue_create('no label', 'body')
-    _failed_bump_dag(exec_path, done_dir, issue_num)
-    assert _detect_dag_terminated_workflows(client, cfg, cfg.observe.max_api_calls) == []
-    client.issue_update(issue_num, labels_add=['bump:running'])
-    client.issue_close(issue_num)
-    assert _detect_dag_terminated_workflows(client, cfg, cfg.observe.max_api_calls) == []
-
 def test_bump_dag_terminated_auto_resolves_without_in_flight(env, monkeypatch):
     store, client, tmp_path = env
     issue_num = client.issue_create('bump auto', 'body')

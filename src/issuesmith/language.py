@@ -125,6 +125,21 @@ _EN_MESSAGES: dict[str, str] = {
         "## requires: preexisting violations (non-blocking)\n\n{items}"
     ),
     "dispatch.preexisting_violation_item": "- `{rule_id}`: {message}",
+    # observe/policy
+    "policy.reopened_after_failure": (
+        "DAG failure detected after the Issue was closed "
+        "(workflow={workflow}, step={step}, uuid={uuid}, "
+        "result_line={result_line}, closed_at={closed_at}, failed_at={failed_at}). "
+        "Reopening because the pipeline still failed."
+    ),
+    "policy.reopened_guard": (
+        "DAG failed again on Issue #{issue} ({workflow}/{step}, uuid={uuid}) "
+        "but it was already reopened once; leaving the Issue closed."
+    ),
+    "policy.unstarted_task": (
+        "Runnable task has no start markers for {minutes} minutes "
+        "(workflow={workflow}, step={step}, uuid={uuid}, key={key})."
+    ),
     "dispatch.step_no_module": (
         "step {step} has no module; run it via engine run-guarded --requires-step {step}"
     ),

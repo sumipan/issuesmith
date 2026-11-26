@@ -203,6 +203,10 @@ class QueueSnapshot:
     halt_scope: str = "all"
     halt_event: str | None = None
     blocks: tuple[QueueBlock, ...] = ()
+    observe_failure_watch_since: str | None = None
+    observe_failure_seen: tuple[str, ...] = ()
+    observe_reopened: tuple[str, ...] = ()
+    observe_unstarted_first_seen: tuple[tuple[str, str], ...] = ()
 
     @property
     def active_requests(self) -> list[QueueRequest]:
@@ -336,6 +340,10 @@ def default_state() -> dict[str, Any]:
         "in_flight": [],
         "milestone_chains": {},
         "observe_andons": [],
+        "observe_failure_watch_since": None,
+        "observe_failure_seen": [],
+        "observe_reopened": [],
+        "observe_unstarted_first_seen": {},
     }
 
 
@@ -537,6 +545,13 @@ class QueueStore:
             halt_scope=halt_scope,
             halt_event=halt_event,
             blocks=blocks,
+            observe_failure_watch_since=state.get("observe_failure_watch_since"),
+            observe_failure_seen=tuple(state.get("observe_failure_seen") or []),
+            observe_reopened=tuple(state.get("observe_reopened") or []),
+            observe_unstarted_first_seen=tuple(
+                (str(k), str(v))
+                for k, v in (state.get("observe_unstarted_first_seen") or {}).items()
+            ),
         )
 
     def enqueue(
@@ -834,6 +849,8 @@ class QueueStore:
         Records ``outcome=dequeued`` and ``reason`` in request_meta. Returns dequeued
         request ids; does not write state when nothing was removed.
         """
+        if reason.startswith("stopped: andon observe:"):
+            return []
         with self.lock():
             state = self._load_state_unlocked()
             completed_ids = set(state.get("completed_request_ids") or [])
@@ -902,6 +919,49 @@ class QueueStore:
             state = self._load_state_unlocked()
             known = set(state.get("observe_andons") or [])
             state["observe_andons"] = sorted(known | set(ids))
+            self._save_state_unlocked(state)
+
+    def merge_observe_ledger(
+        self,
+        *,
+        watch_since: str | None = None,
+        seen_add: tuple[str, ...] = (),
+        seen_remove: tuple[str, ...] = (),
+        reopened_add: tuple[str, ...] = (),
+        unstarted_set: tuple[tuple[str, str], ...] = (),
+        unstarted_remove: tuple[str, ...] = (),
+    ) -> None:
+        """Atomically merge observe failure / unstarted ledger fields."""
+        if (
+            watch_since is None
+            and not seen_add
+            and not seen_remove
+            and not reopened_add
+            and not unstarted_set
+            and not unstarted_remove
+        ):
+            return
+        with self.lock():
+            state = self._load_state_unlocked()
+            if watch_since is not None:
+                state["observe_failure_watch_since"] = watch_since
+            if seen_add or seen_remove:
+                known = list(state.get("observe_failure_seen") or [])
+                known_set = set(known)
+                known_set -= set(seen_remove)
+                known_set |= set(seen_add)
+                state["observe_failure_seen"] = sorted(known_set)
+            if reopened_add:
+                known = set(state.get("observe_reopened") or [])
+                known |= set(reopened_add)
+                state["observe_reopened"] = sorted(known)
+            if unstarted_set or unstarted_remove:
+                raw = dict(state.get("observe_unstarted_first_seen") or {})
+                for uuid, ts in unstarted_set:
+                    raw[str(uuid)] = str(ts)
+                for uuid in unstarted_remove:
+                    raw.pop(str(uuid), None)
+                state["observe_unstarted_first_seen"] = raw
             self._save_state_unlocked(state)
 
     def mark_triaged(self, revision: int) -> None:
