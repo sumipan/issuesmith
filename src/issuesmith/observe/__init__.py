@@ -725,8 +725,8 @@ def _detect_unstarted_tasks(
     for wf in config.observe.workflows:
         prefixes.add(wf.name)
 
-    issue_rows: dict[int, list[dict]] = {}
-    issue_last_key: dict[int, str] = {}
+    dag_rows: dict[tuple[str, int], list[dict]] = {}
+    dag_last_key: dict[tuple[str, int], str] = {}
     for raw in exec_path.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         if not line:
@@ -738,13 +738,15 @@ def _detect_unstarted_tasks(
         if not isinstance(row, dict):
             continue
         key = str(row.get("idempotency_key", ""))
-        if _workflow_name_from_key(key, prefixes) is None:
+        workflow = _workflow_name_from_key(key, prefixes)
+        if workflow is None:
             continue
         issue = _issue_from_key(key)
         if issue is None:
             continue
-        issue_last_key[issue] = key
-        issue_rows.setdefault(issue, []).append(row)
+        dag = (workflow, issue)
+        dag_last_key[dag] = key
+        dag_rows.setdefault(dag, []).append(row)
 
     read_done_content = ghdag_done.read_done_content
     interpret_done = ghdag_done.interpret_done
@@ -756,16 +758,17 @@ def _detect_unstarted_tasks(
 
     latest_uuids = {
         str(row.get("uuid", ""))
-        for issue, rows in issue_rows.items()
+        for dag, rows in dag_rows.items()
         for row in rows
-        if row.get("idempotency_key") == issue_last_key[issue]
+        if row.get("idempotency_key") == dag_last_key[dag]
         and str(row.get("uuid", ""))
     }
     ledger_remove.extend(sorted(set(first_seen_map) - latest_uuids))
 
-    for issue in sorted(issue_rows):
-        current_key = issue_last_key[issue]
-        rows = [r for r in issue_rows[issue] if r.get("idempotency_key") == current_key]
+    for dag in sorted(dag_rows):
+        _workflow, issue = dag
+        current_key = dag_last_key[dag]
+        rows = [r for r in dag_rows[dag] if r.get("idempotency_key") == current_key]
         for row in rows:
             uuid = str(row.get("uuid", ""))
             if not uuid:

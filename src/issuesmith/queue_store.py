@@ -952,9 +952,9 @@ class QueueStore:
                 known_set |= set(seen_add)
                 state["observe_failure_seen"] = sorted(known_set)
             if reopened_add:
-                known = set(state.get("observe_reopened") or [])
-                known |= set(reopened_add)
-                state["observe_reopened"] = sorted(known)
+                reopened_known = set(state.get("observe_reopened") or [])
+                reopened_known |= set(reopened_add)
+                state["observe_reopened"] = sorted(reopened_known)
             if unstarted_set or unstarted_remove:
                 raw = dict(state.get("observe_unstarted_first_seen") or {})
                 for uuid, ts in unstarted_set:

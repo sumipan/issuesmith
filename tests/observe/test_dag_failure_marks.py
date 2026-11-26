@@ -383,6 +383,34 @@ def test_unstarted_ledger_drops_uuid_removed_from_latest_generation(env):
     assert "new" in ledger
 
 
+def test_unstarted_tracks_latest_generation_per_workflow(env):
+    store, client, tmp_path = env
+    exec_path, done_dir, _running, _quota = _dirs(tmp_path)
+    cfg = _patch_cfg(tmp_path, exec_path, done_dir)
+    issue = client.issue_create("parallel workflows", "body")
+    rows = [
+        {"uuid": "main", "idempotency_key": f"issuesmith:impl:{issue}:0", "depends": []},
+        {"uuid": "bump", "idempotency_key": f"bump:bump:{issue}:0", "depends": []},
+    ]
+    exec_path.write_text(
+        "\n".join(json.dumps(row) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+    seed_time = _seed(store, client, cfg)
+    first_seen_events = observe(
+        store.snapshot(), client, cfg, now=seed_time + timedelta(seconds=5),
+    )
+    execute(evaluate(first_seen_events, cfg.observe), store, sinks=[], client=client)
+    assert set(dict(store.snapshot().observe_unstarted_first_seen)) == {"main", "bump"}
+
+    timeout_events = observe(
+        store.snapshot(), client, cfg, now=seed_time + timedelta(minutes=2),
+    )
+    unstarted = [event for event in timeout_events if event.kind == "unstarted_task"]
+    assert {event.uuid for event in unstarted} == {"main", "bump"}
+    assert {event.namespace for event in unstarted} == {"", "bump"}
+
+
 def test_closed_unstarted_task_comment_uses_timeout_time_and_no_marker(env):
     store, client, tmp_path = env
     exec_path, done_dir, _running, _quota = _dirs(tmp_path)
