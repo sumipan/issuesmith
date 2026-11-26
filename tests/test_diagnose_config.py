@@ -23,6 +23,8 @@ def test_diagnose_config_defaults_paths_and_validation(tmp_path, monkeypatch):
     assert diagnose.step == "diagnose"
     assert diagnose.handler == "diagnose"
     assert diagnose.reuse_days == 7
+    assert diagnose.role == "design"
+    assert diagnose.on_proposal is None
     assert cfg.paths.diagnoses == (tmp_path / "jobs/issuesmith-diagnoses.jsonl").resolve()
     reset_config_cache()
 
@@ -39,6 +41,9 @@ def test_diagnose_config_defaults_paths_and_validation(tmp_path, monkeypatch):
         ("    reuse_days: -3\n", "reuse_days"),
         ("    reuse_days: true\n", "reuse_days"),
         ("    reuse_days: 1.5\n", "reuse_days"),
+        ("    role: '  '\n", "role"),
+        ("    on_proposal: bad\n", "on_proposal"),
+        ("    on_proposal: 'a:'\n", "on_proposal"),
     ],
 )
 def test_diagnose_config_rejects_invalid_values(tmp_path, monkeypatch, andon_yaml, msg):
@@ -51,6 +56,19 @@ def test_diagnose_config_rejects_invalid_values(tmp_path, monkeypatch, andon_yam
     monkeypatch.setenv("ISSUESMITH_CONFIG", str(path))
     with pytest.raises(ConfigError, match=msg):
         load_config(path)
+
+
+def test_diagnose_config_accepts_on_proposal_hook(tmp_path, monkeypatch):
+    """Refs #8078 AC15."""
+    path = tmp_path / "issuesmith.yaml"
+    path.write_text(
+        "repo: org/repo\nandon:\n  diagnose:\n    on_proposal: hooks.sample:record\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(path))
+    reset_config_cache()
+    assert get_config().andon.diagnose.on_proposal == "hooks.sample:record"
+    reset_config_cache()
 
 
 def test_disabled_diagnose_cli_does_not_scan_forge_active_dags_or_ledger(tmp_path, monkeypatch):

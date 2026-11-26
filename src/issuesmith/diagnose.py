@@ -1,6 +1,7 @@
 """Deterministic diagnosis planning: bundle open andons or request one diagnose DAG run."""
 from __future__ import annotations
 
+import importlib
 import json
 import re
 import subprocess
@@ -13,13 +14,19 @@ from typing import Any, Mapping
 import yaml
 
 from issuesmith.andon import diagnosis_signature, note
-from issuesmith.config import AndonDiagnoseConfig
+from issuesmith.config import AndonDiagnoseConfig, IssuesmithConfig
 
 _DIAGNOSIS_MARKER = re.compile(
     r"<!--\s*issuesmith-diagnosis:\s*([0-9a-f]{12})\s*-->", re.IGNORECASE
 )
 _FENCE_OPEN = "```andon-diagnosis"
 _FENCE_CLOSE = "```"
+_PROPOSAL_FENCE = re.compile(
+    r"```andon-diagnosis\s*\n(.*?)```",
+    re.DOTALL | re.IGNORECASE,
+)
+_ISSUE_MD = "issue.md"
+_REL_PATH_BAD = re.compile(r"(^|/)\.\.(/|$)|^\.\.")
 
 
 @dataclass
@@ -399,4 +406,382 @@ def apply_diagnose_plan(
     return replace(plan, failures=failures)
 
 
-__all__ = ["DiagnosePlan", "plan_diagnoses", "apply_diagnose_plan"]
+class ProposalError(ValueError):
+    """Raised when LLM diagnosis output fails deterministic validation."""
+
+
+@dataclass(frozen=True)
+class Proposal:
+    fix_kind: str
+    summary: str
+    payload: dict[str, Any]
+
+
+_FIX_KIND_KEYS: dict[str, frozenset[str]] = {
+    "edit_issue": frozenset({"allow_paths_add", "allow_paths_remove", "body_patch"}),
+    "clean_env": frozenset({"steps", "rerun_from"}),
+    "fix_line": frozenset({"target_repo", "title", "body"}),
+    "review_override": frozenset({"assessment", "resume_from"}),
+    "diagnose": frozenset({"unknowns"}),
+}
+
+
+def _last_proposal_fence(text: str) -> Mapping[str, Any]:
+    matches = list(_PROPOSAL_FENCE.finditer(text))
+    if not matches:
+        raise ProposalError("missing andon-diagnosis block")
+    body = matches[-1].group(1)
+    try:
+        data = yaml.safe_load(body)
+    except yaml.YAMLError as exc:
+        raise ProposalError(f"invalid proposal yaml: {exc}") from exc
+    if not isinstance(data, Mapping):
+        raise ProposalError("proposal must be a mapping")
+    return data
+
+
+def _validate_rel_path(path: str) -> None:
+    p = path.strip()
+    if not p:
+        raise ProposalError("empty path")
+    if p.startswith("/") or "\\" in p:
+        raise ProposalError("absolute path not allowed")
+    if "**" in p or p.endswith("/**") or p.startswith("**/"):
+        raise ProposalError("glob path not allowed")
+    if _REL_PATH_BAD.search(p):
+        raise ProposalError("parent traversal not allowed")
+
+
+def _validate_path_list(value: Any, *, field: str) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
+        raise ProposalError(f"{field} must be a list of strings")
+    out: list[str] = []
+    for item in value:
+        _validate_rel_path(item)
+        out.append(item.strip())
+    return out
+
+
+def _issue_lines(issue_body: str) -> list[str]:
+    return issue_body.splitlines()
+
+
+def _apply_hunk(lines: list[str], old_start: int, old_count: int, hunk_lines: list[str]) -> None:
+    idx = old_start - 1
+    for line in hunk_lines:
+        if line.startswith(" "):
+            if idx >= len(lines) or lines[idx] != line[1:]:
+                raise ProposalError("body_patch hunk mismatch")
+            idx += 1
+        elif line.startswith("-"):
+            if idx >= len(lines) or lines[idx] != line[1:]:
+                raise ProposalError("body_patch hunk mismatch")
+            idx += 1
+        elif line.startswith("+"):
+            continue
+        elif line.startswith("\\"):
+            continue
+
+
+def _validate_body_patch(patch: str, issue_body: str) -> None:
+    if not isinstance(patch, str) or not patch.strip():
+        raise ProposalError("body_patch must be a non-empty string")
+    target_files: set[str] = set()
+    hunks: list[tuple[int, int, list[str]]] = []
+    current_hunk: list[str] = []
+    old_start = 0
+    old_count = 0
+    in_hunk = False
+    for line in patch.splitlines():
+        if line.startswith("--- ") or line.startswith("+++ "):
+            name = line[4:].strip().split("\t", 1)[0]
+            if name not in ("issue.md", "a/issue.md", "b/issue.md"):
+                raise ProposalError("body_patch must target issue.md only")
+            target_files.add(name.removeprefix("a/").removeprefix("b/"))
+            continue
+        if line.startswith("@@ "):
+            if in_hunk:
+                hunks.append((old_start, old_count, current_hunk))
+            m = re.match(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
+            if m is None:
+                raise ProposalError("invalid body_patch hunk header")
+            old_start = int(m.group(1))
+            old_count = int(m.group(2) or "1")
+            current_hunk = []
+            in_hunk = True
+            continue
+        if in_hunk:
+            current_hunk.append(line)
+    if in_hunk:
+        hunks.append((old_start, old_count, current_hunk))
+    if "issue.md" not in target_files or len(target_files) != 1:
+        raise ProposalError("body_patch must target issue.md only")
+    lines = _issue_lines(issue_body)
+    for start, count, hunk in hunks:
+        _apply_hunk(lines, start, count, hunk)
+
+
+def _payload_edit_issue(data: Mapping[str, Any], issue_body: str) -> dict[str, Any]:
+    allow_add = _validate_path_list(data.get("allow_paths_add"), field="allow_paths_add")
+    allow_remove = _validate_path_list(data.get("allow_paths_remove"), field="allow_paths_remove")
+    body_patch = data.get("body_patch")
+    patch_s = body_patch.strip() if isinstance(body_patch, str) else ""
+    if not allow_add and not allow_remove and not patch_s:
+        raise ProposalError("edit_issue needs a non-empty change")
+    if patch_s:
+        _validate_body_patch(patch_s, issue_body)
+    return {
+        "allow_paths_add": allow_add,
+        "allow_paths_remove": allow_remove,
+        **({"body_patch": patch_s} if patch_s else {}),
+    }
+
+
+def _payload_clean_env(data: Mapping[str, Any], config: IssuesmithConfig) -> dict[str, Any]:
+    steps_raw = data.get("steps")
+    if not isinstance(steps_raw, list) or not steps_raw or len(steps_raw) > 10:
+        raise ProposalError("steps must contain 1-10 strings")
+    steps = [s.strip() for s in steps_raw if isinstance(s, str) and s.strip()]
+    if not steps or len(steps) != len(steps_raw):
+        raise ProposalError("steps must contain 1-10 strings")
+    rerun = data.get("rerun_from")
+    if not isinstance(rerun, str) or rerun.strip() not in config.steps:
+        raise ProposalError("rerun_from must be a configured step id")
+    return {"steps": steps, "rerun_from": rerun.strip()}
+
+
+def _payload_fix_line(
+    data: Mapping[str, Any],
+    *,
+    signature: str,
+    config: IssuesmithConfig,
+) -> dict[str, Any]:
+    target = data.get("target_repo")
+    title = data.get("title")
+    body = data.get("body")
+    if not isinstance(target, str) or target.strip() not in config.supported_repos:
+        raise ProposalError("target_repo must be in supported_repos")
+    if not isinstance(title, str) or not title.strip():
+        raise ProposalError("title must be a non-empty string")
+    if not isinstance(body, str) or not body.strip():
+        raise ProposalError("body must be a non-empty string")
+    marker = f"<!-- issuesmith-diagnosis: {signature} -->"
+    text = body.rstrip()
+    if marker not in text:
+        text = f"{text}\n{marker}"
+    return {"target_repo": target.strip(), "title": title.strip(), "body": text}
+
+
+def _payload_review_override(data: Mapping[str, Any], config: IssuesmithConfig) -> dict[str, Any]:
+    assessment = data.get("assessment")
+    resume = data.get("resume_from")
+    if not isinstance(assessment, str) or not assessment.strip():
+        raise ProposalError("assessment must be a non-empty string")
+    if not isinstance(resume, str) or resume.strip() not in config.steps:
+        raise ProposalError("resume_from must be a configured step id")
+    return {"assessment": assessment.strip(), "resume_from": resume.strip()}
+
+
+def _payload_diagnose(data: Mapping[str, Any]) -> dict[str, Any]:
+    unknowns = data.get("unknowns")
+    if not isinstance(unknowns, list) or not unknowns:
+        raise ProposalError("unknowns must be a non-empty list")
+    items = [u.strip() for u in unknowns if isinstance(u, str) and u.strip()]
+    if not items:
+        raise ProposalError("unknowns must be a non-empty list")
+    return {"unknowns": items}
+
+
+def parse_proposal(
+    text: str,
+    *,
+    andon_record: Mapping[str, Any],
+    issue_body: str,
+    config: IssuesmithConfig,
+    allowed_fix_kinds: list[str] | None = None,
+) -> Proposal:
+    """Parse and validate the last andon-diagnosis block in LLM output."""
+    data = dict(_last_proposal_fence(text))
+    summary_raw = data.pop("summary", None)
+    fix_kind_raw = data.pop("fix_kind", None)
+    if not isinstance(fix_kind_raw, str) or not fix_kind_raw.strip():
+        raise ProposalError("fix_kind is required")
+    fix_kind = fix_kind_raw.strip()
+    allowed = allowed_fix_kinds
+    if allowed is None:
+        fix_kinds = andon_record.get("fix_kinds")
+        allowed = list(fix_kinds) if isinstance(fix_kinds, list) else []
+        if "diagnose" not in allowed:
+            allowed = [*allowed, "diagnose"]
+    if fix_kind not in allowed:
+        raise ProposalError("fix_kind not allowed")
+    if not isinstance(summary_raw, str):
+        raise ProposalError("summary is required")
+    summary = summary_raw.strip()
+    if not summary or len(summary) > 1000:
+        raise ProposalError("summary must be 1-1000 characters")
+    permitted = _FIX_KIND_KEYS.get(fix_kind)
+    if permitted is None:
+        raise ProposalError("unknown fix_kind")
+    extra = set(data) - permitted
+    if extra:
+        raise ProposalError(f"unexpected keys: {', '.join(sorted(extra))}")
+    signature = diagnosis_signature(andon_record)
+    if fix_kind == "edit_issue":
+        payload = _payload_edit_issue(data, issue_body)
+    elif fix_kind == "clean_env":
+        payload = _payload_clean_env(data, config)
+    elif fix_kind == "fix_line":
+        payload = _payload_fix_line(data, signature=signature, config=config)
+    elif fix_kind == "review_override":
+        payload = _payload_review_override(data, config)
+    else:
+        payload = _payload_diagnose(data)
+    return Proposal(fix_kind=fix_kind, summary=summary, payload=payload)
+
+
+def proposal_comment_body(
+    proposal: Proposal,
+    *,
+    andon_id: str,
+    signature: str,
+    diagnosed_at: datetime,
+) -> str:
+    data: dict[str, Any] = {
+        "andon_id": andon_id,
+        "signature": signature,
+        "fix_kind": proposal.fix_kind,
+        "summary": proposal.summary,
+        "diagnosed_at": diagnosed_at.astimezone(timezone.utc).isoformat(),
+    }
+    data.update(proposal.payload)
+    yaml_body = yaml.safe_dump(data, allow_unicode=True, sort_keys=False, default_flow_style=False)
+    return f"{_FENCE_OPEN}\n{yaml_body}{_FENCE_CLOSE}\n"
+
+
+def append_diagnosis_ledger(
+    path: Path,
+    *,
+    andon_id: str,
+    issue: int,
+    signature: str,
+    fix_kind: str,
+    summary: str,
+    diagnosed_at: datetime,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    row = {
+        "andon_id": andon_id,
+        "issue": issue,
+        "signature": signature,
+        "fix_kind": fix_kind,
+        "summary": summary,
+        "ts": diagnosed_at.astimezone(timezone.utc).isoformat(),
+    }
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def proposal_to_dict(
+    proposal: Proposal,
+    *,
+    andon_id: str,
+    signature: str,
+    diagnosed_at: datetime,
+) -> dict[str, Any]:
+    return {
+        "andon_id": andon_id,
+        "signature": signature,
+        "fix_kind": proposal.fix_kind,
+        "summary": proposal.summary,
+        "diagnosed_at": diagnosed_at.astimezone(timezone.utc).isoformat(),
+        **proposal.payload,
+    }
+
+
+def invoke_on_proposal_hook(spec: str, payload: Mapping[str, Any]) -> None:
+    module_name, func_name = spec.split(":", 1)
+    mod = importlib.import_module(module_name.strip())
+    func = getattr(mod, func_name.strip(), None)
+    if not callable(func):
+        raise TypeError(f"{spec} is not callable")
+    func(dict(payload))
+
+
+def persist_diagnosis_success(
+    client: Any,
+    proposal: Proposal,
+    *,
+    andon_record: Mapping[str, Any],
+    ledger_path: Path,
+    on_proposal: str | None,
+) -> None:
+    andon_id = str(andon_record.get("id") or "")
+    issue = andon_record.get("issue")
+    if not andon_id or not isinstance(issue, int):
+        return
+    signature = diagnosis_signature(andon_record)
+    now = datetime.now(timezone.utc)
+    note(client, andon_id, "diagnosis", proposal.fix_kind)
+    client.issue_comment(
+        issue,
+        proposal_comment_body(proposal, andon_id=andon_id, signature=signature, diagnosed_at=now),
+    )
+    append_diagnosis_ledger(
+        ledger_path,
+        andon_id=andon_id,
+        issue=issue,
+        signature=signature,
+        fix_kind=proposal.fix_kind,
+        summary=proposal.summary,
+        diagnosed_at=now,
+    )
+    if on_proposal:
+        try:
+            invoke_on_proposal_hook(
+                on_proposal,
+                proposal_to_dict(proposal, andon_id=andon_id, signature=signature, diagnosed_at=now),
+            )
+        except Exception as exc:
+            print(f"[diagnose] on_proposal hook failed: {exc}", file=sys.stderr)
+
+
+def _truncate_reason(text: str, limit: int = 1000) -> str:
+    text = text.strip()
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
+def persist_diagnosis_failure(
+    client: Any,
+    *,
+    andon_record: Mapping[str, Any],
+    reason: str,
+) -> None:
+    andon_id = str(andon_record.get("id") or "")
+    issue = andon_record.get("issue")
+    if not andon_id or not isinstance(issue, int):
+        return
+    try:
+        note(client, andon_id, "diagnosis", "failed")
+    except Exception as exc:
+        print(f"[diagnose] failure note failed: {exc}", file=sys.stderr)
+    msg = _truncate_reason(reason)
+    client.issue_comment(issue, f"Diagnosis failed: {msg}\n")
+
+
+__all__ = [
+    "DiagnosePlan",
+    "Proposal",
+    "ProposalError",
+    "append_diagnosis_ledger",
+    "apply_diagnose_plan",
+    "invoke_on_proposal_hook",
+    "parse_proposal",
+    "persist_diagnosis_failure",
+    "persist_diagnosis_success",
+    "plan_diagnoses",
+    "proposal_comment_body",
+    "proposal_to_dict",
+]
