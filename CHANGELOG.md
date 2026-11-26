@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.220.0 - 2026-11-26
+
+### Added
+
+- andon: classify stop causes and gate agent auto-answers
+
 ## 0.219.1 - 2026-11-26
 
 ### Fixed

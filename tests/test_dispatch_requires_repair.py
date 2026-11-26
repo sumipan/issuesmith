@@ -290,3 +290,80 @@ class TestIssueInputViolationAndon:
         raised = _raised_andons(forge)[0]
         assert raised.options == ["resume_from_b1", "split", "reject"]
 
+
+class TestRequiresLoopAndonFacts:
+    """Refs #8075 AC-9 — requires-loop andon facts by stop trigger."""
+
+    @pytest.mark.parametrize(
+        ("case", "expected_trigger", "expected_rule_ids"),
+        [
+            ("gate_build", "gate_error", []),
+            ("gate_exception", "gate_error", []),
+            ("environment", "non_repairable", ["tests.environment"]),
+            ("non_repairable", "non_repairable", ["deps.unparsed_dependency_section"]),
+            ("oscillation", "repair_oscillation", ["tests.pytest_failure"]),
+            ("no_progress_limit", "repair_limit", ["tests.pytest_failure"]),
+            ("safety_limit", "repair_limit", ["tests.pytest_failure"]),
+        ],
+    )
+    def test_stop_path_facts(self, case, expected_trigger, expected_rule_ids):
+        from issuesmith.config import RepairConfig, StepConfig
+        from issuesmith.gates import GateBuildError
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        gate_id = "deps" if case == "non_repairable" else "tests"
+        rule_id = (
+            "deps.unparsed_dependency_section"
+            if case == "non_repairable"
+            else "tests.environment"
+            if case == "environment"
+            else "tests.pytest_failure"
+        )
+        gate = _fail_gate(rule_id, auto_fixable=False)
+        if case == "gate_exception":
+            gate.check.side_effect = RuntimeError("gate exploded")
+        cfg = StepConfig(
+            module="issuesmith.steps.test",
+            requires=(gate_id,),
+            repair=RepairConfig(max=3),
+        )
+        kwargs = {}
+        if case == "oscillation":
+            kwargs.update(
+                _prev_blocking_fingerprints=frozenset(
+                    {("tests.pytest_failure", "", "test violation")}
+                ),
+                _total_repair_count=1,
+            )
+        elif case == "no_progress_limit":
+            kwargs["repair_count"] = 3
+        elif case == "safety_limit":
+            kwargs.update(_total_repair_count=4, _initial_blocking_count=1)
+
+        build = (
+            patch(
+                "issuesmith.ops.dispatch._build_requires_gates",
+                side_effect=GateBuildError("missing"),
+            )
+            if case == "gate_build"
+            else patch(
+                "issuesmith.ops.dispatch._build_requires_gates",
+                return_value={gate_id: gate},
+            )
+        )
+        with (
+            build,
+            patch("issuesmith.ops.dispatch.get_forge") as mock_forge,
+            stand_in_repair_step(RepairStepBoundary()),
+        ):
+            forge = _RecordingForge()
+            mock_forge.return_value = forge
+            rc = run_requires_loop(cfg, "p1", _make_ctx(), **kwargs)
+        assert rc == 1
+        facts = _raised_andons(forge)[0].facts
+        assert facts["failed_step"] == "p1"
+        assert facts["trigger"] == expected_trigger
+        assert facts["rule_ids"] == expected_rule_ids
+        if case in {"oscillation", "no_progress_limit", "safety_limit"}:
+            assert isinstance(facts["repairs"], int)
+            assert isinstance(facts["no_progress"], int)

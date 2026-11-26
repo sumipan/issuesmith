@@ -24,6 +24,201 @@ logger = logging.getLogger(__name__)
 # Data model
 # ---------------------------------------------------------------------------
 
+_CAUSES = (
+    "transient",
+    "contention",
+    "environment",
+    "issue_design",
+    "line_defect",
+    "review_failed",
+    "unknown",
+)
+
+_CAUSE_STRENGTH: dict[str, int] = {
+    "issue_design": 6,
+    "environment": 5,
+    "line_defect": 4,
+    "review_failed": 3,
+    "contention": 2,
+    "transient": 1,
+    "unknown": 0,
+}
+
+_TRANSIENT_FAILURE_CLASSES = frozenset({"TIMEOUT", "ENGINE_ERROR", "QUOTA_EXHAUSTED"})
+_ENVIRONMENT_FAILURE_CLASSES = frozenset(
+    {"AUTH", "ENGINE_ENVIRONMENT_ERROR", "INTERACTIVE_PROMPT"}
+)
+
+_BUILTIN_RULE_PREFIX_CAUSES: tuple[tuple[str, str], ...] = (
+    ("tests.interrupted", "transient"),
+    ("base_freshness.fetch_transient_exhausted", "transient"),
+    ("review.branch_moved", "contention"),
+    ("merge.rebase_conflict", "contention"),
+    ("merge.push_rejected", "contention"),
+    ("p0.base_rebase_conflict", "contention"),
+    ("tests.environment", "environment"),
+    ("tests.timeout", "environment"),
+    ("design_lint", "issue_design"),
+    ("ac_format", "issue_design"),
+    ("ac_contract", "issue_design"),
+    ("scope_breadth", "issue_design"),
+    ("scope_coupling", "issue_design"),
+    ("pr_scope", "issue_design"),
+    ("deps", "issue_design"),
+    ("migration_plan", "issue_design"),
+    ("milestone_consistency", "issue_design"),
+    ("allow_paths_forbidden", "issue_design"),
+    ("merge.redo_failed", "line_defect"),
+    ("review.", "review_failed"),
+)
+
+
+def _normalize_facts(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {}
+    return dict(raw)
+
+
+def _rule_ids_from_andon(andon: Andon) -> list[str]:
+    facts = andon.facts or {}
+    rule_ids = facts.get("rule_ids")
+    if isinstance(rule_ids, list):
+        return sorted({str(r) for r in rule_ids if r})
+    if andon.rule_id:
+        return [andon.rule_id]
+    return []
+
+
+def _longest_prefix_cause(rule_id: str, table: list[tuple[str, str]]) -> str | None:
+    best_len = -1
+    best_cause: str | None = None
+    for prefix, cause in table:
+        matches = rule_id.startswith(prefix) if prefix.endswith(".") else (
+            rule_id == prefix or rule_id.startswith(prefix + ".")
+        )
+        if matches:
+            if len(prefix) > best_len:
+                best_len = len(prefix)
+                best_cause = cause
+            elif len(prefix) == best_len:
+                best_cause = cause
+    return best_cause
+
+
+def _cause_table() -> list[tuple[str, str]]:
+    from issuesmith.config import get_config
+
+    cfg = get_config().andon
+    rows = list(_BUILTIN_RULE_PREFIX_CAUSES)
+    for prefix, cause in cfg.causes.items():
+        rows.append((str(prefix), str(cause)))
+    return rows
+
+
+def _rule_id_cause(rule_id: str) -> str | None:
+    if rule_id.startswith("review.") and rule_id.endswith(".engine_error"):
+        return "transient"
+    return _longest_prefix_cause(rule_id, _cause_table())
+
+
+def _stronger_cause(a: str, b: str) -> str:
+    return a if _CAUSE_STRENGTH.get(a, 0) >= _CAUSE_STRENGTH.get(b, 0) else b
+
+
+def classify_cause(andon: Andon) -> str:
+    facts = andon.facts or {}
+    if facts.get("trigger") == "gate_error":
+        return "line_defect"
+    failure_class = facts.get("failure_class")
+    if isinstance(failure_class, str):
+        if failure_class in _TRANSIENT_FAILURE_CLASSES:
+            return "transient"
+        if failure_class in _ENVIRONMENT_FAILURE_CLASSES:
+            return "environment"
+    rule_ids = _rule_ids_from_andon(andon)
+    if rule_ids:
+        agg = "unknown"
+        for rid in rule_ids:
+            mapped = _rule_id_cause(rid)
+            if mapped is not None:
+                agg = _stronger_cause(agg, mapped)
+        if agg != "unknown":
+            return agg
+    return "unknown"
+
+
+def failed_step(andon: Andon) -> str | None:
+    facts = andon.facts or {}
+    failed = facts.get("failed_step")
+    if isinstance(failed, str) and failed:
+        return failed
+    if not facts and andon.step not in {"observe", "repair"}:
+        return andon.step if andon.step else None
+    return None
+
+
+def _parse_action_string(action: str, andon: Andon) -> dict[str, Any]:
+    entry: dict[str, Any] = {"action": action, "source": "options"}
+    if action.startswith("resume_from_"):
+        from_step = action[len("resume_from_") :]
+        entry.update(op="resume", from_step=from_step, force=True)
+    elif action == "resume":
+        entry.update(op="resume", from_step=andon.step, force=False)
+    elif action.startswith("widen:"):
+        paths = [p.strip() for p in action[len("widen:") :].split(",") if p.strip()]
+        entry.update(op="widen", paths=paths)
+    elif action == "reject":
+        entry.update(op="record")
+    else:
+        entry.update(op="record")
+    return entry
+
+
+def answer_actions(andon: Andon, *, prior_reruns: int = 0) -> list[dict[str, Any]]:
+    from issuesmith.config import get_config
+
+    auto_max = get_config().andon.auto_rerun_max
+    step_s = failed_step(andon)
+    cause = classify_cause(andon)
+    actions: list[dict[str, Any]] = []
+    if step_s:
+        resume_default = f"resume_from_{step_s}"
+        if resume_default not in andon.options:
+            actions.append({**_parse_action_string(resume_default, andon), "source": "default"})
+    for opt in andon.options:
+        actions.append(_parse_action_string(opt, andon))
+    if not andon.options:
+        actions.append({**_parse_action_string("reject", andon), "source": "default"})
+
+    for entry in actions:
+        op = entry.get("op")
+        from_step = entry.get("from_step")
+        may = (
+            op == "resume"
+            and from_step == step_s
+            and cause in ("transient", "contention")
+            and prior_reruns < auto_max
+        )
+        entry["agent_may_answer"] = bool(may) if step_s else False
+    return actions
+
+
+def fix_kinds_for(andon: Andon, actions: list[dict[str, Any]], cause: str | None = None) -> list[str]:
+    if any(a.get("agent_may_answer") for a in actions):
+        return []
+    cause = cause if cause is not None else classify_cause(andon)
+    mapping: dict[str, list[str]] = {
+        "issue_design": ["edit_issue"],
+        "environment": ["clean_env"],
+        "line_defect": ["fix_line"],
+        "review_failed": ["edit_issue", "review_override"],
+        "unknown": ["diagnose"],
+        "transient": ["diagnose"],
+        "contention": ["diagnose"],
+    }
+    return list(mapping.get(cause, ["diagnose"]))
+
+
 @dataclass
 class Andon:
     id: str
@@ -37,6 +232,7 @@ class Andon:
     mention: str = ""
     rule_id: str = ""
     namespace: str = ""
+    facts: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -71,10 +267,19 @@ def andon_namespace(andon: Andon) -> str:
     return andon.namespace or _ns()
 
 
-def to_comment(andon: Andon) -> str:
+def to_comment(andon: Andon, *, prior_reruns: int = 0) -> str:
     data = asdict(andon)
     if not data.get("namespace"):
         data.pop("namespace", None)
+    if not data.get("facts"):
+        data.pop("facts", None)
+    if data.get("facts"):
+        cause = classify_cause(andon)
+        actions = answer_actions(andon, prior_reruns=prior_reruns)
+        data["cause"] = cause
+        data["fix_kinds"] = fix_kinds_for(andon, actions, cause=cause)
+        data["prior_reruns"] = prior_reruns
+        data["actions"] = actions
     body = yaml.dump(data, allow_unicode=True, sort_keys=False, default_flow_style=False)
     return f"{_FENCE_OPEN}\n{body}{_FENCE_CLOSE}\n"
 
@@ -111,6 +316,7 @@ def from_comment(text: str) -> Andon | None:
             mention=str(data.get("mention") or ""),
             rule_id=str(data.get("rule_id") or ""),
             namespace=str(data.get("namespace") or ""),
+            facts=_normalize_facts(data.get("facts")),
         )
     except (KeyError, TypeError, ValueError):
         return None
@@ -125,14 +331,54 @@ _ANSWER_RE = re.compile(
     r"<!-- andon-answer -->\s*\n"
     r"(?:<!-- andon-answer-id: (\S+) -->|andon `([^`]+)` answered:)"
 )
-_ANSWERED_BY_RE = re.compile(r"^(?:human|agent|rule:.+)$")
+_ANSWER_ACTION_RE = re.compile(r"<!-- andon-answer-action: (.+?) -->")
+_ANSWERED_BY_TAG_RE = re.compile(r"<!-- andon-answered-by: (.+?) -->")
+_ANSWERED_BY_RE = re.compile(r"^(?:human|agent|rule:.+|observe)$")
 
 
-def _answer_comment(andon_id: str, action: str) -> str:
+def _answer_comment(andon_id: str, action: str, answered_by: str) -> str:
     from issuesmith.config import get_config
 
     text = get_config().language.message("andon.answered", andon_id=andon_id, action=action)
-    return f"{_ANSWER_MARKER}\n<!-- andon-answer-id: {andon_id} -->\n{text}\n"
+    return (
+        f"{_ANSWER_MARKER}\n"
+        f"<!-- andon-answer-id: {andon_id} -->\n"
+        f"<!-- andon-answer-action: {action} -->\n"
+        f"<!-- andon-answered-by: {answered_by} -->\n"
+        f"{text}\n"
+    )
+
+
+def _parse_answer_comment(body: str) -> tuple[str, str | None] | None:
+    m = _ANSWER_RE.search(body)
+    if m is None:
+        return None
+    andon_id = m.group(1) or m.group(2)
+    if not andon_id:
+        return None
+    action_m = _ANSWER_ACTION_RE.search(body)
+    action = action_m.group(1).strip() if action_m else None
+    return andon_id, action
+
+
+def _prior_reruns_before(
+    comments: list[dict],
+    *,
+    failed_step: str,
+    stop_before_index: int | None = None,
+) -> int:
+    target_action = f"resume_from_{failed_step}"
+    count = 0
+    for index, comment in enumerate(comments):
+        if stop_before_index is not None and index >= stop_before_index:
+            break
+        body = str(comment.get("body") or "")
+        ans = _parse_answer_comment(body)
+        if ans is not None:
+            _, action = ans
+            if action == target_action:
+                count += 1
+    return count
 
 
 def _note_comment(andon_id: str, key: str, value: str) -> str:
@@ -212,36 +458,68 @@ def _iter_open_andon_issues(client: Any) -> Iterator[dict]:
 class _OpenEntry:
     andon: Andon
     raised_at: str
+    comment_index: int = -1
     notes: dict[str, str] = field(default_factory=dict)
 
 
-def _iter_open_entries(client: Any) -> Iterator[_OpenEntry]:
-    """Yield unanswered andons of open andon Issues, fetching each Issue's comments once.
+def _fold_open_entries(comments: list[dict]) -> list[_OpenEntry]:
+    entries: list[_OpenEntry] = []
+    for comment_index, comment in enumerate(comments):
+        body = str(comment.get("body") or "")
+        parsed = from_comment(body)
+        if parsed is not None:
+            entries.append(
+                _OpenEntry(
+                    parsed,
+                    str(comment.get("created_at") or ""),
+                    comment_index=comment_index,
+                )
+            )
+            continue
+        m = _ANSWER_RE.search(body)
+        if m is not None:
+            answered_id = m.group(1) or m.group(2)
+            entries = [e for e in entries if e.andon.id != answered_id]
+            continue
+        note_data = _parse_note(body)
+        if note_data is not None:
+            note_id, key, value = note_data
+            for e in entries:
+                if e.andon.id == note_id:
+                    e.notes[key] = value
+    return entries
 
-    Comments are folded in posting order: an andon comment opens an entry, an
-    ``<!-- andon-answer -->`` comment closes every open entry with that id, and a note
-    comment sets ``notes[key]`` on the open entries with that id (last write wins).
-    """
+
+def _iter_open_entries(client: Any) -> Iterator[_OpenEntry]:
+    """Yield unanswered andons of open andon Issues, fetching each Issue's comments once."""
     for issue in _iter_open_andon_issues(client):
-        entries: list[_OpenEntry] = []
-        for comment in client.get_issue_comments(issue["number"]):
-            body = str(comment.get("body") or "")
-            parsed = from_comment(body)
-            if parsed is not None:
-                entries.append(_OpenEntry(parsed, str(comment.get("created_at") or "")))
-                continue
-            m = _ANSWER_RE.search(body)
-            if m is not None:
-                answered_id = m.group(1) or m.group(2)
-                entries = [e for e in entries if e.andon.id != answered_id]
-                continue
-            note_data = _parse_note(body)
-            if note_data is not None:
-                note_id, key, value = note_data
-                for e in entries:
-                    if e.andon.id == note_id:
-                        e.notes[key] = value
-        yield from entries
+        comments = list(client.get_issue_comments(issue["number"]))
+        yield from _fold_open_entries(comments)
+
+
+def _enrich_andon_record(
+    andon: Andon,
+    comments: list[dict],
+    *,
+    comment_index: int,
+) -> dict[str, Any]:
+    step_s = failed_step(andon)
+    prior = 0
+    if step_s:
+        prior = _prior_reruns_before(
+            comments,
+            failed_step=step_s,
+            stop_before_index=comment_index,
+        )
+    cause = classify_cause(andon)
+    actions = answer_actions(andon, prior_reruns=prior)
+    return {
+        **asdict(andon),
+        "cause": cause,
+        "fix_kinds": fix_kinds_for(andon, actions, cause=cause),
+        "prior_reruns": prior,
+        "actions": actions,
+    }
 
 
 def _validate_answered_by(value: str) -> str:
@@ -409,7 +687,13 @@ def raise_andon(
     from issuesmith.config import get_config
     from issuesmith.projection import phase_for_step
 
-    client.issue_comment(andon.issue, to_comment(andon))
+    fetch = getattr(client, "get_issue_comments", None)
+    comments = list(fetch(andon.issue)) if callable(fetch) else []
+    step_s = failed_step(andon)
+    prior = 0
+    if step_s and comments:
+        prior = _prior_reruns_before(comments, failed_step=step_s)
+    client.issue_comment(andon.issue, to_comment(andon, prior_reruns=prior))
     _release_stopped_issue(andon)
     ns = andon_namespace(andon)
     if ns != _ns():
@@ -454,11 +738,38 @@ def list_open(client: Any) -> list[Andon]:
 
 
 def list_open_records(client: Any) -> list[dict[str, Any]]:
-    """Return list_open() as dicts with ``raised_at`` (andon comment created_at) and ``notes``."""
-    return [
-        {**asdict(e.andon), "raised_at": e.raised_at, "notes": dict(e.notes)}
-        for e in _iter_open_entries(client)
-    ]
+    """Return list_open() as dicts with enrichment fields and comment metadata."""
+    records: list[dict[str, Any]] = []
+    for issue in _iter_open_andon_issues(client):
+        comments = list(client.get_issue_comments(issue["number"]))
+        for e in _fold_open_entries(comments):
+            row = _enrich_andon_record(
+                e.andon,
+                comments,
+                comment_index=e.comment_index,
+            )
+            row["raised_at"] = e.raised_at
+            row["notes"] = dict(e.notes)
+            records.append(row)
+    return records
+
+
+def andon_record(client: Any, andon_id: str) -> dict[str, Any] | None:
+    """Return enriched JSON record for an open andon id."""
+    for issue in _iter_open_andon_issues(client):
+        comments = list(client.get_issue_comments(issue["number"]))
+        for entry in _fold_open_entries(comments):
+            if entry.andon.id == andon_id:
+                return {
+                    **_enrich_andon_record(
+                        entry.andon,
+                        comments,
+                        comment_index=entry.comment_index,
+                    ),
+                    "raised_at": entry.raised_at,
+                    "notes": dict(entry.notes),
+                }
+    return None
 
 
 def note(client: Any, andon_id: str, key: str, value: str) -> None:
@@ -500,7 +811,7 @@ def answer(
     if target is None:
         raise KeyError(f"Andon not found: {andon_id}")
 
-    reply = _answer_comment(andon_id, action)
+    reply = _answer_comment(andon_id, action, answered_by)
     client.issue_comment(target.issue, reply)
     project_issue(client, target.issue, _without_andon(target.kind))
 
@@ -552,7 +863,7 @@ def answer_if_open(
         logger.debug("answer_if_open: andon not found (already closed?): %s", andon_id)
         return
 
-    reply = _answer_comment(andon_id, action)
+    reply = _answer_comment(andon_id, action, "observe")
     client.issue_comment(target.issue, reply)
     if external_namespace is not None:
         client.issue_update(
@@ -668,9 +979,12 @@ __all__ = [
     "Andon",
     "AndonSink",
     "AutoAnswerPlan",
+    "answer_actions",
+    "classify_cause",
     "raise_andon",
     "list_open",
     "list_open_records",
+    "andon_record",
     "answer",
     "from_comment",
     "to_comment",

@@ -268,6 +268,7 @@ def _andon_parser() -> ContractParser:
     p_list.add_argument("--json", action="store_true")
     p_show = sub.add_parser("show")
     p_show.add_argument("andon_id")
+    p_show.add_argument("--json", action="store_true")
     p_answer = sub.add_parser("answer")
     p_answer.add_argument("andon_id")
     p_answer.add_argument("action")
@@ -325,6 +326,7 @@ def _active_issue_numbers(cfg: Any) -> set[int]:
 
 def _cmd_andon(argv: list[str]) -> int:
     from issuesmith.andon import (
+        andon_record,
         answer,
         apply_auto_answers,
         list_open,
@@ -371,6 +373,12 @@ def _cmd_andon(argv: list[str]) -> int:
         return 0
 
     if args.subcmd == "show":
+        if args.json:
+            record = andon_record(client, args.andon_id)
+            if record is None:
+                return fail("NOT_FOUND", f"andon not found: {args.andon_id}")
+            print(json.dumps(record, ensure_ascii=False))
+            return 0
         andons = list_open(client)
         matched = [a for a in andons if a.id == args.andon_id]
         if not matched:

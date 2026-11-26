@@ -120,6 +120,8 @@ class AutoAnswerRule:
 @dataclass(frozen=True)
 class AndonConfig:
     auto_answer: tuple[AutoAnswerRule, ...] = ()
+    causes: Mapping[str, str] = field(default_factory=dict)
+    auto_rerun_max: int = 1
 
 
 @dataclass(frozen=True)
@@ -1701,12 +1703,54 @@ def _build_pin_packages(raw: Any) -> tuple[str, ...]:
     return tuple(out)
 
 
+_VALID_ANDON_CAUSES = frozenset(
+    {
+        "transient",
+        "contention",
+        "environment",
+        "issue_design",
+        "line_defect",
+        "review_failed",
+        "unknown",
+    }
+)
+
+
+def _build_andon_causes(raw: Any) -> dict[str, str]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, Mapping):
+        raise ConfigError("andon.causes must be a mapping")
+    out: dict[str, str] = {}
+    for key, value in raw.items():
+        prefix = str(key)
+        if not prefix:
+            raise ConfigError("andon.causes keys must be non-empty strings")
+        cause = str(value)
+        if cause not in _VALID_ANDON_CAUSES:
+            raise ConfigError(f"andon.causes[{prefix!r}] must be one of {_VALID_ANDON_CAUSES}")
+        out[prefix] = cause
+    return out
+
+
+def _build_andon_auto_rerun_max(raw: Any) -> int:
+    if raw is None:
+        return 1
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise ConfigError("andon.auto_rerun_max must be a non-negative integer")
+    if raw < 0:
+        raise ConfigError("andon.auto_rerun_max must be a non-negative integer")
+    return raw
+
+
 def _build_andon(raw: Mapping[str, Any] | None) -> AndonConfig:
     if not raw:
         return AndonConfig()
+    causes = _build_andon_causes(raw.get("causes"))
+    auto_rerun_max = _build_andon_auto_rerun_max(raw.get("auto_rerun_max"))
     auto_raw = raw.get("auto_answer")
     if auto_raw is None:
-        return AndonConfig()
+        return AndonConfig(causes=causes, auto_rerun_max=auto_rerun_max)
     if not isinstance(auto_raw, list):
         raise ConfigError("andon.auto_answer must be a list")
     rules: list[AutoAnswerRule] = []
@@ -1751,7 +1795,11 @@ def _build_andon(raw: Mapping[str, Any] | None) -> AndonConfig:
                 max_per_issue=max_per_issue,
             )
         )
-    return AndonConfig(auto_answer=tuple(rules))
+    return AndonConfig(
+        auto_answer=tuple(rules),
+        causes=causes,
+        auto_rerun_max=auto_rerun_max,
+    )
 
 
 def _build_api_brake(raw: Mapping[str, Any] | None) -> ApiBreakConfig:

@@ -213,6 +213,31 @@ class TestRunGuardedSkippedValidation:
 # ---------------------------------------------------------------------------
 
 
+def test_map_step_result_repair_andon_facts():
+    """Refs #8075 AC-8."""
+    with patch("issuesmith.ops.dispatch.get_forge") as mock_forge, patch(
+        "issuesmith.ops.dispatch._raise_andon"
+    ) as mock_raise:
+        mock_forge.return_value = MagicMock()
+        map_step_result(
+            StepResult(
+                status="andon",
+                andon=Andon(kind="decision", rule_id="repair.gave_up"),
+            ),
+            step_id="repair",
+            context={
+                "issue_number": "42",
+                "repair_step_origin": "cp2",
+            },
+        )
+    _, full_andon = mock_raise.call_args[0]
+    assert full_andon.facts == {
+        "failed_step": "cp2",
+        "trigger": "step",
+        "rule_ids": ["repair.gave_up"],
+    }
+
+
 class _LabelForge:
     """In-memory forge holding one Issue's labels."""
 

@@ -171,3 +171,59 @@ def test_config_auto_answer_validation(tmp_path, monkeypatch):
     monkeypatch.setenv("ISSUESMITH_CONFIG", str(path))
     with pytest.raises(ConfigError):
         load_config(path)
+
+
+def test_andon_causes_config_override(tmp_path, monkeypatch):
+    """Refs #8075 AC-7."""
+    from issuesmith.andon import Andon, classify_cause
+    from issuesmith.config import reset_config_cache
+
+    path = tmp_path / "issuesmith.yaml"
+    path.write_text(
+        "repo: org/repo\n"
+        "andon:\n"
+        "  causes:\n"
+        "    hostgate.flaky: transient\n"
+        "    tests.interrupted: issue_design\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(path))
+    reset_config_cache()
+    cfg = load_config(path)
+    andon = Andon(
+        id="wf:1:p1:0",
+        kind="blocked",
+        issue=1,
+        step="p1",
+        summary="",
+        rule_id="hostgate.flaky.x",
+    )
+    assert cfg.andon.causes["hostgate.flaky"] == "transient"
+    assert classify_cause(andon) == "transient"
+    overridden = Andon(
+        id="wf:2:p1:0",
+        kind="blocked",
+        issue=2,
+        step="p1",
+        summary="",
+        rule_id="tests.interrupted",
+    )
+    assert classify_cause(overridden) == "issue_design"
+    reset_config_cache()
+
+
+@pytest.mark.parametrize(
+    "andon_yaml,msg",
+    [
+        ("  causes:\n    x: not_a_cause\n", "andon.causes"),
+        ("  auto_rerun_max: -1\n", "auto_rerun_max"),
+        ("  auto_rerun_max: true\n", "auto_rerun_max"),
+    ],
+)
+def test_andon_config_validation(tmp_path, monkeypatch, andon_yaml, msg):
+    """Refs #8075 AC-7."""
+    path = tmp_path / "issuesmith.yaml"
+    path.write_text(f"repo: org/repo\nandon:\n{andon_yaml}", encoding="utf-8")
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(path))
+    with pytest.raises(ConfigError, match=msg):
+        load_config(path)

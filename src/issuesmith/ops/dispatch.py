@@ -33,7 +33,7 @@ from collections.abc import Collection, Mapping
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from ghdag.forge import get_forge
 
@@ -58,6 +58,37 @@ _STEP_MODULES: dict[str, str] | None = None
 # Maximum number of LLM repair cycles before raising andon(decision).
 # Step ID used for the host-side repair workflow template.
 _REPAIR_STEP_ID: str = "repair"
+
+
+def _failed_step_for_context(step_id: str, context: Mapping[str, str]) -> str:
+    if step_id == _REPAIR_STEP_ID:
+        origin = str(context.get("repair_step_origin") or "").strip()
+        return origin or step_id
+    return step_id
+
+
+def _rule_ids_sorted(rule_ids: Collection[str]) -> list[str]:
+    return sorted({str(r) for r in rule_ids if r})
+
+
+def _make_andon_facts(
+    *,
+    step_id: str,
+    context: Mapping[str, str],
+    trigger: str,
+    rule_ids: Collection[str] | None = None,
+    extra: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    facts: dict[str, Any] = {
+        "failed_step": _failed_step_for_context(step_id, context),
+        "trigger": trigger,
+        "rule_ids": _rule_ids_sorted(rule_ids or ()),
+    }
+    if extra:
+        for key, value in extra.items():
+            if value is not None:
+                facts[key] = value
+    return facts
 
 
 def resolve_step_config(step_id: str) -> StepConfig:
@@ -292,14 +323,21 @@ def map_step_result(
             issue_num = int(context.get("issue_number") or "0")
             workflow = _workflow_name(context)
             summary = getattr(andon, "summary", "") or f"step {step_id} raised andon {andon.kind}"
+            contract_rule = getattr(andon, "rule_id", "") or ""
             full_andon = _FullAndon(
                 id=f"{workflow}:{issue_num}:{step_id}:0",
                 kind=andon.kind,
                 issue=issue_num,
                 step=step_id,
                 summary=summary,
-                rule_id=getattr(andon, "rule_id", "") or "",
+                rule_id=contract_rule,
                 options=list(getattr(andon, "options", None) or []),
+                facts=_make_andon_facts(
+                    step_id=step_id,
+                    context=context,
+                    trigger="step",
+                    rule_ids=[contract_rule] if contract_rule else (),
+                ),
             )
             _raise_andon(get_forge(), full_andon)
         return 1
@@ -947,6 +985,11 @@ def run_requires_loop(
             issue=int(eval_context.get("issue_number") or "0"),
             step=step_id,
             summary=summary,
+            facts=_make_andon_facts(
+                step_id=step_id,
+                context=eval_context,
+                trigger="gate_error",
+            ),
         )
         _raise_andon(get_forge(), full_andon)
         return 1
@@ -975,6 +1018,11 @@ def run_requires_loop(
             issue=issue_num,
             step=step_id,
             summary=summary,
+            facts=_make_andon_facts(
+                step_id=step_id,
+                context=eval_context,
+                trigger="gate_error",
+            ),
         )
         _raise_andon(get_forge(), full_andon)
         return 1
@@ -1097,6 +1145,12 @@ def run_requires_loop(
             ),
             rule_id=rule_id,
             options=[f"resume_from_{step_id}"],
+            facts=_make_andon_facts(
+                step_id=step_id,
+                context=eval_context,
+                trigger="non_repairable",
+                rule_ids=[rule_id],
+            ),
         )
         _raise_andon(get_forge(), full_andon)
         return 1
@@ -1134,6 +1188,13 @@ def run_requires_loop(
             step=step_id,
             summary=summary,
             options=options,
+            facts=_make_andon_facts(
+                step_id=step_id,
+                context=eval_context,
+                trigger="repair_oscillation",
+                rule_ids=current_rule_ids,
+                extra={"repairs": _total_repair_count, "no_progress": no_progress_count},
+            ),
         )
         _raise_andon(get_forge(), full_andon)
         return 1
@@ -1169,6 +1230,7 @@ def run_requires_loop(
             f"non-repairable gate violation in step {step_id}: "
             + "; ".join(v.message for v in non_repairable)
         )
+        blocking_ids = [v.rule_id for v in result.blocking]
         full_andon = _FullAndon(
             id=f"{workflow}:{issue_num}:{step_id}:0",
             kind="decision",
@@ -1176,6 +1238,12 @@ def run_requires_loop(
             step=step_id,
             summary=summary,
             options=options,
+            facts=_make_andon_facts(
+                step_id=step_id,
+                context=eval_context,
+                trigger="non_repairable",
+                rule_ids=blocking_ids,
+            ),
         )
         _raise_andon(get_forge(), full_andon)
         return 1
@@ -1197,6 +1265,13 @@ def run_requires_loop(
             step=step_id,
             summary=summary,
             options=options,
+            facts=_make_andon_facts(
+                step_id=step_id,
+                context=eval_context,
+                trigger="repair_limit",
+                rule_ids=current_rule_ids,
+                extra={"repairs": _total_repair_count, "no_progress": no_progress_count},
+            ),
         )
         _raise_andon(get_forge(), full_andon)
         return 1
@@ -1217,6 +1292,13 @@ def run_requires_loop(
             step=step_id,
             summary=summary,
             options=options,
+            facts=_make_andon_facts(
+                step_id=step_id,
+                context=eval_context,
+                trigger="repair_limit",
+                rule_ids=current_rule_ids,
+                extra={"repairs": _total_repair_count, "no_progress": no_progress_count},
+            ),
         )
         _raise_andon(get_forge(), full_andon)
         return 1
