@@ -586,7 +586,8 @@ def test_prior_reruns_and_answer_markers(local_client, tmp_path):
     assert any("<!-- andon-answered-by: agent -->" in b for b in bodies)
 
     second = Andon(
-        id=f"wf:{number}:p1:1",
+        # Dispatch-generated andons reuse the :0 generation for the same step.
+        id=first.id,
         kind="blocked",
         issue=number,
         step="p1",
@@ -600,7 +601,8 @@ def test_prior_reruns_and_answer_markers(local_client, tmp_path):
     parsed = from_comment(comment_body)
     assert parsed is not None
     assert parsed.facts == second.facts
-    assert "cause:" not in comment_body or "cause" in comment_body
+    assert "cause: transient" in comment_body
+    assert "prior_reruns: 1" in comment_body
 
     records = list_open_records(local_client)
     second_record = next(r for r in records if r["id"] == second.id)
@@ -624,4 +626,3 @@ def test_prior_reruns_and_answer_markers(local_client, tmp_path):
     legacy_roundtrip = from_comment(ignore + "\ncause: stale\nfix_kinds: [stale]")
     assert legacy_roundtrip is not None
     assert legacy_roundtrip.facts == second.facts
-

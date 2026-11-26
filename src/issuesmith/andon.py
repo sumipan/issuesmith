@@ -365,15 +365,14 @@ def _prior_reruns_before(
     comments: list[dict],
     *,
     failed_step: str,
-    stop_at_andon_id: str | None = None,
+    stop_before_index: int | None = None,
 ) -> int:
     target_action = f"resume_from_{failed_step}"
     count = 0
-    for comment in comments:
-        body = str(comment.get("body") or "")
-        parsed = from_comment(body)
-        if parsed is not None and stop_at_andon_id and parsed.id == stop_at_andon_id:
+    for index, comment in enumerate(comments):
+        if stop_before_index is not None and index >= stop_before_index:
             break
+        body = str(comment.get("body") or "")
         ans = _parse_answer_comment(body)
         if ans is not None:
             _, action = ans
@@ -459,16 +458,23 @@ def _iter_open_andon_issues(client: Any) -> Iterator[dict]:
 class _OpenEntry:
     andon: Andon
     raised_at: str
+    comment_index: int = -1
     notes: dict[str, str] = field(default_factory=dict)
 
 
 def _fold_open_entries(comments: list[dict]) -> list[_OpenEntry]:
     entries: list[_OpenEntry] = []
-    for comment in comments:
+    for comment_index, comment in enumerate(comments):
         body = str(comment.get("body") or "")
         parsed = from_comment(body)
         if parsed is not None:
-            entries.append(_OpenEntry(parsed, str(comment.get("created_at") or "")))
+            entries.append(
+                _OpenEntry(
+                    parsed,
+                    str(comment.get("created_at") or ""),
+                    comment_index=comment_index,
+                )
+            )
             continue
         m = _ANSWER_RE.search(body)
         if m is not None:
@@ -491,14 +497,19 @@ def _iter_open_entries(client: Any) -> Iterator[_OpenEntry]:
         yield from _fold_open_entries(comments)
 
 
-def _enrich_andon_record(andon: Andon, comments: list[dict], raised_at: str) -> dict[str, Any]:
+def _enrich_andon_record(
+    andon: Andon,
+    comments: list[dict],
+    *,
+    comment_index: int,
+) -> dict[str, Any]:
     step_s = failed_step(andon)
     prior = 0
     if step_s:
         prior = _prior_reruns_before(
             comments,
             failed_step=step_s,
-            stop_at_andon_id=andon.id,
+            stop_before_index=comment_index,
         )
     cause = classify_cause(andon)
     actions = answer_actions(andon, prior_reruns=prior)
@@ -732,7 +743,11 @@ def list_open_records(client: Any) -> list[dict[str, Any]]:
     for issue in _iter_open_andon_issues(client):
         comments = list(client.get_issue_comments(issue["number"]))
         for e in _fold_open_entries(comments):
-            row = _enrich_andon_record(e.andon, comments, e.raised_at)
+            row = _enrich_andon_record(
+                e.andon,
+                comments,
+                comment_index=e.comment_index,
+            )
             row["raised_at"] = e.raised_at
             row["notes"] = dict(e.notes)
             records.append(row)
@@ -746,7 +761,11 @@ def andon_record(client: Any, andon_id: str) -> dict[str, Any] | None:
         for entry in _fold_open_entries(comments):
             if entry.andon.id == andon_id:
                 return {
-                    **_enrich_andon_record(entry.andon, comments, entry.raised_at),
+                    **_enrich_andon_record(
+                        entry.andon,
+                        comments,
+                        comment_index=entry.comment_index,
+                    ),
                     "raised_at": entry.raised_at,
                     "notes": dict(entry.notes),
                 }
