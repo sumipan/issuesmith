@@ -19,6 +19,7 @@ from issuesmith.observe.dag_state import DagState
 from issuesmith.observe.events import DagTerminatedEvent
 from issuesmith.observe.policy import evaluate, execute
 from issuesmith.queue_store import QueueStore
+from issuesmith.task_failure import format_record
 
 _NOW = datetime(2026, 9, 22, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -100,3 +101,152 @@ def test_observe_releases_failed_dag_from_done_markers(env):
     second_evts = _tick(fail_time + timedelta(seconds=10))
     assert any(isinstance(e, DagTerminatedEvent) for e in second_evts)
     assert len(client.get_issue_comments(issue_num)) == len(comments_first)
+
+
+def _seed_failure_watch(store, client, cfg, exec_path, done_dir, tmp_path, when):
+    from dataclasses import replace
+
+    from issuesmith.observe import observe
+
+    patched = replace(cfg, paths=replace(cfg.paths, exec_jsonl=exec_path, done_dir=done_dir))
+    evts = observe(store.snapshot(), client, patched, now=when)
+    execute(evaluate(evts, cfg.observe), store, sinks=[], client=client)
+    return patched
+
+
+def _write_impl_failure(exec_path, done_dir, issue: int, failed_uuid: str, when: datetime):
+    key = f"issuesmith:impl:{issue}"
+    rows = [
+        {"uuid": "u-p1", "idempotency_key": key, "depends": [], "annotations": {"step_name": "p1"}},
+        {
+            "uuid": failed_uuid,
+            "idempotency_key": key,
+            "depends": ["u-p1"],
+            "annotations": {"step_name": "p2"},
+        },
+    ]
+    exec_path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    (done_dir / "u-p1").write_text("0", encoding="utf-8")
+    (done_dir / failed_uuid).write_text("1", encoding="utf-8")
+    os.utime(done_dir / failed_uuid, (when.timestamp(), when.timestamp()))
+
+
+def test_failure_mark_detection_uses_latest_matching_record(env):
+    """Refs #8076 AC5."""
+    from issuesmith.observe import observe
+
+    store, client, tmp_path = env
+    done_dir, _running = _make_dirs(tmp_path)
+    exec_path = tmp_path / "exec.jsonl"
+    cfg = get_config()
+    issue = client.issue_create("records", "body")
+    seed_time = _NOW
+    patched = _seed_failure_watch(store, client, cfg, exec_path, done_dir, tmp_path, seed_time)
+    fail_time = seed_time + timedelta(seconds=5)
+    failed_uuid = "u2"
+    _write_impl_failure(exec_path, done_dir, issue, failed_uuid, fail_time)
+    client.issue_comment(
+        issue,
+        format_record(
+            task_uuid="other",
+            step="p0",
+            returncode=1,
+            failure_class="ENGINE_ERROR",
+            stderr_tail="other",
+        ),
+    )
+    client.issue_comment(
+        issue,
+        format_record(
+            task_uuid=failed_uuid,
+            step="p1",
+            returncode=1,
+            failure_class="ENGINE_ERROR",
+            stderr_tail="older",
+        ),
+    )
+    client.issue_comment(
+        issue,
+        format_record(
+            task_uuid=failed_uuid,
+            step="p2",
+            returncode=124,
+            failure_class="TIMEOUT",
+            stderr_tail="newest",
+        ),
+    )
+    evts = [
+        e
+        for e in observe(store.snapshot(), client, patched, now=fail_time + timedelta(seconds=5))
+        if isinstance(e, DagTerminatedEvent) and not e.sync_only
+    ]
+    assert len(evts) == 1
+    assert evts[0].failure_class == "TIMEOUT"
+    assert evts[0].stderr_tail == "newest"
+
+
+def test_failure_mark_detection_without_record_keeps_empty_fields(env):
+    """Refs #8076 AC6."""
+    from issuesmith.observe import observe
+
+    store, client, tmp_path = env
+    done_dir, _running = _make_dirs(tmp_path)
+    exec_path = tmp_path / "exec.jsonl"
+    cfg = get_config()
+    ns = cfg.label_namespace
+    issue = client.issue_create("no record", "body")
+    client.issue_update(issue, labels_add=[f"{ns}:develop-running"])
+    seed_time = _NOW
+    patched = _seed_failure_watch(store, client, cfg, exec_path, done_dir, tmp_path, seed_time)
+    fail_time = seed_time + timedelta(seconds=5)
+    _write_impl_failure(exec_path, done_dir, issue, "u-miss", fail_time)
+    evts = [
+        e
+        for e in observe(store.snapshot(), client, patched, now=fail_time + timedelta(seconds=5))
+        if isinstance(e, DagTerminatedEvent) and not e.sync_only
+    ]
+    assert len(evts) == 1
+    assert evts[0].failure_class == ""
+    assert evts[0].stderr_tail == ""
+    execute(evaluate(evts, cfg.observe), store, sinks=[], client=client)
+    labels = {
+        lbl["name"] if isinstance(lbl, dict) else str(lbl)
+        for lbl in client.issue_get(issue, fields=["labels"]).get("labels", [])
+    }
+    assert f"{ns}:develop-running" not in labels
+    assert len(list_open(client)) == 1
+
+
+def test_failure_mark_detection_fetches_comments_once_per_issue(env, monkeypatch):
+    """Refs #8076 AC7."""
+    from issuesmith.observe import observe
+
+    store, client, tmp_path = env
+    done_dir, _running = _make_dirs(tmp_path)
+    exec_path = tmp_path / "exec.jsonl"
+    cfg = get_config()
+    issue = client.issue_create("comment budget", "body")
+    seed_time = _NOW
+    patched = _seed_failure_watch(store, client, cfg, exec_path, done_dir, tmp_path, seed_time)
+    fail_time = seed_time + timedelta(seconds=5)
+    _write_impl_failure(exec_path, done_dir, issue, "u-once", fail_time)
+    client.issue_comment(
+        issue,
+        format_record(
+            task_uuid="u-once",
+            step="p2",
+            returncode=1,
+            failure_class="TIMEOUT",
+            stderr_tail="tail",
+        ),
+    )
+    original = client.get_issue_comments
+    calls = {"n": 0}
+
+    def _counting(num: int):
+        calls["n"] += 1
+        return original(num)
+
+    monkeypatch.setattr(client, "get_issue_comments", _counting)
+    observe(store.snapshot(), client, patched, now=fail_time + timedelta(seconds=5))
+    assert calls["n"] == 1
