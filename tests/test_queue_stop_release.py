@@ -194,7 +194,7 @@ def _observe_env(tmp_path: Path, monkeypatch):
 
 
 def test_dag_terminated_releases_in_flight(_observe_env):
-    """refs #7464 AC-2."""
+    """refs #7464 AC-2; observe dag_terminated retains in_flight (nexus #4137)."""
     store, client, tmp_path = _observe_env
     issue_num = client.issue_create("title", "body")
     store.add_in_flight(issue_num, "claude", role="implementation")
@@ -211,7 +211,7 @@ def test_dag_terminated_releases_in_flight(_observe_env):
         patch("issuesmith.andon.project_issue"),
     ):
         execute(actions, store, sinks=[], client=client)
-    assert not any(e.get("issue") == issue_num for e in store.snapshot().in_flight)
+    assert any(e.get("issue") == issue_num for e in store.snapshot().in_flight)
     comments = client.get_issue_comments(issue_num)
     assert any("wf:" in str(c.get("body", "")) or "observe:" in str(c.get("body", "")) for c in comments)
 

@@ -1,10 +1,12 @@
 """Tests for DagTerminatedEvent detection, evaluate, and execute.
 
-Fix 1 (nexus #4137): DagTerminatedEvent retains in_flight and removes only the -running label.
+Failure marks are the entry point (refs #8073); in_flight is retained (nexus #4137).
 """
 from __future__ import annotations
 
 import json
+import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -17,6 +19,8 @@ from issuesmith.observe.dag_state import DagState
 from issuesmith.observe.events import DagTerminatedEvent
 from issuesmith.observe.policy import evaluate, execute
 from issuesmith.queue_store import QueueStore
+
+_NOW = datetime(2026, 9, 22, 12, 0, 0, tzinfo=timezone.utc)
 
 
 @pytest.fixture
@@ -62,20 +66,30 @@ def test_observe_releases_failed_dag_from_done_markers(env):
     client.issue_update(issue_num, labels_add=[f'{ns}:draft-done', f'{ns}:develop-running'])
     store.add_in_flight(issue_num, 'claude', role='implementation')
     key = f'issuesmith:impl:{issue_num}'
+    patched_cfg = replace(cfg, paths=replace(cfg.paths, exec_jsonl=exec_path, done_dir=done_dir))
+    exec_path.write_text('', encoding='utf-8')
+    seed_time = _NOW
+    seed_evts = observe(store.snapshot(), client, patched_cfg, now=seed_time)
+    execute(evaluate(seed_evts, cfg.observe), store, sinks=[], client=client)
+    fail_time = seed_time + timedelta(seconds=5)
     rows = [{'uuid': 'u-p1', 'idempotency_key': key, 'depends': [], 'annotations': {'step_name': 'p1'}}, {'uuid': 'u-p2', 'idempotency_key': key, 'depends': ['u-p1'], 'annotations': {'step_name': 'p2'}}]
     exec_path.write_text(''.join((json.dumps(r) + '\n' for r in rows)), encoding='utf-8')
     (done_dir / 'u-p1').write_text('0', encoding='utf-8')
     (done_dir / 'u-p2').write_text('1', encoding='utf-8')
-    patched_cfg = replace(cfg, paths=replace(cfg.paths, exec_jsonl=exec_path, done_dir=done_dir))
+    os.utime(done_dir / 'u-p2', (fail_time.timestamp(), fail_time.timestamp()))
 
-    def _tick():
-        evts = [e for e in observe(store.snapshot(), client, patched_cfg) if isinstance(e, DagTerminatedEvent)]
+    def _tick(now: datetime):
+        evts = [
+            e
+            for e in observe(store.snapshot(), client, patched_cfg, now=now)
+            if isinstance(e, DagTerminatedEvent)
+        ]
         execute(evaluate(evts, cfg.observe), store, sinks=[], client=client)
         return evts
-    evts = _tick()
-    assert len(evts) == 1
-    assert evts[0].failed_step == 'p2'
-    assert evts[0].phase == 'develop'
+    evts = _tick(fail_time + timedelta(seconds=5))
+    assert len([e for e in evts if e.failed_step == 'p2' and not e.sync_only]) == 1
+    main = next(e for e in evts if e.failed_step == 'p2' and not e.sync_only)
+    assert main.phase == 'develop'
     assert any((e.get('issue') == issue_num for e in store.snapshot().in_flight)), 'in_flight must be retained after DagTerminatedEvent (nexus #4137)'
     labels_after = {lbl['name'] if isinstance(lbl, dict) else str(lbl) for lbl in client.issue_get(issue_num, fields=['labels']).get('labels', [])}
     assert f'{ns}:develop-running' not in labels_after
@@ -83,7 +97,6 @@ def test_observe_releases_failed_dag_from_done_markers(env):
     assert f'{ns}:draft-done' in labels_after
     assert len(list_open(client)) == 1
     comments_first = client.get_issue_comments(issue_num)
-    second_evts = _tick()
-    assert len(second_evts) == 1
-    assert isinstance(second_evts[0], DagTerminatedEvent)
+    second_evts = _tick(fail_time + timedelta(seconds=10))
+    assert any(isinstance(e, DagTerminatedEvent) for e in second_evts)
     assert len(client.get_issue_comments(issue_num)) == len(comments_first)

@@ -19,9 +19,12 @@ from issuesmith.observe.events import (
     MainGreenEvent,
     MainRedEvent,
     ObserveEvent,
+    ObserveFailureWatchSeedEvent,
+    ObserveLedgerPatchEvent,
     OrphanExecEvent,
     SystemicStepFailureEvent,
     TaskTimeoutEvent,
+    UnstartedTaskEvent,
     VersionSkewEvent,
 )
 from issuesmith.queue_store import QueueBlock
@@ -75,6 +78,27 @@ class ResumeAction:
 
 
 @dataclass(frozen=True)
+class IssueCommentAction:
+    issue: int
+    body: str
+
+
+@dataclass(frozen=True)
+class ReopenIssueAction:
+    issue: int
+
+
+@dataclass(frozen=True)
+class ObserveLedgerPatchAction:
+    watch_since: str | None = None
+    seen_add: tuple[str, ...] = ()
+    seen_remove: tuple[str, ...] = ()
+    reopened_add: tuple[str, ...] = ()
+    unstarted_set: tuple[tuple[str, str], ...] = ()
+    unstarted_remove: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class RemoveRunningLabelAction:
     """Remove the -running label of a terminated DAG.
 
@@ -92,6 +116,9 @@ Action = (
     | HaltAction
     | ResumeAction
     | RemoveRunningLabelAction
+    | IssueCommentAction
+    | ReopenIssueAction
+    | ObserveLedgerPatchAction
 )
 
 
@@ -110,30 +137,194 @@ def evaluate(
     return actions
 
 
-def _evaluate_one(event: ObserveEvent, config: "ObserveConfig") -> list[Action]:
-    if isinstance(event, DagTerminatedEvent):
-        reason = f"DAG {event.key} terminated at step {event.failed_step}"
+def _workflow_name_from_key(key: str, ns: str) -> str:
+    if key.startswith(f"{ns}:") or key.startswith(":".join(("issuesmith", ""))):
+        return ns
+    return key.split(":", 1)[0] if ":" in key else ns
+
+
+def _ledger_patch_for_seen(uuid: str) -> ObserveLedgerPatchAction:
+    return ObserveLedgerPatchAction(seen_add=(uuid,))
+
+
+def _ledger_patch_reopened(issue: int, step: str) -> ObserveLedgerPatchAction:
+    return ObserveLedgerPatchAction(reopened_add=(f"{issue}:{step}",))
+
+
+def _dag_terminated_andon(event: DagTerminatedEvent, *, reason: str) -> AndonAction:
+    return AndonAction(
+        kind="blocked",
+        issue=event.issue,
+        summary=reason,
+        evidence=f"uuid={event.failed_uuid} result={event.result_path}",
+        key=f"dag_terminated:{_strip_generation(event.key)}",
+        namespace=event.namespace,
+    )
+
+
+def _evaluate_dag_terminated(event: DagTerminatedEvent, config: "ObserveConfig") -> list[Action]:
+    from issuesmith.config import get_config as _get_config
+
+    cfg = _get_config()
+    ns = cfg.label_namespace
+    workflow = _workflow_name_from_key(event.key, ns)
+    actions: list[Action] = []
+    reopened_patch: ObserveLedgerPatchAction | None = None
+    reason = f"DAG {event.key} terminated at step {event.failed_step}"
+
+    if event.not_planned:
+        if event.mark_seen and event.failed_uuid:
+            actions.append(_ledger_patch_for_seen(event.failed_uuid))
+        return actions
+
+    if event.reopen_guard:
+        body = cfg.language.message(
+            "policy.reopened_guard",
+            issue=event.issue,
+            workflow=workflow,
+            step=event.failed_step,
+            uuid=event.failed_uuid,
+        )
+        actions.append(IssueCommentAction(issue=event.issue, body=body))
+        if event.mark_seen and event.failed_uuid:
+            actions.append(_ledger_patch_for_seen(event.failed_uuid))
+        return actions
+
+    if event.suppress_andon:
+        if event.mark_seen and event.failed_uuid:
+            actions.append(_ledger_patch_for_seen(event.failed_uuid))
+        return actions
+
+    if event.sync_only:
         if event.namespace:
-            return [
-                AndonAction(
-                    kind="blocked",
-                    issue=event.issue,
-                    summary=reason,
-                    evidence=f"uuid={event.failed_uuid} result={event.result_path}",
-                    key=f"dag_terminated:{_strip_generation(event.key)}",
-                    namespace=event.namespace,
-                ),
-            ]
+            actions.append(_dag_terminated_andon(event, reason=reason))
+        else:
+            actions.append(RemoveRunningLabelAction(issue=event.issue, phase=event.phase))
+            actions.append(
+                _dag_terminated_andon(event, reason=f"{reason}; running label removed")
+            )
+        return actions
+
+    if event.needs_reopen:
+        closed_at = event.closed_at or "unknown"
+        body = cfg.language.message(
+            "policy.reopened_after_failure",
+            workflow=workflow,
+            step=event.failed_step,
+            uuid=event.failed_uuid,
+            result_line=event.result_first_line or "",
+            closed_at=closed_at,
+            failed_at=event.failed_at,
+        )
+        actions.append(IssueCommentAction(issue=event.issue, body=body))
+        actions.append(ReopenIssueAction(issue=event.issue))
+        reopened_patch = _ledger_patch_reopened(event.issue, event.failed_step)
+
+    if not event.suppress_andon and not event.not_planned and not event.reopen_guard:
+        summary = reason
+        if event.namespace:
+            actions.append(_dag_terminated_andon(event, reason=summary))
+        else:
+            if str(event.issue_state).upper() == "OPEN":
+                actions.append(
+                    RemoveRunningLabelAction(issue=event.issue, phase=event.phase)
+                )
+                summary = f"{reason}; running label removed"
+            actions.append(_dag_terminated_andon(event, reason=summary))
+
+    if reopened_patch is not None:
+        actions.append(reopened_patch)
+    if event.mark_seen and event.failed_uuid:
+        actions.append(_ledger_patch_for_seen(event.failed_uuid))
+    return actions
+
+
+def _evaluate_unstarted(event: UnstartedTaskEvent, config: "ObserveConfig") -> list[Action]:
+    from issuesmith.config import get_config as _get_config
+
+    cfg = _get_config()
+    ns = cfg.label_namespace
+    workflow = event.namespace or _workflow_name_from_key(event.key, ns)
+    actions: list[Action] = []
+    reopened_patch: ObserveLedgerPatchAction | None = None
+
+    if event.not_planned:
+        return actions
+
+    if event.reopen_guard:
+        body = cfg.language.message(
+            "policy.reopened_guard",
+            issue=event.issue,
+            workflow=workflow,
+            step=event.step,
+            uuid=event.uuid,
+        )
+        actions.append(IssueCommentAction(issue=event.issue, body=body))
+        return actions
+
+    if event.needs_reopen:
+        body = cfg.language.message(
+            "policy.reopened_after_failure",
+            workflow=workflow,
+            step=event.step,
+            uuid=event.uuid,
+            result_line="no completion marker",
+            closed_at=event.closed_at or "unknown",
+            failed_at=event.timeout_at,
+        )
+        actions.append(IssueCommentAction(issue=event.issue, body=body))
+        actions.append(ReopenIssueAction(issue=event.issue))
+        reopened_patch = _ledger_patch_reopened(event.issue, event.step)
+
+    summary = cfg.language.message(
+        "policy.unstarted_task",
+        minutes=cfg.observe.task_timeout_minutes,
+        workflow=workflow,
+        step=event.step,
+        uuid=event.uuid,
+        key=event.key,
+    )
+    actions.append(
+        AndonAction(
+            kind="blocked",
+            issue=event.issue,
+            summary=summary,
+            evidence=f"uuid={event.uuid}",
+            key=f"unstarted:{event.uuid}",
+            namespace=event.namespace,
+        )
+    )
+    if reopened_patch is not None:
+        actions.append(reopened_patch)
+    return actions
+
+
+def _evaluate_one(event: ObserveEvent, config: "ObserveConfig") -> list[Action]:
+    if isinstance(event, ObserveFailureWatchSeedEvent):
         return [
-            RemoveRunningLabelAction(issue=event.issue, phase=event.phase),
-            AndonAction(
-                kind="blocked",
-                issue=event.issue,
-                summary=f"{reason}; running label removed",
-                evidence=f"uuid={event.failed_uuid} result={event.result_path}",
-                key=f"dag_terminated:{_strip_generation(event.key)}",
-            ),
+            ObserveLedgerPatchAction(
+                watch_since=event.watch_since,
+                seen_add=event.failed_uuids,
+            )
         ]
+
+    if isinstance(event, ObserveLedgerPatchEvent):
+        return [
+            ObserveLedgerPatchAction(
+                watch_since=event.watch_since,
+                seen_add=event.seen_add,
+                seen_remove=event.seen_remove,
+                reopened_add=event.reopened_add,
+                unstarted_set=event.unstarted_set,
+                unstarted_remove=event.unstarted_remove,
+            )
+        ]
+
+    if isinstance(event, DagTerminatedEvent):
+        return _evaluate_dag_terminated(event, config)
+
+    if isinstance(event, UnstartedTaskEvent):
+        return _evaluate_unstarted(event, config)
 
     if isinstance(event, IssueStallEvent):
         return [
@@ -496,6 +687,32 @@ def execute(
                     logger.exception(
                         "issue_update failed removing running label for #%s", action.issue
                     )
+
+        elif isinstance(action, IssueCommentAction):
+            if client is not None:
+                try:
+                    client.issue_comment(action.issue, action.body)
+                except Exception:
+                    logger.exception(
+                        "issue_comment failed for #%s", action.issue,
+                    )
+
+        elif isinstance(action, ReopenIssueAction):
+            if client is not None:
+                try:
+                    client.reopen_issue(action.issue)
+                except Exception:
+                    logger.exception("reopen_issue failed for #%s", action.issue)
+
+        elif isinstance(action, ObserveLedgerPatchAction):
+            store.merge_observe_ledger(
+                watch_since=action.watch_since,
+                seen_add=action.seen_add,
+                seen_remove=action.seen_remove,
+                reopened_add=action.reopened_add,
+                unstarted_set=action.unstarted_set,
+                unstarted_remove=action.unstarted_remove,
+            )
 
         elif isinstance(action, WaitAction):
             logger.debug("wait: %s", action.reason)

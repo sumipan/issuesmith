@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -25,9 +25,12 @@ from issuesmith.observe.events import (
     MainGreenEvent,
     MainRedEvent,
     ObserveEvent,
+    ObserveFailureWatchSeedEvent,
+    ObserveLedgerPatchEvent,
     OrphanExecEvent,
     SystemicStepFailureEvent,
     TaskTimeoutEvent,
+    UnstartedTaskEvent,
 )
 
 if TYPE_CHECKING:
@@ -39,7 +42,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _ISSUESMITH_IDEMPOTENCY_PREFIX = "issuesmith:"
-_ISSUE_FIELDS = ["labels", "number", "state"]
+_ISSUE_FIELDS = ["labels", "number", "state", "state_reason", "closed_at"]
 
 
 @dataclass
@@ -51,9 +54,11 @@ class ObserveSnapshot:
     """
 
     issues: dict[int, dict] = field(default_factory=dict)
+    comments: dict[int, list[dict]] = field(default_factory=dict)
     max_api_calls: int = 0
     api_calls: int = 0
     _attempted: set[int] = field(default_factory=set)
+    _comments_attempted: set[int] = field(default_factory=set)
     _warned: bool = False
 
     def take_api_call(self, *, reserve: int = 0) -> bool:
@@ -83,6 +88,23 @@ class ObserveSnapshot:
                 pass
         return self.issues.get(issue_num)
 
+    def get_issue_comments(
+        self, client: "ForgePort", issue_num: int, *, reserve: int = 0,
+    ) -> list[dict] | None:
+        if issue_num not in self._comments_attempted:
+            if not self.take_api_call(reserve=reserve):
+                return None
+            self._comments_attempted.add(issue_num)
+            try:
+                self.comments[issue_num] = client.get_issue_comments(issue_num)
+            except Exception:
+                logger.warning(
+                    "observe: failed to read comments for issue #%s",
+                    issue_num,
+                    exc_info=True,
+                )
+        return self.comments.get(issue_num)
+
 
 def _observed_issues(snapshot: "QueueSnapshot") -> list[int]:
     """in_flight issues first (sorted), then queued-only issues (sorted)."""
@@ -95,14 +117,14 @@ def _observed_issues(snapshot: "QueueSnapshot") -> list[int]:
     return sorted(in_flight) + sorted(queued)
 
 
-def _prefetch(
-    snapshot: "QueueSnapshot", client: "ForgePort", max_api_calls: int,
-) -> ObserveSnapshot:
-    """Fetch every observed issue once, leaving one call for the dag_terminated list_issues."""
-    obs_snapshot = ObserveSnapshot(max_api_calls=max_api_calls)
+def _prefetch_into(
+    snapshot: "QueueSnapshot",
+    client: "ForgePort",
+    obs_snapshot: ObserveSnapshot,
+) -> None:
+    """Fetch every observed issue once into an existing cache."""
     for issue_num in _observed_issues(snapshot):
         obs_snapshot.get_issue(client, issue_num, reserve=1)
-    return obs_snapshot
 
 
 def _as_obs_snapshot(obs_snapshot: "ObserveSnapshot | int") -> ObserveSnapshot:
@@ -159,9 +181,15 @@ def observe(
     )
     events.extend(_detect_task_timeout(snapshot, now, obs.task_timeout_minutes))
     events.extend(_detect_orphan_exec(snapshot, config, dag_states))
-    obs_snapshot = _prefetch(snapshot, client, obs.max_api_calls)
-    events.extend(_detect_dag_terminated(snapshot, client, config, obs_snapshot, dag_states))
-    events.extend(_detect_dag_terminated_workflows(client, config, obs_snapshot))
+    obs_snapshot = ObserveSnapshot(max_api_calls=obs.max_api_calls)
+    events.extend(
+        _detect_failure_marks(snapshot, client, config, obs_snapshot, now),
+    )
+    events.extend(
+        _detect_unstarted_tasks(snapshot, client, config, obs_snapshot, now),
+    )
+    _prefetch_into(snapshot, client, obs_snapshot)
+    events.extend(_detect_dag_terminated_sync(snapshot, config, dag_states))
     events.extend(_detect_label_drift(snapshot, client, config, obs_snapshot))
     events.extend(_detect_chain_halted(snapshot))
     events.extend(_detect_systemic_failure(
@@ -376,6 +404,448 @@ def _issue_from_key(key: str) -> int | None:
     if len(parts) >= 3 and parts[2].isdigit():
         return int(parts[2])
     return None
+
+
+def _done_dir_paths(config: "IssuesmithConfig") -> tuple[Path, Path, Path]:
+    done_dir = config.paths.done_dir
+    parent = done_dir.parent
+    return done_dir, parent / "running", parent / "quota-waiting"
+
+
+def _marker_mtime(path: Path) -> datetime | None:
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+    except OSError:
+        return None
+
+
+def _done_first_line(done_dir: Path, uuid: str) -> str:
+    path = done_dir / uuid
+    if not path.exists():
+        return ""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    if not text:
+        return ""
+    return text.splitlines()[0].strip()
+
+
+def _phase_from_labels(labels: set[str], ns: str, config: "IssuesmithConfig") -> str:
+    for p in config.phases:
+        if f"{ns}:{p.name}-running" in labels:
+            return p.name
+    for lbl in labels:
+        if lbl.startswith(f"{ns}:") and lbl.endswith("-running"):
+            return lbl[len(ns) + 1 : -len("-running")]
+    return ""
+
+
+def _namespace_for_key(key: str, config: "IssuesmithConfig") -> str:
+    head = key.split(":", 1)[0]
+    for wf in config.observe.workflows:
+        if head == wf.name:
+            return wf.label_namespace
+    if head == config.label_namespace or key.startswith("issuesmith:"):
+        return ""
+    return head
+
+
+def _collect_failed_by_namespace(
+    config: "IssuesmithConfig",
+):
+    from issuesmith.observe.dag_state import DagState, load_dag_states
+
+    done_dir, running_dir, _ = _done_dir_paths(config)
+    exec_path = config.paths.exec_jsonl
+    rows: list[tuple[str, int, DagState]] = []
+    main = load_dag_states(exec_path, done_dir, running_dir)
+    for issue, state in main.items():
+        if isinstance(state, DagState) and state.status == "failed":
+            rows.append((config.label_namespace, issue, state))
+    for wf in config.observe.workflows:
+        wf_states = load_dag_states(
+            exec_path, done_dir, running_dir, workflow=wf.name,
+        )
+        for issue, state in wf_states.items():
+            if isinstance(state, DagState) and state.status == "failed":
+                rows.append((wf.label_namespace, issue, state))
+    return rows
+
+
+def _known_exec_uuids(config: "IssuesmithConfig") -> set[str]:
+    exec_path = config.paths.exec_jsonl
+    if not exec_path.exists():
+        return set()
+    prefixes = {config.label_namespace}
+    for wf in config.observe.workflows:
+        prefixes.add(wf.name)
+    uuids: set[str] = set()
+    for raw in exec_path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        key = str(row.get("idempotency_key", ""))
+        if _workflow_name_from_key(key, prefixes) is None:
+            continue
+        uuid = row.get("uuid")
+        if isinstance(uuid, str) and uuid:
+            uuids.add(uuid)
+    return uuids
+
+
+def _parse_issue_time(raw: str | None) -> datetime | None:
+    if not raw or not isinstance(raw, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _pipeline_andon_near_failure(
+    comments: list[dict],
+    failed_at: datetime,
+    timeout_minutes: int,
+) -> bool:
+    from issuesmith.andon import from_comment
+
+    window_start = failed_at - timedelta(minutes=timeout_minutes)
+    window_end = failed_at + timedelta(minutes=5)
+    for comment in comments:
+        body = str(comment.get("body") or "")
+        parsed = from_comment(body)
+        if parsed is None or parsed.step == "observe":
+            continue
+        created = _parse_issue_time(comment.get("created_at"))
+        if created is None:
+            continue
+        if window_start <= created <= window_end:
+            return True
+    return False
+
+
+def _closed_reason(issue_data: dict | None) -> str | None:
+    if issue_data is None:
+        return None
+    if str(issue_data.get("state", "")).upper() != "CLOSED":
+        return None
+    reason = issue_data.get("state_reason")
+    if reason is None or reason == "":
+        return "completed"
+    return str(reason).casefold()
+
+
+def _detect_failure_marks(
+    snapshot: "QueueSnapshot",
+    client: "ForgePort",
+    config: "IssuesmithConfig",
+    obs_snapshot: ObserveSnapshot,
+    now: datetime,
+) -> list[ObserveEvent]:
+    from issuesmith.observe.dag_state import DagState
+
+    done_dir, _, _ = _done_dir_paths(config)
+    watch_since = snapshot.observe_failure_watch_since
+    seen = set(snapshot.observe_failure_seen)
+    reopened = set(snapshot.observe_reopened)
+    failed_rows = _collect_failed_by_namespace(config)
+
+    if watch_since is None:
+        uuids = tuple(
+            st.failed_uuid
+            for _ns, _issue, st in failed_rows
+            if st.failed_uuid
+        )
+        return [
+            ObserveFailureWatchSeedEvent(
+                watch_since=now.isoformat(),
+                failed_uuids=uuids,
+            )
+        ]
+
+    try:
+        since_dt = datetime.fromisoformat(watch_since)
+    except ValueError:
+        since_dt = now
+    if since_dt.tzinfo is None:
+        since_dt = since_dt.replace(tzinfo=timezone.utc)
+
+    stale = seen - _known_exec_uuids(config)
+    events: list[ObserveEvent] = []
+    if stale:
+        events.append(ObserveLedgerPatchEvent(seen_remove=tuple(sorted(stale))))
+
+    for _wf_ns, issue, st in sorted(failed_rows, key=lambda r: (r[1], r[0])):
+        if not isinstance(st, DagState) or not st.failed_uuid:
+            continue
+        marker = done_dir / st.failed_uuid
+        mtime = _marker_mtime(marker)
+        if st.failed_uuid in seen:
+            continue
+        if mtime is None or mtime < since_dt:
+            continue
+
+        issue_data = obs_snapshot.get_issue(client, issue, reserve=1)
+        if issue_data is None:
+            continue
+        comments = obs_snapshot.get_issue_comments(client, issue)
+        if comments is None:
+            continue
+
+        failed_at = mtime.isoformat()
+        result_line = _done_first_line(done_dir, st.failed_uuid)
+        state_upper = str(issue_data.get("state", "OPEN")).upper()
+        state_reason = issue_data.get("state_reason")
+        closed_at = issue_data.get("closed_at")
+        if not closed_at:
+            closed_at = "unknown"
+
+        labels = {
+            lbl["name"] if isinstance(lbl, dict) else str(lbl)
+            for lbl in issue_data.get("labels", [])
+        }
+        phase = _phase_from_labels(labels, config.label_namespace, config)
+        namespace = _namespace_for_key(st.key, config)
+
+        event = DagTerminatedEvent(
+            issue=issue,
+            key=st.key,
+            phase=phase,
+            failed_step=st.failed_step,
+            failed_uuid=st.failed_uuid,
+            result_path=st.failed_result_path,
+            namespace=namespace,
+            result_first_line=result_line,
+            failed_at=failed_at,
+            issue_state=state_upper,
+            state_reason=str(state_reason) if state_reason is not None else None,
+            closed_at=str(closed_at) if closed_at else None,
+            mark_seen=True,
+        )
+
+        if _pipeline_andon_near_failure(
+            comments, mtime, config.observe.task_timeout_minutes,
+        ):
+            event = dataclass_replace(
+                event,
+                suppress_andon=True,
+            )
+            events.append(event)
+            continue
+
+        if state_upper == "CLOSED":
+            reason = _closed_reason(issue_data)
+            guard_key = f"{issue}:{st.failed_step}"
+            if reason == "not_planned":
+                events.append(dataclass_replace(event, not_planned=True))
+                continue
+            if guard_key in reopened:
+                events.append(dataclass_replace(event, reopen_guard=True))
+                continue
+            if reason in (None, "completed"):
+                events.append(dataclass_replace(event, needs_reopen=True))
+                continue
+
+        events.append(event)
+
+    return events
+
+
+def dataclass_replace(obj: DagTerminatedEvent, **changes: Any) -> DagTerminatedEvent:
+  from dataclasses import replace
+  return replace(obj, **changes)
+
+
+def _detect_dag_terminated_sync(
+    snapshot: "QueueSnapshot",
+    config: "IssuesmithConfig",
+    dag_states: dict,
+) -> list[ObserveEvent]:
+    seen = set(snapshot.observe_failure_seen)
+    if not seen:
+        return []
+    events: list[ObserveEvent] = []
+    for _wf_ns, issue, st in _collect_failed_by_namespace(config):
+        if st.failed_uuid not in seen or st.status != "failed":
+            continue
+        namespace = _namespace_for_key(st.key, config)
+        events.append(
+            DagTerminatedEvent(
+                issue=issue,
+                key=st.key,
+                phase="",
+                failed_step=st.failed_step,
+                failed_uuid=st.failed_uuid,
+                result_path=st.failed_result_path,
+                namespace=namespace,
+                sync_only=True,
+            )
+        )
+    return events
+
+
+def _row_step(row: dict) -> str:
+    ann = row.get("annotations") or {}
+    if isinstance(ann, dict) and ann.get("step_name"):
+        return str(ann["step_name"])
+    return str(row.get("uuid", ""))
+
+
+def _detect_unstarted_tasks(
+    snapshot: "QueueSnapshot",
+    client: "ForgePort",
+    config: "IssuesmithConfig",
+    obs_snapshot: ObserveSnapshot,
+    now: datetime,
+) -> list[ObserveEvent]:
+    from ghdag.io import done as ghdag_done
+
+    if snapshot.observe_failure_watch_since is None:
+        return []
+
+    done_dir, running_dir, quota_dir = _done_dir_paths(config)
+    exec_path = config.paths.exec_jsonl
+    if not exec_path.exists():
+        stale = tuple(uuid for uuid, _ts in snapshot.observe_unstarted_first_seen)
+        if not stale:
+            return []
+        return [ObserveLedgerPatchEvent(unstarted_remove=stale)]
+    prefixes = {config.label_namespace}
+    for wf in config.observe.workflows:
+        prefixes.add(wf.name)
+
+    dag_rows: dict[tuple[str, int], list[dict]] = {}
+    dag_last_key: dict[tuple[str, int], str] = {}
+    for raw in exec_path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        key = str(row.get("idempotency_key", ""))
+        workflow = _workflow_name_from_key(key, prefixes)
+        if workflow is None:
+            continue
+        issue = _issue_from_key(key)
+        if issue is None:
+            continue
+        dag = (workflow, issue)
+        dag_last_key[dag] = key
+        dag_rows.setdefault(dag, []).append(row)
+
+    read_done_content = ghdag_done.read_done_content
+    interpret_done = ghdag_done.interpret_done
+    first_seen_map = dict(snapshot.observe_unstarted_first_seen)
+    ledger_sets: list[tuple[str, str]] = []
+    ledger_remove: list[str] = []
+    events: list[ObserveEvent] = []
+    timeout = config.observe.task_timeout_minutes
+
+    latest_uuids = {
+        str(row.get("uuid", ""))
+        for dag, rows in dag_rows.items()
+        for row in rows
+        if row.get("idempotency_key") == dag_last_key[dag]
+        and str(row.get("uuid", ""))
+    }
+    ledger_remove.extend(sorted(set(first_seen_map) - latest_uuids))
+
+    for dag in sorted(dag_rows):
+        _workflow, issue = dag
+        current_key = dag_last_key[dag]
+        rows = [r for r in dag_rows[dag] if r.get("idempotency_key") == current_key]
+        for row in rows:
+            uuid = str(row.get("uuid", ""))
+            if not uuid:
+                continue
+            has_done = (done_dir / uuid).exists()
+            has_running = (running_dir / f"{uuid}.json").exists()
+            has_quota = (quota_dir / f"{uuid}.json").exists()
+            depends = row.get("depends") or []
+            deps_ok = True
+            if isinstance(depends, list):
+                for dep in depends:
+                    raw_dep = read_done_content(done_dir, str(dep))
+                    if interpret_done(raw_dep) != "success":
+                        deps_ok = False
+                        break
+            if has_done or has_running or has_quota or not deps_ok:
+                if uuid in first_seen_map:
+                    ledger_remove.append(uuid)
+                continue
+            if uuid not in first_seen_map:
+                ledger_sets.append((uuid, now.isoformat()))
+                first_seen_map[uuid] = now.isoformat()
+                continue
+            try:
+                first_dt = datetime.fromisoformat(first_seen_map[uuid])
+            except ValueError:
+                continue
+            if first_dt.tzinfo is None:
+                first_dt = first_dt.replace(tzinfo=timezone.utc)
+            elapsed = (now - first_dt).total_seconds() / 60
+            if elapsed < timeout:
+                continue
+            namespace = _namespace_for_key(current_key, config)
+            issue_data = obs_snapshot.get_issue(client, issue, reserve=1)
+            if issue_data is None:
+                continue
+            state_upper = str(issue_data.get("state", "OPEN")).upper()
+            closed_at = issue_data.get("closed_at") or "unknown"
+            step = _row_step(row)
+            ev = UnstartedTaskEvent(
+                issue=issue,
+                key=current_key,
+                step=step,
+                uuid=uuid,
+                first_seen=first_seen_map[uuid],
+                timeout_at=now.isoformat(),
+                namespace=namespace,
+                issue_state=state_upper,
+                state_reason=issue_data.get("state_reason"),
+                closed_at=str(closed_at),
+            )
+            if state_upper == "CLOSED":
+                reason = _closed_reason(issue_data)
+                guard_key = f"{issue}:{step}"
+                if reason == "not_planned":
+                    ledger_remove.append(uuid)
+                    continue
+                if guard_key in snapshot.observe_reopened:
+                    ev = dataclass_replace_unstarted(ev, reopen_guard=True)
+                elif reason in (None, "completed"):
+                    ev = dataclass_replace_unstarted(ev, needs_reopen=True)
+            events.append(ev)
+
+    if ledger_sets or ledger_remove:
+        events.insert(
+            0,
+            ObserveLedgerPatchEvent(
+                unstarted_set=tuple(ledger_sets),
+                unstarted_remove=tuple(ledger_remove),
+            ),
+        )
+    return events
+
+
+def dataclass_replace_unstarted(obj: UnstartedTaskEvent, **changes: Any) -> UnstartedTaskEvent:
+    from dataclasses import replace
+    return replace(obj, **changes)
 
 
 def _detect_dag_terminated(
