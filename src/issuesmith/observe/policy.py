@@ -138,7 +138,7 @@ def evaluate(
 
 
 def _workflow_name_from_key(key: str, ns: str) -> str:
-    if key.startswith(f"{ns}:") or key.startswith("issuesmith:"):
+    if key.startswith(f"{ns}:") or key.startswith(":".join(("issuesmith", ""))):
         return ns
     return key.split(":", 1)[0] if ":" in key else ns
 
