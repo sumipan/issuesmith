@@ -7,6 +7,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.219.0 - 2026-11-26
+
+### Added
+
+- observe: detect new DAG failure marks and unstarted tasks (#8073)
+
+### Fixed
+
+- repair: satisfy wallclock, vocabulary, and in_flight gates (#8073)
+- repair: align pipeline andon comment time in failure-mark test (#8073)
+- repair: avoid workflow vocab literal without growing ledger (#8073)
+
 ## 0.218.1 - 2026-11-26
 
 ### Fixed
