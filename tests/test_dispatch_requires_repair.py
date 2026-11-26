@@ -195,6 +195,72 @@ class TestAutoFixRoundLimit:
         assert gate.fix.call_count == 1
 
 
+class TestEnvironmentViolationBlocked:
+    """Ref: sumipan/nexus#8074 AC5–AC6 — environment failures block without repair."""
+
+    def test_environment_violation_raises_blocked_andon_without_repair(self):
+        from issuesmith.config import StepConfig
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        cfg = StepConfig(module="issuesmith.steps.test", requires=("tests",))
+        gate = _fail_gate(rule_id="tests.environment", auto_fixable=False)
+        repair = RepairStepBoundary()
+        with (
+            patch(
+                "issuesmith.ops.dispatch._build_requires_gates",
+                return_value={"tests": gate},
+            ),
+            patch("issuesmith.ops.dispatch.get_forge") as mock_forge,
+            stand_in_repair_step(repair),
+        ):
+            forge = _RecordingForge()
+            mock_forge.return_value = forge
+            rc = run_requires_loop(cfg, "p1", _make_ctx(), repair_count=0)
+        assert rc == 1
+        assert repair.launches == []
+        raised = _raised_andons(forge)[0]
+        assert raised.kind == "blocked"
+        assert raised.rule_id == "tests.environment"
+        assert raised.options == ["resume_from_p1"]
+        assert "tests.environment" in raised.summary
+
+    def test_environment_violation_preferred_over_repairable_lint(self):
+        from issuesmith.config import StepConfig
+        from issuesmith.ops.dispatch import run_requires_loop
+
+        cfg = StepConfig(module="issuesmith.steps.test", requires=("tests", "lint"))
+        tests_gate = _fail_gate(rule_id="tests.interrupted", auto_fixable=False)
+        lint_gate = _fail_gate(rule_id="lint.E501", auto_fixable=True)
+        repair = RepairStepBoundary()
+        with (
+            patch(
+                "issuesmith.ops.dispatch._build_requires_gates",
+                return_value={"tests": tests_gate, "lint": lint_gate},
+            ),
+            patch("issuesmith.ops.dispatch.get_forge") as mock_forge,
+            stand_in_repair_step(repair),
+        ):
+            forge = _RecordingForge()
+            mock_forge.return_value = forge
+            rc = run_requires_loop(cfg, "p1", _make_ctx(), repair_count=0)
+        assert rc == 1
+        assert repair.launches == []
+        raised = _raised_andons(forge)[0]
+        assert raised.kind == "blocked"
+        assert raised.rule_id == "tests.interrupted"
+
+
+class TestEnvironmentRuleNonRepairable:
+    """Ref: sumipan/nexus#8074 AC8 — environment rule_ids are non-repairable."""
+
+    def test_environment_rules_non_repairable_collection_stays_repairable(self):
+        from issuesmith.gates import ENVIRONMENT_RULE_IDS, is_non_repairable_rule_id
+
+        for rule_id in ENVIRONMENT_RULE_IDS:
+            assert is_non_repairable_rule_id(rule_id) is True
+        assert is_non_repairable_rule_id("tests.collection_error") is False
+
+
 class TestIssueInputViolationAndon:
     """Issue-body gates skip worktree repair and raise decision andon instead (nexus #6523)."""
 

@@ -13,10 +13,18 @@ NON_REPAIRABLE_RULE_IDS: frozenset[str] = frozenset({
     "base_freshness.fetch_transient_exhausted",
 })
 
+ENVIRONMENT_RULE_IDS: frozenset[str] = frozenset({
+    "tests.environment",
+    "tests.timeout",
+    "tests.interrupted",
+})
+
 
 def is_non_repairable_rule_id(rule_id: str) -> bool:
     """True for fixed non-repairable rules and review engine/process failures."""
     if rule_id in NON_REPAIRABLE_RULE_IDS:
+        return True
+    if rule_id in ENVIRONMENT_RULE_IDS:
         return True
     return rule_id.startswith("review.") and rule_id.endswith(".engine_error")
 
@@ -29,6 +37,7 @@ __all__ = [
     "RequiresGate",
     "GATE_REGISTRY",
     "NON_REPAIRABLE_RULE_IDS",
+    "ENVIRONMENT_RULE_IDS",
     "is_non_repairable_rule_id",
     "resolve_gate",
     "validate_step_requires",

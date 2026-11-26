@@ -918,6 +918,8 @@ def _mapped_test_paths(root: Path, changed: list[str]) -> list[str]:
 
 # rc of a pytest killed by SIGTERM/SIGKILL: negative from subprocess, 128+N via a shell.
 _INTERRUPTED_RC: frozenset[int] = frozenset({143, 137, -15, -9})
+_PYTEST_ENVIRONMENT_RC = 127
+_PYTEST_TIMEOUT_RC = 124
 _NO_TESTS_RC = 5
 _SUMMARY_RE = re.compile(r"\bin \d+(?:\.\d+)?s\b")
 
@@ -1170,6 +1172,26 @@ class TestsGate:
 
         if rc in _INTERRUPTED_RC:
             return [_interrupted(rc)]
+
+        if rc == _PYTEST_ENVIRONMENT_RC:
+            return [Violation(
+                rule_id="tests.environment",
+                severity="fail",
+                message=output[-500:],
+                location=None,
+                auto_fixable=False,
+                fix_hint=None,
+            )]
+
+        if rc == _PYTEST_TIMEOUT_RC:
+            return [Violation(
+                rule_id="tests.timeout",
+                severity="fail",
+                message=output[-500:],
+                location=None,
+                auto_fixable=False,
+                fix_hint=None,
+            )]
 
         if rc not in (0, 1):
             # Collection errors stay blocking, but newly broken files still get derived.
