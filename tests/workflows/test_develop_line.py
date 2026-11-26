@@ -53,6 +53,8 @@ _ALLOWED_ISSMITH_IMPORTS = frozenset(
         "issuesmith.bump_commits",
         "issuesmith.version_policy",
         "issuesmith.merge",
+        "issuesmith.diagnose",
+        "issuesmith.engine",
     }
 )
 
