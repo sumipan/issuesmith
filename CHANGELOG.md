@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.222.0 - 2026-11-26
+
+### Added
+
+- andon: add deterministic diagnose planning and CLI
+
 ## 0.221.0 - 2026-11-26
 
 ### Added
