@@ -1,0 +1,25 @@
+# issuesmith
+
+> Suite for agent-first software factories: Issue-to-merge production lines on ghdag.
+
+## Docs
+
+- [README.md](README.md)
+- [Configuration](README.md#configuration)
+- [CLI Reference](README.md#cli-reference)
+- [Error Reference](README.md#error-reference)
+
+## Schemas
+
+- `issuesmith-config` — JSON Schema for `issuesmith.yaml` (`issuesmith config schema` prints it)
+
+## CLI
+
+Agent-oriented entry points (full command list: `issuesmith` with no args prints hints):
+
+- `issuesmith queue status --json`
+- `issuesmith andon list --json`
+- `issuesmith milestone status`
+- `issuesmith config show`
+- `issuesmith config schema`
+- `issuesmith doctor --json`

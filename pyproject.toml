@@ -45,7 +45,7 @@ Repository = "https://github.com/sumipan/issuesmith"
 where = ["src"]
 
 [tool.setuptools.package-data]
-issuesmith = ["py.typed", "lines/*/files/**/*"]
+issuesmith = ["py.typed", "lines/*/files/**/*", "schemas/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import os
+import sys
 from pathlib import Path
 
 import pytest
 import yaml
 
+from issuesmith import cli
 from issuesmith.config import get_config, load_config, reset_config_cache
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -69,6 +72,40 @@ def test_supported_repos_default_empty_when_repo_set(tmp_path, monkeypatch):
     cfg = get_config()
     assert cfg.repo == "example/app"
     assert cfg.supported_repos == frozenset()
+
+
+def test_config_schema_prints_json_schema(tmp_path, monkeypatch, capsys) -> None:
+    """Refs #8167 — config schema prints draft 2020-12 JSON without loading host config."""
+    missing = tmp_path / "missing-issuesmith.yaml"
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(missing))
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["config", "schema"])
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+    assert isinstance(payload.get("properties"), dict)
+
+
+def test_config_schema_cli_missing_config_file(tmp_path, monkeypatch) -> None:
+    """Refs #8167 — config schema succeeds when ISSUESMITH_CONFIG points at a missing file."""
+    env = os.environ.copy()
+    env["ISSUESMITH_CONFIG"] = str(tmp_path / "does-not-exist.yaml")
+    env["PYTHONPATH"] = _pythonpath()
+    import subprocess
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "issuesmith", "config", "schema"],
+        env=env,
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        check=False,
+    )
+    assert proc.returncode == 0
+    payload = json.loads(proc.stdout)
+    assert payload.get("properties")
 
 
 

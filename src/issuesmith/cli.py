@@ -676,13 +676,14 @@ def _json_default(o: object) -> object:
 
 
 def _config_subcommand_hint() -> str:
-    return "subcommands: show, extract-line"
+    return "subcommands: show, schema, extract-line"
 
 
 def _config_parser() -> ContractParser:
     parser = ContractParser(command="config")
     sub = parser.add_subparsers(dest="subcmd", required=True)
     sub.add_parser("show")
+    sub.add_parser("schema")
     extract = sub.add_parser("extract-line")
     extract.add_argument("line_name")
     extract.add_argument("dest_dir")
@@ -690,10 +691,6 @@ def _config_parser() -> ContractParser:
 
 
 def _cmd_config(argv: list[str]) -> int:
-    from issuesmith.config import ConfigError, get_config
-    from issuesmith.gates import validate_step_requires
-    from issuesmith.lines import LINES, extract_line
-
     if not argv:
         return fail("MISSING_ARGUMENT", "subcommand required", _config_subcommand_hint())
     parser = _config_parser()
@@ -704,7 +701,14 @@ def _cmd_config(argv: list[str]) -> int:
     if isinstance(parsed, int):
         return parsed
     args = parsed
+    if args.subcmd == "schema":
+        from issuesmith.schemas import load_schema
+
+        print(json.dumps(load_schema("issuesmith-config"), indent=2))
+        return 0
     if args.subcmd == "extract-line":
+        from issuesmith.lines import LINES, extract_line
+
         if args.line_name not in LINES:
             return fail(
                 "INVALID_VALUE",
@@ -722,6 +726,9 @@ def _cmd_config(argv: list[str]) -> int:
         return 0
     if args.subcmd != "show":
         return fail("UNKNOWN_COMMAND", f"unknown config subcommand: {args.subcmd}")
+    from issuesmith.config import ConfigError, get_config
+    from issuesmith.gates import validate_step_requires
+
     cfg = get_config()
     print(json.dumps(asdict(cfg), default=_json_default, indent=2))
     try:
