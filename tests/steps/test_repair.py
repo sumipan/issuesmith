@@ -136,32 +136,60 @@ def test_repair_failed_reply_block_triggers_decision_andon(tmp_path) -> None:
     assert result.andon.kind == "decision"
 
 
-def test_repair_failed_returns_decision_andon_with_widen_options(tmp_path) -> None:
-    pub = tmp_path / 'tools' / 'newspaper' / 'publish.py'
-    test_pub = tmp_path / 'tests' / 'tools' / 'newspaper' / 'test_publish.py'
+def test_repair_failed_ignores_paths_in_llm_output(tmp_path) -> None:
+    """Refs sumipan/issuesmith#8178 — widen options ignore paths only in LLM stdout."""
+    pub = tmp_path / "tools" / "newspaper" / "publish.py"
     pub.parent.mkdir(parents=True)
-    test_pub.parent.mkdir(parents=True)
-    pub.write_text('# x\n', encoding='utf-8')
-    test_pub.write_text('# t\n', encoding='utf-8')
+    pub.write_text("# x\n", encoding="utf-8")
     stdout = (
-        "reason: need changes in tests/tools/newspaper/test_publish.py and tools/newspaper/publish.py\n"
+        "reason: need changes in tools/newspaper/publish.py\n"
         "```ghdag\n"
         "status: failed\n"
         "code: REPAIR\n"
         "```\n"
     )
-    ctx = _ctx(worktree_path=str(tmp_path), repair_step_origin='p1', allow_paths='- src/**\n', derived_allow_paths='', repair_violation_summary='- pr_scope.out_of_allow: outside allow_paths', repair_widen_candidates='')
-    with patch('issuesmith.ops.repair_step.run_guarded_output', return_value=(1, stdout)):
-        with patch('issuesmith.ops.repair_step.get_config') as mock_cfg:
+    ctx = _ctx(
+        worktree_path=str(tmp_path),
+        repair_step_origin="p1",
+        allow_paths="- src/**\n",
+        derived_allow_paths="",
+        repair_widen_candidates="",
+    )
+    with patch("issuesmith.ops.repair_step.run_guarded_output", return_value=(1, stdout)):
+        with patch("issuesmith.ops.repair_step.get_config") as mock_cfg:
             _configure_mock_get_config(mock_cfg)
             result = run(ctx, _step())
-    assert result.status == 'andon'
+    assert result.status == "andon"
     assert result.andon is not None
-    assert result.andon.kind == 'decision'
-    assert result.andon.rule_id == 'repair.gave_up'
-    assert result.andon.options == ['widen:tests/tools/newspaper/test_publish.py,tools/newspaper/publish.py', 'split', 'reject']
-    assert 'repair gave up in step p1' in result.andon.summary
-    assert len(result.andon.summary) <= 600
+    assert result.andon.kind == "decision"
+    assert result.andon.options == ["split", "reject"]
+
+
+def test_repair_failed_offers_widen_from_structured_candidates(tmp_path) -> None:
+    """Refs sumipan/issuesmith#8178 — widen options come from repair_widen_candidates."""
+    outside = tmp_path / "tools" / "newspaper" / "publish.py"
+    outside.parent.mkdir(parents=True)
+    outside.write_text("# x\n", encoding="utf-8")
+    stdout = "```ghdag\nstatus: failed\ncode: REPAIR\n```\n"
+    ctx = _ctx(
+        worktree_path=str(tmp_path),
+        repair_step_origin="p1",
+        allow_paths="- src/**\n",
+        derived_allow_paths="",
+        repair_widen_candidates="tools/newspaper/publish.py",
+    )
+    with patch("issuesmith.ops.repair_step.run_guarded_output", return_value=(1, stdout)):
+        with patch("issuesmith.ops.repair_step.get_config") as mock_cfg:
+            _configure_mock_get_config(mock_cfg)
+            result = run(ctx, _step())
+    assert result.status == "andon"
+    assert result.andon is not None
+    assert result.andon.options == [
+        "widen:tools/newspaper/publish.py",
+        "split",
+        "reject",
+    ]
+
 
 def test_repair_widen_excludes_allowed_and_invalid_paths(tmp_path) -> None:
     allowed = tmp_path / 'src' / 'ok.py'
@@ -169,5 +197,6 @@ def test_repair_widen_excludes_allowed_and_invalid_paths(tmp_path) -> None:
     allowed.write_text('x', encoding='utf-8')
     ctx = _ctx(worktree_path=str(tmp_path), allow_paths='- src/**', derived_allow_paths='tests/**', repair_widen_candidates='src/ok.py\n/etc/passwd\nfoo/../bar.py')
     from issuesmith.ops.repair_step import _decision_options
-    options = _decision_options(ctx, '')
-    assert options == ['split', 'reject']
+
+    options = _decision_options(ctx)
+    assert options == ["split", "reject"]

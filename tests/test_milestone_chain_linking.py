@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from issuesmith.milestone import (
     PlanRow,
+    SplitPlanError,
     _list_open_milestones,
     advance_milestone_chains,
     allow_paths_for_row,
@@ -158,17 +161,47 @@ class TestSub1PublicApi:
         assert "child" in section
 
 
-    def test_parse_split_plan_rejects_malformed_number_column(self):
+    def test_parse_split_plan_raises_on_dotted_number(self):
+        """Refs sumipan/issuesmith#8178 — dotted number column stops with SplitPlanError."""
         body = (
             _PARENT_BODY
             + f"\n## Milestone\n\n### Sub-issue Plan\n"
             f"| # | {TITLE} | {TARGET_REPOSITORY} | {CONTENT} | {DEPENDENCY} |\n"
             "|---|--------|----------------|------|------|\n"
-            f"| x | child | `sumipan/nexus` | scope | {NONE} |\n"
+            f"| 1. | child | `sumipan/nexus` | scope | {NONE} |\n"
+        )
+        with pytest.raises(SplitPlanError) as exc:
+            parse_split_plan(body, parent_target_repo="sumipan/nexus")
+        assert exc.value.violations
+        assert exc.value.violations[0].startswith("split plan row 1:")
+
+    def test_parse_split_plan_raises_on_short_row(self):
+        """Refs sumipan/issuesmith#8178 — row with too few cells raises SplitPlanError."""
+        body = (
+            _PARENT_BODY
+            + f"\n## Milestone\n\n### Sub-issue Plan\n"
+            f"| # | {TITLE} | {TARGET_REPOSITORY} | {CONTENT} | {DEPENDENCY} |\n"
+            "|---|--------|----------------|------|------|\n"
+            "| 1 |\n"
+        )
+        with pytest.raises(SplitPlanError) as exc:
+            parse_split_plan(body, parent_target_repo="sumipan/nexus")
+        assert exc.value.violations[0].startswith("split plan row 1:")
+
+    def test_parse_split_plan_skips_blank_row(self):
+        """Refs sumipan/issuesmith#8178 — blank rows are skipped; valid rows still parse."""
+        body = (
+            _PARENT_BODY
+            + f"\n## Milestone\n\n### Sub-issue Plan\n"
+            f"| # | {TITLE} | {TARGET_REPOSITORY} | {CONTENT} | {DEPENDENCY} |\n"
+            "|---|--------|----------------|------|------|\n"
+            "|   |   |   |   |   |\n"
+            f"| 1 | first | `sumipan/nexus` | scope a | {NONE} |\n"
+            f"| 2 | second | `sumipan/nexus` | scope b | {NONE} |\n"
         )
         rows, has_repo = parse_split_plan(body, parent_target_repo="sumipan/nexus")
         assert has_repo is True
-        assert rows == []
+        assert [r.row_num for r in rows] == [1, 2]
 
     def test_build_child_body_preserves_target_repo_and_ac(self):
         parent_body = (
