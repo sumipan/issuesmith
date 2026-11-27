@@ -490,3 +490,81 @@ def test_review_gate_doc_states_tier_priority() -> None:
     doc = review_mod.__doc__ or ""
     assert "pr_diff" in doc
     assert "review.tier" in doc
+
+
+def test_check_fail_maps_reply_block_problems_to_review_violations(
+    tmp_path: Path,
+) -> None:
+    """Refs #8166 — failed reply block problems become review.<step_id> violations."""
+    gate = ReviewGate(_review_cfg(), "cp2", tmp_path, {})
+    stdout = (
+        "```ghdag\n"
+        "status: failed\n"
+        "code: CP2\n"
+        "problems:\n"
+        "  - scope leak\n"
+        "  - missing test\n"
+        "```\n"
+    )
+    with patch("issuesmith.engine.run_guarded_output", return_value=(1, stdout)):
+        vs = gate.check("", [])
+    assert [v.message for v in vs] == ["scope leak", "missing test"]
+    assert all(v.rule_id == "review.cp2" for v in vs)
+
+
+def test_check_invalid_reply_block_returns_engine_error_with_code(
+    tmp_path: Path,
+) -> None:
+    """Refs #8166 — unparseable reply block yields review.<step_id>.engine_error."""
+    gate = ReviewGate(_review_cfg(), "cp2", tmp_path, {})
+    stdout = (
+        "```ghdag\n"
+        "status: failed\n"
+        "problems: not-a-list\n"
+        "```\n"
+    )
+    with patch("issuesmith.engine.run_guarded_output", return_value=(1, stdout)):
+        vs = gate.check("", [])
+    assert len(vs) == 1
+    assert vs[0].rule_id == "review.cp2.engine_error"
+    assert "REPLY_BLOCK_INVALID" in vs[0].message
+
+
+def test_check_failed_reply_without_problems_uses_problems_heading(
+    tmp_path: Path,
+) -> None:
+    """Refs #8166 — empty block problems keep legacy Problems: heading parsing."""
+    gate = ReviewGate(_review_cfg(), "cp2", tmp_path, {})
+    stdout = (
+        "Problems:\n"
+        "- legacy finding\n"
+        "```ghdag\n"
+        "status: failed\n"
+        "code: CP2\n"
+        "```\n"
+    )
+    with patch("issuesmith.engine.run_guarded_output", return_value=(1, stdout)):
+        vs = gate.check("", [])
+    assert len(vs) == 1
+    assert vs[0].rule_id == "review.cp2"
+    assert vs[0].message == "legacy finding"
+
+
+def test_check_reply_block_problems_ignore_legacy_heading_bullets(
+    tmp_path: Path,
+) -> None:
+    """Refs #8166 — structured block problems supersede Problems: bullets."""
+    gate = ReviewGate(_review_cfg(), "cp2", tmp_path, {})
+    stdout = (
+        "Problems:\n"
+        "- ignore me\n"
+        "```ghdag\n"
+        "status: failed\n"
+        "code: CP2\n"
+        "problems:\n"
+        "  - structured only\n"
+        "```\n"
+    )
+    with patch("issuesmith.engine.run_guarded_output", return_value=(1, stdout)):
+        vs = gate.check("", [])
+    assert [v.message for v in vs] == ["structured only"]
