@@ -23,6 +23,7 @@ from issuesmith.dep_extractor import extract_dependencies
 from issuesmith.errors import IssuesmithError
 from issuesmith.forge_api import api_request
 from issuesmith.milestone import (
+    SplitPlanError,
     Sub1State,
     allow_paths_for_row,
     build_child_body,
@@ -302,9 +303,12 @@ def plan_children(client: ForgePort, parent_number: int, *, repo: str) -> ChildP
     milestone_number = _milestone_number(parent)
     parent_meta = _safe_metadata(parent_body)
     parent_target_repo = str(parent_meta.get("target_repo") or repo or "").strip()
-    plan_rows, has_repo_col = parse_split_plan(
-        parent_body, parent_target_repo=parent_target_repo or repo
-    )
+    try:
+        plan_rows, has_repo_col = parse_split_plan(
+            parent_body, parent_target_repo=parent_target_repo or repo
+        )
+    except SplitPlanError as exc:
+        raise ChildPlanError(exc.violations, hint=exc.hint) from exc
     if not plan_rows:
         raise ChildPlanError(
             ("split plan not found or empty",),

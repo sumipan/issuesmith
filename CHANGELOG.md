@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.228.0 - 2026-11-28
+
+### Fixed
+
+- milestone,repair: fail on unreadable split-plan rows and deterministic widen
+
 ## 0.227.0 - 2026-11-28
 
 ### Added

@@ -7,6 +7,7 @@ import functools
 import json
 import re
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -29,6 +30,7 @@ from issuesmith.contract import (
     sub_block,
 )
 from issuesmith.dep_extractor import check_dependencies, extract_dependencies
+from issuesmith.errors import IssuesmithError
 from issuesmith.forge_api import api_request
 from issuesmith.issue_outcome import issue_outcome
 from issuesmith.language import LanguagePack
@@ -1190,6 +1192,21 @@ _SUB1_DEP_REF_RE = re.compile(r"#(\d+)")
 _BREAKING_CHANGE_HEADING = "Breaking Change Impact"
 
 
+class SplitPlanError(IssuesmithError, ValueError):
+    code = "INVALID_VALUE"
+
+    def __init__(self, violations: Sequence[str]) -> None:
+        self.violations = tuple(violations)
+        message = "; ".join(self.violations)
+        super().__init__(
+            message,
+            hint=(
+                "the number column must be digits only (e.g. 1) and each row "
+                "must have as many cells as the header"
+            ),
+        )
+
+
 @dataclass
 class PlanRow:
     row_num: int
@@ -1247,11 +1264,16 @@ def parse_split_plan(
 
     has_repo = repo_i is not None
     plan_rows: list[PlanRow] = []
-    for row in rows[1:]:
+    violations: list[str] = []
+    for row_idx, row in enumerate(rows[1:], start=1):
+        if all(not cell.strip() for cell in row):
+            continue
         if len(row) <= max(num_i, title_i):
+            violations.append(f'split plan row {row_idx}: {" | ".join(row)}')
             continue
         num_raw = row[num_i].strip()
         if not num_raw.isdigit():
+            violations.append(f'split plan row {row_idx}: {" | ".join(row)}')
             continue
         title = row[title_i].strip()
         scope = row[scope_i].strip() if scope_i is not None and len(row) > scope_i else ""
@@ -1269,6 +1291,8 @@ def parse_split_plan(
                 dep_raw=dep_raw,
             )
         )
+    if violations:
+        raise SplitPlanError(violations)
     plan_rows.sort(key=lambda r: r.row_num)
     return plan_rows, has_repo
 

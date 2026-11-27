@@ -79,6 +79,32 @@ def _create_parent(client, body: str) -> int:
 
 
 
+def test_plan_children_raises_on_unreadable_plan_row(local_client) -> None:
+    """Refs sumipan/issuesmith#8178 — bad plan number column surfaces as ChildPlanError."""
+    lang = EN
+    s = lang.sections
+    body = (
+        f"```yaml\ntarget_repo: {_REPO}\nbase_branch: main\n```\n\n"
+        f"## {s['design']}\n\n"
+        f"#### {lang.sub_header_prefix}1: part 1\n\n"
+        f"**{lang.sub_design_subsections[2]}**:\n"
+        f"| {lang.change_table_columns[0]} | {lang.change_table_columns[1]} | "
+        f"{lang.change_table_columns[2]} | {lang.change_table_columns[3]} |\n"
+        "|---|---|---|---|\n"
+        f"| `{_REPO}` | `src/a.py` | modify | x |\n\n"
+        f"## {s['acceptance_criteria']}\n\n- [ ] done\n\n"
+        f"## {s['milestone']}\n\n### {s['sub_plan']}\n\n"
+        f"{lang.sub_plan_header}\n|---|---|---|---|---|\n"
+        f"| #1 | bad part | `{_REPO}` | do a | {lang.no_deps_word} |\n"
+    )
+    parent = _create_parent(local_client, body)
+    with pytest.raises(vchildren.ChildPlanError) as exc:
+        vchildren.plan_children(local_client, parent, repo=_REPO)
+    assert exc.value.violations
+    assert exc.value.violations[0].startswith("split plan row 1:")
+    assert local_client.list_sub_issues(parent) == []
+
+
 def test_plan_children_rejects_duplicate_design_without_creation(local_client) -> None:
     """Refs sumipan/nexus#6583 — duplicate design sections raise ChildPlanError."""
     parent = _create_parent(local_client, _parent_body_two_rows(duplicate_design=True))
