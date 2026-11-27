@@ -71,6 +71,11 @@ class ReviewGate:
         )
         if rc == 0:
             return []
+        # Prefer ghdag reply-block problems over legacy Problems: heading (#8166).
+        block_violations = _violations_from_reply_block(stdout, self._step_id)
+        if block_violations is not None:
+            return block_violations
+        # Transitional dual-read: remove heading parsing once host templates switch to problems (after #8165).
         if _stdout_is_review_result(stdout, self._review_cfg):
             return _violations_from_stdout(stdout, self._review_cfg, self._step_id)
         return [_engine_error_violation(rc, stdout, self._step_id)]
@@ -131,6 +136,47 @@ def _worktree_diff_lines(
                 return DIFF_LINES_FALLBACK, "invalid_numstat"
             total += value
     return total, None
+
+
+def _violations_from_reply_block(
+    stdout: str, step_id: str
+) -> list[Violation] | None:
+    """Map a failed reply block's problems to violations; None to keep legacy parsing."""
+    from ghdag.core import reply_block
+
+    if reply_block.find_reply_block(stdout) is None:
+        return None
+    try:
+        block = reply_block.parse_reply_block(stdout)
+    except reply_block.ReplyBlockError as exc:
+        detail = f"review reply block invalid ({exc.code}): {exc.message}"
+        if exc.hint:
+            detail = f"{detail} (hint: {exc.hint})"
+        rule_id = f"review.{step_id}.engine_error"
+        return [
+            Violation(
+                rule_id=rule_id,
+                severity="fail",
+                message=detail,
+                location=None,
+                auto_fixable=False,
+                fix_hint=detail,
+            )
+        ]
+    if block is None or block.status != "failed" or not block.problems:
+        return None
+    rule_id = f"review.{step_id}"
+    return [
+        Violation(
+            rule_id=rule_id,
+            severity="fail",
+            message=msg,
+            location=None,
+            auto_fixable=False,
+            fix_hint=msg,
+        )
+        for msg in block.problems
+    ]
 
 
 def _stdout_is_review_result(stdout: str, review_cfg: ReviewConfig) -> bool:
