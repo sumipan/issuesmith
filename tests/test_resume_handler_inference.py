@@ -18,6 +18,13 @@ _ISSUE = 3762
 _WORKFLOW = "issuesmith"
 _CHAIN = ["p0", "p1", "p2", "p3", "cp2", "m1", "m2"]
 
+_MINIMAL_CONFIG = {
+    "repo": "sumipan/nexus",
+    "phases": [
+        {"name": "draft", "role": "design", "entry_step": "b1", "handler": "brushup"},
+    ],
+}
+
 
 def _impl_records(issue: int, key_suffix: str = "") -> list[dict]:
     key = f"issuesmith:impl:{issue}{key_suffix}"
@@ -49,7 +56,7 @@ def _fs(tmp_path: Path, records: list[dict]):
         (jobs / f"20260925000000-shell-order-{rec['uuid']}.md").write_text(
             rec["command"], encoding="utf-8"
         )
-    cfg = _build_config({"repo": "sumipan/nexus", "workflow": "issuesmith.yaml"}, root=tmp_path)
+    cfg = _build_config(_MINIMAL_CONFIG, root=tmp_path)
     return jobs, cfg
 
 
