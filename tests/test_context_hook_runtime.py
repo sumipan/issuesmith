@@ -15,6 +15,7 @@ from issuesmith.context_hook import (
     main,
     validate_issue_metadata,
 )
+from issuesmith.errors import IssuesmithError
 from tests import test_context_hook as _base
 
 _no_real_branch_search = _base._no_real_branch_search
@@ -66,29 +67,31 @@ def test_build_context_unique_pipeline_ids():
 
 
 def test_main_no_args(capsys):
-    """With no args, print usage to stderr and exit 1."""
+    """With no args, print usage to stderr and exit 2 (MISSING_ARGUMENT)."""
     import sys
 
-    with pytest.raises(SystemExit, match="1"):
-        original = sys.argv
-        sys.argv = ["context_hook"]
-        try:
+    original = sys.argv
+    sys.argv = ["context_hook"]
+    try:
+        with pytest.raises(SystemExit) as exc_info:
             main()
-        finally:
-            sys.argv = original
+        assert int(exc_info.value.code) == 2
+    finally:
+        sys.argv = original
 
 
 def test_main_invalid_arg(capsys):
-    """Non-integer args print an error to stderr and exit 1."""
+    """Non-integer args print an error to stderr and exit 2 (INVALID_VALUE)."""
     import sys
 
-    with pytest.raises(SystemExit, match="1"):
-        original = sys.argv
-        sys.argv = ["context_hook", "not-a-number"]
-        try:
+    original = sys.argv
+    sys.argv = ["context_hook", "not-a-number"]
+    try:
+        with pytest.raises(SystemExit) as exc_info:
             main()
-        finally:
-            sys.argv = original
+        assert int(exc_info.value.code) == 2
+    finally:
+        sys.argv = original
 
 
 
@@ -132,11 +135,11 @@ def test_no_local_file_created(tmp_path, monkeypatch):
 
 
 def test_gh_fetch_failure_exits_immediately():
-    """T6: _fetch_issue_body_from_gh() returns None → SystemExit non-zero; no local-file fallback."""
+    """T6: _fetch_issue_body_from_gh() returns None → IssuesmithError; no local-file fallback."""
     with patch("issuesmith.context_hook._fetch_issue_body_from_gh", return_value=None):
-        with pytest.raises(SystemExit) as exc_info:
+        with pytest.raises(IssuesmithError, match="failed to fetch") as exc_info:
             build_context(42)
-        assert exc_info.value.code != 0
+        assert exc_info.value.code == "NOT_FOUND"
 
 
 def test_main_exits_on_api_failure():
@@ -208,7 +211,7 @@ def test_main_skips_andon_when_open_duplicate_exists(capsys):
         try:
             with pytest.raises(SystemExit) as exc_info:
                 main()
-            assert exc_info.value.code == 1
+            assert int(exc_info.value.code) == 2
         finally:
             sys.argv = original
     raise_andon.assert_not_called()
@@ -229,12 +232,12 @@ def test_main_andon_failure_adds_warning(capsys):
         try:
             with pytest.raises(SystemExit) as exc_info:
                 main()
-            assert exc_info.value.code == 1
+            assert int(exc_info.value.code) == 2
         finally:
             sys.argv = original
     err = capsys.readouterr().err
     assert "Warning: failed to raise context_hook andon for #77:" in err
-    assert "Error:" in err
+    assert "error[INVALID_VALUE]:" in err
 
 
 def test_main_no_andon_for_string_only_context_hook_error():
@@ -249,7 +252,7 @@ def test_main_no_andon_for_string_only_context_hook_error():
         try:
             with pytest.raises(SystemExit) as exc_info:
                 main()
-            assert exc_info.value.code == 1
+            assert int(exc_info.value.code) == 2
         finally:
             sys.argv = original
     mock_andon.assert_not_called()
