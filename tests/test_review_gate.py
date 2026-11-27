@@ -568,3 +568,24 @@ def test_check_reply_block_problems_ignore_legacy_heading_bullets(
     with patch("issuesmith.engine.run_guarded_output", return_value=(1, stdout)):
         vs = gate.check("", [])
     assert [v.message for v in vs] == ["structured only"]
+
+
+def test_check_ok_reply_block_with_problems_returns_reply_block_invalid(
+    tmp_path: Path,
+) -> None:
+    """Refs #8166 — status: ok with problems yields engine_error with ghdag hint."""
+    gate = ReviewGate(_review_cfg(), "cp2", tmp_path, {})
+    stdout = (
+        "```ghdag\n"
+        "status: ok\n"
+        "code: CP2_PASS\n"
+        "problems:\n"
+        "  - x\n"
+        "```\n"
+    )
+    with patch("issuesmith.engine.run_guarded_output", return_value=(1, stdout)):
+        vs = gate.check("", [])
+    assert len(vs) == 1
+    assert vs[0].rule_id == "review.cp2.engine_error"
+    assert "REPLY_BLOCK_INVALID" in vs[0].message
+    assert "status: failed" in vs[0].message

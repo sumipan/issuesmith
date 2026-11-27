@@ -75,6 +75,7 @@ class ReviewGate:
         block_violations = _violations_from_reply_block(stdout, self._step_id)
         if block_violations is not None:
             return block_violations
+        # 移行期間の併読: #8165 の後のホストのテンプレートの切り替えが済んだら見出し読みを消す
         if _stdout_is_review_result(stdout, self._review_cfg):
             return _violations_from_stdout(stdout, self._review_cfg, self._step_id)
         return [_engine_error_violation(rc, stdout, self._step_id)]
@@ -148,11 +149,9 @@ def _violations_from_reply_block(
     try:
         block = reply_block.parse_reply_block(stdout)
     except reply_block.ReplyBlockError as exc:
-        detail = exc.code
-        if str(exc):
-            detail = f"{detail}: {exc}"
+        detail = f"review reply block invalid ({exc.code}): {exc.message}"
         if exc.hint:
-            detail = f"{detail}; {exc.hint}"
+            detail = f"{detail} (hint: {exc.hint})"
         rule_id = f"review.{step_id}.engine_error"
         return [
             Violation(
