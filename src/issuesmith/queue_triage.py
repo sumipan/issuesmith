@@ -26,6 +26,26 @@ from issuesmith.queue_store import (
     QueueStore,
 )
 
+FallbackCode = Literal[
+    "revision_unchanged",
+    "config_error",
+    "llm_failed",
+    "llm_timeout",
+    "cas_conflict",
+    "circuit_open",
+]
+
+_KNOWN_FALLBACK_CODES = frozenset(
+    {
+        "revision_unchanged",
+        "config_error",
+        "llm_failed",
+        "llm_timeout",
+        "cas_conflict",
+        "circuit_open",
+    }
+)
+
 DecisionKind = Literal[
     "keep",
     "closed",
@@ -170,6 +190,7 @@ class TriageResult:
     trace_id: str
     prompt_version: str
     circuit_skipped: bool = False
+    fallback_code: FallbackCode | None = None
 
 
 def label_names(issue: dict[str, Any]) -> set[str]:
@@ -378,6 +399,10 @@ def apply_priority_bucket_order(
     return result
 
 
+def _legacy_timeout_reason(reason: str) -> bool:
+    return reason.startswith("llm failed:") and "timed out" in reason
+
+
 def is_circuit_open(
     log_path: Path,
     threshold: int,
@@ -405,11 +430,16 @@ def is_circuit_open(
         entries.append(data)
     oldest_ts: datetime | None = None
     for entry in entries:
-        reason = entry.get("fallback_reason")
-        if not isinstance(reason, str):
-            return False
-        if not reason.startswith("llm failed:") or "timed out" not in reason:
-            return False
+        code = entry.get("fallback_code")
+        if code is not None:
+            if not isinstance(code, str) or code not in _KNOWN_FALLBACK_CODES:
+                return False
+            if code != "llm_timeout":
+                return False
+        else:
+            reason = entry.get("fallback_reason")
+            if not isinstance(reason, str) or not _legacy_timeout_reason(reason):
+                return False
         ts_raw = entry.get("timestamp")
         if not isinstance(ts_raw, str) or not ts_raw.strip():
             return False
@@ -439,6 +469,7 @@ def append_cas_conflict_log(
     append_triage_log(
         {
             "timestamp": now.isoformat(),
+            "fallback_code": "cas_conflict",
             "fallback_reason": "cas_conflict",
             "adopted_order": None,
             "proposed_order": list(order),
@@ -460,6 +491,7 @@ def append_circuit_open_log(
     append_triage_log(
         {
             "timestamp": now.isoformat(),
+            "fallback_code": "circuit_open",
             "fallback_reason": "circuit_open",
             "adopted_order": list(order),
             "circuit_skipped": True,
@@ -576,6 +608,7 @@ def triage(
             decisions=[TriageDecision(rid, "keep", "no triage needed") for rid in snapshot.active_order],
             adopted=False,
             fallback_reason="revision unchanged or empty",
+            fallback_code="revision_unchanged",
             raw_output=None,
             uncertain_flag=False,
             latency_ms=0,
@@ -627,6 +660,7 @@ def triage(
 
     raw_output: str | None = None
     fallback_reason: str | None = None
+    fallback_code: FallbackCode | None = None
     adopted = False
     order = fallback
     decisions: list[TriageDecision] = [
@@ -645,9 +679,11 @@ def triage(
 
             validate_engine_model(engine, model)
         except EngineModelError as exc:
+            fallback_code = "config_error"
             fallback_reason = f"config error: {exc}"
             llm = None
         except Exception as exc:  # pragma: no cover — import / unexpected validation failures
+            fallback_code = "config_error"
             fallback_reason = f"config error: {exc}"
             llm = None
 
@@ -743,7 +779,14 @@ def triage(
             decisions = fixed
             adopted = True
             uncertain_flag = any(d.uncertain_flag for d in fixed)
+        except TimeoutError as exc:
+            fallback_code = "llm_timeout"
+            fallback_reason = f"llm failed: {exc}"
+            order = fallback
+            decisions = [TriageDecision(rid, "keep", "deterministic fallback") for rid in fallback]
+            adopted = False
         except Exception as exc:
+            fallback_code = "llm_failed"
             fallback_reason = f"llm failed: {exc}"
             order = fallback
             decisions = [TriageDecision(rid, "keep", "deterministic fallback") for rid in fallback]
@@ -785,6 +828,7 @@ def triage(
         "uncertain_flag": uncertain_flag,
         "adopted_order": order if adopted else None,
         "fallback_reason": fallback_reason,
+        "fallback_code": fallback_code,
         "circuit_skipped": False,
     }
     append_triage_log(entry, path=triage_log_path)
@@ -794,6 +838,7 @@ def triage(
         decisions=decisions,
         adopted=adopted,
         fallback_reason=fallback_reason,
+        fallback_code=fallback_code,
         raw_output=raw_output,
         uncertain_flag=uncertain_flag,
         latency_ms=latency_ms,

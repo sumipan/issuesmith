@@ -2337,7 +2337,8 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="action", required=True)
     show_parser = subparsers.add_parser("show", help="show effective role assignments")
     show_parser.add_argument("--json", action="store_true")
-    subparsers.add_parser("check", help="validate commands, models, and workflow drift")
+    check_parser = subparsers.add_parser("check", help="validate commands, models, and workflow drift")
+    check_parser.add_argument("--json", action="store_true")
 
     clear_parser = subparsers.add_parser("clear", help="clear quota pause sources for an engine")
     clear_parser.add_argument("engine")
@@ -2445,6 +2446,10 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.action == "check":
             errors = check_state()
+            if getattr(args, "json", False):
+                payload = {"ok": not errors, "errors": errors}
+                print(json.dumps(payload, ensure_ascii=False))
+                return 1 if errors else 0
             if errors:
                 for error in errors:
                     print(f"REJECTED:{error}")

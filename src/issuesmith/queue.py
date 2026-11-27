@@ -2863,8 +2863,7 @@ def _cmd_audit(args: argparse.Namespace) -> int:
         lock_path=Path(args.lock_path) if getattr(args, "lock_path", None) else None,
     )
     purged = store.purge_orphan_ids()
-    if purged:
-        print(f"purged orphan active_order ids: {', '.join(purged)}")
+    json_mode = bool(getattr(args, "json", False))
 
     snap = store.snapshot()
     with store.lock():
@@ -2887,6 +2886,13 @@ def _cmd_audit(args: argparse.Namespace) -> int:
     if snap.last_triaged_revision > snap.revision:
         errors.append("last_triaged_revision > revision")
 
+    if json_mode:
+        payload = {"ok": not errors, "purged": purged, "errors": errors}
+        print(json.dumps(payload, ensure_ascii=False))
+        return 1 if errors else 0
+
+    if purged:
+        print(f"purged orphan active_order ids: {', '.join(purged)}")
     if errors:
         for e in errors:
             print(f"AUDIT FAIL: {e}")
@@ -3061,6 +3067,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_deq.set_defaults(func=_cmd_dequeue)
 
     p_audit = sub.add_parser("audit")
+    p_audit.add_argument("--json", action="store_true")
     p_audit.set_defaults(func=_cmd_audit)
 
     p_tlog = sub.add_parser("triage-log")
