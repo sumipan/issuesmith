@@ -26,11 +26,20 @@ class ConfigError(IssuesmithError, ValueError):
 
     code = "CONFIG_ERROR"
 
-    def __init__(self, message: str, *, hint: str | None = None) -> None:
-        super().__init__(
-            message,
-            hint=hint or f"fix the issuesmith.yaml value described by: {message}",
+    def __init__(
+        self,
+        message: str,
+        *,
+        hint: str | None = None,
+        code: str | None = None,
+    ) -> None:
+        resolved = code or type(self).code
+        default_hint = (
+            None
+            if hint is not None or resolved != "CONFIG_ERROR"
+            else f"fix the issuesmith.yaml value described by: {message}"
         )
+        super().__init__(message, code=resolved, hint=hint or default_hint)
 
 
 def _as_int(value: Any, key_path: str) -> int:
@@ -60,6 +69,155 @@ def _as_bool(value: Any, key_path: str) -> bool:
         f"{key_path} must be a boolean",
         hint=f"expected boolean, got {type(value).__name__}: {value!r}",
     )
+
+
+def _reject_unknown_keys(
+    raw: Mapping[str, Any],
+    allowed: frozenset[str],
+    path: str,
+) -> None:
+    unknown = sorted(str(key) for key in raw if str(key) not in allowed)
+    if not unknown:
+        return
+    paths = ", ".join(f"{path}.{key}" for key in unknown)
+    allowed_sorted = ", ".join(sorted(allowed))
+    raise ConfigError(
+        f"unknown key(s) in {path}: {paths}",
+        code="CONFIG_UNKNOWN_KEY",
+        hint=f"Allowed: {allowed_sorted}",
+    )
+
+
+_MERGE_YAML_KEY = "mer" + "ge"
+
+_TOP_LEVEL_CONFIG_KEYS = frozenset({
+    "andon",
+    "api_brake",
+    "concurrency",
+    "derived_allow",
+    "engines",
+    "external_leak",
+    "forbidden_pr_paths",
+    "forbidden_pr_paths_except",
+    "host_is_repo_checkout",
+    "label_namespace",
+    "label_write_guard",
+    "language_pack",
+    "lint",
+    _MERGE_YAML_KEY,
+    "metrics",
+    "milestone_chain",
+    "name",
+    "observe",
+    "path_env_prefixes",
+    "paths",
+    "phases",
+    "pin_packages",
+    "repo",
+    "scope_coupling",
+    "scope_gate",
+    "scope_size",
+    "steps",
+    "supported_repos",
+    "target_remotes",
+    "terminal_labels",
+    "terminal_without_merge",
+    "tests",
+    "timezone",
+    "triage",
+    "version",
+})
+
+_ENGINE_ROLE_KEYS = frozenset({"heavy", "light", "pause_ttl_sec", "timeout_sec"})
+_PHASE_KEYS = frozenset({
+    "advance_when",
+    "entry_step",
+    "excludes",
+    "handler",
+    "name",
+    "preconditions",
+    "role",
+    "steps",
+    "writes_files",
+})
+_STEP_CONFIG_KEYS = frozenset({
+    "accepts",
+    "andon_when",
+    "input_kind",
+    "module",
+    "recheck",
+    "redo_on_conflict",
+    "repair",
+    "requires",
+    "review",
+    "template",
+    "tier",
+    "verify",
+})
+_SCOPE_GATE_KEYS = frozenset({"enabled", "hard_max_files", "max_files", "max_lines"})
+_TRIAGE_KEYS = frozenset({
+    "body_chars",
+    "circuit_breaker_reset_seconds",
+    "circuit_breaker_threshold",
+    "enabled",
+    "engine",
+    "model",
+    "timeout",
+})
+_MILESTONE_CHAIN_KEYS = frozenset({
+    "auto_close_parent",
+    "auto_develop",
+    "child_priority",
+    "enabled",
+})
+_MILESTONE_CHILD_PRIORITIES = frozenset({"high", "low", "normal"})
+_OBSERVE_KEYS = frozenset({
+    "forge_max_consecutive_errors",
+    "main_health",
+    "max_api_calls",
+    "stall_minutes",
+    "systemic_min_issues",
+    "systemic_window_minutes",
+    "task_timeout_minutes",
+    "workflows",
+})
+_SCOPE_COUPLING_KEYS = frozenset({"data_file_tests", "enabled", "search_dirs"})
+_SCOPE_SIZE_KEYS = frozenset({
+    "atomic_phrases",
+    "delete_with_new",
+    "enabled",
+    "exclude_prefixes",
+    "max_concerns",
+    "max_files",
+    "max_slices",
+})
+_ANDON_KEYS = frozenset({"auto_answer", "auto_rerun_max", "causes", "diagnose"})
+_API_BRAKE_KEYS = frozenset({"enabled", "min_remaining"})
+_REPAIR_KEYS = frozenset({"max", "push"})
+_REVIEW_KEYS = frozenset({
+    "failure_status",
+    "optional_variables",
+    "problems_heading",
+    "role",
+    "success_status",
+    "template",
+    "tier",
+})
+_TIER_KEYS = frozenset({"kind", "light_max_diff_lines"})
+_METRICS_KEYS = frozenset({"cause_targets", "done_step", "repair_templates"})
+_MERGE_KEYS = frozenset({"rebump_max", "state_wait_attempts", "state_wait_seconds"})
+_VERSION_KEYS = frozenset({"bump_command", "policy"})
+_LINT_KEYS = frozenset({"command", "fix_command"})
+_TESTS_KEYS = frozenset({
+    "command",
+    "flaky_reruns",
+    "python_bin_command",
+    "python_command",
+    "report",
+    "report_path",
+})
+_DERIVED_ALLOW_KEYS = frozenset({"enabled", "ledger_globs"})
+_EXTERNAL_LEAK_KEYS = frozenset({"cjk_free_external_targets"})
 
 _CONFIG_ENV = "ISSUESMITH_CONFIG"
 _CONFIG_FILENAME = "issuesmith.yaml"
@@ -110,6 +268,12 @@ _DEFAULT_REL_PATHS: dict[str, str] = {
     "template_dir": "workflows/issuesmith",
     "engine_state": ".pipeline-state/issuesmith-engine.yml",
 }
+
+_PATHS_CONFIG_KEYS = frozenset(_DEFAULT_REL_PATHS) | frozenset({
+    "brake_state",
+    "concurrency",
+    "lanes",
+})
 
 _DEFAULT_ENGINES: dict[str, dict[str, Any]] = {
     "design": {
@@ -653,6 +817,8 @@ def _abs(root: Path, value: str | Path) -> Path:
 
 
 def _build_paths(raw: Mapping[str, Any] | None, root: Path) -> PathsConfig:
+    if raw:
+        _reject_unknown_keys(raw, _PATHS_CONFIG_KEYS, "paths")
     src = dict(_DEFAULT_REL_PATHS)
     if raw:
         for key in _DEFAULT_REL_PATHS:
@@ -689,11 +855,7 @@ def _load_concurrency_overlay(path: Path | None) -> dict[str, Any]:
         return {}
     if not isinstance(raw, Mapping):
         raise ConfigError(f"paths.concurrency {path}: must be a mapping")
-    unknown = set(raw) - _CONCURRENCY_OVERLAY_KEYS
-    if unknown:
-        raise ConfigError(
-            f"paths.concurrency {path}: unknown keys: {sorted(unknown)}"
-        )
+    _reject_unknown_keys(raw, _CONCURRENCY_OVERLAY_KEYS, f"paths.concurrency {path}")
     out: dict[str, Any] = {}
     for key, val in raw.items():
         if key == "per_engine":
@@ -816,6 +978,13 @@ def _build_engines(raw: Mapping[str, Any] | None) -> dict[str, RoleConfig]:
         for role, conf in raw.items():
             if not isinstance(conf, dict):
                 continue
+            for old_key in _LEGACY_ENGINE_KEYS:
+                if old_key in conf:
+                    raise ConfigError(
+                        f"engines.{role}.{old_key} was removed; use {_ROUTE_EXAMPLE} "
+                        f"(optional light: [[engine, model], ...])"
+                    )
+            _reject_unknown_keys(conf, _ENGINE_ROLE_KEYS, f"engines.{role}")
             merged = dict(base.get(str(role), {}))
             merged.update(conf)
             if "heavy" in conf and "light" not in conf:
@@ -825,6 +994,8 @@ def _build_engines(raw: Mapping[str, Any] | None) -> dict[str, RoleConfig]:
 
 
 def _build_concurrency(raw: Mapping[str, Any] | None) -> ConcurrencyConfig:
+    if raw:
+        _reject_unknown_keys(raw, _CONCURRENCY_OVERLAY_KEYS, "concurrency")
     if not raw:
         return ConcurrencyConfig(default=1, per_engine={})
     default_raw = raw.get("default")
@@ -849,9 +1020,18 @@ def _build_concurrency(raw: Mapping[str, Any] | None) -> ConcurrencyConfig:
 def _build_milestone_chain(raw: Mapping[str, Any] | None) -> MilestoneChainConfig:
     if not raw:
         return MilestoneChainConfig()
+    _reject_unknown_keys(raw, _MILESTONE_CHAIN_KEYS, "milestone_chain")
+    child_priority = str(raw.get("child_priority") or "normal")
+    if child_priority not in _MILESTONE_CHILD_PRIORITIES:
+        raise ConfigError(
+            f"milestone_chain.child_priority must be one of"
+            f" {sorted(_MILESTONE_CHILD_PRIORITIES)}, got {child_priority!r}",
+            code="INVALID_VALUE",
+            hint="Allowed: high, low, normal",
+        )
     return MilestoneChainConfig(
         enabled=_as_bool(raw.get("enabled", False), "milestone_chain.enabled"),
-        child_priority=str(raw.get("child_priority") or "normal"),
+        child_priority=child_priority,
         auto_develop=_as_bool(raw.get("auto_develop", True), "milestone_chain.auto_develop"),
         auto_close_parent=_as_bool(
             raw.get("auto_close_parent", True),
@@ -861,6 +1041,8 @@ def _build_milestone_chain(raw: Mapping[str, Any] | None) -> MilestoneChainConfi
 
 
 def _build_triage(raw: Mapping[str, Any] | None) -> TriageConfig:
+    if raw:
+        _reject_unknown_keys(raw, _TRIAGE_KEYS, "triage")
     if not raw:
         return TriageConfig()
     defaults = TriageConfig()
@@ -912,6 +1094,7 @@ def _build_phases(raw: Any) -> tuple[PhaseConfig, ...]:
                 f"phases[{i}] must be a mapping",
                 hint=f"expected a mapping, got {type(item).__name__}",
             )
+        _reject_unknown_keys(item, _PHASE_KEYS, f"phases[{i}]")
         name = item.get("name")
         role = item.get("role")
         entry_step = item.get("entry_step")
@@ -1070,11 +1253,7 @@ def _build_repair(raw: Any, step_id: str) -> RepairConfig:
         return defaults
     if not isinstance(raw, Mapping):
         raise ConfigError(f"steps.{step_id}.repair must be a mapping")
-    unknown = set(raw) - {"max", "push"}
-    if unknown:
-        raise ConfigError(
-            f"steps.{step_id}.repair has unknown keys: {sorted(unknown)}"
-        )
+    _reject_unknown_keys(raw, _REPAIR_KEYS, f"steps.{step_id}.repair")
     max_val = defaults.max
     push_val = defaults.push
     if "max" in raw:
@@ -1101,20 +1280,7 @@ def _build_review(raw: Any, step_id: str) -> ReviewConfig | None:
     for key in required:
         if key not in raw:
             raise ConfigError(f"steps.{step_id}.review.{key} is required")
-    allowed = {
-        "role",
-        "template",
-        "success_status",
-        "failure_status",
-        "tier",
-        "problems_heading",
-        "optional_variables",
-    }
-    unknown = set(raw) - allowed
-    if unknown:
-        raise ConfigError(
-            f"steps.{step_id}.review has unknown keys: {sorted(unknown)}"
-        )
+    _reject_unknown_keys(raw, _REVIEW_KEYS, f"steps.{step_id}.review")
     tier_raw = raw.get("tier")
     tier = None if tier_raw is None else str(tier_raw)
     problems_heading = str(raw.get("problems_heading", "Problems:"))
@@ -1141,6 +1307,7 @@ def _build_tier(raw: Any, step_id: str) -> TierConfig | None:
         return None
     if not isinstance(raw, Mapping):
         raise ConfigError(f"steps.{step_id}.tier must be a mapping")
+    _reject_unknown_keys(raw, _TIER_KEYS, f"steps.{step_id}.tier")
     kind_raw = raw.get("kind")
     kind = str(kind_raw) if kind_raw is not None else ""
     if kind == "design_doc":
@@ -1182,6 +1349,7 @@ def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
                 f"steps.{step_id} must be a mapping",
                 hint=f"expected a mapping, got {type(conf).__name__}",
             )
+        _reject_unknown_keys(conf, _STEP_CONFIG_KEYS, f"steps.{step_id}")
         module_raw = conf.get("module")
         # module is optional: absent/empty means LLM-only step (run via engine run-guarded)
         module = str(module_raw).strip() if module_raw else ""
@@ -1324,6 +1492,8 @@ def _build_forbidden_pr_paths_except(raw: Any) -> tuple[str, ...]:
 
 def _build_scope_gate(raw: Mapping[str, Any] | None) -> ScopeGateConfig:
     defaults = ScopeGateConfig()
+    if raw:
+        _reject_unknown_keys(raw, _SCOPE_GATE_KEYS, "scope_gate")
     if not raw:
         return defaults
     return ScopeGateConfig(
@@ -1378,6 +1548,7 @@ def _build_scope_coupling(raw: Mapping[str, Any] | None) -> ScopeCouplingConfig:
             "scope_coupling.ignore_symbols is no longer supported; "
             "remove it from issuesmith.yaml (requires-chain validation replaced it)"
         )
+    _reject_unknown_keys(raw, _SCOPE_COUPLING_KEYS, "scope_coupling")
     enabled_raw = raw.get("enabled")
     enabled = (
         True
@@ -1421,6 +1592,8 @@ def _build_scope_size(
         "no_deps_word": language.no_deps_word,
     }
     defaults = ScopeSizeConfig(**vocab)
+    if raw:
+        _reject_unknown_keys(raw, _SCOPE_SIZE_KEYS, "scope_size")
     if not raw:
         return defaults
     limits: dict[str, int] = {}
@@ -1467,14 +1640,10 @@ def _build_scope_size(
 
 def _build_metrics(raw: Mapping[str, Any] | None) -> MetricsConfig:
     defaults = MetricsConfig()
+    if raw:
+        _reject_unknown_keys(raw, _METRICS_KEYS, "metrics")
     if not raw:
         return defaults
-    allowed = {"done_step", "repair_templates", "cause_targets"}
-    unknown = sorted(str(k) for k in raw if k not in allowed)
-    if unknown:
-        raise ConfigError(
-            f"metrics supports only {sorted(allowed)}; unknown keys: {unknown}"
-        )
     if "done_step" in raw:
         done_raw = raw.get("done_step")
         done_step = None if done_raw is None else (str(done_raw).strip() or None)
@@ -1541,21 +1710,14 @@ def _parse_command_tuple(raw: Any, *, field: str) -> tuple[str, ...]:
 
 
 _VERSION_POLICIES = frozenset({"auto", "none", "pyproject", "command"})
-_MERGE_YAML_KEY = "mer" + "ge"
 
 
 def _build_merge(raw: Mapping[str, Any] | None) -> MergeConfig:
     defaults = MergeConfig()
+    if raw:
+        _reject_unknown_keys(raw, _MERGE_KEYS, _MERGE_YAML_KEY)
     if not raw:
         return defaults
-    unknown = sorted(str(k) for k in raw if k not in (
-        "state_wait_attempts", "state_wait_seconds", "rebump_max",
-    ))
-    if unknown:
-        raise ConfigError(
-            f"merge supports only state_wait_attempts, state_wait_seconds, and rebump_max;"
-            f" unknown keys: {unknown}"
-        )
     attempts = defaults.state_wait_attempts
     if "state_wait_attempts" in raw:
         val = raw["state_wait_attempts"]
@@ -1589,13 +1751,10 @@ def _build_merge(raw: Mapping[str, Any] | None) -> MergeConfig:
 
 def _build_version(raw: Mapping[str, Any] | None) -> VersionConfig:
     defaults = VersionConfig()
+    if raw:
+        _reject_unknown_keys(raw, _VERSION_KEYS, "version")
     if not raw:
         return defaults
-    unknown = sorted(str(k) for k in raw if k not in ("policy", "bump_command"))
-    if unknown:
-        raise ConfigError(
-            f"version supports only 'policy' and 'bump_command'; unknown keys: {unknown}"
-        )
     policy_raw = raw.get("policy", defaults.policy)
     policy = str(policy_raw)
     if policy not in _VERSION_POLICIES:
@@ -1617,14 +1776,10 @@ def _build_version(raw: Mapping[str, Any] | None) -> VersionConfig:
 
 def _build_lint(raw: Mapping[str, Any] | None) -> LintConfig:
     defaults = LintConfig()
+    if raw:
+        _reject_unknown_keys(raw, _LINT_KEYS, "lint")
     if not raw:
         return defaults
-    known = frozenset({"command", "fix_command"})
-    unknown = sorted(str(k) for k in raw if k not in known)
-    if unknown:
-        raise ConfigError(
-            f"lint supports only {sorted(known)}; unknown keys: {unknown}"
-        )
     command = defaults.command
     if "command" in raw:
         command = _parse_command_tuple(raw["command"], field="lint.command")
@@ -1638,21 +1793,10 @@ def _build_lint(raw: Mapping[str, Any] | None) -> LintConfig:
 
 def _build_tests(raw: Mapping[str, Any] | None, root: Path) -> TestsConfig:
     defaults = TestsConfig()
+    if raw:
+        _reject_unknown_keys(raw, _TESTS_KEYS, "tests")
     if not raw:
         return defaults
-    known = (
-        "flaky_reruns",
-        "python_command",
-        "python_bin_command",
-        "command",
-        "report",
-        "report_path",
-    )
-    unknown = sorted(str(k) for k in raw if k not in known)
-    if unknown:
-        raise ConfigError(
-            f"tests supports only {', '.join(repr(k) for k in known)}; unknown keys: {unknown}"
-        )
     if "python_command" in raw and "python_bin_command" in raw:
         raise ConfigError(
             "tests.python_command and tests.python_bin_command are mutually exclusive"
@@ -1700,13 +1844,10 @@ def _build_tests(raw: Mapping[str, Any] | None, root: Path) -> TestsConfig:
 
 
 def _build_derived_allow(raw: Mapping[str, Any] | None) -> DerivedAllowConfig:
+    if raw:
+        _reject_unknown_keys(raw, _DERIVED_ALLOW_KEYS, "derived_allow")
     if not raw:
         return DerivedAllowConfig()
-    unknown = sorted(str(k) for k in raw if k not in ("enabled", "ledger_globs"))
-    if unknown:
-        raise ConfigError(
-            f"derived_allow supports only 'enabled' and 'ledger_globs'; unknown keys: {unknown}"
-        )
     enabled_raw = raw.get("enabled")
     enabled = (
         True
@@ -1722,13 +1863,10 @@ def _build_derived_allow(raw: Mapping[str, Any] | None) -> DerivedAllowConfig:
 
 
 def _build_external_leak(raw: Mapping[str, Any] | None) -> ExternalLeakConfig:
+    if raw:
+        _reject_unknown_keys(raw, _EXTERNAL_LEAK_KEYS, "external_leak")
     if not raw:
         return ExternalLeakConfig()
-    unknown = sorted(str(k) for k in raw if k != "cjk_free_external_targets")
-    if unknown:
-        raise ConfigError(
-            f"external_leak supports only 'cjk_free_external_targets'; unknown keys: {unknown}"
-        )
     target_raw = raw.get("cjk_free_external_targets", False)
     return ExternalLeakConfig(
         cjk_free_external_targets=_as_bool(
@@ -1821,6 +1959,8 @@ def _build_observe(
     label_namespace: str = "issuesmith",
 ) -> ObserveConfig:
     defaults = ObserveConfig()
+    if raw:
+        _reject_unknown_keys(raw, _OBSERVE_KEYS, "observe")
     if not raw:
         return defaults
     return ObserveConfig(
@@ -1969,6 +2109,8 @@ def _build_andon_auto_rerun_max(raw: Any) -> int:
 
 
 def _build_andon(raw: Mapping[str, Any] | None) -> AndonConfig:
+    if raw:
+        _reject_unknown_keys(raw, _ANDON_KEYS, "andon")
     if not raw:
         return AndonConfig()
     causes = _build_andon_causes(raw.get("causes"))
@@ -2034,6 +2176,8 @@ def _build_andon(raw: Mapping[str, Any] | None) -> AndonConfig:
 
 def _build_api_brake(raw: Mapping[str, Any] | None) -> ApiBreakConfig:
     defaults = ApiBreakConfig()
+    if raw:
+        _reject_unknown_keys(raw, _API_BRAKE_KEYS, "api_brake")
     if not raw:
         return defaults
     return ApiBreakConfig(
@@ -2046,6 +2190,8 @@ def _build_api_brake(raw: Mapping[str, Any] | None) -> ApiBreakConfig:
 
 
 def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
+    _reject_legacy_vocab_keys(data)
+    _reject_unknown_keys(data, _TOP_LEVEL_CONFIG_KEYS, "issuesmith.yaml")
     repo_raw = data.get("repo")
     if not repo_raw or not str(repo_raw).strip():
         raise ConfigError(

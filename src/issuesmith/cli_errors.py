@@ -14,6 +14,7 @@ ERROR_EXIT: dict[str, int] = {
     "INVALID_VALUE": 2,
     "NOT_FOUND": 1,
     "CONFIG_ERROR": 1,
+    "CONFIG_UNKNOWN_KEY": 1,
     "FAILED": 1,
     "CONFLICT": 1,
 }

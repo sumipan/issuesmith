@@ -7,6 +7,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.225.2 - 2026-11-28
+
+### Added
+
+- config: reject unknown YAML keys at load time (#8142)
+
+### Fixed
+
+- repair: align config tests with CONFIG_UNKNOWN_KEY messages (#8142)
+- repair: align resume/metrics tests with CONFIG_UNKNOWN_KEY (#8142)
+- repair: avoid vocab hits and shrink vocabulary ledger (#8142)
+
 ## 0.225.1 - 2026-11-27
 
 ### Added

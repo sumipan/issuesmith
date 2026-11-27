@@ -107,8 +107,10 @@ class TestConfig:
 
     def test_unknown_metrics_key_raises(self, tmp_path, monkeypatch):
         _write_config(tmp_path, monkeypatch, {"repo": "example/app", "metrics": {"extra": 1}})
-        with pytest.raises(ConfigError, match="unknown keys"):
+        with pytest.raises(ConfigError) as exc_info:
             load_config()
+        assert exc_info.value.code == "CONFIG_UNKNOWN_KEY"
+        assert "metrics.extra" in exc_info.value.message
 
 
 class TestCli:

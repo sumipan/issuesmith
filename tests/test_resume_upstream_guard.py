@@ -23,6 +23,13 @@ _ISSUE = 3627
 _HANDLER = "impl"
 _WORKFLOW = "issuesmith"
 
+_MINIMAL_CONFIG = {
+    "repo": "sumipan/issuesmith",
+    "phases": [
+        {"name": "draft", "role": "design", "entry_step": "b1", "handler": "brushup"},
+    ],
+}
+
 # p1 -> p2 -> p3 serial chain
 _STEPS = [
     {
@@ -80,10 +87,7 @@ def pipeline_fs(tmp_path: Path):
 
     _write_exec_jsonl(jobs, _STEPS)
 
-    cfg = _build_config(
-        {"repo": "sumipan/issuesmith", "workflow": "issuesmith.yaml"},
-        root=tmp_path,
-    )
+    cfg = _build_config(_MINIMAL_CONFIG, root=tmp_path)
     yield tmp_path, cfg
     config_module.reset_config_cache()
 
