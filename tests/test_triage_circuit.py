@@ -223,6 +223,33 @@ def test_timeout_records_code_and_circuit_ignores_reason_text(tmp_path) -> None:
     assert is_circuit_open(log, threshold=3, reset_seconds=1800, now=_FIXED_NOW) is True
 
 
+def test_timeout_result_records_llm_timeout(tmp_path) -> None:
+    """refs #8141: ghdag's returned timeout status maps to llm_timeout."""
+    from issuesmith.queue_triage import triage
+
+    store, snap, _r = _triage_snapshot(tmp_path)
+    log = tmp_path / "triage.jsonl"
+
+    class TimedOutResult:
+        timed_out = True
+        stderr = "TIMEOUT: synthetic deadline"
+        body = ""
+
+    result = triage(
+        snap,
+        issues={1: {"title": "t", "body": _VALID_BODY, "labels": [], "state": "OPEN"}},
+        store=store,
+        call_llm=lambda prompt, **kwargs: TimedOutResult(),
+        triage_log_path=log,
+        now=_FIXED_NOW,
+    )
+
+    row = json.loads(log.read_text(encoding="utf-8").strip())
+    assert result.fallback_code == "llm_timeout"
+    assert row["fallback_code"] == "llm_timeout"
+    assert row["fallback_reason"] == "llm failed: TIMEOUT: synthetic deadline"
+
+
 def test_non_timeout_failure_records_llm_failed(tmp_path) -> None:
     """refs #8141: parse failures record llm_failed and do not open the circuit."""
     from issuesmith.queue_triage import is_circuit_open, triage
@@ -288,5 +315,4 @@ def test_code_takes_precedence_over_timeout_words(tmp_path) -> None:
             fallback_code="llm_failed",
         )
     assert is_circuit_open(log, threshold=3, reset_seconds=1800, now=now) is False
-
 

@@ -690,6 +690,15 @@ def triage(
     if llm is not None:
         try:
             llm_result = llm(prompt, route=[(engine, model)], timeout=timeout)
+            # ghdag reports subprocess deadlines on the result instead of
+            # raising, while injected callers may raise ``TimeoutError``.
+            if bool(getattr(llm_result, "timed_out", False)):
+                detail = (
+                    getattr(llm_result, "stderr", None)
+                    or getattr(llm_result, "body", None)
+                    or "LLM call timed out"
+                )
+                raise TimeoutError(str(detail).strip())
             raw_output = (
                 getattr(llm_result, "text", None)
                 or getattr(llm_result, "body", None)
