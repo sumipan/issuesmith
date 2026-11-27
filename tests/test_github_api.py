@@ -48,7 +48,7 @@ def test_main_blocks_foreign_issue_create_before_subprocess(capsys):
     assert exc_info.value.code == 2
     mock_run.assert_not_called()
     captured = capsys.readouterr()
-    assert "Issue creation is allowed only in" in captured.err
+    assert captured.err.splitlines()[0].startswith("error[INVALID_VALUE]:")
     assert "other/repo" in captured.err
 
 
@@ -126,7 +126,8 @@ def test_main_allows_issue_create_to_configured_repo():
         ["github_api", "issue", "edit", "1", "--add-label", "issuesmith:merge-ready"],
     ],
 )
-def test_main_blocks_ready_label_with_unified_queue_enqueue_hint(argv, capsys):
+def test_reject_direct_label_uses_invalid_value_contract(argv, capsys):
+    """Refs #8129 — ready-label guard uses error[INVALID_VALUE] on stderr."""
     with patch("issuesmith.github_api.subprocess.run") as mock_run:
         with patch.object(sys, "argv", argv):
             with pytest.raises(SystemExit) as exc_info:
@@ -134,5 +135,6 @@ def test_main_blocks_ready_label_with_unified_queue_enqueue_hint(argv, capsys):
     assert exc_info.value.code == 2
     mock_run.assert_not_called()
     err = capsys.readouterr().err
+    assert err.splitlines()[0].startswith("error[INVALID_VALUE]:")
     assert "python3 -m issuesmith queue enqueue" in err
     assert ("issuesmith" + ".queue enqueue") not in err

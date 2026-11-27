@@ -19,6 +19,7 @@ from issuesmith.body_editor import (
     get_section_by_keyword,
     get_subsections,
 )
+from issuesmith.cli_errors import fail
 from issuesmith.config import IssuesmithConfig, MilestoneChainConfig, get_config
 from issuesmith.context_hook import parse_issue_metadata
 from issuesmith.contract import (
@@ -1041,8 +1042,11 @@ def milestone_status(
             fields=["state", "labels", "body", "milestone", "number", "title", "sub_issues_summary"],
         )
     except Exception as exc:
-        print(f"error[FAILED]: failed to fetch parent #{parent}: {exc}", file=sys.stderr)
-        return 1
+        return fail(
+            "FAILED",
+            f"failed to fetch parent #{parent}: {exc}",
+            "verify GitHub API access and the parent issue number",
+        )
 
     snap = store.snapshot()
     chain = store.get_milestone_chain(parent)
@@ -1127,22 +1131,31 @@ def milestone_resume(parent: int, *, store: QueueStore | None = None) -> int:
     if store.resume_milestone_chain(parent):
         print(f"milestone chain #{parent}: resumed")
         return 0
-    print(f"error: chain for #{parent} is not halted", file=sys.stderr)
-    return 1
+    return fail(
+        "FAILED",
+        f"chain for #{parent} is not halted",
+        "halt the milestone chain before calling milestone resume",
+    )
 
 
 def milestone_consolidate(child: int, into: int, *, client: ForgePort | None = None) -> int:
     """Mark ``child`` as consolidated into ``into``: marker comment, rejected, closed."""
     if child == into:
-        print("error: child and --into must differ", file=sys.stderr)
-        return 2
+        return fail(
+            "INVALID_VALUE",
+            "child and --into must differ",
+            "pass distinct child and --into issue numbers",
+        )
     client = client or get_forge()
     try:
         child_issue = client.issue_get(child, fields=["state", "labels", "number"])
         client.issue_get(into, fields=["state", "number"])
     except Exception as exc:
-        print(f"error: failed to fetch issue: {exc}", file=sys.stderr)
-        return 1
+        return fail(
+            "FAILED",
+            f"failed to fetch issue: {exc}",
+            "verify GitHub API access and the child/into issue numbers",
+        )
     _ensure_parent_comment(
         client, child, _msg("consolidated_into", sibling=into), _consolidated_marker(into)
     )

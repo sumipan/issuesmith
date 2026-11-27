@@ -39,6 +39,7 @@ from ghdag.forge import get_forge
 
 from issuesmith.andon import Andon as _FullAndon
 from issuesmith.andon import raise_andon as _raise_andon
+from issuesmith.cli_errors import fail
 from issuesmith.config import StepConfig, get_config
 from issuesmith.contract import Andon, LabelWriteForbidden, StepContext, StepResult, Verdict
 from issuesmith.engine import RetrySignal, emit_pipeline_reply, write_reply_block
@@ -1423,8 +1424,7 @@ def main(argv: list[str]) -> int:
     try:
         validate_step_requires(get_config().steps)
     except ConfigError as exc:
-        print(f"[issuesmith-dispatch] ERROR: invalid requires in issuesmith.yaml: {exc}", file=sys.stderr)
-        return 2
+        return fail("CONFIG_ERROR", str(exc), exc.hint)
     if not argv:
         print(__doc__, file=sys.stderr)
         return 2
@@ -1437,8 +1437,11 @@ def main(argv: list[str]) -> int:
     try:
         context = parse_context(raw_context)
     except ValueError as exc:
-        print(f"[issuesmith-dispatch] ERROR: {exc}", file=sys.stderr)
-        return 2
+        return fail(
+            "INVALID_VALUE",
+            str(exc),
+            "check dispatch context key=value pairs passed on the command line",
+        )
 
     issue_number = _issue_number(context)
 
@@ -1471,7 +1474,11 @@ def main(argv: list[str]) -> int:
         try:
             return _run_bash_step(step_id, context)
         except (KeyError, FileNotFoundError) as exc:
-            print(f"[issuesmith-dispatch] ERROR: {exc}", file=sys.stderr)
+            fail(
+                "FAILED",
+                str(exc),
+                "add the step to issuesmith.yaml or provide its template under workflows/",
+            )
             if step_id not in get_config().steps:
                 template_path = TEMPLATE_DIR / f"{step_id}.md"
                 summary = (

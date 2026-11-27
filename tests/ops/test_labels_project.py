@@ -248,3 +248,18 @@ class TestProjectIssue:
         client.issue_update.side_effect = RuntimeError('boom')
         assert project_issue(client, 7, lambda st: replace(st, waiting=True)) == ([], [])
         assert 'WARNING' in capsys.readouterr().err
+
+
+def test_github_failure_is_structured_json():
+    """Refs #8129 — label hygiene reports FAILED in structured JSON with rc=1."""
+    from ghdag.forge import GitHubApiError
+
+    from issuesmith.ops.labels import run_hygiene
+
+    client = MagicMock()
+    client.issue_get.side_effect = GitHubApiError("api down", status_code=500)
+    rc, payload = run_hygiene(99, client=client)
+    assert rc == 1
+    assert payload["error"]["code"] == "FAILED"
+    assert payload["error"]["message"]
+    assert payload["error"]["hint"]

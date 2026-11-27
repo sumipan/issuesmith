@@ -248,6 +248,14 @@ def test_require_yaml_metadata_rejects_missing_block() -> None:
         wt.require_yaml_metadata("## Background\nno yaml\n")
 
 
+def test_worktree_fail_uses_error_failed_contract(capsys) -> None:
+    """Refs #8129 — worktree preparation failures print error[FAILED] on stderr."""
+    with pytest.raises(wt.WorktreeError):
+        wt.validate_branch("bad branch name")
+    err = capsys.readouterr().err
+    assert err.splitlines()[0].startswith("error[FAILED]: invalid branch name:")
+
+
 def _make_repo_with_diverged_branch(tmp_path: Path) -> tuple[Path, str]:
     repo = tmp_path / "repo"
     _git_init_with_main(repo)
