@@ -7,6 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.224.2 - 2026-11-27
+
+### Fixed
+
+- errors: align module stderr with fail() and IssuesmithError (#8129)
+- repair: align context_hook runtime tests with #8129 exit contract (#8129)
+
 ## 0.224.1 - 2026-11-27
 
 ### Added
