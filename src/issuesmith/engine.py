@@ -2447,8 +2447,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.action == "check":
             errors = check_state()
             if getattr(args, "json", False):
-                payload = {"ok": not errors, "errors": errors}
-                print(json.dumps(payload, ensure_ascii=False))
+                check_payload = {"ok": not errors, "errors": errors}
+                print(json.dumps(check_payload, ensure_ascii=False))
                 return 1 if errors else 0
             if errors:
                 for error in errors:
