@@ -273,7 +273,11 @@ def wait_merge_state(
         else:
             sleeper(poll_interval_seconds)
 
-    raise MergeStateTimeoutError(number, last)
+    raise MergeStateTimeoutError(
+        number,
+        last,
+        hint="retry when the merge queue unblocks or increase merge poll timeout",
+    )
 
 
 def verify_local_merge(

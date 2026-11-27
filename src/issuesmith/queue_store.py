@@ -80,12 +80,21 @@ def _validate_block_scope(scope: str) -> None:
         phase = scope[len("phase:") :]
         if phase in tuple(p.name for p in get_config().phases):
             return
-        raise QueueValidationError(f"invalid block scope: {scope!r}")
+        raise QueueValidationError(
+            f"invalid block scope: {scope!r}",
+            hint="use all, phase:<name>, or repo:owner/name",
+        )
     if scope.startswith("repo:"):
         if _REPO_BLOCK_SCOPE_RE.match(scope):
             return
-        raise QueueValidationError(f"invalid block scope: {scope!r}")
-    raise QueueValidationError(f"invalid block scope: {scope!r}")
+        raise QueueValidationError(
+            f"invalid block scope: {scope!r}",
+            hint="use all, phase:<name>, or repo:owner/name",
+        )
+    raise QueueValidationError(
+        f"invalid block scope: {scope!r}",
+        hint="use all, phase:<name>, or repo:owner/name",
+    )
 
 
 def _parse_block_until(value: str | None) -> datetime | None:

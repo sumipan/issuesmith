@@ -227,7 +227,10 @@ def _ensure_worktree(
     if worktree.exists():
         raise MainHealthError(f"main_health worktree is not a directory: {worktree}")
     if repo_root is None:
-        raise MainHealthError(f"main_health worktree not found: {worktree}")
+        raise MainHealthError(
+            f"main_health worktree not found: {worktree}",
+            hint="set observe.main_health.worktree to an existing path or repo root",
+        )
 
     try:
         worktree.parent.mkdir(parents=True, exist_ok=True)

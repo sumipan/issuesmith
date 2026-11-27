@@ -717,3 +717,39 @@ def test_config_error_preserves_value_error_mro():
     """Refs sumipan/issuesmith#8128 — ConfigError remains a ValueError subclass."""
     assert issubclass(ConfigError, IssuesmithError)
     assert issubclass(ConfigError, ValueError)
+
+
+def test_external_leak_cjk_rejects_string_false(tmp_path, monkeypatch):
+    """Refs sumipan/issuesmith#8128 — external_leak booleans reject string literals."""
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump(
+            {
+                "repo": "example/app",
+                "external_leak": {"cjk_free_external_targets": "false"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    with pytest.raises(ConfigError, match="external_leak.cjk_free_external_targets"):
+        load_config(cfg_path)
+
+
+def test_config_show_formats_config_error(tmp_path, monkeypatch, capsys):
+    """Refs sumipan/issuesmith#8128 — config show prints error[CONFIG_ERROR] without traceback."""
+    from issuesmith import cli
+
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text("repo: [\n", encoding="utf-8")
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["config", "show"])
+    assert exc_info.value.code == 1
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    lines = [ln for ln in err.splitlines() if ln.strip()]
+    assert lines[0].startswith("error[CONFIG_ERROR]:")
+    assert any(ln.startswith("hint:") for ln in lines)

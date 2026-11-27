@@ -31,7 +31,10 @@ def _run_git(worktree: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "").strip()
-        raise BumpCommitsError(detail or f"git {' '.join(args)} failed")
+        raise BumpCommitsError(
+            detail or f"git {' '.join(args)} failed",
+            hint=f"run git -C {worktree} {' '.join(args)} in the worktree and fix the repo state",
+        )
     return proc
 
 

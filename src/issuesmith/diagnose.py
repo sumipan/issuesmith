@@ -433,7 +433,10 @@ _FIX_KIND_KEYS: dict[str, frozenset[str]] = {
 def _last_proposal_fence(text: str) -> Mapping[str, Any]:
     matches = list(_PROPOSAL_FENCE.finditer(text))
     if not matches:
-        raise ProposalError("missing andon-diagnosis block")
+        raise ProposalError(
+            "missing andon-diagnosis block",
+            hint="wrap the proposal in a ```andon-diagnosis fenced block",
+        )
     body = matches[-1].group(1)
     try:
         data = yaml.safe_load(body)

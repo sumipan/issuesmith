@@ -72,7 +72,10 @@ def run_command(
         tail = partial[-_OUTPUT_TAIL:]
         return 124, f"command timed out after {limit:.0f} s\n{tail}"
     except OSError as exc:
-        raise CommandStartError(f"command could not be started: {argv!r}: {exc}") from exc
+        raise CommandStartError(
+            f"command could not be started: {argv!r}: {exc}",
+            hint="check PATH, python_bin_command, and the command argv",
+        ) from exc
     output = (proc.stdout or "") + (proc.stderr or "")
     return proc.returncode, output
 

@@ -50,7 +50,8 @@ def materialize_gate_root(repo_cwd: Path, base_branch: str, prefix: str) -> Path
         shutil.rmtree(gate_root, ignore_errors=True)
         raise GateMaterializationError(
             f"fetch failed (repo={repo_cwd}): "
-            f"fetch_rc={fetch.returncode} fetch_stderr={fetch.stderr!r}"
+            f"fetch_rc={fetch.returncode} fetch_stderr={fetch.stderr!r}",
+            hint=f"git fetch -q origin {base_branch} in {repo_cwd}",
         )
 
     max_retry = 3
@@ -286,7 +287,10 @@ def grep_matches(repo_root: Path, entry: dict, *, ref: str | None = None) -> lis
         return []
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
-        raise GrepError(detail or f"git grep failed (exit {result.returncode})")
+        raise GrepError(
+            detail or f"git grep failed (exit {result.returncode})",
+            hint="run the git grep command in the repo root and fix ref or pathspecs",
+        )
     lines = [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
     if ref:
         prefix = f"{ref}:"

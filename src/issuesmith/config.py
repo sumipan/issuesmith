@@ -1723,8 +1723,11 @@ def _build_external_leak(raw: Mapping[str, Any] | None) -> ExternalLeakConfig:
         raise ConfigError(
             f"external_leak supports only 'cjk_free_external_targets'; unknown keys: {unknown}"
         )
+    target_raw = raw.get("cjk_free_external_targets", False)
     return ExternalLeakConfig(
-        cjk_free_external_targets=bool(raw.get("cjk_free_external_targets")),
+        cjk_free_external_targets=_as_bool(
+            target_raw, "external_leak.cjk_free_external_targets"
+        ),
     )
 
 

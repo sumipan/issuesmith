@@ -505,7 +505,7 @@ class LabelWriteForbidden(IssuesmithError, RuntimeError):
         self.labels = list(labels)
         super().__init__(
             f"step {step_id} wrote labels {self.labels}; labels are projected by the runner",
-            hint=hint,
+            hint=hint or "remove label writes from the step; the runner applies labels",
         )
 
 

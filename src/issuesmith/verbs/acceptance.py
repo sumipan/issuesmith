@@ -161,7 +161,10 @@ def check_acceptance(
             try:
                 gate_root = materialize_gate_root(repo_cwd, base_branch, prefix)
             except GateMaterializationError as exc:
-                raise AcceptanceError(str(exc)) from exc
+                raise AcceptanceError(
+                    str(exc),
+                    hint=f"git fetch -q origin {base_branch} in {repo_cwd}",
+                ) from exc
             materialized.append((repo_cwd, gate_root))
             repo_roots[slug] = gate_root
 

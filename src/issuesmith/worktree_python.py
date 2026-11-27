@@ -47,7 +47,8 @@ def python_bin_for(worktree: Path) -> Path | None:
     except OSError as exc:
         raise WorktreePythonError(
             f"python_bin_command could not be started: {cmd_display} "
-            f"(worktree={worktree_abs}): {exc}"
+            f"(worktree={worktree_abs}): {exc}",
+            hint="check tests.python_bin_command in issuesmith.yaml",
         ) from exc
     except subprocess.TimeoutExpired as exc:
         partial = (exc.stderr or exc.stdout or b"")

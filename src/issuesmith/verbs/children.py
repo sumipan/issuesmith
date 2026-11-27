@@ -79,7 +79,10 @@ class ChildPlanError(IssuesmithError, RuntimeError):
     ) -> None:
         self.violations = tuple(violations)
         message = "; ".join(self.violations) if self.violations else "child plan failed"
-        super().__init__(message, hint=hint)
+        super().__init__(
+            message,
+            hint=hint or "fix the parent milestone split plan and design sections",
+        )
 
 
 def _safe_metadata(body: str) -> dict[str, Any]:
@@ -303,7 +306,10 @@ def plan_children(client: ForgePort, parent_number: int, *, repo: str) -> ChildP
         parent_body, parent_target_repo=parent_target_repo or repo
     )
     if not plan_rows:
-        raise ChildPlanError(("split plan not found or empty",))
+        raise ChildPlanError(
+            ("split plan not found or empty",),
+            hint="add a milestone split-plan table to the parent issue body",
+        )
     if not has_repo_col and not parent_target_repo:
         raise ChildPlanError(("parent YAML missing target_repo",))
 

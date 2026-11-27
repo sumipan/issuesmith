@@ -114,7 +114,8 @@ def _issue_number(ctx: GateBuildContext) -> int | None:
 def _require_worktree(gate_id: str, ctx: GateBuildContext) -> Path:
     if ctx.worktree_path is None:
         raise GateBuildError(
-            f"gate {gate_id!r} requires worktree_path but context has none"
+            f"gate {gate_id!r} requires worktree_path but context has none",
+            hint="dispatch with a worktree_path or use an issue-only gate",
         )
     return ctx.worktree_path
 

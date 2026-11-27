@@ -367,10 +367,14 @@ def _validate_derived_entry(entry: str) -> str:
         normalized = normalize_allow_path(entry)
     except ValueError:
         raise DerivedAllowPathsError(
-            f"invalid derived_allow_paths entry: {entry!r}"
+            f"invalid derived_allow_paths entry: {entry!r}",
+            hint="use a repo-relative path or tests/**/*.py glob",
         ) from None
     if not _DERIVED_ENTRY_RE.match(entry):
-        raise DerivedAllowPathsError(f"invalid derived_allow_paths entry: {entry!r}")
+        raise DerivedAllowPathsError(
+            f"invalid derived_allow_paths entry: {entry!r}",
+            hint="use a repo-relative path or tests/**/*.py glob",
+        )
     return normalized
 
 
