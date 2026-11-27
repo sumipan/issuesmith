@@ -504,5 +504,5 @@ def test_resume_stops_when_rebased_branch_push_fails(tmp_path, monkeypatch, caps
         )
         assert resume_mod.resume(issue_num, from_step="p1") == 1
     err = capsys.readouterr().err
-    assert "error: resume push failed:" in err
+    assert any(line.startswith("error[FAILED]: resume push failed:") for line in err.splitlines())
     recover.assert_not_called()

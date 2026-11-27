@@ -276,6 +276,16 @@ def test_milestone_consolidate_fetch_failure(monkeypatch):
     assert client.posted == []
 
 
+def test_milestone_resume_not_halted_uses_fail_contract(capsys, monkeypatch) -> None:
+    """Refs #8129 — milestone resume failures use error[FAILED] on stderr."""
+    store = FakeStore()
+    monkeypatch.setattr("issuesmith.milestone.QueueStore", lambda: store)
+    rc = milestone_resume(100)
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert err.splitlines()[0].startswith("error[FAILED]: chain for #100 is not halted")
+
+
 def test_status_json_has_stage_and_children(capsys, monkeypatch) -> None:
     """refs #6779: milestone status --json includes stage and child numbers."""
     monkeypatch.setattr("issuesmith.milestone.get_forge", lambda: FakeClient())

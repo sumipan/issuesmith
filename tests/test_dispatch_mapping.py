@@ -238,6 +238,31 @@ def test_map_step_result_repair_andon_facts():
     }
 
 
+def test_dispatch_main_invalid_context_uses_fail_contract(capsys):
+    """Refs #8129 — dispatch parse errors use error[INVALID_VALUE] on stderr."""
+    from issuesmith.ops import dispatch
+
+    rc = dispatch.main(["p0", "not_a_key_value"])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert err.splitlines()[0].startswith("error[INVALID_VALUE]:")
+
+
+def test_dispatch_main_reraises_retry_signal():
+    """Refs #8129 — RetrySignal still propagates from dispatch main."""
+    from issuesmith.engine import RetryReason, RetrySignal
+    from issuesmith.ops import dispatch
+
+    sig = RetrySignal(reason=RetryReason.QUOTA_PAUSED, after=None)
+    with patch("issuesmith.ops.dispatch._try_python_step", return_value=None), patch(
+        "issuesmith.ops.dispatch._run_bash_step",
+        side_effect=sig,
+    ), patch("issuesmith.ops.dispatch._handle_retry_signal") as mock_handle:
+        rc = dispatch.main(["p0", "issue_number=1"])
+    assert rc == 0
+    mock_handle.assert_called_once()
+
+
 class _LabelForge:
     """In-memory forge holding one Issue's labels."""
 

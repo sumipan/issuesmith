@@ -16,15 +16,25 @@ from pathlib import Path
 
 from ghdag.forge import ForgePort, get_forge
 
+from issuesmith.cli_errors import fail
 from issuesmith.config import get_config
 from issuesmith.contract import Andon, StepResult
+from issuesmith.errors import IssuesmithError
 
 _TRANSIENT_FETCH_MARKERS = ("cannot lock ref", "unable to update local ref")
 CALLER_STEP_ENV_VAR = "ISSUESMITH_CALLER_STEP"
 
 
-class WorktreeError(Exception):
+class WorktreeError(IssuesmithError, RuntimeError):
     """Deterministic worktree preparation failure."""
+
+    code = "FAILED"
+
+    def __init__(self, message: str, *, hint: str | None = None) -> None:
+        super().__init__(
+            message,
+            hint=hint or "check branch name, base ref, fetch state, and worktree paths",
+        )
 
 
 def _sleep(seconds: float) -> None:
@@ -33,9 +43,9 @@ def _sleep(seconds: float) -> None:
     time.sleep(seconds)
 
 
-def _fail(message: str) -> None:
-    print(f"WORKTREE_ERROR: {message}", file=sys.stderr)
-    raise WorktreeError(message)
+def _fail(message: str, *, hint: str | None = None) -> None:
+    fail("FAILED", message, hint)
+    raise WorktreeError(message, hint=hint)
 
 
 def validate_branch(branch: str) -> None:
@@ -466,7 +476,11 @@ def handle_milestone(
         client.issue_comment(issue_number, comment)
     except Exception as exc:  # noqa: BLE001
         print(f"P0 milestone comment failed: {exc}", file=sys.stderr)
-    print(f"WORKTREE_ERROR: {stderr_error}", file=sys.stderr)
+    fail(
+        "FAILED",
+        stderr_error,
+        "milestone-scoped issues cannot enter implementation; use milestone workflow",
+    )
     return StepResult(exit_code=1, pipeline_status="WORKTREE_FAILED")
 
 

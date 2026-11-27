@@ -14,6 +14,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Callable, Iterable
 
 from issuesmith import projection
+from issuesmith.cli_errors import ERROR_EXIT
 from issuesmith.contract import ANDON_KINDS, ANDON_PREFIX, PHASE_STATUSES
 from issuesmith.projection import IssueState
 
@@ -258,6 +259,24 @@ def reconcile(
     return divergences
 
 
+def _hygiene_error(
+    code: str,
+    message: str,
+    *,
+    hint: str | None = None,
+    **extra: Any,
+) -> tuple[int, dict[str, Any]]:
+    payload: dict[str, Any] = {
+        "error": {
+            "code": code,
+            "message": message,
+            "hint": hint or message,
+        }
+    }
+    payload.update(extra)
+    return ERROR_EXIT[code], payload
+
+
 def run_hygiene(
     issue_number: int,
     dry_run: bool = False,
@@ -273,8 +292,16 @@ def run_hygiene(
         data = client.issue_get(issue_number, fields=["labels"])
     except GitHubApiError as exc:
         if getattr(exc, "status_code", None) == 404:
-            return 1, {"error": "issue not found"}
-        return 3, {"error": str(exc)}
+            return _hygiene_error(
+                "NOT_FOUND",
+                "issue not found",
+                hint=f"verify that issue #{issue_number} exists",
+            )
+        return _hygiene_error(
+            "FAILED",
+            str(exc),
+            hint="retry after confirming GitHub API access",
+        )
 
     ns = _ns()
     labels_set = {lbl["name"] for lbl in (data.get("labels") or [])}
@@ -287,6 +314,11 @@ def run_hygiene(
         try:
             client.issue_update(issue_number, labels_remove=stale)
         except GitHubApiError as exc:
-            return 3, {"error": str(exc), "stale": stale}
+            return _hygiene_error(
+                "FAILED",
+                str(exc),
+                hint="retry label update after confirming GitHub API access",
+                stale=stale,
+            )
 
     return 0, {"removed": [] if dry_run else stale, "stale": stale, "dry_run": dry_run}

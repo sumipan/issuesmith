@@ -2,6 +2,7 @@ import re
 import subprocess
 import sys
 
+from issuesmith.cli_errors import fail
 from issuesmith.config import get_config
 
 _READY_LABEL_RE = re.compile(r"issuesmith:(?:draft|develop|merge)-ready")
@@ -51,20 +52,23 @@ def main() -> None:
     configured_repo = get_config().repo
     argv = sys.argv[1:]
     if _has_ready_label_in_argv(argv):
-        print(
-            "Error: Direct addition of issuesmith:draft|develop|merge-ready labels is prohibited. "
-            "Use `python3 -m issuesmith queue enqueue` instead.",
-            file=sys.stderr,
+        raise SystemExit(
+            fail(
+                "INVALID_VALUE",
+                "Direct addition of issuesmith:draft|develop|merge-ready labels is prohibited.",
+                "Use `python3 -m issuesmith queue enqueue` instead.",
+            )
         )
-        sys.exit(2)
     target = _issue_create_target(argv, configured_repo)
     if target is not None:
-        print(
-            f"Error: Issue creation is allowed only in {configured_repo} "
-            f"(CLAUDE.md §6). Got --repo {target}",
-            file=sys.stderr,
+        raise SystemExit(
+            fail(
+                "INVALID_VALUE",
+                f"Issue creation is allowed only in {configured_repo} (CLAUDE.md §6)."
+                f" Got --repo {target}",
+                f"Pass --repo {configured_repo} or omit --repo.",
+            )
         )
-        sys.exit(2)
     argv = _inject_issue_create_repo(argv, configured_repo)
     completed = subprocess.run(
         [sys.executable, "-m", "ghdag.github_cli", *argv],

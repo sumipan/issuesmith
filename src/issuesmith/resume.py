@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from ghdag.forge import get_forge
 
+from issuesmith.cli_errors import fail
 from issuesmith.config import get_config
 from issuesmith.contract import parse_frontmatter_fields
 from issuesmith.queue import apply_redispatch_labels, handler_for_failed_step, issue_target_meta
@@ -149,11 +150,17 @@ def _resume_push_after_catch_up(
             f"HEAD:{ref}",
         )
     except OSError as exc:
-        print(f"error: resume push failed: {exc}", file=sys.stderr)
-        return 1
+        return fail(
+            "FAILED",
+            f"resume push failed: {exc}",
+            "check git credentials, network, and branch protections",
+        )
     if pushed.returncode != 0:
-        print(f"error: resume push failed: {_git_tail(pushed)}", file=sys.stderr)
-        return 1
+        return fail(
+            "FAILED",
+            f"resume push failed: {_git_tail(pushed)}",
+            "resolve git push errors before resuming",
+        )
     print(f"RESUME_PUSH: {branch} {old_head}..{new_head}", file=sys.stderr)
     return 0
 
@@ -293,8 +300,7 @@ def _catch_up_base_before_resume(issue: int, *, caller_step: str) -> int:
         else:
             fetch_base_or_raise(repo_dir, base_branch)
     except WorktreeError as exc:
-        print(f"error: resume base fetch failed: {exc}", file=sys.stderr)
-        return 1
+        return fail("FAILED", f"resume base fetch failed: {exc}", exc.hint)
 
     branch = ""
     old_head = ""
@@ -348,8 +354,11 @@ def _catch_up_base_before_resume(issue: int, *, caller_step: str) -> int:
                 return rc
         return 0
     if getattr(step_result, "status", "done") != "andon" or step_result.andon is None:
-        print("error: resume base catch-up failed", file=sys.stderr)
-        return 1
+        return fail(
+            "FAILED",
+            "resume base catch-up failed",
+            "inspect ensure_base_included output and worktree git state",
+        )
 
     spec = step_result.andon
     workflow = cfg.paths.workflow.stem
@@ -405,7 +414,11 @@ def _load_step_statuses(
         )
         return result.steps
     except (OSError, ValueError) as exc:
-        print(f"error: cannot load step statuses: {exc}", file=sys.stderr)
+        fail(
+            "FAILED",
+            f"cannot load step statuses: {exc}",
+            "check exec.jsonl, queue state, and ghdag status inputs",
+        )
         return None
 
 
@@ -734,21 +747,24 @@ def _resume_from_step(
         for name in mark_done:
             step = by_name.get(name)
             if step is None:
-                print(f"error: --mark-done {name!r}: step not found", file=sys.stderr)
-                return 2
+                return fail(
+                    "INVALID_VALUE",
+                    f"--mark-done {name!r}: step not found",
+                    "pass step names that exist in the current DAG run",
+                )
             if step.uuid not in ancestor_uuids:
-                print(
-                    f"error: --mark-done {name!r}: not an ancestor of {from_step!r}",
-                    file=sys.stderr,
+                return fail(
+                    "INVALID_VALUE",
+                    f"--mark-done {name!r}: not an ancestor of {from_step!r}",
+                    "mark only steps upstream of the resume --from step",
                 )
-                return 2
             if step.status not in _markable:
-                print(
-                    f"error: --mark-done {name!r}: status is {step.status!r},"
+                return fail(
+                    "INVALID_VALUE",
+                    f"--mark-done {name!r}: status is {step.status!r},"
                     f" must be one of {sorted(_markable)}",
-                    file=sys.stderr,
+                    "only failed, cancelled, or skipped steps may be marked done",
                 )
-                return 2
 
         # Check if remaining blockers survive after simulated mark_done
         blockers = _upstream_blockers(steps, from_step)

@@ -443,3 +443,28 @@ def test_raise_metadata_andon_uses_configured_forge_repo():
                 with patch("issuesmith.andon.raise_andon"):
                     _raise_metadata_andon(1, violations)
     mock_get.assert_called_once_with(repo="owner-a/repo-a")
+
+
+def test_context_hook_main_missing_arg_uses_fail_contract(capsys):
+    """Refs #8129 — CLI failures use error[...] stderr lines."""
+    import sys
+
+    from issuesmith import context_hook
+
+    with patch.object(sys, "argv", ["context_hook"]):
+        with pytest.raises(SystemExit) as exc_info:
+            context_hook.main()
+    assert int(exc_info.value.code) == 2
+    err = capsys.readouterr().err
+    assert err.splitlines()[0].startswith("error[MISSING_ARGUMENT]:")
+
+
+def test_context_hook_success_stdout_unchanged(capsys):
+    """Refs #8129 — successful build_context stdout stays JSON when printed."""
+    import json
+
+    body = _body(target_repo="sumipan/ghdag", allow_paths="src/**")
+    ctx = build_context(50, body=body)
+    print(json.dumps(ctx, ensure_ascii=False))
+    parsed = json.loads(capsys.readouterr().out)
+    assert parsed["pipeline_id"].startswith("issue-50-")

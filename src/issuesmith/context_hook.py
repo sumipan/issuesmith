@@ -35,7 +35,9 @@ import yaml
 from issuesmith.branch_reuse import find_reusable_branch
 from issuesmith.branch_reuse import is_base_recorded as _is_base_recorded
 from issuesmith.branch_reuse import previous_commits as _prev_commits
+from issuesmith.cli_errors import fail
 from issuesmith.config import ConfigError, get_config
+from issuesmith.errors import IssuesmithError
 
 _PIPELINE_BRANCH_RE = re.compile(
     r"<!--\s*pipeline-branch:\s*feat/issue-(\d+)-([a-f0-9]+)\s*-->",
@@ -49,9 +51,10 @@ _SOURCE_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
 _LANG_EN = Path(__file__).resolve().parent / "lang" / "en.yaml"
 
 
-class ContextHookError(ValueError):
+class ContextHookError(IssuesmithError, ValueError):
     """Issue YAML metadata failed security validation before template expansion."""
 
+    code = "INVALID_VALUE"
     violations: tuple[MetadataViolation, ...]
 
     def __init__(
@@ -59,8 +62,12 @@ class ContextHookError(ValueError):
         message: str,
         *,
         violations: tuple[MetadataViolation, ...] = (),
+        hint: str | None = None,
     ) -> None:
-        super().__init__(message)
+        super().__init__(
+            message,
+            hint=hint or "fix YAML metadata at the top of the Issue body",
+        )
         self.violations = violations
 
 
@@ -574,11 +581,11 @@ def build_context(
     if body is None:
         body = _fetch_issue_body_from_gh(issue_number)
         if body is None:
-            print(
-                f"Error: failed to fetch the body of Issue #{issue_number} via the GitHub API.",
-                file=sys.stderr,
+            raise IssuesmithError(
+                f"failed to fetch the body of Issue #{issue_number} via the GitHub API.",
+                code="NOT_FOUND",
+                hint="verify the issue number and GitHub API credentials",
             )
-            sys.exit(1)
 
     # Extract the YAML metadata
     metadata: dict = {}
@@ -756,28 +763,41 @@ def main() -> None:
     exit code: 0=success, 1=argument error / API error
     """
     if len(sys.argv) < 2:
-        print(
-            "Usage: python -m issuesmith.context_hook <issue_number>",
-            file=sys.stderr,
+        raise SystemExit(
+            fail(
+                "MISSING_ARGUMENT",
+                "issue_number required",
+                "Usage: python -m issuesmith.context_hook <issue_number>",
+            )
         )
-        sys.exit(1)
 
     try:
         issue_number = int(sys.argv[1])
     except ValueError:
-        print(
-            f"Error: issue_number must be an integer, got: {sys.argv[1]!r}",
-            file=sys.stderr,
+        raise SystemExit(
+            fail(
+                "INVALID_VALUE",
+                f"issue_number must be an integer, got: {sys.argv[1]!r}",
+                "pass the GitHub issue number as the sole positional argument",
+            )
         )
-        sys.exit(1)
 
     try:
         context = build_context(issue_number)
     except ContextHookError as exc:
         if exc.violations:
             _raise_metadata_andon(issue_number, exc.violations)
-        print(f"Error: {exc}", file=sys.stderr)
-        sys.exit(1)
+        raise SystemExit(fail(exc.code, exc.message, exc.hint))
+    except IssuesmithError as exc:
+        raise SystemExit(fail(exc.code, exc.message, exc.hint))
+    except ValueError as exc:
+        raise SystemExit(
+            fail(
+                "INVALID_VALUE",
+                str(exc),
+                "fix Issue YAML metadata in the leading ```yaml block",
+            )
+        )
 
     print(json.dumps(context, ensure_ascii=False))
 
