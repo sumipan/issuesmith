@@ -45,12 +45,15 @@ def _write_entry(
     *,
     reason: str,
     ts: datetime,
+    fallback_code: str | None = None,
 ) -> None:
-    entry = {
+    entry: dict[str, object] = {
         "timestamp": ts.isoformat(),
         "fallback_reason": reason,
         "adopted_order": None,
     }
+    if fallback_code is not None:
+        entry["fallback_code"] = fallback_code
     with open(path, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry) + "\n")
 
@@ -166,4 +169,150 @@ def test_dispatch_skips_llm_when_circuit_open(tmp_path, monkeypatch):
     assert skipped
     assert skipped[-1].get("circuit_skipped") is True
 
+
+def _triage_snapshot(tmp_path: Path):
+    store = _store(tmp_path)
+    r = store.enqueue(
+        issue=1,
+        phase="draft",
+        source="s",
+        actor_kind="automation",
+        priority="normal",
+        requested_by=["a"],
+        requested_at=_NOW,
+    )
+    return store, store.snapshot(), r
+
+
+def test_timeout_records_code_and_circuit_ignores_reason_text(tmp_path) -> None:
+    """refs #8141: TimeoutError maps to llm_timeout and circuit ignores reason edits."""
+    from issuesmith.queue_triage import is_circuit_open, triage
+
+    store, snap, _r = _triage_snapshot(tmp_path)
+    log = tmp_path / "triage.jsonl"
+
+    def timeout_llm(prompt, **kwargs):
+        raise TimeoutError("synthetic deadline")
+
+    triage(
+        snap,
+        issues={1: {"title": "t", "body": _VALID_BODY, "labels": [], "state": "OPEN"}},
+        store=store,
+        call_llm=timeout_llm,
+        triage_log_path=log,
+        now=_FIXED_NOW,
+    )
+    row = json.loads(log.read_text(encoding="utf-8").strip())
+    assert row.get("fallback_code") == "llm_timeout"
+    assert (row.get("fallback_reason") or "").startswith("llm failed:")
+
+    for i in range(2):
+        _write_entry(
+            log,
+            reason="llm failed: Command timed out after 60 seconds",
+            ts=_FIXED_NOW - timedelta(minutes=2 - i),
+            fallback_code="llm_timeout",
+        )
+    assert is_circuit_open(log, threshold=3, reset_seconds=1800, now=_FIXED_NOW) is True
+
+    lines = log.read_text(encoding="utf-8").splitlines()
+    mutated = json.loads(lines[-1])
+    mutated["fallback_reason"] = "llm failed: totally different wording"
+    lines[-1] = json.dumps(mutated)
+    log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    assert is_circuit_open(log, threshold=3, reset_seconds=1800, now=_FIXED_NOW) is True
+
+
+def test_timeout_result_records_llm_timeout(tmp_path) -> None:
+    """refs #8141: ghdag's returned timeout status maps to llm_timeout."""
+    from issuesmith.queue_triage import triage
+
+    store, snap, _r = _triage_snapshot(tmp_path)
+    log = tmp_path / "triage.jsonl"
+
+    class TimedOutResult:
+        timed_out = True
+        stderr = "TIMEOUT: synthetic deadline"
+        body = ""
+
+    result = triage(
+        snap,
+        issues={1: {"title": "t", "body": _VALID_BODY, "labels": [], "state": "OPEN"}},
+        store=store,
+        call_llm=lambda prompt, **kwargs: TimedOutResult(),
+        triage_log_path=log,
+        now=_FIXED_NOW,
+    )
+
+    row = json.loads(log.read_text(encoding="utf-8").strip())
+    assert result.fallback_code == "llm_timeout"
+    assert row["fallback_code"] == "llm_timeout"
+    assert row["fallback_reason"] == "llm failed: TIMEOUT: synthetic deadline"
+
+
+def test_non_timeout_failure_records_llm_failed(tmp_path) -> None:
+    """refs #8141: parse failures record llm_failed and do not open the circuit."""
+    from issuesmith.queue_triage import is_circuit_open, triage
+
+    store, snap, _r = _triage_snapshot(tmp_path / "run")
+    log = tmp_path / "run" / "triage.jsonl"
+
+    def bad_json_llm(prompt, **kwargs):
+        class R:
+            text = "not-json"
+            body = "not-json"
+            usage = None
+
+        return R()
+
+    triage(
+        snap,
+        issues={1: {"title": "t", "body": _VALID_BODY, "labels": [], "state": "OPEN"}},
+        store=store,
+        call_llm=bad_json_llm,
+        triage_log_path=log,
+        now=_FIXED_NOW,
+    )
+    row = json.loads(log.read_text(encoding="utf-8").strip())
+    assert row.get("fallback_code") == "llm_failed"
+
+    for i in range(2):
+        _write_entry(
+            log,
+            reason="llm failed: parse error",
+            ts=_FIXED_NOW - timedelta(minutes=2 - i),
+            fallback_code="llm_failed",
+        )
+    assert is_circuit_open(log, threshold=3, reset_seconds=1800, now=_FIXED_NOW) is False
+
+
+def test_legacy_reason_only_entries_still_open_circuit(tmp_path) -> None:
+    """refs #8141: legacy log rows without fallback_code still trip the breaker."""
+    from issuesmith.queue_triage import is_circuit_open
+
+    log = tmp_path / "legacy.jsonl"
+    now = _FIXED_NOW
+    for i in range(3):
+        _write_entry(
+            log,
+            reason="llm failed: Command timed out after 60 seconds",
+            ts=now - timedelta(minutes=3 - i),
+        )
+    assert is_circuit_open(log, threshold=3, reset_seconds=1800, now=now) is True
+
+
+def test_code_takes_precedence_over_timeout_words(tmp_path) -> None:
+    """refs #8141: llm_failed code blocks breaker even when reason mentions timeout."""
+    from issuesmith.queue_triage import is_circuit_open
+
+    log = tmp_path / "coded.jsonl"
+    now = _FIXED_NOW
+    for i in range(3):
+        _write_entry(
+            log,
+            reason="llm failed: Command timed out after 60 seconds",
+            ts=now - timedelta(minutes=3 - i),
+            fallback_code="llm_failed",
+        )
+    assert is_circuit_open(log, threshold=3, reset_seconds=1800, now=now) is False
 
