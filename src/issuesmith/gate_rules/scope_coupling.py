@@ -13,7 +13,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from issuesmith.ac_contract import extract_contract_from_body
+from issuesmith.ac_contract import AcContractError, extract_contract_from_body
 from issuesmith.config import get_config
 from issuesmith.context_hook import parse_issue_metadata
 from issuesmith.contract import change_paths_for_repo, extract_change_table_rows
@@ -87,6 +87,14 @@ def _delete_move_keywords() -> tuple[str, ...]:
 _BACKTICK_KEY_VALUE_RE = re.compile(
     r"`([A-Za-z_][A-Za-z0-9_]*\s*:\s*[A-Za-z0-9_]+)`"
 )
+
+
+def _contract_or_empty(body: str) -> dict:
+    """Return the AC contract mapping, or ``{}`` when missing or broken."""
+    try:
+        return extract_contract_from_body(body) or {}
+    except AcContractError:
+        return {}
 
 
 def _parse_allow_paths(metadata: dict) -> list[str]:
@@ -296,7 +304,7 @@ def _extract_search_keys(
                 required.add(name)
 
     # Basenames of paths_must_not_exist (these are being deleted): declaration → required
-    contract = extract_contract_from_body(body) or {}
+    contract = _contract_or_empty(body)
     for raw in contract.get("paths_must_not_exist") or []:
         path = str(raw).strip()
         if path:
@@ -446,7 +454,7 @@ def check_paths_must_not_exist_contract(
     Each path is allowed when it appears as a deletion row in the change table,
     or when it is absent on the base branch checkout.
     """
-    contract = extract_contract_from_body(body) or {}
+    contract = _contract_or_empty(body)
     raw_paths = contract.get("paths_must_not_exist") or []
     must_not_exist = sorted(
         {str(p).strip() for p in raw_paths if str(p).strip()}
@@ -752,7 +760,7 @@ def _deletion_hits(
     if not deleted:
         return {}, {}
 
-    contract = extract_contract_from_body(body) or {}
+    contract = _contract_or_empty(body)
     must_not_exist = sorted(
         {str(p).strip() for p in (contract.get("paths_must_not_exist") or []) if str(p).strip()}
     )

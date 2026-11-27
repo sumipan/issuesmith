@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from issuesmith.ac_contract import (
+    AcContractError,
     GateMaterializationError,
     contract_failures,
     dual_gate_roots,
@@ -53,10 +54,23 @@ def test_extract_returns_none_without_yaml_block():
     assert extract_contract_from_body("## Acceptance Criteria\n\n- [x] AC1\n") is None
 
 
-def test_extract_returns_none_for_invalid_yaml():
-    # ASCII fixture data.
+def test_extract_raises_for_invalid_yaml():
+    """Refs: nexus#8162 — broken AC yaml must not be treated as absent."""
     body = "## Acceptance Criteria\n\n```yaml\n: : broken [\n```\n"
-    assert extract_contract_from_body(body) is None
+    with pytest.raises(AcContractError) as exc_info:
+        extract_contract_from_body(body)
+    exc = exc_info.value
+    assert exc.code == "INVALID_VALUE"
+    assert "line" in exc.message.lower()
+    assert exc.hint
+
+
+def test_contract_failures_reports_yaml_invalid(tmp_path):
+    """Refs: nexus#8162."""
+    body = "## Acceptance Criteria\n\n```yaml\n: [\n```\n"
+    failures = contract_failures(body, repo_root=tmp_path)
+    assert len(failures) == 1
+    assert failures[0].startswith("ac_contract.yaml_invalid:")
 
 
 def test_extract_supports_header_variants():

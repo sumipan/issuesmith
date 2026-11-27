@@ -58,10 +58,31 @@ class TestContractEdgeCases:
     def test_no_contract_section(self, tmp_path: Path) -> None:
         assert _gate(tmp_path).check("body text", []) == []
 
-    def test_broken_yaml(self, tmp_path: Path) -> None:
-        body = "## Acceptance Criteria\n\n```yaml\n: [\n```\n"
+    def test_section_without_yaml_block_returns_no_violation(self, tmp_path: Path) -> None:
+        body = "## Acceptance Criteria\n\n- [x] AC1\n"
         assert _gate(tmp_path).check(body, []) == []
 
+
+def test_broken_yaml_returns_yaml_invalid(tmp_path: Path) -> None:
+    """Refs: nexus#8162."""
+    body = "## Acceptance Criteria\n\n```yaml\n: [\n```\n"
+    violations = _gate(tmp_path).check(body, [])
+    assert len(violations) == 1
+    v = violations[0]
+    assert v.rule_id == "ac_contract.yaml_invalid"
+    assert v.severity == "fail"
+    assert v.location == "acceptance_criteria"
+
+
+def test_non_mapping_yaml_returns_yaml_invalid(tmp_path: Path) -> None:
+    """Refs: nexus#8162."""
+    body = "## Acceptance Criteria\n\n```yaml\n- only_a_list\n```\n"
+    violations = _gate(tmp_path).check(body, [])
+    assert len(violations) == 1
+    assert violations[0].rule_id == "ac_contract.yaml_invalid"
+
+
+class TestContractPathsCoercion:
     def test_non_list_paths_must_exist(self, tmp_path: Path) -> None:
         body = _ac_body("paths_must_exist: a.py\npaths_must_not_exist: []")
         assert _gate(tmp_path).check(body, []) == []

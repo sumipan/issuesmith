@@ -13,7 +13,10 @@ import pytest
 import yaml
 
 from issuesmith.config import reset_config_cache
-from issuesmith.gate_rules.scope_coupling import ScopeCouplingRules
+from issuesmith.gate_rules.scope_coupling import (
+    ScopeCouplingRules,
+    check_paths_must_not_exist_contract,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -302,4 +305,15 @@ class TestScopeModeInternal:
 # ---------------------------------------------------------------------------
 # AC-5: root_unavailable when clone is absent
 # ---------------------------------------------------------------------------
+
+
+def test_paths_must_not_exist_contract_ignores_broken_contract(tmp_path: Path):
+    """Refs: nexus#8162."""
+    body = (
+        "## Acceptance Criteria\n\n"
+        "```yaml\n"
+        ": broken [\n"
+        "```\n"
+    )
+    assert check_paths_must_not_exist_contract(body, tmp_path) == []
 

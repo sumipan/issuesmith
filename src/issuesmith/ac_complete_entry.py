@@ -112,10 +112,13 @@ def _proceed_or_contract_retry(
         }
 
     if has_migration_label:
-        from issuesmith.ac_contract import extract_contract_from_body
+        from issuesmith.ac_contract import AcContractError, extract_contract_from_body
         from issuesmith.ops.preflight import check_post_merge
 
-        contract = extract_contract_from_body(body)
+        try:
+            contract = extract_contract_from_body(body)
+        except AcContractError:
+            contract = None
         post_merge = contract.get("post_merge") if isinstance(contract, dict) else None
         if isinstance(post_merge, list) and post_merge:
             post_merge_results = check_post_merge(post_merge)
@@ -176,9 +179,12 @@ def check_gate_multi_root(
         return base
 
     if contracts is None:
-        from issuesmith.ac_contract import extract_contract_from_body
+        from issuesmith.ac_contract import AcContractError, extract_contract_from_body
 
-        contract = extract_contract_from_body(body)
+        try:
+            contract = extract_contract_from_body(body)
+        except AcContractError:
+            return base
         if contract is None:
             return base
         contracts = {repo: contract for repo in repo_roots}

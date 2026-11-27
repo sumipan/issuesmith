@@ -70,7 +70,11 @@ def unchecked_acceptance_count(body: str) -> int:
 
 
 def extract_contract(body: str) -> dict | None:
-    """Parse the YAML contract block from the acceptance criteria section."""
+    """Parse the YAML contract block from the acceptance criteria section.
+
+    Raises :class:`issuesmith.ac_contract.AcContractError` when a yaml fence is
+    present but its content is not a valid mapping.
+    """
     return extract_contract_from_body(body)
 
 

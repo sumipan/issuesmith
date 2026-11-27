@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from issuesmith.ac_contract import extract_contract_from_body
+from issuesmith.ac_contract import AcContractError, extract_contract_from_body
 
 ContractDict = dict[str, list[str]]
 
@@ -45,7 +45,11 @@ def _parse_ac_contracts(body: str | None) -> tuple[dict[str, ContractDict] | Non
     """Split the acceptance-criteria YAML into the legacy contract and per-repo contracts."""
     if not body:
         return None, _empty_contract()
-    ac = extract_contract_from_body(body)
+    try:
+        ac = extract_contract_from_body(body)
+    except AcContractError:
+        # Broken contract is reported by AC gates; targets carry no contract paths.
+        return None, _empty_contract()
     if not ac:
         return None, _empty_contract()
     if "targets" not in ac:

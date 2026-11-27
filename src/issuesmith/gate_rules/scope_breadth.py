@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import issuesmith.config as config_module
-from issuesmith.ac_contract import extract_contract_from_body
+from issuesmith.ac_contract import AcContractError, extract_contract_from_body
 from issuesmith.config import get_config
 from issuesmith.context_hook import parse_issue_metadata
 from issuesmith.contract import change_paths_for_repo
@@ -38,7 +38,11 @@ def _autofix_candidate(body: str, target_repo: str) -> list[str]:
     default allow_paths pattern (e.g. ``tests/**``) picked up (#3487).
     """
     candidate: list[str] = list(change_paths_for_repo(body, target_repo or None))
-    contract = extract_contract_from_body(body) or {}
+    try:
+        contract = extract_contract_from_body(body) or {}
+    except AcContractError:
+        # Broken contract: only paths from the change table count.
+        contract = {}
     for raw in contract.get("paths_must_exist") or []:
         path = str(raw).strip()
         if path and path not in candidate:
