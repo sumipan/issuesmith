@@ -1,8 +1,7 @@
-"""AC-12: triage must not reject for deps-waiting reasons (#3130)."""
+"""Deterministic queue intake and ordering (#8161)."""
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -10,16 +9,11 @@ from zoneinfo import ZoneInfo
 import pytest
 import yaml
 
+import issuesmith.queue_triage as queue_triage
 from issuesmith.config import reset_config_cache
 from issuesmith.contract import validate_frontmatter
 from issuesmith.queue_store import QueueRequest, QueueStore
-from issuesmith.queue_triage import (
-    deterministic_decision,
-    is_deps_waiting_reject_reason,
-    is_yaml_reject_reason,
-    missing_yaml_fields,
-    triage,
-)
+from issuesmith.queue_triage import deterministic_decision, missing_yaml_fields
 
 _FIXED_NOW = datetime(2026, 9, 1, 0, 0, tzinfo=timezone.utc)
 _NOW = _FIXED_NOW.isoformat()
@@ -90,10 +84,23 @@ def test_missing_yaml_fields_matches_validate_frontmatter():
     assert missing_yaml_fields(body) == validate_frontmatter(body)
 
 
-def test_is_yaml_reject_reason_matches():
-    assert is_yaml_reject_reason("missing YAML fields") is True
-    assert is_yaml_reject_reason("missing YAML: allow_paths") is True
-    assert is_yaml_reject_reason("duplicate of #1") is False
+def test_queue_triage_exposes_only_deterministic_api():
+    """Refs sumipan/issuesmith#8161 — LLM triage symbols must not remain on the module."""
+    removed = (
+        "triage",
+        "TriageDecision",
+        "TriageResult",
+        "_parse_llm_response",
+        "is_circuit_open",
+        "append_triage_log",
+        "append_cas_conflict_log",
+        "append_circuit_open_log",
+        "is_deps_waiting_reject_reason",
+        "is_yaml_reject_reason",
+    )
+    for name in removed:
+        assert not hasattr(queue_triage, name), name
+    assert "ghdag.llm" not in Path(queue_triage.__file__).read_text(encoding="utf-8")
 
 
 def test_deterministic_decision_develop_rejects_scope_milestone():
@@ -123,116 +130,6 @@ def test_deterministic_decision_develop_rejects_scope_milestone():
     assert decision.add_rejected_label is True
     assert "scope:milestone" in decision.reason
     assert "develop" in decision.reason or "MILESTONE_BLOCKED" in decision.reason
-
-
-def test_is_deps_waiting_reject_reason_matches():
-    assert is_deps_waiting_reject_reason("deps_blocked: waiting for #3162") is True
-    assert is_deps_waiting_reject_reason("dependencies not resolved") is True
-    assert is_deps_waiting_reject_reason("waiting for deps #3162") is True
-    assert is_deps_waiting_reject_reason("duplicate of #1") is False
-    assert is_deps_waiting_reject_reason("obsolete bump") is False
-
-
-def test_triage_downgrades_deps_reject_to_keep(tmp_path: Path):
-    store = _store(tmp_path)
-    rid = store.enqueue(
-        issue=3166,
-        phase="develop",
-        source="milestone-chain",
-        actor_kind="automation",
-        priority="normal",
-        requested_by=["milestone-chain"],
-        requested_at=_NOW,
-    ).request_id
-    snap = store.snapshot()
-
-    def fake_llm(prompt: str, **kwargs):
-        payload = {
-            "order": [rid],
-            "decisions": [
-                {
-                    "request_id": rid,
-                    "decision": "reject",
-                    "reason": "deps_not_resolved waiting for #3162",
-                    "uncertain_flag": False,
-                }
-            ],
-        }
-        return type("R", (), {"text": json.dumps(payload), "usage": None})()
-
-    result = triage(
-        snap,
-        now=_FIXED_NOW,
-        issues={
-            3166: {
-                "number": 3166,
-                "title": "child",
-                "body": "```yaml\ntarget_repo: sumipan/nexus\nbase_branch: main\nallow_paths:\n  - src/**\n```\n",
-                "labels": [{"name": "issuesmith:draft-done"}],
-                "state": "OPEN",
-            }
-        },
-        engine="cursor",
-        model="auto",
-        call_llm=fake_llm,
-        store=store,
-        triage_log_path=tmp_path / "triage.jsonl",
-    )
-    assert result.adopted is True
-    assert len(result.decisions) == 1
-    assert result.decisions[0].decision == "keep"
-    assert "deps reject ignored" in result.decisions[0].reason
-
-
-def test_triage_downgrades_yaml_reject_to_keep(tmp_path: Path):
-    store = _store(tmp_path)
-    rid = store.enqueue(
-        issue=3167,
-        phase="develop",
-        source="milestone-chain",
-        actor_kind="automation",
-        priority="normal",
-        requested_by=["milestone-chain"],
-        requested_at=_NOW,
-    ).request_id
-    snap = store.snapshot()
-
-    def fake_llm(prompt: str, **kwargs):
-        payload = {
-            "order": [rid],
-            "decisions": [
-                {
-                    "request_id": rid,
-                    "decision": "reject",
-                    "reason": "missing YAML: allow_paths",
-                    "uncertain_flag": False,
-                }
-            ],
-        }
-        return type("R", (), {"text": json.dumps(payload), "usage": None})()
-
-    result = triage(
-        snap,
-        now=_FIXED_NOW,
-        issues={
-            3167: {
-                "number": 3167,
-                "title": "child",
-                "body": _VALID_BODY,
-                "labels": [{"name": "issuesmith:draft-done"}],
-                "state": "OPEN",
-            }
-        },
-        engine="cursor",
-        model="auto",
-        call_llm=fake_llm,
-        store=store,
-        triage_log_path=tmp_path / "triage.jsonl",
-    )
-    assert result.adopted is True
-    assert len(result.decisions) == 1
-    assert result.decisions[0].decision == "keep"
-    assert "yaml reject ignored" in result.decisions[0].reason
 
 
 def test_draft_rejects_unsupported_target_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -338,10 +235,10 @@ def test_draft_without_target_repo_is_kept_for_b1(tmp_path: Path, monkeypatch: p
     assert decision.kind == "keep"
 
 
-def test_dispatch_one_rejects_unsupported_repo_before_llm(
+def test_dispatch_one_rejects_unsupported_repo(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """#7985: dispatch_one rejects unsupported target_repo without LLM or stage dispatch."""
+    """#7985: dispatch_one rejects unsupported target_repo without stage dispatch."""
     from ghdag.forge import LocalForge
 
     from issuesmith import queue as qmod
@@ -364,12 +261,7 @@ def test_dispatch_one_rejects_unsupported_repo_before_llm(
         requested_at=_NOW,
     )
 
-    llm_called: list[int] = []
     pipeline_called: list[int] = []
-
-    def boom(*_args, **_kwargs):
-        llm_called.append(1)
-        raise AssertionError("LLM must not run for unsupported target_repo")
 
     def no_pipeline(*_args, **_kwargs):
         pipeline_called.append(1)
@@ -388,10 +280,8 @@ def test_dispatch_one_rejects_unsupported_repo_before_llm(
         client=client,
         store=store,
         skip_seed=True,
-        call_llm=boom,
     )
 
-    assert not llm_called
     assert not pipeline_called
     meta = store.snapshot().request_meta.get(req.request_id) or {}
     assert meta.get("outcome") == "rejected"

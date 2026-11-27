@@ -65,7 +65,6 @@ def test_dispatch_one_keeps_non_404_api_errors_in_queue(tmp_path, monkeypatch):
         client=Client(),
         store=store,
         skip_seed=True,
-        call_llm=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")),
     )
 
     snap = store.snapshot()

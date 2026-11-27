@@ -139,7 +139,6 @@ _RUNTIME_STATE_PATH_KEYS = (
     "queue",
     "queue_state",
     "queue_lock",
-    "triage_log",
     "night_state",
     "exec_jsonl",
     "done_dir",

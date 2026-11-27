@@ -321,7 +321,6 @@ _WRITE_MODES = frozenset({"w", "a", "x", "r+", "wb", "ab", "xb", "r+b"})
 def _no_side_effects(tmp_path_factory):
     """Guard against I/O writes outside pytest's tmp directory."""
     import issuesmith.queue as _qmod
-    import issuesmith.queue_triage as _qtriage
 
     basetemp = tmp_path_factory.getbasetemp().resolve()
     session_forge_root = Path(_SESSION_FORGE_ROOT).resolve()
@@ -486,7 +485,6 @@ def _no_side_effects(tmp_path_factory):
         stack.enter_context(patch.object(_qmod, "EXEC_PATH", new=basetemp / "exec.jsonl"))
         stack.enter_context(patch.object(_qmod, "DONE_DIR", new=basetemp / "done"))
         stack.enter_context(patch.object(_qmod, "JOBS_DIR", new=basetemp))
-        stack.enter_context(patch.object(_qtriage, "DEFAULT_TRIAGE_LOG_PATH", new=basetemp / "issuesmith-triage.jsonl"))
         # I/O write guard.
         stack.enter_context(patch("builtins.open", _open_guard))
         stack.enter_context(patch.object(Path, "write_text", _write_text))

@@ -101,7 +101,6 @@ def route_queue_config(tmp_path, monkeypatch):
             "queue": "jobs/issuesmith-queue.jsonl",
             "queue_state": "logs/issuesmith-queue-state.json",
             "queue_lock": "logs/issuesmith-queue.lock",
-            "triage_log": "jobs/issuesmith-triage.jsonl",
             "seed": "configs/night-queue.yaml",
             "night_state": "logs/night-queue-state.json",
             "exec_jsonl": "jobs/exec.jsonl",

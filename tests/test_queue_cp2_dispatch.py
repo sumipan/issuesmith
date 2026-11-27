@@ -87,7 +87,6 @@ class TestCp2MergePrDetection:
             client=client,
             store=store,
             skip_seed=True,
-            call_llm=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")),
         )
         assert result.dispatched is True
         assert result.label == "issuesmith:merge-ready"
@@ -142,7 +141,6 @@ class TestCp2NoTitleSupersede:
             client=client,
             store=store,
             skip_seed=True,
-            call_llm=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")),
         )
         assert result.dispatched is False
         assert 10 not in client.closes
@@ -180,7 +178,6 @@ class TestCp2DevelopDispatch:
             client=client,
             store=store,
             skip_seed=True,
-            call_llm=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")),
         )
         assert result.dispatched is False
         assert "idle" in result.reason

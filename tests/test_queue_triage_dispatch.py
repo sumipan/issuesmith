@@ -1,8 +1,7 @@
-"""Queue LLM triage, dispatch repair and base dispatch."""
+"""Queue dispatch repair and base dispatch."""
 
 from __future__ import annotations
 
-import json
 from datetime import datetime
 
 import pytest
@@ -41,7 +40,6 @@ class TestQueueRepair:
 
         client.issue_update = tracking_update  # type: ignore[method-assign]
         return client
-
 
     def test_dispatch_repair_comment_is_idempotent(self, tmp_path, monkeypatch):
         from zoneinfo import ZoneInfo
@@ -96,7 +94,6 @@ class TestQueueRepair:
                 client=client,
                 store=store,
                 skip_seed=True,
-                call_llm=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")),
             )
         repair_comments = [
             body for _, body in client.comments
@@ -105,108 +102,7 @@ class TestQueueRepair:
         assert len(repair_comments) == 1
 
 
-class TestTriage:
-
-    def test_human_reject_converted_to_keep(self, tmp_path):
-        from issuesmith.queue_triage import triage
-
-        store = _store(tmp_path)
-        r = store.enqueue(
-            issue=1, phase="draft", source="skill", actor_kind="human",
-            priority="normal", requested_by=["alice"], requested_at=_NOW,
-        )
-        snap = store.snapshot()
-
-        def fake_llm(prompt, **kwargs):
-            payload = {
-                "order": [r.request_id],
-                "decisions": [
-                    {
-                        "request_id": r.request_id,
-                        "decision": "reject",
-                        "reason": "noise",
-                        "uncertain_flag": False,
-                    }
-                ],
-            }
-
-            class R:
-                text = json.dumps(payload)
-                usage = None
-
-            return R()
-
-        result = triage(
-            snap,
-            issues={1: {"title": "a", "body": _VALID_BODY, "labels": [], "state": "OPEN"}},
-            store=store,
-            call_llm=fake_llm,
-            triage_log_path=tmp_path / "triage.jsonl",
-        )
-        assert result.decisions[0].decision == "keep"
-
-
-    def test_default_engine_model_is_allowlisted(self):
-        """Default triage engine/model must exist in the configs allowlist (#2803)."""
-        from ghdag.llm import EngineModelError, validate_engine_model
-
-        validate_engine_model("claude", "claude-sonnet-4-6")
-        with pytest.raises(EngineModelError):
-            validate_engine_model("cursor", "gemini-3-flash")
-
-    def test_engine_model_mismatch_is_config_error(self, tmp_path):
-        """engine/model mismatch is a config error, not llm failed (#2803)."""
-        from issuesmith.queue_triage import triage
-
-        store = _store(tmp_path)
-        r = store.enqueue(
-            issue=1, phase="draft", source="s", actor_kind="automation",
-            priority="low", requested_by=["a"], requested_at=_NOW,
-        )
-        snap = store.snapshot()
-        called = {"n": 0}
-
-        def fake_llm(prompt, **kwargs):
-            called["n"] += 1
-            payload = {
-                "order": [r.request_id],
-                "decisions": [
-                    {
-                        "request_id": r.request_id,
-                        "decision": "keep",
-                        "reason": "ok",
-                        "uncertain_flag": False,
-                    }
-                ],
-            }
-
-            class R:
-                text = json.dumps(payload)
-                usage = None
-
-            return R()
-
-        result = triage(
-            snap,
-            issues={1: {"title": "a", "body": _VALID_BODY, "labels": [], "state": "OPEN"}},
-            store=store,
-            call_llm=fake_llm,
-            engine="cursor",
-            model="gemini-3-flash",
-            triage_log_path=tmp_path / "triage.jsonl",
-        )
-        assert result.adopted is False
-        assert called["n"] == 0
-        assert (result.fallback_reason or "").startswith("config error:")
-        assert "llm failed:" not in (result.fallback_reason or "")
-        log = json.loads((tmp_path / "triage.jsonl").read_text(encoding="utf-8").strip())
-        assert log["config"]["engine"] == "cursor"
-        assert log["config"]["model"] == "gemini-3-flash"
-        assert (log.get("fallback_reason") or "").startswith("config error:")
-
-
 class TestDispatch:
-
 
     def test_comment_marker_idempotent(self, tmp_path):
         from issuesmith import queue as qmod
@@ -289,7 +185,6 @@ class TestDispatch:
             store=store,
             seed_path=seed_path,
             skip_seed=True,
-            call_llm=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")),
         )
         assert result.dispatched is False
         assert "no dispatchable" in result.reason
@@ -404,5 +299,3 @@ def test_undeclared_source_does_not_wait_outside_window(tmp_path, monkeypatch):
     )
     by_id = {e.request_id: e for e in queue_plan.entries}
     assert by_id[enqueued.request_id].reason != "window"
-
-

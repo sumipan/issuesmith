@@ -6,11 +6,10 @@ import argparse
 import fnmatch
 import json
 import logging
-import os
 import re
 import subprocess
 import sys
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime, time, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -34,7 +33,6 @@ from issuesmith.milestone import advance_milestone_chains
 from issuesmith.queue_store import (
     DEFAULT_NIGHT_STATE_PATH,
     DEFAULT_SEED_PATH,
-    DEFAULT_TRIAGE_LOG_PATH,
     EnqueueResult,
     QueueBlock,
     QueueRequest,
@@ -45,22 +43,17 @@ from issuesmith.queue_store import (
 )
 from issuesmith.queue_triage import (
     READY_LABEL,
-    append_cas_conflict_log,
-    append_circuit_open_log,
     apply_deterministic_order_constraints,
-    apply_priority_bucket_order,
     comment_marker,
     deterministic_decision,
     deterministic_order,
     get_terminal_without_merge,
     has_marker_comment,
-    is_circuit_open,
     label_names,
     load_seed_entries,
     parse_frontmatter_fields,
     seed_extra_sources,
     seed_window,
-    triage,
 )
 from issuesmith.targets import _normalize_allow_paths
 
@@ -2265,7 +2258,6 @@ def dispatch_one(
     *,
     store: QueueStore | None = None,
     seed_path: Path | None = None,
-    call_llm: Any = None,
     skip_seed: bool = False,
 ) -> DispatchResult:
     now = now or _now_jst()
@@ -2361,14 +2353,7 @@ def dispatch_one(
 
     snap = store.snapshot()
     triage_revision = snap.revision
-    # Triage if needed (LLM outside lock conceptually — triage() does not hold store lock during LLM).
     if triage_revision > snap.last_triaged_revision and snap.active_order:
-        _triage_log = (
-            Path(os.environ["ISSUESMITH_QUEUE_DIR"]) / "issuesmith-triage.jsonl"
-            if os.environ.get("ISSUESMITH_QUEUE_DIR")
-            else DEFAULT_TRIAGE_LOG_PATH
-        )
-        triage_cfg = get_config().triage
         active_reqs = []
         for rid in snap.active_order:
             req = store.effective_request(snap, rid)
@@ -2380,96 +2365,9 @@ def dispatch_one(
             {r.request_id: r for r in active_reqs},
             now=now.astimezone(timezone.utc) if now.tzinfo else now.replace(tzinfo=timezone.utc),
         )
-        # AC-2: apply priority (deterministic) before waiting on LLM.
         adopted_fallback = store.replace_order(triage_revision, fallback_order)
         if not adopted_fallback:
             store.mark_triaged(triage_revision)
-        else:
-            now_utc = (
-                now.astimezone(timezone.utc)
-                if now.tzinfo
-                else now.replace(tzinfo=timezone.utc)
-            )
-            if not triage_cfg.enabled:
-                pass  # deterministic order already applied; skip LLM
-            elif is_circuit_open(
-                _triage_log,
-                triage_cfg.circuit_breaker_threshold,
-                triage_cfg.circuit_breaker_reset_seconds,
-                now=now_utc,
-            ):
-                append_circuit_open_log(
-                    path=_triage_log,
-                    order=fallback_order,
-                    revision=store.snapshot().revision,
-                    now=now_utc,
-                )
-            else:
-                snap2 = store.snapshot()
-                # replace_order marked last_triaged==revision; force LLM path.
-                llm_snap = replace(snap2, last_triaged_revision=snap2.revision - 1)
-                result = triage(
-                    llm_snap,
-                    issues=issues,
-                    store=store,
-                    call_llm=call_llm,
-                    now=now,
-                    triage_log_path=_triage_log,
-                    timeout=triage_cfg.timeout,
-                    engine=triage_cfg.engine,
-                    model=triage_cfg.model,
-                    body_chars=triage_cfg.body_chars,
-                )
-                if result.adopted:
-                    active_for_bucket = []
-                    for rid in snap2.active_order:
-                        req = store.effective_request(snap2, rid)
-                        if req is not None:
-                            active_for_bucket.append(req)
-                    bucket_order = apply_priority_bucket_order(
-                        result.order, active_for_bucket
-                    )
-                    active_set = set(snap2.active_order)
-                    new_order = [rid for rid in bucket_order if rid in active_set]
-                    for rid in snap2.active_order:
-                        if rid not in new_order:
-                            new_order.append(rid)
-                    adopted_cas = store.replace_order(snap2.revision, new_order)
-                    if not adopted_cas:
-                        latest = store.snapshot()
-                        latest_set = set(latest.active_order)
-                        retry_order = [rid for rid in bucket_order if rid in latest_set]
-                        for rid in latest.active_order:
-                            if rid not in retry_order:
-                                retry_order.append(rid)
-                        adopted_cas = store.replace_order(latest.revision, retry_order)
-                        if not adopted_cas:
-                            append_cas_conflict_log(
-                                path=_triage_log,
-                                order=bucket_order,
-                                revision=latest.revision,
-                                now=now_utc,
-                            )
-                            store.mark_triaged(latest.revision)
-                # Apply LLM rejects after ordering CAS.
-                for d in result.decisions:
-                    if d.decision != "reject":
-                        continue
-                    cur = store.snapshot()
-                    req = store.effective_request(cur, d.request_id)
-                    if req is None or d.request_id not in cur.active_order:
-                        continue
-                    _apply_terminal(
-                        store,
-                        client,
-                        d.request_id,
-                        req.issue,
-                        "rejected",
-                        d.reason,
-                        close_issue=False,
-                        add_rejected_label=True,
-                        comment=True,
-                    )
 
     snap = store.snapshot()
     # Release finished in_flight even when the queue is empty (absorbs milestone C0).
@@ -2901,18 +2799,6 @@ def _cmd_audit(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_triage_log(args: argparse.Namespace) -> int:
-    path = Path(args.path) if args.path else DEFAULT_TRIAGE_LOG_PATH
-    if not path.exists():
-        print("no triage log")
-        return 0
-    lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
-    last_n = lines[-args.last :]
-    for ln in last_n:
-        print(ln)
-    return 0
-
-
 def _cmd_migrate(args: argparse.Namespace) -> int:
     store = QueueStore(
         queue_path=Path(args.queue_path) if getattr(args, "queue_path", None) else None,
@@ -3069,11 +2955,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_audit = sub.add_parser("audit")
     p_audit.add_argument("--json", action="store_true")
     p_audit.set_defaults(func=_cmd_audit)
-
-    p_tlog = sub.add_parser("triage-log")
-    p_tlog.add_argument("--last", type=int, default=20)
-    p_tlog.add_argument("--path", default=None)
-    p_tlog.set_defaults(func=_cmd_triage_log)
 
     p_mig = sub.add_parser("migrate")
     p_mig.add_argument("--from-night-queue-state", default=str(DEFAULT_NIGHT_STATE_PATH))

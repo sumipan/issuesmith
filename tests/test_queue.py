@@ -488,7 +488,6 @@ def issuesmith_config(tmp_path, monkeypatch):
             "queue": "jobs/issuesmith-queue.jsonl",
             "queue_state": "logs/issuesmith-queue-state.json",
             "queue_lock": "logs/issuesmith-queue.lock",
-            "triage_log": "jobs/issuesmith-triage.jsonl",
             "seed": "configs/night-queue.yaml",
             "night_state": "logs/night-queue-state.json",
             "exec_jsonl": "jobs/exec.jsonl",
@@ -568,7 +567,6 @@ def _patch_dispatch(tmp_path, monkeypatch, issuesmith_config):
         queue=tmp_path / "queue.jsonl",
         queue_state=tmp_path / "state.json",
         queue_lock=tmp_path / "lock",
-        triage_log=tmp_path / "triage.jsonl",
         seed=tmp_path / "seed.yaml",
         night_state=tmp_path / "night.json",
         exec_jsonl=exec_path,
@@ -891,6 +889,17 @@ def test_apply_terminal_without_rejected_closes_completed(tmp_path: Path) -> Non
     got = client.issue_get(number, fields=["state", "state_reason"])
     assert got["state"] == "CLOSED"
     assert got["state_reason"] == "completed"
+
+
+def test_triage_log_subcommand_is_unknown(capsys):
+    """Refs sumipan/issuesmith#8161 — queue triage-log is no longer a subcommand."""
+    from issuesmith import queue as qmod
+
+    with pytest.raises(SystemExit) as exc_info:
+        qmod.main(["triage-log"])
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    assert err.splitlines()[0].startswith("error[UNKNOWN_COMMAND]:")
 
 
 def test_queue_sources_have_no_after_feature_markers():
