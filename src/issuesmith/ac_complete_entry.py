@@ -7,13 +7,13 @@ has_acceptance_criteria_section / get_unchecked_count are re-exported from gate_
 
 from __future__ import annotations
 
-import argparse
 import json
 import sys
 from pathlib import Path
 
 from ghdag.forge import get_forge
 
+from issuesmith.cli_errors import ContractParser
 from issuesmith.config import get_config
 from issuesmith.gate_rules.ac_complete_rules import (
     AcCompleteRules,
@@ -250,9 +250,9 @@ def _parse_repo_roots(values: list[str]) -> dict[str, Path]:
     return roots
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> int:
     """CLI entry point: python -m issuesmith gate m2 <issue_number> [--repo-roots ...]"""
-    parser = argparse.ArgumentParser(prog="m2-gate")
+    parser = ContractParser(prog="m2-gate")
     parser.add_argument("issue_number", type=int)
     parser.add_argument(
         "--repo-root",
@@ -267,7 +267,7 @@ def main() -> None:
         metavar="REPO=PATH",
         help="per-target repo-root (e.g. owner/repo=/path/to/repo)",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv if argv is not None else sys.argv[1:])
 
     configured_repo = get_config().repo
     data = get_forge(repo=configured_repo).issue_get(
@@ -296,3 +296,4 @@ def main() -> None:
     else:
         gate_result = check_gate(body, labels, repo_root=args.repo_root)
     print(json.dumps(gate_result))
+    return 0

@@ -55,6 +55,23 @@ def test_main_undeclared_step_returns_rc2(tmp_path, monkeypatch):
     assert "not declared" in err.getvalue()
 
 
+def test_main_missing_issue_uses_contract(tmp_path, monkeypatch, capsys) -> None:
+    """refs #8140 — verify design_doc tier requires issue_number with MISSING_ARGUMENT."""
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "repo": "example/app",
+            "steps": {"p1": {"verify": "design_doc"}},
+        },
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        main("p1", [])
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    assert err.splitlines()[0].startswith("error[MISSING_ARGUMENT]:")
+
+
 def test_config_unknown_verify_raises(tmp_path, monkeypatch):
     _write_config(
         tmp_path,

@@ -292,6 +292,31 @@ def test_no_migration_label_skips_migration_rules():
     assert result["status"] == "PASS"
 
 
+def test_main_missing_issue_uses_contract(capsys) -> None:
+    """refs #8140 — design_lint gate requires issue_number (MISSING_ARGUMENT)."""
+    from issuesmith.design_lint_entry import main
+
+    with pytest.raises(SystemExit) as exc_info:
+        main([])
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    assert err.splitlines()[0].startswith("error[MISSING_ARGUMENT]:")
+
+
+def test_main_non_integer_issue_uses_contract(capsys) -> None:
+    """refs #8140 — non-integer issue_number uses INVALID_VALUE with hint."""
+    from issuesmith.design_lint_entry import main
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(["abc"])
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    lines = [ln for ln in err.splitlines() if ln.strip()]
+    assert lines[0].startswith("error[INVALID_VALUE]:")
+    assert any(ln.startswith("hint:") for ln in lines)
+    assert "Traceback" not in err
+
+
 # ---------------------------------------------------------------------------
 # scope_breadth (#3427) — CP1 must FAIL when allow_paths scope is exceeded
 # ---------------------------------------------------------------------------

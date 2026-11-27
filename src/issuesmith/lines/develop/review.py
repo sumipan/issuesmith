@@ -11,6 +11,7 @@ from pathlib import Path
 
 import yaml
 
+from issuesmith.cli_errors import fail
 from issuesmith.config import StepConfig, get_config
 from issuesmith.contract import Andon, StepContext, StepResult
 from issuesmith.forge import get_forge
@@ -238,18 +239,40 @@ def run(ctx: StepContext, step: StepConfig) -> StepResult:
     return StepResult(status="done", markers=["REVIEW_READY"])
 
 
-def _cli_dispatch() -> int:
-    if len(sys.argv) < 3:
-        print(
-            "usage: python3 -m issuesmith.lines.develop.review dispatch key=value ...",
-            file=sys.stderr,
+_REVIEW_DISPATCH_HINT = (
+    "usage: python3 -m issuesmith.lines.develop.review dispatch key=value ..."
+)
+
+
+def main(argv: list[str] | None = None) -> int:
+    tokens = list(argv if argv is not None else sys.argv[1:])
+    if not tokens:
+        return fail(
+            "MISSING_ARGUMENT",
+            "subcommand required",
+            _REVIEW_DISPATCH_HINT,
         )
-        return 2
-    raw = _parse_context(sys.argv[2:])
+    sub = tokens[0]
+    if sub != "dispatch":
+        return fail(
+            "UNKNOWN_COMMAND",
+            f"unknown subcommand: {sub!r}",
+            _REVIEW_DISPATCH_HINT,
+        )
+    if len(tokens) < 2:
+        return fail(
+            "MISSING_ARGUMENT",
+            "dispatch requires key=value arguments",
+            _REVIEW_DISPATCH_HINT,
+        )
+    raw = _parse_context(tokens[1:])
     worktree = raw.get("worktree_path", "")
     if not worktree:
-        print("worktree_path is required for review dispatch", file=sys.stderr)
-        return 2
+        return fail(
+            "MISSING_ARGUMENT",
+            "worktree_path is required for review dispatch",
+            f"{_REVIEW_DISPATCH_HINT} (include worktree_path=PATH)",
+        )
     err = _commit_tracked_changes(worktree)
     if err:
         return map_step_result(
@@ -271,9 +294,9 @@ def _cli_dispatch() -> int:
     return 0  # unreachable
 
 
+def _cli_dispatch() -> int:
+    return main(sys.argv[1:])
+
+
 if __name__ == "__main__":
-    if sys.argv[1:2] == ["dispatch"]:
-        raise SystemExit(_cli_dispatch())
-    raise SystemExit(
-        "usage: python3 -m issuesmith.lines.develop.review dispatch key=value ...",
-    )
+    raise SystemExit(main())

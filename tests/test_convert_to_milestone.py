@@ -135,6 +135,15 @@ def test_idempotent_second_run(repo_layout: Path, monkeypatch) -> None:
     assert redispatch.call_count == 2
 
 
+def test_main_missing_issue_uses_contract(capsys) -> None:
+    """refs #8140 — convert-to-milestone without issue number uses MISSING_ARGUMENT."""
+    with pytest.raises(SystemExit) as exc_info:
+        ctm.main([])
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    assert err.splitlines()[0].startswith("error[MISSING_ARGUMENT]:")
+
+
 def test_dry_run_makes_no_side_effects(repo_layout: Path, monkeypatch, capsys) -> None:
     jobs = repo_layout / "jobs"
     uuid = "dry-uuid"

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from ghdag.forge import ForgePort
 
+from issuesmith.cli_errors import ContractParser
 from issuesmith.config import get_config
 from issuesmith.gate_registry import Violation
 from issuesmith.gate_rules import GATE_REGISTRY
@@ -364,7 +365,7 @@ def main(step_id: str, argv: list[str] | None = None) -> int:
 
     from ghdag.forge import get_forge
 
-    parser = argparse.ArgumentParser(prog=f"issuesmith verify {step_id}")
+    parser = ContractParser(command=f"verify {step_id}")
     parser.add_argument("issue_number", type=int)
     parser.add_argument("--prev-report", default=None, metavar="FILE")
     parser.add_argument(
