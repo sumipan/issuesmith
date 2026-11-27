@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.225.0 - 2026-11-27
+
+### Added
+
+- cli: align gate entry points with ContractParser (#8140)
+
 ## 0.224.2 - 2026-11-27
 
 ### Fixed
