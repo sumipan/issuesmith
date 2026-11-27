@@ -15,6 +15,7 @@ import yaml
 
 from issuesmith.andon import diagnosis_signature, note
 from issuesmith.config import AndonDiagnoseConfig, IssuesmithConfig
+from issuesmith.errors import IssuesmithError
 
 _DIAGNOSIS_MARKER = re.compile(
     r"<!--\s*issuesmith-diagnosis:\s*([0-9a-f]{12})\s*-->", re.IGNORECASE
@@ -407,8 +408,10 @@ def apply_diagnose_plan(
     return replace(plan, failures=failures)
 
 
-class ProposalError(ValueError):
+class ProposalError(IssuesmithError, ValueError):
     """Raised when LLM diagnosis output fails deterministic validation."""
+
+    code = "INVALID_VALUE"
 
 
 @dataclass(frozen=True)

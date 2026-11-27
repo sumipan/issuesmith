@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Iterator, Literal
 
 from issuesmith.config import get_config
+from issuesmith.errors import IssuesmithError
 
 logger = logging.getLogger(__name__)
 
@@ -45,8 +46,10 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-class QueueValidationError(ValueError):
+class QueueValidationError(IssuesmithError, ValueError):
     """Invalid queue request input (exit 2)."""
+
+    code = "INVALID_VALUE"
 
 
 _REPO_BLOCK_SCOPE_RE = re.compile(r"^repo:[^/]+/[^/]+$")

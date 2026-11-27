@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Literal, Mapping, Protocol
 
+from issuesmith.errors import IssuesmithError
+
 NON_REPAIRABLE_RULE_IDS: frozenset[str] = frozenset({
     "pr_diff_scope.forbidden_path",
     "base_freshness.fetch_transient_exhausted",
@@ -76,8 +78,10 @@ class GateBuildContext:
     variables: Mapping[str, str] = field(default_factory=dict)
 
 
-class GateBuildError(ValueError):
+class GateBuildError(IssuesmithError, ValueError):
     """Raised by GateEntry.build when the gate cannot be instantiated."""
+
+    code = "CONFIG_ERROR"
 
 
 class RequiresGate(Protocol):

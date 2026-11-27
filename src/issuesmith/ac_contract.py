@@ -23,14 +23,19 @@ from typing import Any, Iterator
 import yaml
 
 from issuesmith.config import get_config
+from issuesmith.errors import IssuesmithError
 
 
-class GateMaterializationError(RuntimeError):
+class GateMaterializationError(IssuesmithError, RuntimeError):
     """origin/base temporary worktree could not be materialized."""
 
+    code = "FAILED"
 
-class GrepError(RuntimeError):
+
+class GrepError(IssuesmithError, RuntimeError):
     """git grep failed while evaluating greps_must_be_empty."""
+
+    code = "FAILED"
 
 
 def _git(cmd: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:

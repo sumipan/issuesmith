@@ -31,6 +31,7 @@ from typing import Any, Literal
 import yaml
 
 from issuesmith.config import get_config
+from issuesmith.errors import IssuesmithError
 
 _SECTION_END = r"(?=^##(?!#)|\Z)"
 
@@ -488,14 +489,23 @@ ANDON_PREFIX = "andon-"
 ANDON_KINDS: tuple[str, ...] = ("broken", "decision", "blocked")
 
 
-class LabelWriteForbidden(RuntimeError):
+class LabelWriteForbidden(IssuesmithError, RuntimeError):
     """A step wrote labels through the forge while ``label_write_guard`` is ``enforce``."""
 
-    def __init__(self, step_id: str, labels: list[str]) -> None:
+    code = "CONFLICT"
+
+    def __init__(
+        self,
+        step_id: str,
+        labels: list[str],
+        *,
+        hint: str | None = None,
+    ) -> None:
         self.step_id = step_id
         self.labels = list(labels)
         super().__init__(
-            f"step {step_id} wrote labels {self.labels}; labels are projected by the runner"
+            f"step {step_id} wrote labels {self.labels}; labels are projected by the runner",
+            hint=hint,
         )
 
 

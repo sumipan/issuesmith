@@ -16,6 +16,7 @@ from issuesmith.ac_contract import (
     materialize_gate_root,
     run_checks,
 )
+from issuesmith.errors import IssuesmithError
 from issuesmith.gate_rules.ac_complete_rules import get_unchecked_count
 from issuesmith.pr_scope import DIFF_LINES_FALLBACK, find_pr_for_branch
 from issuesmith.step_tier import pr_diff_tier
@@ -35,8 +36,10 @@ Action = Literal["proceed", "retry", "migrate"]
 Tier = Literal["light", "heavy"]
 
 
-class AcceptanceError(RuntimeError):
+class AcceptanceError(IssuesmithError, RuntimeError):
     """Temporary gate root (origin/base) could not be materialized."""
+
+    code = "INVALID_VALUE"
 
 
 @dataclass(frozen=True, slots=True)

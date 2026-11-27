@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
+from issuesmith.errors import IssuesmithError
+
 if TYPE_CHECKING:
     from issuesmith.config import IssuesmithConfig, MainHealthConfig
 
@@ -31,8 +33,10 @@ _OUTPUT_TAIL_LINES = 80
 _OUTPUT_TAIL_LINE_CHARS = 500
 
 
-class MainHealthError(RuntimeError):
+class MainHealthError(IssuesmithError, RuntimeError):
     """The health check could not run (git / worktree / timeout); state is not updated."""
+
+    code = "FAILED"
 
 
 @dataclass(frozen=True)

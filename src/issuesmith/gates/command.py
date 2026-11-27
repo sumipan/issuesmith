@@ -11,6 +11,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Sequence
 
+from issuesmith.errors import IssuesmithError
 from issuesmith.gate_registry import Violation
 from issuesmith.gates.base import ContractInput
 
@@ -20,8 +21,10 @@ _PYTEST_TIMEOUT_DEFAULT_SEC = 1500.0
 _INTERRUPTED_RC: frozenset[int] = frozenset({143, 137, -15, -9})
 
 
-class CommandStartError(RuntimeError):
+class CommandStartError(IssuesmithError, RuntimeError):
     """The configured command or python_bin launcher could not be started."""
+
+    code = "FAILED"
 
 
 def _func_id(test_id: str) -> str:

@@ -7,13 +7,16 @@ import subprocess
 from pathlib import Path
 
 from issuesmith.config import get_config
+from issuesmith.errors import IssuesmithError
 
 _PYTHON_BIN_TIMEOUT_SEC = 600.0
 _STDERR_TAIL = 2000
 
 
-class WorktreePythonError(RuntimeError):
+class WorktreePythonError(IssuesmithError, RuntimeError):
     """``python_bin_command`` failed or returned an unusable path."""
+
+    code = "FAILED"
 
 
 def _stderr_tail(proc: subprocess.CompletedProcess[str]) -> str:

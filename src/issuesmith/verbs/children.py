@@ -20,6 +20,7 @@ from issuesmith.config import get_config
 from issuesmith.contract import parse_issue_metadata
 from issuesmith.convert_to_milestone import _ensure_milestone
 from issuesmith.dep_extractor import extract_dependencies
+from issuesmith.errors import IssuesmithError
 from issuesmith.forge_api import api_request
 from issuesmith.milestone import (
     Sub1State,
@@ -67,11 +68,18 @@ class ChildPlan:
     milestone_number: int | None
 
 
-class ChildPlanError(RuntimeError):
-    def __init__(self, violations: Sequence[str]) -> None:
+class ChildPlanError(IssuesmithError, RuntimeError):
+    code = "INVALID_VALUE"
+
+    def __init__(
+        self,
+        violations: Sequence[str],
+        *,
+        hint: str | None = None,
+    ) -> None:
         self.violations = tuple(violations)
         message = "; ".join(self.violations) if self.violations else "child plan failed"
-        super().__init__(message)
+        super().__init__(message, hint=hint)
 
 
 def _safe_metadata(body: str) -> dict[str, Any]:
