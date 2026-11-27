@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.226.0 - 2026-11-28
+
+### Added
+
+- ac_contract: fail closed on broken acceptance YAML
+
 ## 0.225.2 - 2026-11-28
 
 ### Added
