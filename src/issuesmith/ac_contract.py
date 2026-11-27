@@ -31,11 +31,23 @@ class GateMaterializationError(IssuesmithError, RuntimeError):
 
     code = "FAILED"
 
+    def __init__(self, message: str, *, hint: str | None = None) -> None:
+        super().__init__(
+            message,
+            hint=hint or f"fix the gate worktree or origin/base state: {message}",
+        )
+
 
 class GrepError(IssuesmithError, RuntimeError):
     """git grep failed while evaluating greps_must_be_empty."""
 
     code = "FAILED"
+
+    def __init__(self, message: str, *, hint: str | None = None) -> None:
+        super().__init__(
+            message,
+            hint=hint or f"fix the grep ref or pathspecs: {message}",
+        )
 
 
 def _git(cmd: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:

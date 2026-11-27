@@ -83,6 +83,12 @@ class GateBuildError(IssuesmithError, ValueError):
 
     code = "CONFIG_ERROR"
 
+    def __init__(self, message: str, *, hint: str | None = None) -> None:
+        super().__init__(
+            message,
+            hint=hint or f"fix the gate configuration: {message}",
+        )
+
 
 class RequiresGate(Protocol):
     """Protocol: a gate that can be checked against issue body and labels."""

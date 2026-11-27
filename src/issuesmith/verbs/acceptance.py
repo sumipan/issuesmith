@@ -41,6 +41,12 @@ class AcceptanceError(IssuesmithError, RuntimeError):
 
     code = "INVALID_VALUE"
 
+    def __init__(self, message: str, *, hint: str | None = None) -> None:
+        super().__init__(
+            message,
+            hint=hint or f"fix the acceptance contract or repository state: {message}",
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class AcceptanceVerdict:

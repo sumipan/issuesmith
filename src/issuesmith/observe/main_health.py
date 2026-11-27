@@ -38,6 +38,12 @@ class MainHealthError(IssuesmithError, RuntimeError):
 
     code = "FAILED"
 
+    def __init__(self, message: str, *, hint: str | None = None) -> None:
+        super().__init__(
+            message,
+            hint=hint or f"fix observe.main_health or its worktree state: {message}",
+        )
+
 
 @dataclass(frozen=True)
 class MainHealthState:

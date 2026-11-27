@@ -26,6 +26,12 @@ class CommandStartError(IssuesmithError, RuntimeError):
 
     code = "FAILED"
 
+    def __init__(self, message: str, *, hint: str | None = None) -> None:
+        super().__init__(
+            message,
+            hint=hint or "check PATH, python_bin_command, and the command argv",
+        )
+
 
 def _func_id(test_id: str) -> str:
     return re.sub(r"\[.*\]$", "", test_id)

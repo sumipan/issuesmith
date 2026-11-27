@@ -18,6 +18,12 @@ class WorktreePythonError(IssuesmithError, RuntimeError):
 
     code = "FAILED"
 
+    def __init__(self, message: str, *, hint: str | None = None) -> None:
+        super().__init__(
+            message,
+            hint=hint or "check tests.python_bin_command and the worktree environment",
+        )
+
 
 def _stderr_tail(proc: subprocess.CompletedProcess[str]) -> str:
     text = (proc.stderr or "") + (proc.stdout or "")

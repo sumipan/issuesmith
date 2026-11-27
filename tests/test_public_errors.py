@@ -15,7 +15,7 @@ from issuesmith.diagnose import ProposalError, parse_proposal
 from issuesmith.errors import IssuesmithError
 from issuesmith.forge_guard import ReadOnlyLabelForge
 from issuesmith.gates import GATE_REGISTRY, GateBuildContext, GateBuildError
-from issuesmith.gates.command import run_command
+from issuesmith.gates.command import CommandStartError, run_command
 from issuesmith.merge import MergeStateInfo, MergeStateTimeoutError, wait_merge_state
 from issuesmith.observe.main_health import MainHealthError, _ensure_worktree
 from issuesmith.pr_scope import DerivedAllowPathsError, derived_allow_paths_from_result
@@ -34,6 +34,7 @@ _STDILIB_BASE: dict[str, type[BaseException]] = {
     "AcceptanceError": RuntimeError,
     "ChildPlanError": RuntimeError,
     "GateBuildError": ValueError,
+    "CommandStartError": RuntimeError,
     "LabelWriteForbidden": RuntimeError,
     "BumpCommitsError": RuntimeError,
     "GateMaterializationError": RuntimeError,
@@ -51,6 +52,7 @@ _ERROR_CODES = {
     "AcceptanceError": "INVALID_VALUE",
     "ChildPlanError": "INVALID_VALUE",
     "GateBuildError": "CONFIG_ERROR",
+    "CommandStartError": "FAILED",
     "LabelWriteForbidden": "CONFLICT",
     "BumpCommitsError": "FAILED",
     "GateMaterializationError": "FAILED",
@@ -74,6 +76,7 @@ def test_public_error_classes_preserve_contract(name: str) -> None:
         "AcceptanceError": AcceptanceError,
         "ChildPlanError": ChildPlanError,
         "GateBuildError": GateBuildError,
+        "CommandStartError": CommandStartError,
         "LabelWriteForbidden": LabelWriteForbidden,
         "BumpCommitsError": BumpCommitsError,
         "GateMaterializationError": GateMaterializationError,
@@ -85,6 +88,27 @@ def test_public_error_classes_preserve_contract(name: str) -> None:
     assert issubclass(cls, IssuesmithError)
     assert issubclass(cls, _STDILIB_BASE[name])
     assert cls.code == _ERROR_CODES[name]  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ConfigError("bad config"),
+        QueueValidationError("bad queue value"),
+        DerivedAllowPathsError("bad derived path"),
+        ProposalError("bad proposal"),
+        AcceptanceError("bad acceptance contract"),
+        GateBuildError("bad gate config"),
+        CommandStartError("bad command"),
+        BumpCommitsError("bad bump state"),
+        GateMaterializationError("bad gate worktree"),
+        GrepError("bad grep"),
+        WorktreePythonError("bad python command"),
+        MainHealthError("bad main health state"),
+    ],
+)
+def test_public_errors_supply_default_hint(error: IssuesmithError) -> None:
+    assert error.hint
 
 
 def test_retry_signal_not_issuesmith_error() -> None:

@@ -26,6 +26,12 @@ class ConfigError(IssuesmithError, ValueError):
 
     code = "CONFIG_ERROR"
 
+    def __init__(self, message: str, *, hint: str | None = None) -> None:
+        super().__init__(
+            message,
+            hint=hint or f"fix the issuesmith.yaml value described by: {message}",
+        )
+
 
 def _as_int(value: Any, key_path: str) -> int:
     if isinstance(value, bool):

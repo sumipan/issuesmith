@@ -78,7 +78,7 @@ class MergeStateTimeoutError(IssuesmithError, Exception):
         super().__init__(
             f"merge state timeout for PR #{pr_number}: "
             f"last mergeStateStatus={last_state.merge_state_status}",
-            hint=hint,
+            hint=hint or "retry when the merge queue unblocks or increase merge poll timeout",
         )
 
 

@@ -21,6 +21,12 @@ class BumpCommitsError(IssuesmithError, RuntimeError):
 
     code = "FAILED"
 
+    def __init__(self, message: str, *, hint: str | None = None) -> None:
+        super().__init__(
+            message,
+            hint=hint or f"fix the publish bump commit state: {message}",
+        )
+
 
 def _run_git(worktree: Path, *args: str) -> subprocess.CompletedProcess[str]:
     proc = subprocess.run(

@@ -413,6 +413,12 @@ class ProposalError(IssuesmithError, ValueError):
 
     code = "INVALID_VALUE"
 
+    def __init__(self, message: str, *, hint: str | None = None) -> None:
+        super().__init__(
+            message,
+            hint=hint or f"fix the andon diagnosis proposal: {message}",
+        )
+
 
 @dataclass(frozen=True)
 class Proposal:

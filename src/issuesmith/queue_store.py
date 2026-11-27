@@ -51,6 +51,9 @@ class QueueValidationError(IssuesmithError, ValueError):
 
     code = "INVALID_VALUE"
 
+    def __init__(self, message: str, *, hint: str | None = None) -> None:
+        super().__init__(message, hint=hint or f"fix the invalid queue value: {message}")
+
 
 _REPO_BLOCK_SCOPE_RE = re.compile(r"^repo:[^/]+/[^/]+$")
 

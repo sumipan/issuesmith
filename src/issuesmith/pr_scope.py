@@ -34,6 +34,12 @@ class DerivedAllowPathsError(IssuesmithError, ValueError):
 
     code = "INVALID_VALUE"
 
+    def __init__(self, message: str, *, hint: str | None = None) -> None:
+        super().__init__(
+            message,
+            hint=hint or f"fix the derived_allow_paths entry: {message}",
+        )
+
 
 def _strip_path(path: str) -> str:
     """Strip leading ``./`` and apply ``posixpath.normpath`` (no validation)."""
