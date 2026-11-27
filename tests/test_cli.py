@@ -174,3 +174,95 @@ def test_gate_design_lint_issue_form_routes_to_entry(monkeypatch) -> None:
     assert calls and calls[0][-1] == "99"
 
 
+def test_main_formats_issuesmith_error_for_text(monkeypatch, capsys) -> None:
+    """refs #8127: IssuesmithError is formatted on stderr without traceback."""
+    from issuesmith import cli
+    from issuesmith.errors import IssuesmithError
+
+    def _raise(_argv: list[str]) -> int:
+        raise IssuesmithError("missing thing", code="NOT_FOUND", hint="check id")
+
+    monkeypatch.setitem(cli._HANDLERS, "verify", _raise)
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["verify", "step"])
+    assert exc_info.value.code == 1
+    err = capsys.readouterr().err
+    lines = err.splitlines()
+    assert lines[0] == "error[NOT_FOUND]: missing thing"
+    assert lines[1] == "hint: check id"
+    assert not err.strip().startswith("Traceback")
+
+
+def test_main_formats_issuesmith_error_for_json(monkeypatch, capsys) -> None:
+    """refs #8127: --json failures emit one JSON object on stdout."""
+    import json
+
+    from issuesmith import cli
+    from issuesmith.errors import IssuesmithError
+
+    def _raise(_argv: list[str]) -> int:
+        raise IssuesmithError("bad", code="FAILED", hint="retry")
+
+    monkeypatch.setitem(cli._HANDLERS, "verify", _raise)
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["verify", "step", "--json"])
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    payload = json.loads(captured.out.strip())
+    assert payload == {
+        "error": {"code": "FAILED", "message": "bad", "hint": "retry"},
+    }
+
+
+def test_verify_missing_step_id_uses_contract(capsys) -> None:
+    """refs #8127: verify without step id uses MISSING_ARGUMENT contract."""
+    from issuesmith import cli
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["verify"])
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    lines = [ln for ln in err.splitlines() if ln.strip()]
+    assert lines[0].startswith("error[MISSING_ARGUMENT]:")
+    assert any(ln.startswith("hint:") for ln in lines)
+
+
+def test_main_health_error_exits_one(monkeypatch, capsys, tmp_path: Path) -> None:
+    """refs #8127: MainHealthError infrastructure failure exits with FAILED (1)."""
+    from issuesmith import cli
+    from issuesmith.observe.main_health import MainHealthError
+
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+
+    class _MainHealth:
+        def __init__(self) -> None:
+            self.worktree = worktree
+
+    class _Observe:
+        def __init__(self) -> None:
+            self.main_health = _MainHealth()
+
+    class _Paths:
+        def __init__(self) -> None:
+            self.queue_state = tmp_path / "queue-state.json"
+
+    class _Cfg:
+        def __init__(self) -> None:
+            self.observe = _Observe()
+            self.root = tmp_path
+            self.paths = _Paths()
+
+    def _boom(_mh, _path, repo_root=None):
+        raise MainHealthError("git fetch failed")
+
+    monkeypatch.setattr("issuesmith.config.get_config", _Cfg)
+    monkeypatch.setattr("issuesmith.observe.main_health.check", _boom)
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["main-health"])
+    assert exc_info.value.code == 1
+    err = capsys.readouterr().err
+    assert err.splitlines()[0].startswith("error[FAILED]:")
+
+
