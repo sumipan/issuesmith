@@ -155,8 +155,16 @@ def test_config_rejects_unknown_external_leak_keys(tmp_path: Path, monkeypatch) 
 
 
 def test_config_parses_external_leak(tmp_path: Path, monkeypatch) -> None:
-    _write_config(tmp_path, monkeypatch, {"external_leak": {"cjk_free_external_targets": "yes"}})
+    _write_config(tmp_path, monkeypatch, {"external_leak": {"cjk_free_external_targets": True}})
     assert get_config().external_leak.cjk_free_external_targets is True
+
+
+def test_config_rejects_string_external_leak_bool(tmp_path: Path, monkeypatch) -> None:
+    from issuesmith.config import ConfigError
+
+    _write_config(tmp_path, monkeypatch, {"external_leak": {"cjk_free_external_targets": "yes"}})
+    with pytest.raises(ConfigError):
+        get_config()
 
 
 # --- external_target_state / fail-closed CJK check (nexus #4116) -------------
