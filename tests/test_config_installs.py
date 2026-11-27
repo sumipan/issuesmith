@@ -16,7 +16,7 @@ def _clear_cache():
 
 
 def test_legacy_installs_is_ignored_and_pin_packages_defaults_empty(tmp_path, monkeypatch):
-    """Refs sumipan/issuesmith#8028."""
+    """Refs sumipan/issuesmith#8028, #8142 — legacy installs is an unknown top-level key."""
     cfg_path = tmp_path / "issuesmith.yaml"
     cfg_path.write_text(
         yaml.safe_dump(
@@ -31,6 +31,11 @@ def test_legacy_installs_is_ignored_and_pin_packages_defaults_empty(tmp_path, mo
         encoding="utf-8",
     )
     monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    with pytest.raises(ConfigError, match=r"issuesmith\.yaml\.installs"):
+        load_config()
+
+    cfg_path.write_text(yaml.safe_dump({"repo": "sumipan/nexus"}), encoding="utf-8")
+    reset_config_cache()
     cfg = load_config()
     assert cfg.pin_packages == ()
 

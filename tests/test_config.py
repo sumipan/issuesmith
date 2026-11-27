@@ -508,7 +508,7 @@ def test_target_remotes_rejects_unsupported_repo(
             {"tests": {"report": "junit", "report_path": "r.xml"}},
             "tests.command",
         ),
-        ({"lint": {"bogus": 1}}, "lint supports"),
+        ({"lint": {"bogus": 1}}, r"lint\.bogus"),
         ({"lint": {"fix_command": ["f"]}}, "lint.command"),
     ],
 )
@@ -594,7 +594,7 @@ def test_version_command_requires_bump_command(tmp_path, monkeypatch):
     "version_raw,match",
     [
         ({"policy": "bogus"}, "version.policy"),
-        ({"policy": "none", "extra": 1}, "unknown keys"),
+        ({"policy": "none", "extra": 1}, r"version\.extra"),
     ],
 )
 def test_version_rejects_unknown_policy_and_keys(
@@ -640,7 +640,7 @@ def test_merge_config_defaults_and_values(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     "merge_raw,match",
     [
-        ({"foo": 1}, "unknown keys"),
+        ({"foo": 1}, r"merge\.foo"),
         ({"state_wait_attempts": 0}, "state_wait_attempts"),
         ({"state_wait_seconds": -1}, "state_wait_seconds"),
         ({"rebump_max": True}, "rebump_max"),
