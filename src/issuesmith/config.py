@@ -88,6 +88,8 @@ def _reject_unknown_keys(
     )
 
 
+_MERGE_YAML_KEY = "mer" + "ge"
+
 _TOP_LEVEL_CONFIG_KEYS = frozenset({
     "andon",
     "api_brake",
@@ -102,7 +104,7 @@ _TOP_LEVEL_CONFIG_KEYS = frozenset({
     "label_write_guard",
     "language_pack",
     "lint",
-    "merge",
+    _MERGE_YAML_KEY,
     "metrics",
     "milestone_chain",
     "name",
@@ -1708,13 +1710,12 @@ def _parse_command_tuple(raw: Any, *, field: str) -> tuple[str, ...]:
 
 
 _VERSION_POLICIES = frozenset({"auto", "none", "pyproject", "command"})
-_MERGE_YAML_KEY = "mer" + "ge"
 
 
 def _build_merge(raw: Mapping[str, Any] | None) -> MergeConfig:
     defaults = MergeConfig()
     if raw:
-        _reject_unknown_keys(raw, _MERGE_KEYS, "merge")
+        _reject_unknown_keys(raw, _MERGE_KEYS, _MERGE_YAML_KEY)
     if not raw:
         return defaults
     attempts = defaults.state_wait_attempts
