@@ -134,3 +134,12 @@ def test_nexus_target_repo_normalized_to_issue_repo():
     assert len(targets) == 1
     assert targets[0].repo == ISSUE_REPO
     assert targets[0].primary is True
+
+
+def test_broken_contract_yields_empty_contract():
+    """Refs: nexus#8162."""
+    metadata = {"allow_paths": ["src/**"], "base_branch": "main"}
+    body = "## Acceptance Criteria\n\n```yaml\n: broken [\n```\n"
+    targets = targets_from_issue(metadata, issue_repo=ISSUE_REPO, body=body)
+    assert len(targets) == 1
+    assert targets[0].contract == {}

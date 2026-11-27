@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from issuesmith.ac_contract import (
+    AcContractError,
     GrepError,
     extract_contract_from_body,
     grep_matches,
@@ -75,7 +76,19 @@ class AcContractGate:
         self._worktree_path = worktree_path
 
     def check(self, body: str, labels: list[str]) -> list[Violation]:
-        contract = extract_contract_from_body(body)
+        try:
+            contract = extract_contract_from_body(body)
+        except AcContractError as exc:
+            return [
+                Violation(
+                    rule_id="ac_contract.yaml_invalid",
+                    severity="fail",
+                    message=str(exc),
+                    location="acceptance_criteria",
+                    auto_fixable=False,
+                    fix_hint=exc.hint,
+                )
+            ]
         if contract is None:
             return []
 

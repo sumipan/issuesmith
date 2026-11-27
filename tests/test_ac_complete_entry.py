@@ -13,6 +13,7 @@ import pytest
 
 from issuesmith.ac_complete_entry import (
     check_gate,
+    check_gate_multi_root,
     get_unchecked_count,
     has_acceptance_criteria_section,
 )
@@ -177,6 +178,16 @@ paths_must_exist:
 - [x] AC1
 """
 
+BODY_BROKEN_CONTRACT = """\
+## Acceptance Criteria
+
+```yaml
+: broken [
+```
+
+- [x] AC1
+"""
+
 
 class TestCheckGateContract:
     def test_checked_ac_with_passing_contract_returns_proceed(self):
@@ -189,6 +200,23 @@ class TestCheckGateContract:
         result = check_gate(BODY_ONE_UNCHECKED, [])
         assert result["action"] == "retry"
         assert result["contract_failures"] == []
+
+    def test_broken_contract_returns_retry_with_yaml_invalid(self):
+        """Refs: nexus#8162."""
+        result = check_gate(BODY_BROKEN_CONTRACT, [])
+        assert result["action"] == "retry"
+        assert result["unchecked_count"] == 0
+        assert len(result["contract_failures"]) == 1
+        assert result["contract_failures"][0].startswith("ac_contract.yaml_invalid:")
+
+    def test_multi_root_broken_contract_returns_retry(self, tmp_path: Path):
+        """Refs: nexus#8162."""
+        roots = {"sumipan/issuesmith": tmp_path}
+        result = check_gate_multi_root(BODY_BROKEN_CONTRACT, [], roots)
+        assert result["action"] == "retry"
+        assert result["unchecked_count"] == 0
+        assert len(result["contract_failures"]) == 1
+        assert result["contract_failures"][0].startswith("ac_contract.yaml_invalid:")
 
     def test_contract_execution_error_is_fail_open(self, monkeypatch):
         import issuesmith.ac_contract as ac_contract

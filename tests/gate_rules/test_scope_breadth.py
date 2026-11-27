@@ -123,4 +123,34 @@ def test_autofix_note_uses_default_pack_text():
     assert "files=100, lines=100" in rule.autofix_note
 
 
+def test_autofix_with_broken_contract_uses_change_table_only():
+    """Refs: nexus#8162 — contract paths are ignored when yaml is broken."""
+    from issuesmith.config import get_config
+
+    cfg = get_config()
+    ac_heading = cfg.sections["acceptance_criteria"]
+    changed = cfg.sections["changed_files"]
+    cols = cfg.language.change_table_columns
+    table_header = "| " + " | ".join(cols) + " |"
+    table_sep = "|" + "|".join(["---"] * len(cols)) + "|"
+    body = (
+        "```yaml\n"
+        "target_repo: sumipan/issuesmith\n"
+        "base_branch: main\n"
+        "allow_paths:\n"
+        '  - "src/**"\n'
+        "```\n\n"
+        f"## {changed}\n\n"
+        f"{table_header}\n"
+        f"{table_sep}\n"
+        f"| `sumipan/issuesmith` | `src/table/only.py` | modify | x |\n\n"
+        f"## {ac_heading}\n\n"
+        "```yaml\n"
+        ": broken [\n"
+        "```\n"
+    )
+    rule = _narrow(body)
+    assert rule.autofix_new_allow_paths == ["src/table/only.py"]
+
+
 

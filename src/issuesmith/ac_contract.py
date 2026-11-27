@@ -25,6 +25,19 @@ import yaml
 from issuesmith.config import get_config
 from issuesmith.errors import IssuesmithError
 
+_AC_CONTRACT_HINT = (
+    "rewrite the first yaml block in the acceptance criteria section as a mapping"
+)
+
+
+class AcContractError(IssuesmithError, ValueError):
+    """Acceptance criteria YAML contract exists but cannot be parsed as a mapping."""
+
+    code = "INVALID_VALUE"
+
+    def __init__(self, message: str, *, hint: str | None = None) -> None:
+        super().__init__(message, hint=hint or _AC_CONTRACT_HINT)
+
 
 class GateMaterializationError(IssuesmithError, RuntimeError):
     """origin/base temporary worktree could not be materialized."""
@@ -370,12 +383,25 @@ def extract_key_path_values(data: Any, key_path: str) -> list[Any]:
     return flattened
 
 
+def _ac_contract_error_for_yaml(exc: yaml.YAMLError) -> AcContractError:
+    problem = getattr(exc, "problem_mark", None)
+    if problem is not None:
+        line = problem.line + 1
+        column = problem.column + 1
+        message = f"failed to parse acceptance criteria yaml at line {line} column {column}"
+    else:
+        message = "failed to parse acceptance criteria yaml"
+    return AcContractError(message)
+
+
 def extract_contract_from_body(body: str) -> dict | None:
     """Extract and parse the first ```yaml block in the acceptance criteria section.
 
     The heading is ``get_config().sections["acceptance_criteria"]`` (from the language
     pack); numbered or decorated variants (e.g. ``## 7. Acceptance Criteria (AC)``)
-    also match. Returns None when no contract can be read.
+    also match. Returns ``None`` when the section or yaml fence is missing. Raises
+    :class:`AcContractError` when the fence is present but the content is not a
+    parseable mapping.
     """
     heading = get_config().sections["acceptance_criteria"]
     match = re.search(
@@ -391,9 +417,14 @@ def extract_contract_from_body(body: str) -> dict | None:
         return None
     try:
         data = yaml.safe_load(yaml_match.group(1))
-    except yaml.YAMLError:
-        return None
-    return data if isinstance(data, dict) else None
+    except yaml.YAMLError as exc:
+        raise _ac_contract_error_for_yaml(exc) from exc
+    if not isinstance(data, dict):
+        kind = type(data).__name__
+        raise AcContractError(
+            f"acceptance criteria yaml must be a mapping, got {kind}"
+        )
+    return data
 
 
 def run_checks(contract: dict, repo_root: Path, *, base_ref: str = "HEAD") -> list[dict]:
@@ -689,9 +720,13 @@ def pending_manual_checks(records: list[dict]) -> list[str]:
 def contract_failures(body: str, repo_root: Path | None = None) -> list[str]:
     """Run the Issue body's contract and return FAIL records as human-readable strings.
 
-    Returns an empty list when there is no contract block (fail-open).
+    Returns an empty list when there is no contract block. A broken contract yields
+    a single ``ac_contract.yaml_invalid`` line without calling :func:`run_checks`.
     """
-    contract = extract_contract_from_body(body)
+    try:
+        contract = extract_contract_from_body(body)
+    except AcContractError as exc:
+        return [f"ac_contract.yaml_invalid: {exc}"]
     if contract is None:
         return []
     records = run_checks(contract, repo_root or REPO_ROOT)
