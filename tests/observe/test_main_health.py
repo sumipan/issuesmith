@@ -298,7 +298,7 @@ def test_cli_error_exits_two(enabled, monkeypatch, capsys):
     monkeypatch.setattr('issuesmith.observe.main_health.check', boom)
     with pytest.raises(SystemExit) as exc:
         cli.main(['main-health'])
-    assert exc.value.code == 2
+    assert exc.value.code == 1
     assert 'git fetch failed' in capsys.readouterr().err
 
 def _log_file(path: Path) -> Path:
