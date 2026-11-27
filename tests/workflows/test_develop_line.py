@@ -1847,6 +1847,42 @@ def test_review_unknown_command_uses_contract(capsys) -> None:
     assert err.splitlines()[0].startswith("error[UNKNOWN_COMMAND]:")
 
 
+@pytest.mark.parametrize(
+    ("args", "code"),
+    [
+        (["dispatch", "invalid"], "INVALID_VALUE"),
+        (["dispatch", "worktree_path=/tmp/example"], "MISSING_ARGUMENT"),
+        (
+            [
+                "dispatch",
+                "worktree_path=/tmp/example",
+                "issue_number=invalid",
+                "base_branch=main",
+            ],
+            "INVALID_VALUE",
+        ),
+        (
+            [
+                "dispatch",
+                "worktree_path=/tmp/example",
+                "issue_number=8140",
+            ],
+            "MISSING_ARGUMENT",
+        ),
+    ],
+)
+def test_review_invalid_dispatch_context_uses_contract(
+    args: list[str], code: str, capsys
+) -> None:
+    """Review dispatch input errors must not leak Python exceptions."""
+    from issuesmith.lines.develop import review as develop_review
+
+    assert develop_review.main(args) == 2
+    err = capsys.readouterr().err
+    assert err.splitlines()[0].startswith(f"error[{code}]:")
+    assert "Traceback" not in err
+
+
 def test_cli_dispatch_raises_broken_andon_when_commit_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

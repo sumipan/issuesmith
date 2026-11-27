@@ -265,13 +265,37 @@ def main(argv: list[str] | None = None) -> int:
             "dispatch requires key=value arguments",
             _REVIEW_DISPATCH_HINT,
         )
-    raw = _parse_context(tokens[1:])
+    try:
+        raw = _parse_context(tokens[1:])
+    except ValueError as exc:
+        return fail("INVALID_VALUE", str(exc), _REVIEW_DISPATCH_HINT)
     worktree = raw.get("worktree_path", "")
     if not worktree:
         return fail(
             "MISSING_ARGUMENT",
             "worktree_path is required for review dispatch",
             f"{_REVIEW_DISPATCH_HINT} (include worktree_path=PATH)",
+        )
+    issue_number = raw.get("issue_number", "")
+    if not issue_number:
+        return fail(
+            "MISSING_ARGUMENT",
+            "issue_number is required for review dispatch",
+            f"{_REVIEW_DISPATCH_HINT} (include issue_number=NUMBER)",
+        )
+    try:
+        int(issue_number)
+    except ValueError:
+        return fail(
+            "INVALID_VALUE",
+            f"issue_number must be an integer: {issue_number!r}",
+            f"{_REVIEW_DISPATCH_HINT} (include issue_number=NUMBER)",
+        )
+    if not raw.get("base_branch", ""):
+        return fail(
+            "MISSING_ARGUMENT",
+            "base_branch is required for review dispatch",
+            f"{_REVIEW_DISPATCH_HINT} (include base_branch=BRANCH)",
         )
     err = _commit_tracked_changes(worktree)
     if err:
