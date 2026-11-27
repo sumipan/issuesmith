@@ -23,11 +23,7 @@ class IssuesmithError(GhdagError):
         if resolved not in ERROR_EXIT:
             raise ValueError(f"unknown error code: {resolved!r}")
         super().__init__(message, code=resolved, hint=hint)
-        self._exit_code = ERROR_EXIT[resolved]
-
-    @property
-    def exit_code(self) -> int:
-        return self._exit_code
+        self.exit_code = ERROR_EXIT[resolved]
 
     def to_dict(self) -> dict[str, object]:
         return {
