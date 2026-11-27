@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "issuesmith"
-version = "0.228.1"
+version = "0.229.0"
 description = "Suite for agent-first software factories: Issue-to-merge production lines on ghdag"
 readme = "README.md"
 license = "MIT"
@@ -45,7 +45,7 @@ Repository = "https://github.com/sumipan/issuesmith"
 where = ["src"]
 
 [tool.setuptools.package-data]
-issuesmith = ["py.typed", "lines/*/files/**/*"]
+issuesmith = ["py.typed", "lines/*/files/**/*", "schemas/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

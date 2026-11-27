@@ -56,7 +56,7 @@ def test_detects_command_dropped_from_table():
 
 
 def unknown_mentioned_commands(registered: set[str]) -> dict[str, set[str]]:
-    texts = [(REPO_ROOT / "CHANGELOG.md"), *py_files(SRC)]
+    texts = [(REPO_ROOT / "CHANGELOG.md"), (REPO_ROOT / "llms.txt"), *py_files(SRC)]
     unknown: dict[str, set[str]] = {}
     for path in texts:
         for cmd in mentioned_commands(path.read_text(encoding="utf-8")):

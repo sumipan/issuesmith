@@ -1,0 +1,603 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/sumipan/issuesmith/schemas/issuesmith-config.schema.json",
+  "title": "issuesmith configuration",
+  "description": "issuesmith.yaml parsed as a JSON-compatible mapping.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "andon": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "auto_answer": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "match": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "description": "issuesmith.yaml key 'kind'."
+                  },
+                  "rule_id": {
+                    "description": "issuesmith.yaml key 'rule_id'."
+                  },
+                  "step": {
+                    "description": "issuesmith.yaml key 'step'."
+                  }
+                }
+              },
+              "action": {
+                "type": "string"
+              },
+              "max_per_issue": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        },
+        "auto_rerun_max": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "causes": {
+          "type": "object"
+        },
+        "diagnose": {
+          "type": "object"
+        }
+      }
+    },
+    "api_brake": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "description": "issuesmith.yaml key 'enabled'."
+        },
+        "min_remaining": {
+          "description": "issuesmith.yaml key 'min_remaining'."
+        }
+      }
+    },
+    "concurrency": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_dispatch_per_tick": {
+          "description": "issuesmith.yaml key 'max_dispatch_per_tick'."
+        },
+        "per_engine": {
+          "description": "issuesmith.yaml key 'per_engine'."
+        },
+        "strict_order": {
+          "description": "issuesmith.yaml key 'strict_order'."
+        }
+      }
+    },
+    "derived_allow": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "description": "issuesmith.yaml key 'enabled'."
+        },
+        "ledger_globs": {
+          "description": "issuesmith.yaml key 'ledger_globs'."
+        }
+      }
+    },
+    "engines": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "heavy": {
+            "type": "array"
+          },
+          "light": {
+            "type": "array"
+          },
+          "pause_ttl_sec": {
+            "type": "integer"
+          },
+          "timeout_sec": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "external_leak": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cjk_free_external_targets": {
+          "description": "issuesmith.yaml key 'cjk_free_external_targets'."
+        }
+      }
+    },
+    "forbidden_pr_paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "forbidden_pr_paths_except": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "host_is_repo_checkout": {
+      "type": "boolean"
+    },
+    "label_namespace": {
+      "type": "string"
+    },
+    "label_write_guard": {
+      "type": "string",
+      "enum": [
+        "warn",
+        "enforce"
+      ]
+    },
+    "language_pack": {
+      "type": "string"
+    },
+    "lint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "description": "issuesmith.yaml key 'command'."
+        },
+        "fix_command": {
+          "description": "issuesmith.yaml key 'fix_command'."
+        }
+      }
+    },
+    "merge": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rebump_max": {
+          "description": "issuesmith.yaml key 'rebump_max'."
+        },
+        "state_wait_attempts": {
+          "description": "issuesmith.yaml key 'state_wait_attempts'."
+        },
+        "state_wait_seconds": {
+          "description": "issuesmith.yaml key 'state_wait_seconds'."
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cause_targets": {
+          "description": "issuesmith.yaml key 'cause_targets'."
+        },
+        "done_step": {
+          "description": "issuesmith.yaml key 'done_step'."
+        },
+        "repair_templates": {
+          "description": "issuesmith.yaml key 'repair_templates'."
+        }
+      }
+    },
+    "milestone_chain": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "auto_close_parent": {
+          "description": "issuesmith.yaml key 'auto_close_parent'."
+        },
+        "auto_develop": {
+          "description": "issuesmith.yaml key 'auto_develop'."
+        },
+        "child_priority": {
+          "type": "string",
+          "enum": [
+            "high",
+            "low",
+            "normal"
+          ]
+        },
+        "enabled": {
+          "description": "issuesmith.yaml key 'enabled'."
+        }
+      }
+    },
+    "name": {
+      "type": "string"
+    },
+    "observe": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "forge_max_consecutive_errors": {
+          "description": "issuesmith.yaml key 'forge_max_consecutive_errors'."
+        },
+        "main_health": {
+          "type": "object"
+        },
+        "max_api_calls": {
+          "description": "issuesmith.yaml key 'max_api_calls'."
+        },
+        "stall_minutes": {
+          "description": "issuesmith.yaml key 'stall_minutes'."
+        },
+        "systemic_min_issues": {
+          "description": "issuesmith.yaml key 'systemic_min_issues'."
+        },
+        "systemic_window_minutes": {
+          "description": "issuesmith.yaml key 'systemic_window_minutes'."
+        },
+        "task_timeout_minutes": {
+          "description": "issuesmith.yaml key 'task_timeout_minutes'."
+        },
+        "workflows": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "path_env_prefixes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "paths": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "brake_state": {
+          "type": "string"
+        },
+        "concurrency": {
+          "type": "string"
+        },
+        "diagnoses": {
+          "type": "string"
+        },
+        "done_dir": {
+          "type": "string"
+        },
+        "engine_state": {
+          "type": "string"
+        },
+        "exec_jsonl": {
+          "type": "string"
+        },
+        "external_dir": {
+          "type": "string"
+        },
+        "lanes": {
+          "type": "string"
+        },
+        "metrics": {
+          "type": "string"
+        },
+        "night_state": {
+          "type": "string"
+        },
+        "queue": {
+          "type": "string"
+        },
+        "queue_lock": {
+          "type": "string"
+        },
+        "queue_state": {
+          "type": "string"
+        },
+        "quota_state": {
+          "type": "string"
+        },
+        "seed": {
+          "type": "string"
+        },
+        "template_dir": {
+          "type": "string"
+        },
+        "workflow": {
+          "type": "string"
+        },
+        "worktrees_dir": {
+          "type": "string"
+        }
+      }
+    },
+    "phases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "advance_when": {
+            "description": "issuesmith.yaml key 'advance_when'."
+          },
+          "entry_step": {
+            "type": "string"
+          },
+          "excludes": {
+            "description": "issuesmith.yaml key 'excludes'."
+          },
+          "handler": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "preconditions": {
+            "description": "issuesmith.yaml key 'preconditions'."
+          },
+          "role": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "writes_files": {
+            "description": "issuesmith.yaml key 'writes_files'."
+          }
+        }
+      }
+    },
+    "pin_packages": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "repo": {
+      "type": "string",
+      "description": "Primary repository owner/name."
+    },
+    "scope_coupling": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "data_file_tests": {
+          "description": "issuesmith.yaml key 'data_file_tests'."
+        },
+        "enabled": {
+          "description": "issuesmith.yaml key 'enabled'."
+        },
+        "search_dirs": {
+          "description": "issuesmith.yaml key 'search_dirs'."
+        }
+      }
+    },
+    "scope_gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "description": "issuesmith.yaml key 'enabled'."
+        },
+        "hard_max_files": {
+          "description": "issuesmith.yaml key 'hard_max_files'."
+        },
+        "max_files": {
+          "description": "issuesmith.yaml key 'max_files'."
+        },
+        "max_lines": {
+          "description": "issuesmith.yaml key 'max_lines'."
+        }
+      }
+    },
+    "scope_size": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "atomic_phrases": {
+          "description": "issuesmith.yaml key 'atomic_phrases'."
+        },
+        "delete_with_new": {
+          "description": "issuesmith.yaml key 'delete_with_new'."
+        },
+        "enabled": {
+          "description": "issuesmith.yaml key 'enabled'."
+        },
+        "exclude_prefixes": {
+          "description": "issuesmith.yaml key 'exclude_prefixes'."
+        },
+        "max_concerns": {
+          "description": "issuesmith.yaml key 'max_concerns'."
+        },
+        "max_files": {
+          "description": "issuesmith.yaml key 'max_files'."
+        },
+        "max_slices": {
+          "description": "issuesmith.yaml key 'max_slices'."
+        }
+      }
+    },
+    "steps": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "accepts": {
+            "description": "issuesmith.yaml key 'accepts'."
+          },
+          "andon_when": {
+            "description": "issuesmith.yaml key 'andon_when'."
+          },
+          "input_kind": {
+            "description": "issuesmith.yaml key 'input_kind'."
+          },
+          "module": {
+            "description": "issuesmith.yaml key 'module'."
+          },
+          "recheck": {
+            "description": "issuesmith.yaml key 'recheck'."
+          },
+          "redo_on_conflict": {
+            "description": "issuesmith.yaml key 'redo_on_conflict'."
+          },
+          "repair": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "max": {
+                "description": "issuesmith.yaml key 'max'."
+              },
+              "push": {
+                "description": "issuesmith.yaml key 'push'."
+              }
+            }
+          },
+          "requires": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "review": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "failure_status": {
+                "description": "issuesmith.yaml key 'failure_status'."
+              },
+              "optional_variables": {
+                "description": "issuesmith.yaml key 'optional_variables'."
+              },
+              "problems_heading": {
+                "description": "issuesmith.yaml key 'problems_heading'."
+              },
+              "role": {
+                "description": "issuesmith.yaml key 'role'."
+              },
+              "success_status": {
+                "description": "issuesmith.yaml key 'success_status'."
+              },
+              "template": {
+                "description": "issuesmith.yaml key 'template'."
+              },
+              "tier": {
+                "description": "issuesmith.yaml key 'tier'."
+              }
+            }
+          },
+          "template": {
+            "description": "issuesmith.yaml key 'template'."
+          },
+          "tier": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "description": "issuesmith.yaml key 'kind'."
+              },
+              "light_max_diff_lines": {
+                "description": "issuesmith.yaml key 'light_max_diff_lines'."
+              }
+            }
+          },
+          "verify": {
+            "description": "issuesmith.yaml key 'verify'."
+          }
+        }
+      }
+    },
+    "supported_repos": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "target_remotes": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "terminal_labels": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "terminal_without_merge": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "tests": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "description": "issuesmith.yaml key 'command'."
+        },
+        "flaky_reruns": {
+          "description": "issuesmith.yaml key 'flaky_reruns'."
+        },
+        "python_bin_command": {
+          "description": "issuesmith.yaml key 'python_bin_command'."
+        },
+        "python_command": {
+          "description": "issuesmith.yaml key 'python_command'."
+        },
+        "report": {
+          "description": "issuesmith.yaml key 'report'."
+        },
+        "report_path": {
+          "description": "issuesmith.yaml key 'report_path'."
+        }
+      }
+    },
+    "timezone": {
+      "type": "string"
+    },
+    "version": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bump_command": {
+          "description": "issuesmith.yaml key 'bump_command'."
+        },
+        "policy": {
+          "description": "issuesmith.yaml key 'policy'."
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "repo": "example/app",
+      "phases": [
+        {
+          "name": "draft",
+          "role": "design",
+          "entry_step": "b1",
+          "handler": "brushup"
+        }
+      ]
+    }
+  ]
+}
