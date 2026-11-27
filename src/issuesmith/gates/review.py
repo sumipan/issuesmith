@@ -75,7 +75,7 @@ class ReviewGate:
         block_violations = _violations_from_reply_block(stdout, self._step_id)
         if block_violations is not None:
             return block_violations
-        # 移行期間の併読: #8165 の後のホストのテンプレートの切り替えが済んだら見出し読みを消す
+        # Transitional dual-read: remove heading parsing once host templates switch to problems (after #8165).
         if _stdout_is_review_result(stdout, self._review_cfg):
             return _violations_from_stdout(stdout, self._review_cfg, self._step_id)
         return [_engine_error_violation(rc, stdout, self._step_id)]
