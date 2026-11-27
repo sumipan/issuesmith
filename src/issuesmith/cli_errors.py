@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from typing import Any
 
@@ -18,11 +19,26 @@ ERROR_EXIT: dict[str, int] = {
 }
 
 
-def fail(code: str, message: str, hint: str | None = None) -> int:
+def fail(
+    code: str,
+    message: str,
+    hint: str | None = None,
+    *,
+    output_json: bool = False,
+) -> int:
+    rc = ERROR_EXIT[code]
+    if output_json:
+        print(
+            json.dumps(
+                {"error": {"code": code, "message": message, "hint": hint}},
+                ensure_ascii=False,
+            )
+        )
+        return rc
     print(f"error[{code}]: {message}", file=sys.stderr)
     if hint:
         print(f"hint: {hint}", file=sys.stderr)
-    return ERROR_EXIT[code]
+    return rc
 
 
 def _classify_error(message: str, subcommand_dests: frozenset[str]) -> str:

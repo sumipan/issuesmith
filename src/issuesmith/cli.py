@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from issuesmith.cli_errors import ContractParser, fail
+from issuesmith.errors import IssuesmithError
 
 _ANDON_USAGE = """\
 usage: issuesmith andon <subcommand> ...
@@ -115,8 +116,7 @@ _ISSUE_GATE_ENTRIES = {
 
 def _cmd_gate(argv: list[str]) -> int:
     if not argv:
-        print("gate: gate name required", file=sys.stderr)
-        return 2
+        return fail("MISSING_ARGUMENT", "gate name required", "pass a gate name as the first argument")
     gate_name, *rest = argv
 
     # New form: gate <name> --body-file ...  (== gate-preflight --gate <name> ...)
@@ -126,12 +126,12 @@ def _cmd_gate(argv: list[str]) -> int:
     if rest and not rest[0].startswith("-"):
         mod_name = _ISSUE_GATE_ENTRIES.get(gate_name)
         if mod_name is None:
-            print(
-                f"gate {gate_name}: issue-number form supports: "
-                f"{', '.join(sorted(_ISSUE_GATE_ENTRIES))}",
-                file=sys.stderr,
+            supported = ", ".join(sorted(_ISSUE_GATE_ENTRIES))
+            return fail(
+                "UNKNOWN_COMMAND",
+                f"gate {gate_name!r}: issue-number form is not supported",
+                f"supported gates: {supported}",
             )
-            return 2
         gate_mod = importlib.import_module(mod_name)
         sys.argv = [mod_name, *rest]
         gate_mod.main()
@@ -141,14 +141,16 @@ def _cmd_gate(argv: list[str]) -> int:
     if rest:
         return _run_gate_preflight(["--gate", gate_name, *rest])
 
-    print(f"gate {gate_name}: --body-file or an issue number is required", file=sys.stderr)
-    return 2
+    return fail(
+        "MISSING_ARGUMENT",
+        f"gate {gate_name}: --body-file or an issue number is required",
+        "pass --body-file PATH or an issue number",
+    )
 
 
 def _cmd_verify(argv: list[str]) -> int:
     if not argv:
-        print("verify: step id required", file=sys.stderr)
-        return 2
+        return fail("MISSING_ARGUMENT", "verify: step id required", "pass a step id, e.g. p1")
     step_id, *rest = argv
     from issuesmith.config import get_config
 
@@ -158,8 +160,11 @@ def _cmd_verify(argv: list[str]) -> int:
 
         return int(step_verify_main(step_id, rest))
 
-    print(f"verify: steps.{step_id}.verify is not declared", file=sys.stderr)
-    return 2
+    return fail(
+        "NOT_FOUND",
+        f"verify: steps.{step_id}.verify is not declared",
+        f"declare steps.{step_id}.verify in issuesmith.yaml",
+    )
 
 
 def _cmd_queue(argv: list[str]) -> int:
@@ -195,8 +200,7 @@ def _cmd_deps(argv: list[str]) -> int:
 
 def _cmd_tier(argv: list[str]) -> int:
     if not argv:
-        print("tier: step id required", file=sys.stderr)
-        return 2
+        return fail("MISSING_ARGUMENT", "tier: step id required", "pass a step id, e.g. p1")
     step_id, *rest = argv
     from issuesmith.config import get_config
 
@@ -206,8 +210,11 @@ def _cmd_tier(argv: list[str]) -> int:
 
         return int(step_tier_main(step_id, rest))
 
-    print(f"tier: steps.{step_id}.tier is not declared", file=sys.stderr)
-    return 2
+    return fail(
+        "NOT_FOUND",
+        f"tier: steps.{step_id}.tier is not declared",
+        f"declare steps.{step_id}.tier in issuesmith.yaml",
+    )
 
 
 def _cmd_comments(argv: list[str]) -> int:
@@ -598,8 +605,11 @@ def _cmd_resume(argv: list[str]) -> int:
         kwargs["mark_done"] = args.mark_done
     if args.force:
         if args.from_step is None:
-            print("resume: --force requires --from", file=sys.stderr)
-            return 2
+            return fail(
+                "MISSING_ARGUMENT",
+                "resume: --force requires --from",
+                "pass --from <step> together with --force",
+            )
         kwargs["force"] = True
     return _cmd_resume_fn(args.issue, **kwargs)
 
@@ -770,8 +780,11 @@ def _cmd_metrics_rework(argv: list[str]) -> int:
 
 def _cmd_metrics(argv: list[str]) -> int:
     if not argv or argv[0] != "rework":
-        print("metrics: expected 'rework'", file=sys.stderr)
-        return 2
+        return fail(
+            "UNKNOWN_COMMAND",
+            "metrics: expected 'rework'",
+            "usage: issuesmith metrics rework ...",
+        )
     return _cmd_metrics_rework(argv[1:])
 
 
@@ -792,8 +805,7 @@ def _cmd_main_health(_argv: list[str]) -> int:
     try:
         state = check(mh, state_path(cfg), repo_root=cfg.root)
     except MainHealthError as exc:
-        print(f"main_health: {exc}", file=sys.stderr)
-        return 2
+        return fail("FAILED", str(exc))
     if not had_worktree and mh.worktree.is_dir():
         print(f"main_health: created worktree {mh.worktree}")
     print(f"main_health: {state.status} {state.sha[:12]}")
@@ -866,15 +878,17 @@ def _cmd_lanes(argv: list[str]) -> int:
     args = parsed
     cfg = get_config()
     if cfg.paths.lanes is None:
-        print("lanes: paths.lanes is not configured", file=sys.stderr)
-        return 2
+        return fail(
+            "CONFIG_ERROR",
+            "lanes: paths.lanes is not configured",
+            "set paths.lanes in issuesmith.yaml",
+        )
 
     ledger_path = cfg.paths.lanes
     try:
         ledger = load_ledger(ledger_path, default_api_min=cfg.api_brake.min_remaining)
     except ConfigError as exc:
-        print(f"lanes: {exc}", file=sys.stderr)
-        return 2
+        return fail("CONFIG_ERROR", str(exc))
 
     ledger = select_workflow(ledger, cfg.label_namespace)
 
@@ -1008,7 +1022,16 @@ def main(argv: Sequence[str] | None = None) -> None:
         raise SystemExit(
             fail("UNKNOWN_COMMAND", f"unknown command: {cmd}", f"commands: {command_hint}")
         )
-    raise SystemExit(handler(rest))
+    try:
+        rc = handler(rest)
+    except IssuesmithError as exc:
+        rc = fail(
+            exc.code,
+            exc.message,
+            exc.hint,
+            output_json=("--json" in args),
+        )
+    raise SystemExit(rc)
 
 
 if __name__ == "__main__":
