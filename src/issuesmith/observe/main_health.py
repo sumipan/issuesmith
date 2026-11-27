@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
+from issuesmith.errors import IssuesmithError
+
 if TYPE_CHECKING:
     from issuesmith.config import IssuesmithConfig, MainHealthConfig
 
@@ -31,8 +33,16 @@ _OUTPUT_TAIL_LINES = 80
 _OUTPUT_TAIL_LINE_CHARS = 500
 
 
-class MainHealthError(RuntimeError):
+class MainHealthError(IssuesmithError, RuntimeError):
     """The health check could not run (git / worktree / timeout); state is not updated."""
+
+    code = "FAILED"
+
+    def __init__(self, message: str, *, hint: str | None = None) -> None:
+        super().__init__(
+            message,
+            hint=hint or f"fix observe.main_health or its worktree state: {message}",
+        )
 
 
 @dataclass(frozen=True)
@@ -223,7 +233,10 @@ def _ensure_worktree(
     if worktree.exists():
         raise MainHealthError(f"main_health worktree is not a directory: {worktree}")
     if repo_root is None:
-        raise MainHealthError(f"main_health worktree not found: {worktree}")
+        raise MainHealthError(
+            f"main_health worktree not found: {worktree}",
+            hint="set observe.main_health.worktree to an existing path or repo root",
+        )
 
     try:
         worktree.parent.mkdir(parents=True, exist_ok=True)

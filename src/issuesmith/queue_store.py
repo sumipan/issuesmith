@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Iterator, Literal
 
 from issuesmith.config import get_config
+from issuesmith.errors import IssuesmithError
 
 logger = logging.getLogger(__name__)
 
@@ -45,8 +46,13 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-class QueueValidationError(ValueError):
+class QueueValidationError(IssuesmithError, ValueError):
     """Invalid queue request input (exit 2)."""
+
+    code = "INVALID_VALUE"
+
+    def __init__(self, message: str, *, hint: str | None = None) -> None:
+        super().__init__(message, hint=hint or f"fix the invalid queue value: {message}")
 
 
 _REPO_BLOCK_SCOPE_RE = re.compile(r"^repo:[^/]+/[^/]+$")
@@ -77,12 +83,21 @@ def _validate_block_scope(scope: str) -> None:
         phase = scope[len("phase:") :]
         if phase in tuple(p.name for p in get_config().phases):
             return
-        raise QueueValidationError(f"invalid block scope: {scope!r}")
+        raise QueueValidationError(
+            f"invalid block scope: {scope!r}",
+            hint="use all, phase:<name>, or repo:owner/name",
+        )
     if scope.startswith("repo:"):
         if _REPO_BLOCK_SCOPE_RE.match(scope):
             return
-        raise QueueValidationError(f"invalid block scope: {scope!r}")
-    raise QueueValidationError(f"invalid block scope: {scope!r}")
+        raise QueueValidationError(
+            f"invalid block scope: {scope!r}",
+            hint="use all, phase:<name>, or repo:owner/name",
+        )
+    raise QueueValidationError(
+        f"invalid block scope: {scope!r}",
+        hint="use all, phase:<name>, or repo:owner/name",
+    )
 
 
 def _parse_block_until(value: str | None) -> datetime | None:

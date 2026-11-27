@@ -18,6 +18,7 @@ from typing import Any, Callable
 
 from ghdag.forge import ForgePort
 
+from issuesmith.errors import IssuesmithError
 from issuesmith.forge_api import api_request
 
 _DEFAULT_BLOCKED_BACKOFF = (5.0, 10.0, 20.0)
@@ -60,15 +61,24 @@ class MergeStateInfo:
         )
 
 
-class MergeStateTimeoutError(Exception):
+class MergeStateTimeoutError(IssuesmithError, Exception):
     """Raised when merge state does not reach a non-BLOCKED status before timeout."""
 
-    def __init__(self, pr_number: int, last_state: MergeStateInfo) -> None:
+    code = "FAILED"
+
+    def __init__(
+        self,
+        pr_number: int,
+        last_state: MergeStateInfo,
+        *,
+        hint: str | None = None,
+    ) -> None:
         self.pr_number = pr_number
         self.last_state = last_state
         super().__init__(
             f"merge state timeout for PR #{pr_number}: "
-            f"last mergeStateStatus={last_state.merge_state_status}"
+            f"last mergeStateStatus={last_state.merge_state_status}",
+            hint=hint or "retry when the merge queue unblocks or increase merge poll timeout",
         )
 
 
@@ -263,7 +273,11 @@ def wait_merge_state(
         else:
             sleeper(poll_interval_seconds)
 
-    raise MergeStateTimeoutError(number, last)
+    raise MergeStateTimeoutError(
+        number,
+        last,
+        hint="retry when the merge queue unblocks or increase merge poll timeout",
+    )
 
 
 def verify_local_merge(

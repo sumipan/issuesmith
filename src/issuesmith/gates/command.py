@@ -11,6 +11,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Sequence
 
+from issuesmith.errors import IssuesmithError
 from issuesmith.gate_registry import Violation
 from issuesmith.gates.base import ContractInput
 
@@ -20,8 +21,16 @@ _PYTEST_TIMEOUT_DEFAULT_SEC = 1500.0
 _INTERRUPTED_RC: frozenset[int] = frozenset({143, 137, -15, -9})
 
 
-class CommandStartError(RuntimeError):
+class CommandStartError(IssuesmithError, RuntimeError):
     """The configured command or python_bin launcher could not be started."""
+
+    code = "FAILED"
+
+    def __init__(self, message: str, *, hint: str | None = None) -> None:
+        super().__init__(
+            message,
+            hint=hint or "check PATH, python_bin_command, and the command argv",
+        )
 
 
 def _func_id(test_id: str) -> str:
@@ -69,7 +78,10 @@ def run_command(
         tail = partial[-_OUTPUT_TAIL:]
         return 124, f"command timed out after {limit:.0f} s\n{tail}"
     except OSError as exc:
-        raise CommandStartError(f"command could not be started: {argv!r}: {exc}") from exc
+        raise CommandStartError(
+            f"command could not be started: {argv!r}: {exc}",
+            hint="check PATH, python_bin_command, and the command argv",
+        ) from exc
     output = (proc.stdout or "") + (proc.stderr or "")
     return proc.returncode, output
 

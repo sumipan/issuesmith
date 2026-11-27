@@ -7,13 +7,22 @@ import subprocess
 from pathlib import Path
 
 from issuesmith.config import get_config
+from issuesmith.errors import IssuesmithError
 
 _PYTHON_BIN_TIMEOUT_SEC = 600.0
 _STDERR_TAIL = 2000
 
 
-class WorktreePythonError(RuntimeError):
+class WorktreePythonError(IssuesmithError, RuntimeError):
     """``python_bin_command`` failed or returned an unusable path."""
+
+    code = "FAILED"
+
+    def __init__(self, message: str, *, hint: str | None = None) -> None:
+        super().__init__(
+            message,
+            hint=hint or "check tests.python_bin_command and the worktree environment",
+        )
 
 
 def _stderr_tail(proc: subprocess.CompletedProcess[str]) -> str:
@@ -44,7 +53,8 @@ def python_bin_for(worktree: Path) -> Path | None:
     except OSError as exc:
         raise WorktreePythonError(
             f"python_bin_command could not be started: {cmd_display} "
-            f"(worktree={worktree_abs}): {exc}"
+            f"(worktree={worktree_abs}): {exc}",
+            hint="check tests.python_bin_command in issuesmith.yaml",
         ) from exc
     except subprocess.TimeoutExpired as exc:
         partial = (exc.stderr or exc.stdout or b"")

@@ -7,6 +7,8 @@ import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 
+from issuesmith.errors import IssuesmithError
+
 # Same value as issuesmith.ops.version_bump._BUMP_COMMIT_PREFIX (standalone script).
 BUMP_SUBJECT_PREFIX = "chore: bump version to "
 
@@ -14,8 +16,16 @@ _PLUS_VERSION_VALUE_RE = re.compile(r"""^\+\s*version\s*=\s*["']([^"']+)["']""")
 _MINUS_VERSION_LINE_RE = re.compile(r"""^-\s*version\s*=\s*["']""")
 
 
-class BumpCommitsError(RuntimeError):
+class BumpCommitsError(IssuesmithError, RuntimeError):
     """Git could not list or rewrite publish bump commits."""
+
+    code = "FAILED"
+
+    def __init__(self, message: str, *, hint: str | None = None) -> None:
+        super().__init__(
+            message,
+            hint=hint or f"fix the publish bump commit state: {message}",
+        )
 
 
 def _run_git(worktree: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -27,7 +37,10 @@ def _run_git(worktree: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "").strip()
-        raise BumpCommitsError(detail or f"git {' '.join(args)} failed")
+        raise BumpCommitsError(
+            detail or f"git {' '.join(args)} failed",
+            hint=f"run git -C {worktree} {' '.join(args)} in the worktree and fix the repo state",
+        )
     return proc
 
 

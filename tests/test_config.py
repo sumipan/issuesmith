@@ -14,6 +14,7 @@ from issuesmith.config import (
     load_config,
     reset_config_cache,
 )
+from issuesmith.errors import IssuesmithError
 
 # repo is required (#3081).
 _LEGACY_REPO = "sumipan/nexus"
@@ -300,7 +301,7 @@ def test_path_env_prefixes_invalid_type_raises(tmp_path, monkeypatch):
     )
     monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
     reset_config_cache()
-    with pytest.raises(ValueError, match="path_env_prefixes must be a list"):
+    with pytest.raises(ConfigError, match="path_env_prefixes must be a list"):
         load_config()
 
 
@@ -375,7 +376,7 @@ def test_main_health_halt_on_red_non_bool_raises(tmp_path, monkeypatch, bad):
     )
     monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
     reset_config_cache()
-    with pytest.raises(ValueError, match="halt_on_red"):
+    with pytest.raises(ConfigError, match="halt_on_red"):
         load_config()
 
 
@@ -684,3 +685,71 @@ def test_clone_url_resolves_target_remotes(
     assert cfg.clone_url("a/b") == str(rel_bare.resolve())
     assert cfg.clone_url("a/c") == "ssh://git@example.com/c.git"
     assert cfg.clone_url("a/d") == "https://github.com/a/d.git"
+
+
+def test_invalid_yaml_raises_config_error_with_path_hint(tmp_path, monkeypatch):
+    """Refs sumipan/issuesmith#8128 — broken YAML surfaces ConfigError with path hint."""
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text("repo: [\n", encoding="utf-8")
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(cfg_path)
+    assert excinfo.value.code == "CONFIG_ERROR"
+    assert str(cfg_path) in (excinfo.value.hint or "")
+
+
+def test_invalid_scalar_type_reports_key_path(tmp_path, monkeypatch):
+    """Refs sumipan/issuesmith#8128 — non-integer concurrency.default reports key path."""
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"repo": "example/repo", "concurrency": {"default": "nope"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    with pytest.raises(ConfigError) as excinfo:
+        load_config()
+    assert "concurrency.default" in excinfo.value.message
+
+
+def test_config_error_preserves_value_error_mro():
+    """Refs sumipan/issuesmith#8128 — ConfigError remains a ValueError subclass."""
+    assert issubclass(ConfigError, IssuesmithError)
+    assert issubclass(ConfigError, ValueError)
+
+
+def test_external_leak_cjk_rejects_string_false(tmp_path, monkeypatch):
+    """Refs sumipan/issuesmith#8128 — external_leak booleans reject string literals."""
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump(
+            {
+                "repo": "example/app",
+                "external_leak": {"cjk_free_external_targets": "false"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    with pytest.raises(ConfigError, match="external_leak.cjk_free_external_targets"):
+        load_config(cfg_path)
+
+
+def test_config_show_formats_config_error(tmp_path, monkeypatch, capsys):
+    """Refs sumipan/issuesmith#8128 — config show prints error[CONFIG_ERROR] without traceback."""
+    from issuesmith import cli
+
+    cfg_path = tmp_path / "issuesmith.yaml"
+    cfg_path.write_text("repo: [\n", encoding="utf-8")
+    monkeypatch.setenv("ISSUESMITH_CONFIG", str(cfg_path))
+    reset_config_cache()
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["config", "show"])
+    assert exc_info.value.code == 1
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    lines = [ln for ln in err.splitlines() if ln.strip()]
+    assert lines[0].startswith("error[CONFIG_ERROR]:")
+    assert any(ln.startswith("hint:") for ln in lines)

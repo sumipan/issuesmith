@@ -15,6 +15,7 @@ import yaml
 
 from issuesmith.andon import diagnosis_signature, note
 from issuesmith.config import AndonDiagnoseConfig, IssuesmithConfig
+from issuesmith.errors import IssuesmithError
 
 _DIAGNOSIS_MARKER = re.compile(
     r"<!--\s*issuesmith-diagnosis:\s*([0-9a-f]{12})\s*-->", re.IGNORECASE
@@ -407,8 +408,16 @@ def apply_diagnose_plan(
     return replace(plan, failures=failures)
 
 
-class ProposalError(ValueError):
+class ProposalError(IssuesmithError, ValueError):
     """Raised when LLM diagnosis output fails deterministic validation."""
+
+    code = "INVALID_VALUE"
+
+    def __init__(self, message: str, *, hint: str | None = None) -> None:
+        super().__init__(
+            message,
+            hint=hint or f"fix the andon diagnosis proposal: {message}",
+        )
 
 
 @dataclass(frozen=True)
@@ -430,7 +439,10 @@ _FIX_KIND_KEYS: dict[str, frozenset[str]] = {
 def _last_proposal_fence(text: str) -> Mapping[str, Any]:
     matches = list(_PROPOSAL_FENCE.finditer(text))
     if not matches:
-        raise ProposalError("missing andon-diagnosis block")
+        raise ProposalError(
+            "missing andon-diagnosis block",
+            hint="wrap the proposal in a ```andon-diagnosis fenced block",
+        )
     body = matches[-1].group(1)
     try:
         data = yaml.safe_load(body)

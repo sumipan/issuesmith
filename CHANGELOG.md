@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.224.1 - 2026-11-27
+
+### Added
+
+- errors: align ConfigError and public exceptions with IssuesmithError
+
 ## 0.223.0 - 2026-11-27
 
 ### Added

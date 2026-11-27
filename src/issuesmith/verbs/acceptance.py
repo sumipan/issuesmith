@@ -16,6 +16,7 @@ from issuesmith.ac_contract import (
     materialize_gate_root,
     run_checks,
 )
+from issuesmith.errors import IssuesmithError
 from issuesmith.gate_rules.ac_complete_rules import get_unchecked_count
 from issuesmith.pr_scope import DIFF_LINES_FALLBACK, find_pr_for_branch
 from issuesmith.step_tier import pr_diff_tier
@@ -35,8 +36,16 @@ Action = Literal["proceed", "retry", "migrate"]
 Tier = Literal["light", "heavy"]
 
 
-class AcceptanceError(RuntimeError):
+class AcceptanceError(IssuesmithError, RuntimeError):
     """Temporary gate root (origin/base) could not be materialized."""
+
+    code = "INVALID_VALUE"
+
+    def __init__(self, message: str, *, hint: str | None = None) -> None:
+        super().__init__(
+            message,
+            hint=hint or f"fix the acceptance contract or repository state: {message}",
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,7 +167,10 @@ def check_acceptance(
             try:
                 gate_root = materialize_gate_root(repo_cwd, base_branch, prefix)
             except GateMaterializationError as exc:
-                raise AcceptanceError(str(exc)) from exc
+                raise AcceptanceError(
+                    str(exc),
+                    hint=f"git fetch -q origin {base_branch} in {repo_cwd}",
+                ) from exc
             materialized.append((repo_cwd, gate_root))
             repo_roots[slug] = gate_root
 

@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Literal, Mapping, Protocol
 
+from issuesmith.errors import IssuesmithError
+
 NON_REPAIRABLE_RULE_IDS: frozenset[str] = frozenset({
     "pr_diff_scope.forbidden_path",
     "base_freshness.fetch_transient_exhausted",
@@ -76,8 +78,16 @@ class GateBuildContext:
     variables: Mapping[str, str] = field(default_factory=dict)
 
 
-class GateBuildError(ValueError):
+class GateBuildError(IssuesmithError, ValueError):
     """Raised by GateEntry.build when the gate cannot be instantiated."""
+
+    code = "CONFIG_ERROR"
+
+    def __init__(self, message: str, *, hint: str | None = None) -> None:
+        super().__init__(
+            message,
+            hint=hint or f"fix the gate configuration: {message}",
+        )
 
 
 class RequiresGate(Protocol):
@@ -110,7 +120,8 @@ def _issue_number(ctx: GateBuildContext) -> int | None:
 def _require_worktree(gate_id: str, ctx: GateBuildContext) -> Path:
     if ctx.worktree_path is None:
         raise GateBuildError(
-            f"gate {gate_id!r} requires worktree_path but context has none"
+            f"gate {gate_id!r} requires worktree_path but context has none",
+            hint="dispatch with a worktree_path or use an issue-only gate",
         )
     return ctx.worktree_path
 

@@ -16,12 +16,50 @@ from typing import Any, Literal, Mapping
 
 import yaml
 
+from issuesmith.errors import IssuesmithError
 from issuesmith.language import EN, LanguagePack, load_language_pack
 from issuesmith.rule_ids import normalize_rule_id
 
 
-class ConfigError(ValueError):
+class ConfigError(IssuesmithError, ValueError):
     """Raised when issuesmith configuration is invalid."""
+
+    code = "CONFIG_ERROR"
+
+    def __init__(self, message: str, *, hint: str | None = None) -> None:
+        super().__init__(
+            message,
+            hint=hint or f"fix the issuesmith.yaml value described by: {message}",
+        )
+
+
+def _as_int(value: Any, key_path: str) -> int:
+    if isinstance(value, bool):
+        raise ConfigError(
+            f"{key_path} must be an integer",
+            hint=f"expected integer, got bool: {value!r}",
+        )
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.isdigit():
+            return int(stripped, 10)
+        if stripped.startswith("-") and stripped[1:].isdigit():
+            return int(stripped, 10)
+    raise ConfigError(
+        f"{key_path} must be an integer",
+        hint=f"expected integer, got {type(value).__name__}: {value!r}",
+    )
+
+
+def _as_bool(value: Any, key_path: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    raise ConfigError(
+        f"{key_path} must be a boolean",
+        hint=f"expected boolean, got {type(value).__name__}: {value!r}",
+    )
 
 _CONFIG_ENV = "ISSUESMITH_CONFIG"
 _CONFIG_FILENAME = "issuesmith.yaml"
@@ -585,11 +623,25 @@ def _find_upward(start: Path, filename: str) -> Path | None:
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
-    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        mark = getattr(exc, "problem_mark", None)
+        if mark is not None:
+            line_hint = f"{path}:{mark.line + 1}"
+        else:
+            line_hint = str(path)
+        raise ConfigError(
+            f"invalid issuesmith config YAML: {path}",
+            hint=line_hint,
+        ) from exc
     if raw is None:
         return {}
     if not isinstance(raw, dict):
-        raise ValueError(f"issuesmith config must be a mapping: {path}")
+        raise ConfigError(
+            "issuesmith config must be a mapping",
+            hint=f"expected a mapping at {path}, got {type(raw).__name__}",
+        )
     return raw
 
 
@@ -694,7 +746,10 @@ def _build_pause_ttl_sec(raw: Any, role: str) -> int:
     if raw is None:
         return 3600
     if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1:
-        raise ValueError(f"engines.{role}.pause_ttl_sec must be a positive integer")
+        raise ConfigError(
+            f"engines.{role}.pause_ttl_sec must be a positive integer",
+            hint=f"expected a positive integer, got {type(raw).__name__}: {raw!r}",
+        )
     return raw
 
 
@@ -772,11 +827,17 @@ def _build_engines(raw: Mapping[str, Any] | None) -> dict[str, RoleConfig]:
 def _build_concurrency(raw: Mapping[str, Any] | None) -> ConcurrencyConfig:
     if not raw:
         return ConcurrencyConfig(default=1, per_engine={})
-    default = int(raw.get("default") or 1)
+    default_raw = raw.get("default")
+    default = 1 if default_raw is None else _as_int(default_raw, "concurrency.default")
     per_raw = raw.get("per_engine") or {}
-    per_engine = {str(k): int(v) for k, v in dict(per_raw).items()}
-    strict_order = bool(raw.get("strict_order", False))
-    max_dispatch_per_tick = max(1, int(raw.get("max_dispatch_per_tick") or 1))
+    per_engine = {
+        str(k): _as_int(v, f"concurrency.per_engine.{k}")
+        for k, v in dict(per_raw).items()
+    }
+    strict_order = _as_bool(raw.get("strict_order", False), "concurrency.strict_order")
+    mdpt_raw = raw.get("max_dispatch_per_tick")
+    mdpt = 1 if mdpt_raw is None else _as_int(mdpt_raw, "concurrency.max_dispatch_per_tick")
+    max_dispatch_per_tick = max(1, mdpt)
     return ConcurrencyConfig(
         default=default,
         per_engine=per_engine,
@@ -789,10 +850,13 @@ def _build_milestone_chain(raw: Mapping[str, Any] | None) -> MilestoneChainConfi
     if not raw:
         return MilestoneChainConfig()
     return MilestoneChainConfig(
-        enabled=bool(raw.get("enabled", False)),
+        enabled=_as_bool(raw.get("enabled", False), "milestone_chain.enabled"),
         child_priority=str(raw.get("child_priority") or "normal"),
-        auto_develop=bool(raw.get("auto_develop", True)),
-        auto_close_parent=bool(raw.get("auto_close_parent", True)),
+        auto_develop=_as_bool(raw.get("auto_develop", True), "milestone_chain.auto_develop"),
+        auto_close_parent=_as_bool(
+            raw.get("auto_close_parent", True),
+            "milestone_chain.auto_close_parent",
+        ),
     )
 
 
@@ -801,19 +865,21 @@ def _build_triage(raw: Mapping[str, Any] | None) -> TriageConfig:
         return TriageConfig()
     defaults = TriageConfig()
     return TriageConfig(
-        enabled=bool(raw.get("enabled", defaults.enabled)),
+        enabled=_as_bool(raw.get("enabled", defaults.enabled), "triage.enabled"),
         engine=str(raw.get("engine") or defaults.engine),
         model=str(raw.get("model") or defaults.model),
-        timeout=int(raw.get("timeout", defaults.timeout)),
-        body_chars=int(raw.get("body_chars", defaults.body_chars)),
-        circuit_breaker_threshold=int(
-            raw.get("circuit_breaker_threshold", defaults.circuit_breaker_threshold)
+        timeout=_as_int(raw.get("timeout", defaults.timeout), "triage.timeout"),
+        body_chars=_as_int(raw.get("body_chars", defaults.body_chars), "triage.body_chars"),
+        circuit_breaker_threshold=_as_int(
+            raw.get("circuit_breaker_threshold", defaults.circuit_breaker_threshold),
+            "triage.circuit_breaker_threshold",
         ),
-        circuit_breaker_reset_seconds=int(
+        circuit_breaker_reset_seconds=_as_int(
             raw.get(
                 "circuit_breaker_reset_seconds",
                 defaults.circuit_breaker_reset_seconds,
-            )
+            ),
+            "triage.circuit_breaker_reset_seconds",
         ),
     )
 
@@ -822,7 +888,10 @@ def _label_list(raw: Any, *, field: str, index: int) -> tuple[str, ...]:
     if raw is None:
         return ()
     if not isinstance(raw, list):
-        raise ValueError(f"phases[{index}].{field} must be a list of strings")
+        raise ConfigError(
+            f"phases[{index}].{field} must be a list of strings",
+            hint="expected a list of strings",
+        )
     return tuple(str(x) for x in raw if x)
 
 
@@ -830,26 +899,33 @@ def _build_phases(raw: Any) -> tuple[PhaseConfig, ...]:
     if raw is None:
         raise ConfigError("phases must be declared")
     if not isinstance(raw, list):
-        raise ValueError("phases must be a list of mappings")
+        raise ConfigError(
+            "phases must be a list of mappings",
+            hint=f"expected a list, got {type(raw).__name__}",
+        )
     from issuesmith.preconditions import PRECONDITION_REGISTRY, external_reference_valid
 
     phases: list[PhaseConfig] = []
     for i, item in enumerate(raw):
         if not isinstance(item, Mapping):
-            raise ValueError(f"phases[{i}] must be a mapping")
+            raise ConfigError(
+                f"phases[{i}] must be a mapping",
+                hint=f"expected a mapping, got {type(item).__name__}",
+            )
         name = item.get("name")
         role = item.get("role")
         entry_step = item.get("entry_step")
         if not name or not role or not entry_step:
-            raise ValueError(
-                f"phases[{i}] requires non-empty name, role, and entry_step"
+            raise ConfigError(
+                f"phases[{i}] requires non-empty name, role, and entry_step",
+                hint="set non-empty name, role, and entry_step",
             )
         handler = str(item.get("handler") or "").strip()
         if not handler:
             raise ConfigError(f"phases[{i}].handler is required")
         preconditions = _label_list(item.get("preconditions"), field="preconditions", index=i)
         excludes = _label_list(item.get("excludes"), field="excludes", index=i)
-        writes_files = bool(item.get("writes_files", True))
+        writes_files = _as_bool(item.get("writes_files", True), f"phases[{i}].writes_files")
         advance_when = _label_list(item.get("advance_when"), field="advance_when", index=i)
         for pred in advance_when:
             if ":" in pred:
@@ -867,7 +943,10 @@ def _build_phases(raw: Any) -> tuple[PhaseConfig, ...]:
         elif isinstance(raw_steps, list):
             steps = tuple(str(x) for x in raw_steps if x)
         else:
-            raise ValueError(f"phases[{i}].steps must be a list of step ids")
+            raise ConfigError(
+                f"phases[{i}].steps must be a list of step ids",
+                hint="expected a list of step ids",
+            )
         phases.append(
             PhaseConfig(
                 name=str(name),
@@ -882,7 +961,10 @@ def _build_phases(raw: Any) -> tuple[PhaseConfig, ...]:
             )
         )
     if not phases:
-        raise ValueError("phases must not be empty")
+        raise ConfigError(
+            "phases must not be empty",
+            hint="declare at least one phase",
+        )
     owner: dict[str, str] = {}
     for phase in phases:
         for step in phase.steps or (phase.entry_step,):
@@ -1096,7 +1178,10 @@ def _build_steps(raw: Mapping[str, Any] | None) -> dict[str, StepConfig]:
     _valid_input_kinds = {"issue", "worktree", "artifact"}
     for step_id, conf in raw.items():
         if not isinstance(conf, Mapping):
-            raise ValueError(f"steps.{step_id} must be a mapping")
+            raise ConfigError(
+                f"steps.{step_id} must be a mapping",
+                hint=f"expected a mapping, got {type(conf).__name__}",
+            )
         module_raw = conf.get("module")
         # module is optional: absent/empty means LLM-only step (run via engine run-guarded)
         module = str(module_raw).strip() if module_raw else ""
@@ -1219,7 +1304,10 @@ def _build_forbidden_pr_paths(raw: Any) -> tuple[str, ...]:
     if raw is None:
         return _DEFAULT_FORBIDDEN_PR_PATHS
     if not isinstance(raw, list):
-        raise ValueError("forbidden_pr_paths must be a list of strings")
+        raise ConfigError(
+            "forbidden_pr_paths must be a list of strings",
+            hint=f"expected a list, got {type(raw).__name__}",
+        )
     return tuple(str(x) for x in raw)
 
 
@@ -1227,7 +1315,10 @@ def _build_forbidden_pr_paths_except(raw: Any) -> tuple[str, ...]:
     if raw is None:
         return ()
     if not isinstance(raw, list):
-        raise ValueError("forbidden_pr_paths_except must be a list of strings")
+        raise ConfigError(
+            "forbidden_pr_paths_except must be a list of strings",
+            hint=f"expected a list, got {type(raw).__name__}",
+        )
     return tuple(str(x) for x in raw)
 
 
@@ -1236,10 +1327,13 @@ def _build_scope_gate(raw: Mapping[str, Any] | None) -> ScopeGateConfig:
     if not raw:
         return defaults
     return ScopeGateConfig(
-        enabled=bool(raw.get("enabled", defaults.enabled)),
-        max_files=int(raw.get("max_files", defaults.max_files)),
-        max_lines=int(raw.get("max_lines", defaults.max_lines)),
-        hard_max_files=int(raw.get("hard_max_files", defaults.hard_max_files)),
+        enabled=_as_bool(raw.get("enabled", defaults.enabled), "scope_gate.enabled"),
+        max_files=_as_int(raw.get("max_files", defaults.max_files), "scope_gate.max_files"),
+        max_lines=_as_int(raw.get("max_lines", defaults.max_lines), "scope_gate.max_lines"),
+        hard_max_files=_as_int(
+            raw.get("hard_max_files", defaults.hard_max_files),
+            "scope_gate.hard_max_files",
+        ),
     )
 
 
@@ -1247,7 +1341,10 @@ def _build_terminal_labels(raw: Any) -> tuple[str, ...]:
     if raw is None:
         return ()
     if not isinstance(raw, list):
-        raise ValueError("terminal_labels must be a list of strings")
+        raise ConfigError(
+            "terminal_labels must be a list of strings",
+            hint=f"expected a list, got {type(raw).__name__}",
+        )
     return tuple(str(x) for x in raw)
 
 
@@ -1255,7 +1352,10 @@ def _build_path_env_prefixes(raw: Any) -> tuple[str, ...]:
     if raw is None:
         return ()
     if not isinstance(raw, list):
-        raise ValueError("path_env_prefixes must be a list of strings")
+        raise ConfigError(
+            "path_env_prefixes must be a list of strings",
+            hint=f"expected a list, got {type(raw).__name__}",
+        )
     return tuple(str(x) for x in raw)
 
 
@@ -1263,7 +1363,10 @@ def _build_terminal_without_merge(raw: Any) -> tuple[str, ...]:
     if raw is None:
         return ()
     if not isinstance(raw, list):
-        raise ValueError("terminal_without_merge must be a list of strings")
+        raise ConfigError(
+            "terminal_without_merge must be a list of strings",
+            hint=f"expected a list, got {type(raw).__name__}",
+        )
     return tuple(str(x) for x in raw)
 
 
@@ -1276,9 +1379,17 @@ def _build_scope_coupling(raw: Mapping[str, Any] | None) -> ScopeCouplingConfig:
             "remove it from issuesmith.yaml (requires-chain validation replaced it)"
         )
     enabled_raw = raw.get("enabled")
-    enabled = True if enabled_raw is None else bool(enabled_raw)
+    enabled = (
+        True
+        if enabled_raw is None
+        else _as_bool(enabled_raw, "scope_coupling.enabled")
+    )
     dft_raw = raw.get("data_file_tests")
-    data_file_tests = True if dft_raw is None else bool(dft_raw)
+    data_file_tests = (
+        True
+        if dft_raw is None
+        else _as_bool(dft_raw, "scope_coupling.data_file_tests")
+    )
     search_dirs: tuple[str, ...] = ("tests", "src")
     if "search_dirs" in raw:
         sd_raw = raw["search_dirs"]
@@ -1340,11 +1451,14 @@ def _build_scope_size(
             validated.append(item)
         atomic_phrases = tuple(validated)
     return ScopeSizeConfig(
-        enabled=bool(raw.get("enabled", defaults.enabled)),
+        enabled=_as_bool(raw.get("enabled", defaults.enabled), "scope_size.enabled"),
         max_files=limits["max_files"],
         max_concerns=limits["max_concerns"],
         max_slices=limits["max_slices"],
-        delete_with_new=bool(raw.get("delete_with_new", defaults.delete_with_new)),
+        delete_with_new=_as_bool(
+            raw.get("delete_with_new", defaults.delete_with_new),
+            "scope_size.delete_with_new",
+        ),
         exclude_prefixes=exclude_prefixes,
         atomic_phrases=atomic_phrases,
         **vocab,
@@ -1594,7 +1708,11 @@ def _build_derived_allow(raw: Mapping[str, Any] | None) -> DerivedAllowConfig:
             f"derived_allow supports only 'enabled' and 'ledger_globs'; unknown keys: {unknown}"
         )
     enabled_raw = raw.get("enabled")
-    enabled = True if enabled_raw is None else bool(enabled_raw)
+    enabled = (
+        True
+        if enabled_raw is None
+        else _as_bool(enabled_raw, "derived_allow.enabled")
+    )
     if "ledger_globs" not in raw:
         return DerivedAllowConfig(enabled=enabled)
     globs_raw = raw["ledger_globs"]
@@ -1611,17 +1729,28 @@ def _build_external_leak(raw: Mapping[str, Any] | None) -> ExternalLeakConfig:
         raise ConfigError(
             f"external_leak supports only 'cjk_free_external_targets'; unknown keys: {unknown}"
         )
-    return ExternalLeakConfig(cjk_free_external_targets=bool(raw.get("cjk_free_external_targets")))
+    target_raw = raw.get("cjk_free_external_targets", False)
+    return ExternalLeakConfig(
+        cjk_free_external_targets=_as_bool(
+            target_raw, "external_leak.cjk_free_external_targets"
+        ),
+    )
 
 
 def _build_main_health(raw: Any, root: Path) -> MainHealthConfig | None:
     if raw is None:
         return None
     if not isinstance(raw, Mapping):
-        raise ValueError("observe.main_health must be a mapping")
+        raise ConfigError(
+            "observe.main_health must be a mapping",
+            hint=f"expected a mapping, got {type(raw).__name__}",
+        )
     worktree_raw = str(raw.get("worktree") or "").strip()
     if not worktree_raw:
-        raise ValueError("observe.main_health.worktree is required")
+        raise ConfigError(
+            "observe.main_health.worktree is required",
+            hint="set observe.main_health.worktree to a worktree path",
+        )
     command_raw = raw.get("command")
     if isinstance(command_raw, str):
         command = tuple(shlex.split(command_raw))
@@ -1630,10 +1759,12 @@ def _build_main_health(raw: Any, root: Path) -> MainHealthConfig | None:
     else:
         command = ()
     if not command:
-        raise ValueError("observe.main_health.command is required")
+        raise ConfigError(
+            "observe.main_health.command is required",
+            hint="set observe.main_health.command to a shell command",
+        )
     halt_on_red_raw = raw.get("halt_on_red", True)
-    if not isinstance(halt_on_red_raw, bool):
-        raise ValueError("observe.main_health.halt_on_red must be a bool")
+    halt_on_red = _as_bool(halt_on_red_raw, "observe.main_health.halt_on_red")
     worktree = Path(worktree_raw).expanduser()
     if not worktree.is_absolute():
         worktree = root / worktree
@@ -1641,8 +1772,11 @@ def _build_main_health(raw: Any, root: Path) -> MainHealthConfig | None:
         worktree=worktree,
         command=command,
         base_branch=str(raw.get("base_branch") or "main"),
-        timeout_seconds=int(raw.get("timeout_seconds", 1800)),
-        halt_on_red=halt_on_red_raw,
+        timeout_seconds=_as_int(
+            raw.get("timeout_seconds", 1800),
+            "observe.main_health.timeout_seconds",
+        ),
+        halt_on_red=halt_on_red,
     )
 
 
@@ -1690,14 +1824,30 @@ def _build_observe(
     if not raw:
         return defaults
     return ObserveConfig(
-        stall_minutes=int(raw.get("stall_minutes", defaults.stall_minutes)),
-        task_timeout_minutes=int(raw.get("task_timeout_minutes", defaults.task_timeout_minutes)),
-        systemic_min_issues=int(raw.get("systemic_min_issues", defaults.systemic_min_issues)),
-        systemic_window_minutes=int(raw.get("systemic_window_minutes", defaults.systemic_window_minutes)),
-        forge_max_consecutive_errors=int(
-            raw.get("forge_max_consecutive_errors", defaults.forge_max_consecutive_errors)
+        stall_minutes=_as_int(
+            raw.get("stall_minutes", defaults.stall_minutes),
+            "observe.stall_minutes",
         ),
-        max_api_calls=int(raw.get("max_api_calls", defaults.max_api_calls)),
+        task_timeout_minutes=_as_int(
+            raw.get("task_timeout_minutes", defaults.task_timeout_minutes),
+            "observe.task_timeout_minutes",
+        ),
+        systemic_min_issues=_as_int(
+            raw.get("systemic_min_issues", defaults.systemic_min_issues),
+            "observe.systemic_min_issues",
+        ),
+        systemic_window_minutes=_as_int(
+            raw.get("systemic_window_minutes", defaults.systemic_window_minutes),
+            "observe.systemic_window_minutes",
+        ),
+        forge_max_consecutive_errors=_as_int(
+            raw.get("forge_max_consecutive_errors", defaults.forge_max_consecutive_errors),
+            "observe.forge_max_consecutive_errors",
+        ),
+        max_api_calls=_as_int(
+            raw.get("max_api_calls", defaults.max_api_calls),
+            "observe.max_api_calls",
+        ),
         main_health=_build_main_health(raw.get("main_health"), root or Path.cwd()),
         workflows=_build_observe_workflows(raw.get("workflows"), label_namespace=label_namespace),
     )
@@ -1860,7 +2010,10 @@ def _build_andon(raw: Mapping[str, Any] | None) -> AndonConfig:
         action = str(item.get("action") or "").strip()
         if not action:
             raise ConfigError(f"andon.auto_answer[{name!r}].action is required")
-        max_per_issue = int(item.get("max_per_issue", 1))
+        max_per_issue = _as_int(
+            item.get("max_per_issue", 1),
+            f"andon.auto_answer[{name!r}].max_per_issue",
+        )
         if max_per_issue < 1:
             raise ConfigError(f"andon.auto_answer[{name!r}].max_per_issue must be >= 1")
         rules.append(
@@ -1884,16 +2037,20 @@ def _build_api_brake(raw: Mapping[str, Any] | None) -> ApiBreakConfig:
     if not raw:
         return defaults
     return ApiBreakConfig(
-        enabled=bool(raw.get("enabled", defaults.enabled)),
-        min_remaining=int(raw.get("min_remaining", defaults.min_remaining)),
+        enabled=_as_bool(raw.get("enabled", defaults.enabled), "api_brake.enabled"),
+        min_remaining=_as_int(
+            raw.get("min_remaining", defaults.min_remaining),
+            "api_brake.min_remaining",
+        ),
     )
 
 
 def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
     repo_raw = data.get("repo")
     if not repo_raw or not str(repo_raw).strip():
-        raise ValueError(
-            "issuesmith.yaml must set repo: owner/name"
+        raise ConfigError(
+            "issuesmith.yaml must set repo: owner/name",
+            hint="set repo to owner/name",
         )
     repo = str(repo_raw).strip()
     label_namespace = str(data.get("label_namespace") or "issuesmith")

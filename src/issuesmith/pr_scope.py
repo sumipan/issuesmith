@@ -14,6 +14,7 @@ from ghdag.forge import ForgePort
 
 from issuesmith.config import _DEFAULT_FORBIDDEN_PR_PATHS, get_config
 from issuesmith.context_hook import parse_issue_metadata
+from issuesmith.errors import IssuesmithError
 from issuesmith.forge_api import api_request
 from issuesmith.gate_registry import Violation
 
@@ -28,8 +29,16 @@ _FIXTURE_EXCLUDE = _FIXTURE_EXCLUDES[0]  # backward compat
 _DERIVED_ENTRY_RE = re.compile(r"^[^\s/][^\s]*$|^[a-zA-Z0-9_./\-*]+\*\*$")
 
 
-class DerivedAllowPathsError(ValueError):
+class DerivedAllowPathsError(IssuesmithError, ValueError):
     """Raised when ``derived_allow_paths_from_result`` finds malformed entries."""
+
+    code = "INVALID_VALUE"
+
+    def __init__(self, message: str, *, hint: str | None = None) -> None:
+        super().__init__(
+            message,
+            hint=hint or f"fix the derived_allow_paths entry: {message}",
+        )
 
 
 def _strip_path(path: str) -> str:
@@ -364,10 +373,14 @@ def _validate_derived_entry(entry: str) -> str:
         normalized = normalize_allow_path(entry)
     except ValueError:
         raise DerivedAllowPathsError(
-            f"invalid derived_allow_paths entry: {entry!r}"
+            f"invalid derived_allow_paths entry: {entry!r}",
+            hint="use a repo-relative path or tests/**/*.py glob",
         ) from None
     if not _DERIVED_ENTRY_RE.match(entry):
-        raise DerivedAllowPathsError(f"invalid derived_allow_paths entry: {entry!r}")
+        raise DerivedAllowPathsError(
+            f"invalid derived_allow_paths entry: {entry!r}",
+            hint="use a repo-relative path or tests/**/*.py glob",
+        )
     return normalized
 
 
