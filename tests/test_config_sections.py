@@ -186,3 +186,11 @@ def test_config_show_unknown_key_cli_exit_and_stderr(monkeypatch, tmp_path):
     assert proc.returncode == 1
     assert "error[CONFIG_UNKNOWN_KEY]:" in proc.stderr
     assert "hint: Allowed:" in proc.stderr
+
+
+def test_terminal_labels_default(tmp_path, monkeypatch):
+    """Minimal config with only repo keeps package-default terminal labels."""
+    _write_config(tmp_path, monkeypatch, {"repo": "example/app"})
+    cfg = load_config()
+    assert "issuesmith:merge-done" in cfg.terminal_labels
+    assert "bump:done" in cfg.terminal_labels
