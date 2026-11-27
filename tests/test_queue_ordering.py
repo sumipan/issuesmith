@@ -55,7 +55,6 @@ def issuesmith_config(tmp_path, monkeypatch):
             "queue": "jobs/issuesmith-queue.jsonl",
             "queue_state": "logs/issuesmith-queue-state.json",
             "queue_lock": "logs/issuesmith-queue.lock",
-            "triage_log": "jobs/issuesmith-triage.jsonl",
             "seed": "configs/night-queue.yaml",
             "night_state": "logs/night-queue-state.json",
             "exec_jsonl": "jobs/exec.jsonl",
@@ -127,7 +126,6 @@ def _patch_paths(tmp_path: Path, monkeypatch, issuesmith_config):
         queue=tmp_path / "queue.jsonl",
         queue_state=tmp_path / "state.json",
         queue_lock=tmp_path / "lock",
-        triage_log=tmp_path / "triage.jsonl",
         seed=tmp_path / "seed.yaml",
         night_state=tmp_path / "night.json",
         exec_jsonl=exec_path,
@@ -188,6 +186,59 @@ class _DispatchClient:
 
     def get_issue_comments(self, number):
         return []
+
+
+def test_tick_applies_deterministic_order_without_llm(
+    tmp_path, monkeypatch, issuesmith_config,
+):
+    """Refs sumipan/issuesmith#8161 — tick applies deterministic priority order."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from issuesmith import queue as qmod
+    from issuesmith.queue_triage import deterministic_order
+
+    _patch_paths(tmp_path, monkeypatch, issuesmith_config)
+    store = _store(tmp_path)
+    r_low = store.enqueue(
+        issue=1,
+        phase="draft",
+        source="s",
+        actor_kind="automation",
+        priority="low",
+        requested_by=["a"],
+        requested_at=_NOW,
+    )
+    r_high = store.enqueue(
+        issue=2,
+        phase="draft",
+        source="s",
+        actor_kind="automation",
+        priority="high",
+        requested_by=["a"],
+        requested_at=_NOW,
+    )
+    client = _DispatchClient(
+        {
+            1: {"state": "OPEN", "labels": [], "title": "low", "body": _BODY_QUEUE},
+            2: {"state": "OPEN", "labels": [], "title": "high", "body": _BODY_QUEUE},
+        }
+    )
+    monkeypatch.setattr(qmod, "advance_milestone_chains", lambda *a, **k: None)
+    monkeypatch.setattr(qmod, "_dispatch_pipeline_ready", lambda *a, **k: False)
+    monkeypatch.setattr(qmod, "_required_engines_paused", lambda *a, **k: [])
+    now = datetime(2026, 9, 9, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+    qmod.dispatch_one(now=now, client=client, store=store, skip_seed=True)
+    snap = store.snapshot()
+    reqs = [
+        store.effective_request(snap, rid)
+        for rid in snap.active_order
+        if store.effective_request(snap, rid) is not None
+    ]
+    assert snap.active_order == deterministic_order(reqs)
+    assert snap.active_order[0] == r_high.request_id
+    assert snap.active_order[1] == r_low.request_id
+    assert snap.last_triaged_revision == snap.revision
 
 
 def test_allow_paths_conflict_ignores_draft_and_sub_runs():

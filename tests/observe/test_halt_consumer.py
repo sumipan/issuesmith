@@ -36,7 +36,7 @@ class TestLastIssueHaltRuleRemoved:
         monkeypatch.setattr(qmod, '_pipeline_idle_enough_v2', lambda *a, **kw: True)
         monkeypatch.setattr(qmod, '_required_engines_paused', lambda *a, **kw: [])
         monkeypatch.setattr(qmod, '_dispatch_pipeline_ready', lambda *a, **kw: True)
-        qmod.dispatch_one(now=_NOW, client=client, store=store, skip_seed=True, call_llm=lambda *a, **k: (_ for _ in ()).throw(RuntimeError('no llm')))
+        qmod.dispatch_one(now=_NOW, client=client, store=store, skip_seed=True)
         snap = store.snapshot()
         assert snap.halt is False, f'halt should not be set, but reason: {snap.halt_reason}'
 

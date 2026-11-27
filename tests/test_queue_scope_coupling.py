@@ -47,7 +47,6 @@ def _dispatch(store, client, monkeypatch):
         client=client,
         store=store,
         skip_seed=True,
-        call_llm=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")),
     )
 
 

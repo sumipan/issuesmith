@@ -124,7 +124,6 @@ _TOP_LEVEL_CONFIG_KEYS = frozenset({
     "terminal_without_merge",
     "tests",
     "timezone",
-    "triage",
     "version",
 })
 
@@ -155,15 +154,6 @@ _STEP_CONFIG_KEYS = frozenset({
     "verify",
 })
 _SCOPE_GATE_KEYS = frozenset({"enabled", "hard_max_files", "max_files", "max_lines"})
-_TRIAGE_KEYS = frozenset({
-    "body_chars",
-    "circuit_breaker_reset_seconds",
-    "circuit_breaker_threshold",
-    "enabled",
-    "engine",
-    "model",
-    "timeout",
-})
 _MILESTONE_CHAIN_KEYS = frozenset({
     "auto_close_parent",
     "auto_develop",
@@ -254,7 +244,6 @@ _DEFAULT_REL_PATHS: dict[str, str] = {
     "queue": "jobs/issuesmith-queue.jsonl",
     "queue_state": "logs/issuesmith-queue-state.json",
     "queue_lock": "logs/issuesmith-queue.lock",
-    "triage_log": "jobs/issuesmith-triage.jsonl",
     "seed": "configs/night-queue.yaml",
     "night_state": "logs/night-queue-state.json",
     "exec_jsonl": "jobs/exec.jsonl",
@@ -293,7 +282,6 @@ class PathsConfig:
     queue: Path
     queue_state: Path
     queue_lock: Path
-    triage_log: Path
     seed: Path
     night_state: Path
     exec_jsonl: Path
@@ -366,17 +354,6 @@ class MilestoneChainConfig:
     child_priority: str = "normal"
     auto_develop: bool = True
     auto_close_parent: bool = True
-
-
-@dataclass(frozen=True)
-class TriageConfig:
-    enabled: bool = True
-    engine: str = "claude"
-    model: str = "claude-sonnet-4-6"
-    timeout: int = 60
-    body_chars: int = 500
-    circuit_breaker_threshold: int = 3
-    circuit_breaker_reset_seconds: int = 1800
 
 
 @dataclass(frozen=True)
@@ -617,7 +594,6 @@ class IssuesmithConfig:
     engines: Mapping[str, RoleConfig]
     concurrency: ConcurrencyConfig
     milestone_chain: MilestoneChainConfig = field(default_factory=MilestoneChainConfig)
-    triage: TriageConfig = field(default_factory=TriageConfig)
     phases: tuple[PhaseConfig, ...] = ()
     sections: Mapping[str, str] = field(default_factory=lambda: dict(EN.sections))
     sub_design_subsections: tuple[str, ...] = EN.sub_design_subsections
@@ -1036,32 +1012,6 @@ def _build_milestone_chain(raw: Mapping[str, Any] | None) -> MilestoneChainConfi
         auto_close_parent=_as_bool(
             raw.get("auto_close_parent", True),
             "milestone_chain.auto_close_parent",
-        ),
-    )
-
-
-def _build_triage(raw: Mapping[str, Any] | None) -> TriageConfig:
-    if raw:
-        _reject_unknown_keys(raw, _TRIAGE_KEYS, "triage")
-    if not raw:
-        return TriageConfig()
-    defaults = TriageConfig()
-    return TriageConfig(
-        enabled=_as_bool(raw.get("enabled", defaults.enabled), "triage.enabled"),
-        engine=str(raw.get("engine") or defaults.engine),
-        model=str(raw.get("model") or defaults.model),
-        timeout=_as_int(raw.get("timeout", defaults.timeout), "triage.timeout"),
-        body_chars=_as_int(raw.get("body_chars", defaults.body_chars), "triage.body_chars"),
-        circuit_breaker_threshold=_as_int(
-            raw.get("circuit_breaker_threshold", defaults.circuit_breaker_threshold),
-            "triage.circuit_breaker_threshold",
-        ),
-        circuit_breaker_reset_seconds=_as_int(
-            raw.get(
-                "circuit_breaker_reset_seconds",
-                defaults.circuit_breaker_reset_seconds,
-            ),
-            "triage.circuit_breaker_reset_seconds",
         ),
     )
 
@@ -2214,7 +2164,6 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         else {}
     )
     milestone_raw = data.get("milestone_chain") if isinstance(data.get("milestone_chain"), dict) else None
-    triage_raw = data.get("triage") if isinstance(data.get("triage"), dict) else None
     steps_raw = data.get("steps") if isinstance(data.get("steps"), dict) else None
     scope_gate_raw = (
         data.get("scope_gate") if isinstance(data.get("scope_gate"), dict) else None
@@ -2261,7 +2210,6 @@ def _build_config(data: Mapping[str, Any], *, root: Path) -> IssuesmithConfig:
         engines=_build_engines(engines_raw),
         concurrency=_build_concurrency(concurrency_merged or None),
         milestone_chain=_build_milestone_chain(milestone_raw),
-        triage=_build_triage(triage_raw),
         phases=_build_phases(data.get("phases")),
         sections=dict(language.sections),
         sub_design_subsections=language.sub_design_subsections,

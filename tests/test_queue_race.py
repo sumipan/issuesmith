@@ -152,7 +152,6 @@ def test_dispatch_recovers_before_orphan_gate(tmp_path, monkeypatch):
                     "queue": "q.jsonl",
                     "queue_state": "s.json",
                     "queue_lock": "lock",
-                    "triage_log": "t.jsonl",
                     "seed": "seed.yaml",
                     "night_state": "night.json",
                     "exec_jsonl": "jobs/exec.jsonl",
@@ -204,7 +203,6 @@ def test_dispatch_recovers_before_orphan_gate(tmp_path, monkeypatch):
         queue=tmp_path / "q.jsonl",
         queue_state=tmp_path / "s.json",
         queue_lock=tmp_path / "lock",
-        triage_log=tmp_path / "t.jsonl",
         seed=tmp_path / "seed.yaml",
         night_state=tmp_path / "night.json",
         exec_jsonl=exec_path,
@@ -300,7 +298,6 @@ def test_dispatch_recovers_before_orphan_gate(tmp_path, monkeypatch):
         client=Client(),
         store=store,
         skip_seed=True,
-        call_llm=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")),
     )
     assert result.dispatched is True
     assert result.issue == 50

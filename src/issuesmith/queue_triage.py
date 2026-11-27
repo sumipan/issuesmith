@@ -1,49 +1,21 @@
-"""Deterministic gates and LLM triage for issuesmith queue."""
+"""Deterministic gates and ordering for issuesmith queue."""
 
 from __future__ import annotations
 
-import json
-import re
-import time
-import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 
 import yaml
-from ghdag.llm import call
 
 # parse_frontmatter_fields moved to contract.py (#4238). Re-export for existing callers.
 # noqa F401 keeps ruff --fix from stripping the re-export (upstream #4259).
 from issuesmith.contract import parse_frontmatter_fields, validate_frontmatter  # noqa: F401
 from issuesmith.queue_store import (
     DEFAULT_SEED_PATH,
-    DEFAULT_TRIAGE_LOG_PATH,
     PRIORITY_RANK,
     QueueRequest,
-    QueueSnapshot,
-    QueueStore,
-)
-
-FallbackCode = Literal[
-    "revision_unchanged",
-    "config_error",
-    "llm_failed",
-    "llm_timeout",
-    "cas_conflict",
-    "circuit_open",
-]
-
-_KNOWN_FALLBACK_CODES = frozenset(
-    {
-        "revision_unchanged",
-        "config_error",
-        "llm_failed",
-        "llm_timeout",
-        "cas_conflict",
-        "circuit_open",
-    }
 )
 
 DecisionKind = Literal[
@@ -55,7 +27,6 @@ DecisionKind = Literal[
     "repair",
 ]
 
-LLMDecision = Literal["keep", "reject"]
 
 def _build_phase_labels(status: str) -> dict[str, str]:
     from issuesmith.config import get_config
@@ -108,11 +79,13 @@ READY_LABEL: _LazyPhaseLabels = _LazyPhaseLabels("ready")
 RUNNING_LABEL: _LazyPhaseLabels = _LazyPhaseLabels("running")
 DONE_LABEL: _LazyPhaseLabels = _LazyPhaseLabels("done")
 
+
 def _msg(key: str, /, **kwargs: Any) -> str:
     """Render a ``queue_triage.*`` language-pack message (posted as an Issue comment)."""
     from issuesmith.config import get_config
 
     return get_config().language.message(f"queue_triage.{key}", **kwargs)
+
 
 def get_terminal_without_merge() -> frozenset[str]:
     """Terminal labels for closed-without-merge, plus config ``terminal_labels`` (#4790)."""
@@ -135,29 +108,6 @@ def get_terminal_without_merge() -> frozenset[str]:
 
 COMMENT_MARKER = "<!-- ISSUESMITH_QUEUE_REQUEST:{request_id}:{outcome} -->"
 
-# LLM reject reasons that mean "waiting for deps" — keep, do not reject (AC-12).
-_DEPS_REJECT_REASON_RE = re.compile(
-    r"(deps?[_\s-]?(blocked|waiting|not[_\s-]?resolved|unresolved|pending))"
-    r"|(waiting\s+for\s+deps?)"
-    r"|(dependencies?\s+(not\s+)?(met|resolved|ready))",
-    re.IGNORECASE,
-)
-_YAML_REJECT_REASON_RE = re.compile(
-    r"yaml|allow_paths|target_repo|base_branch",
-    re.IGNORECASE,
-)
-
-
-def is_deps_waiting_reject_reason(reason: str) -> bool:
-    """True when an LLM reject reason is really a normal deps-wait (must keep)."""
-    return bool(_DEPS_REJECT_REASON_RE.search(reason or ""))
-
-
-def is_yaml_reject_reason(reason: str) -> bool:
-    """True when an LLM reject reason targets YAML intake (must keep; deterministic repair)."""
-    return bool(_YAML_REJECT_REASON_RE.search(reason or ""))
-
-
 missing_yaml_fields = validate_frontmatter
 
 
@@ -168,29 +118,6 @@ class Decision:
     close_issue: bool = False
     comment: bool = True
     add_rejected_label: bool = False
-
-
-@dataclass
-class TriageDecision:
-    request_id: str
-    decision: LLMDecision
-    reason: str
-    uncertain_flag: bool = False
-
-
-@dataclass
-class TriageResult:
-    order: list[str]
-    decisions: list[TriageDecision]
-    adopted: bool
-    fallback_reason: str | None
-    raw_output: str | None
-    uncertain_flag: bool
-    latency_ms: int
-    trace_id: str
-    prompt_version: str
-    circuit_skipped: bool = False
-    fallback_code: FallbackCode | None = None
 
 
 def label_names(issue: dict[str, Any]) -> set[str]:
@@ -339,10 +266,9 @@ def apply_deterministic_order_constraints(
     *,
     now: datetime | None = None,
 ) -> list[str]:
-    """Re-apply hard constraints after LLM order: high before others; wait>=7d first within priority.
+    """Re-apply hard constraints: high before others; wait>=7d first within priority.
 
-    Within the same (priority, aging) bucket the LLM relative order is preserved.
-    Do not re-sort by requested_at / request_id — that would erase a valid LLM permutation.
+    Within the same (priority, aging) bucket the input relative order is preserved.
     """
     now = now or datetime.now(timezone.utc)
     reqs = [requests[rid] for rid in order if rid in requests]
@@ -356,7 +282,7 @@ def apply_deterministic_order_constraints(
             at = at.replace(tzinfo=timezone.utc)
         return max(0.0, (now - at).total_seconds())
 
-    # Stable: LLM relative order within the same constraint key via original index.
+    # Stable relative order within the same constraint key via original index.
     index = {rid: i for i, rid in enumerate(order)}
 
     def full_key(req: QueueRequest) -> tuple[int, int, int]:
@@ -371,9 +297,9 @@ def apply_priority_bucket_order(
     llm_order: list[str],
     active: list[QueueRequest],
 ) -> list[str]:
-    """Restrict LLM reorder to within priority buckets (high → normal → low → other).
+    """Restrict reorder to within priority buckets (high → normal → low → other).
 
-    Relative LLM order inside each priority bucket is preserved. Requests missing from
+    Relative order inside each priority bucket is preserved. Requests missing from
     ``llm_order`` but present in ``active`` are appended at the end of their bucket
     in the original active order.
     """
@@ -397,464 +323,6 @@ def apply_priority_bucket_order(
     for rank in sorted(buckets.keys()):
         result.extend(buckets[rank])
     return result
-
-
-def _legacy_timeout_reason(reason: str) -> bool:
-    return reason.startswith("llm failed:") and "timed out" in reason
-
-
-def is_circuit_open(
-    log_path: Path,
-    threshold: int,
-    reset_seconds: int,
-    *,
-    now: datetime | None = None,
-) -> bool:
-    """Return True when the last ``threshold`` triage entries are recent LLM timeouts."""
-    if threshold <= 0:
-        return False
-    now = now or datetime.now(timezone.utc)
-    if not log_path.exists():
-        return False
-    lines = [ln for ln in log_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
-    if len(lines) < threshold:
-        return False
-    entries: list[dict[str, Any]] = []
-    for ln in lines[-threshold:]:
-        try:
-            data = json.loads(ln)
-        except json.JSONDecodeError:
-            return False
-        if not isinstance(data, dict):
-            return False
-        entries.append(data)
-    oldest_ts: datetime | None = None
-    for entry in entries:
-        code = entry.get("fallback_code")
-        if code is not None:
-            if not isinstance(code, str) or code not in _KNOWN_FALLBACK_CODES:
-                return False
-            if code != "llm_timeout":
-                return False
-        else:
-            reason = entry.get("fallback_reason")
-            if not isinstance(reason, str) or not _legacy_timeout_reason(reason):
-                return False
-        ts_raw = entry.get("timestamp")
-        if not isinstance(ts_raw, str) or not ts_raw.strip():
-            return False
-        try:
-            ts = datetime.fromisoformat(ts_raw)
-        except ValueError:
-            return False
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
-        if oldest_ts is None or ts < oldest_ts:
-            oldest_ts = ts
-    if oldest_ts is None:
-        return False
-    age = (now - oldest_ts).total_seconds()
-    return age <= float(reset_seconds)
-
-
-def append_cas_conflict_log(
-    *,
-    path: Path | None,
-    order: list[str],
-    revision: int,
-    now: datetime | None = None,
-) -> None:
-    """Record that LLM order CAS failed after retry (``fallback_reason: cas_conflict``)."""
-    now = now or datetime.now(timezone.utc)
-    append_triage_log(
-        {
-            "timestamp": now.isoformat(),
-            "fallback_code": "cas_conflict",
-            "fallback_reason": "cas_conflict",
-            "adopted_order": None,
-            "proposed_order": list(order),
-            "metadata": {"queue_revision": revision},
-            "circuit_skipped": False,
-        },
-        path=path,
-    )
-
-
-def append_circuit_open_log(
-    *,
-    path: Path | None,
-    order: list[str],
-    revision: int,
-    now: datetime | None = None,
-) -> None:
-    now = now or datetime.now(timezone.utc)
-    append_triage_log(
-        {
-            "timestamp": now.isoformat(),
-            "fallback_code": "circuit_open",
-            "fallback_reason": "circuit_open",
-            "adopted_order": list(order),
-            "circuit_skipped": True,
-            "metadata": {"queue_revision": revision},
-        },
-        path=path,
-    )
-
-
-def _git_prompt_version() -> str:
-    try:
-        import subprocess
-
-        out = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"],
-            stderr=subprocess.DEVNULL,
-            text=True,
-        )
-        return out.strip()[:12]
-    except Exception:
-        return "unknown"
-
-
-def _parse_llm_response(raw: str, expected_ids: set[str]) -> tuple[list[str], list[TriageDecision]]:
-    text = raw.strip()
-    # Allow fenced JSON.
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-    data = json.loads(text)
-    if not isinstance(data, dict):
-        raise ValueError("LLM response must be object")
-    order = data.get("order")
-    decisions = data.get("decisions")
-    if not isinstance(order, list) or not isinstance(decisions, list):
-        raise ValueError("order/decisions must be lists")
-    if set(order) != expected_ids or len(order) != len(expected_ids):
-        raise ValueError("order must be a permutation of request ids")
-    seen: set[str] = set()
-    parsed: list[TriageDecision] = []
-    for item in decisions:
-        if not isinstance(item, dict):
-            raise ValueError("decision must be object")
-        rid = item.get("request_id")
-        decision = item.get("decision")
-        reason = item.get("reason")
-        uncertain = item.get("uncertain_flag")
-        if rid not in expected_ids or rid in seen:
-            raise ValueError("invalid or duplicate request_id in decisions")
-        if decision not in ("keep", "reject"):
-            raise ValueError("decision must be keep|reject")
-        if not isinstance(reason, str) or not reason.strip():
-            raise ValueError("reason must be non-empty")
-        if not isinstance(uncertain, bool):
-            raise ValueError("uncertain_flag must be bool")
-        seen.add(rid)
-        parsed.append(
-            TriageDecision(
-                request_id=str(rid),
-                decision=decision,
-                reason=reason.strip(),
-                uncertain_flag=uncertain,
-            )
-        )
-    if seen != expected_ids:
-        raise ValueError("decisions must cover all request ids exactly once")
-    return [str(x) for x in order], parsed
-
-
-def append_triage_log(
-    entry: dict[str, Any],
-    *,
-    path: Path | None = None,
-) -> None:
-    log_path = path or DEFAULT_TRIAGE_LOG_PATH
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(log_path, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
-
-
-def triage(
-    snapshot: QueueSnapshot,
-    *,
-    issues: dict[int, dict[str, Any]],
-    store: QueueStore | None = None,
-    call_llm: Callable[..., Any] | None = None,
-    now: datetime | None = None,
-    triage_log_path: Path | None = None,
-    timeout: int = 60,
-    engine: str = "claude",
-    model: str = "claude-sonnet-4-6",
-    body_chars: int = 500,
-) -> TriageResult:
-    """Run LLM triage when revision advanced; always write audit log."""
-    now = now or datetime.now(timezone.utc)
-    active = []
-    for rid in snapshot.active_order:
-        if store is not None:
-            req = store.effective_request(snapshot, rid)
-        else:
-            req = snapshot.requests.get(rid)
-        if req is not None:
-            active.append(req)
-
-    expected_ids = {r.request_id for r in active}
-    fallback = deterministic_order(active)
-    prompt_version = _git_prompt_version()
-    trace_id = str(uuid.uuid4())
-    started = time.monotonic()
-
-    if snapshot.revision <= snapshot.last_triaged_revision or not active:
-        result = TriageResult(
-            order=list(snapshot.active_order),
-            decisions=[TriageDecision(rid, "keep", "no triage needed") for rid in snapshot.active_order],
-            adopted=False,
-            fallback_reason="revision unchanged or empty",
-            fallback_code="revision_unchanged",
-            raw_output=None,
-            uncertain_flag=False,
-            latency_ms=0,
-            trace_id=trace_id,
-            prompt_version=prompt_version,
-        )
-        return result
-
-    body_limit = max(0, int(body_chars))
-    payload_requests = []
-    for req in active:
-        issue = issues.get(req.issue) or {}
-        try:
-            at = datetime.fromisoformat(req.requested_at)
-            if at.tzinfo is None:
-                at = at.replace(tzinfo=timezone.utc)
-            wait_s = max(0, int((now - at).total_seconds()))
-        except ValueError:
-            wait_s = 0
-        body = str(issue.get("body") or "")[:body_limit]
-        payload_requests.append(
-            {
-                "request_id": req.request_id,
-                "issue": req.issue,
-                "phase": req.phase,
-                "source": req.source,
-                "actor_kind": req.actor_kind,
-                "priority": req.priority,
-                "requested_at": req.requested_at,
-                "requested_by": list(req.requested_by),
-                "title": issue.get("title"),
-                "body_head": body,
-                "labels": sorted(label_names(issue)),
-                "wait_seconds": wait_s,
-            }
-        )
-
-    prompt = (
-        "You reorder and optionally reject automation jobs for issuesmith.\n"
-        "Return ONLY a JSON object with keys order and decisions.\n"
-        "order must be a permutation of all request_id values.\n"
-        "Each decision: request_id, decision(keep|reject), reason(non-empty), uncertain_flag(bool).\n"
-        "Reject ONLY for permanent problems (duplicate, obsolete, unsupported repo).\n"
-        "Do NOT reject for missing YAML — deterministic intake sends those to repair; use keep.\n"
-        "Do NOT reject for unresolved dependencies / deps waiting — that is normal queue wait; use keep.\n"
-        "Write every reason in English.\n"
-        f"requests={json.dumps(payload_requests, ensure_ascii=False)}\n"
-    )
-
-    raw_output: str | None = None
-    fallback_reason: str | None = None
-    fallback_code: FallbackCode | None = None
-    adopted = False
-    order = fallback
-    decisions: list[TriageDecision] = [
-        TriageDecision(rid, "keep", "deterministic fallback") for rid in fallback
-    ]
-    uncertain_flag = False
-    token_usage: Any = None
-
-    llm = call_llm
-    if llm is None:
-        llm = call
-
-    if llm is not None:
-        try:
-            from ghdag.llm import EngineModelError, validate_engine_model
-
-            validate_engine_model(engine, model)
-        except EngineModelError as exc:
-            fallback_code = "config_error"
-            fallback_reason = f"config error: {exc}"
-            llm = None
-        except Exception as exc:  # pragma: no cover — import / unexpected validation failures
-            fallback_code = "config_error"
-            fallback_reason = f"config error: {exc}"
-            llm = None
-
-    if llm is not None:
-        try:
-            llm_result = llm(prompt, route=[(engine, model)], timeout=timeout)
-            # ghdag reports subprocess deadlines on the result instead of
-            # raising, while injected callers may raise ``TimeoutError``.
-            if bool(getattr(llm_result, "timed_out", False)):
-                detail = (
-                    getattr(llm_result, "stderr", None)
-                    or getattr(llm_result, "body", None)
-                    or "LLM call timed out"
-                )
-                raise TimeoutError(str(detail).strip())
-            raw_output = (
-                getattr(llm_result, "text", None)
-                or getattr(llm_result, "body", None)
-                or str(llm_result)
-            )
-            token_usage = getattr(llm_result, "usage", None)
-            parsed_order, parsed_decisions = _parse_llm_response(raw_output, expected_ids)
-            # Protect human / force from LLM reject.
-            protected: set[str] = set()
-            for req in active:
-                force = store.is_force(snapshot, req.request_id) if store else False
-                if req.actor_kind == "human" or force:
-                    protected.add(req.request_id)
-            req_map = {r.request_id: r for r in active}
-            fixed: list[TriageDecision] = []
-            for d in parsed_decisions:
-                if d.decision == "reject" and d.request_id in protected:
-                    fixed.append(
-                        TriageDecision(
-                            request_id=d.request_id,
-                            decision="keep",
-                            reason=f"LLM reject ignored for protected request: {d.reason}",
-                            uncertain_flag=d.uncertain_flag,
-                        )
-                    )
-                elif d.decision == "reject" and is_deps_waiting_reject_reason(d.reason):
-                    fixed.append(
-                        TriageDecision(
-                            request_id=d.request_id,
-                            decision="keep",
-                            reason=f"LLM deps reject ignored: {d.reason}",
-                            uncertain_flag=d.uncertain_flag,
-                        )
-                    )
-                elif d.decision == "reject" and is_yaml_reject_reason(d.reason):
-                    fixed.append(
-                        TriageDecision(
-                            request_id=d.request_id,
-                            decision="keep",
-                            reason=f"LLM yaml reject ignored: {d.reason}",
-                            uncertain_flag=d.uncertain_flag,
-                        )
-                    )
-                elif d.decision == "reject":
-                    from issuesmith.config import get_config
-
-                    req = req_map.get(d.request_id)
-                    impl_phase = next(
-                        (
-                            ph.name
-                            for ph in get_config().phases
-                            if ph.role == "implementation"
-                            and ph.writes_files
-                            and "closing_pr_exists" not in ph.advance_when
-                        ),
-                        None,
-                    )
-                    issue_labels = label_names(issues.get(req.issue) or {}) if req else set()
-                    excluded = (
-                        get_config().excluded_labels(impl_phase)
-                        if impl_phase
-                        else frozenset()
-                    )
-                    if (
-                        req is not None
-                        and impl_phase
-                        and req.phase == impl_phase
-                        and req.source == "milestone-chain"
-                        and not (issue_labels & excluded)
-                    ):
-                        fixed.append(
-                            TriageDecision(
-                                request_id=d.request_id,
-                                decision="keep",
-                                reason=(
-                                    "LLM reject ignored for milestone-chain child develop: "
-                                    f"{d.reason}"
-                                ),
-                                uncertain_flag=d.uncertain_flag,
-                            )
-                        )
-                    else:
-                        fixed.append(d)
-                else:
-                    fixed.append(d)
-            order = apply_deterministic_order_constraints(parsed_order, req_map, now=now)
-            decisions = fixed
-            adopted = True
-            uncertain_flag = any(d.uncertain_flag for d in fixed)
-        except TimeoutError as exc:
-            fallback_code = "llm_timeout"
-            fallback_reason = f"llm failed: {exc}"
-            order = fallback
-            decisions = [TriageDecision(rid, "keep", "deterministic fallback") for rid in fallback]
-            adopted = False
-        except Exception as exc:
-            fallback_code = "llm_failed"
-            fallback_reason = f"llm failed: {exc}"
-            order = fallback
-            decisions = [TriageDecision(rid, "keep", "deterministic fallback") for rid in fallback]
-            adopted = False
-
-    latency_ms = int((time.monotonic() - started) * 1000)
-    entry = {
-        "timestamp": now.isoformat(),
-        "input": {"requests": payload_requests, "prompt": prompt},
-        "output": {
-            "raw": raw_output,
-            "parsed": {
-                "order": order,
-                "decisions": [
-                    {
-                        "request_id": d.request_id,
-                        "decision": d.decision,
-                        "reason": d.reason,
-                        "uncertain_flag": d.uncertain_flag,
-                    }
-                    for d in decisions
-                ],
-            },
-        },
-        "reasoning": [d.reason for d in decisions],
-        "config": {
-            "engine": engine,
-            "model": model,
-            "prompt_version": prompt_version,
-            "timeout": timeout,
-            "body_chars": body_limit,
-        },
-        "metadata": {
-            "trace_id": trace_id,
-            "latency_ms": latency_ms,
-            "token_usage": token_usage,
-            "queue_revision": snapshot.revision,
-        },
-        "uncertain_flag": uncertain_flag,
-        "adopted_order": order if adopted else None,
-        "fallback_reason": fallback_reason,
-        "fallback_code": fallback_code,
-        "circuit_skipped": False,
-    }
-    append_triage_log(entry, path=triage_log_path)
-
-    return TriageResult(
-        order=order,
-        decisions=decisions,
-        adopted=adopted,
-        fallback_reason=fallback_reason,
-        fallback_code=fallback_code,
-        raw_output=raw_output,
-        uncertain_flag=uncertain_flag,
-        latency_ms=latency_ms,
-        trace_id=trace_id,
-        prompt_version=prompt_version,
-        circuit_skipped=False,
-    )
 
 
 def load_seed_entries(path: Path | None = None) -> list[dict[str, Any]]:

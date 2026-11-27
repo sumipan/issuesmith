@@ -357,7 +357,6 @@ def _run_tick(store, client):
         client=client,
         store=store,
         skip_seed=True,
-        call_llm=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")),
     )
 
 

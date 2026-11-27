@@ -57,17 +57,39 @@ def test_top_level_unknown_key_raises(monkeypatch, tmp_path):
     _assert_unknown(exc_info.value, path_fragment="patrol")
 
 
-def test_triage_typo_key_raises(monkeypatch, tmp_path):
-    """Refs #8142 — triage.timout is rejected with triage allowed keys in hint."""
+def test_triage_config_type_removed():
+    """Refs sumipan/issuesmith#8161 — TriageConfig is not part of the public config API."""
+    import issuesmith.config as cfgmod
+
+    assert not hasattr(cfgmod, "TriageConfig")
+
+
+def test_triage_section_is_unknown_key(monkeypatch, tmp_path):
+    """Refs sumipan/issuesmith#8161 — top-level triage: is CONFIG_UNKNOWN_KEY."""
     _write_config(
         tmp_path,
         monkeypatch,
-        _base_payload(triage={"timout": 10, "enabled": True}),
+        _base_payload(triage={"enabled": True}),
     )
     with pytest.raises(ConfigError) as exc_info:
         load_config()
     exc = exc_info.value
-    _assert_unknown(exc, path_fragment="triage.timout", hint_fragment="timeout")
+    assert exc.code == "CONFIG_UNKNOWN_KEY"
+    assert "triage" in exc.message
+
+
+def test_paths_triage_log_is_unknown_key(monkeypatch, tmp_path):
+    """Refs sumipan/issuesmith#8161 — paths.triage_log is CONFIG_UNKNOWN_KEY."""
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        _base_payload(paths={"queue": "jobs/q.jsonl", "triage_log": "jobs/t.jsonl"}),
+    )
+    with pytest.raises(ConfigError) as exc_info:
+        load_config()
+    exc = exc_info.value
+    assert exc.code == "CONFIG_UNKNOWN_KEY"
+    assert "paths.triage_log" in exc.message
 
 
 @pytest.mark.parametrize(
@@ -134,13 +156,13 @@ def test_two_unknown_keys_in_one_section(monkeypatch, tmp_path):
     _write_config(
         tmp_path,
         monkeypatch,
-        _base_payload(triage={"timout": 1, "typo_engine": "x", "enabled": True}),
+        _base_payload(metrics={"done_step": "merge", "bogus_a": 1, "bogus_b": 2}),
     )
     with pytest.raises(ConfigError) as exc_info:
         load_config()
     msg = exc_info.value.message
-    assert "triage.timout" in msg
-    assert "triage.typo_engine" in msg
+    assert "metrics.bogus_a" in msg
+    assert "metrics.bogus_b" in msg
     assert exc_info.value.code == "CONFIG_UNKNOWN_KEY"
 
 

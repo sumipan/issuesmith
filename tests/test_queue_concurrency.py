@@ -46,7 +46,6 @@ def issuesmith_config(tmp_path, monkeypatch):
             "queue": "jobs/issuesmith-queue.jsonl",
             "queue_state": "logs/issuesmith-queue-state.json",
             "queue_lock": "logs/issuesmith-queue.lock",
-            "triage_log": "jobs/issuesmith-triage.jsonl",
             "seed": "configs/night-queue.yaml",
             "night_state": "logs/night-queue-state.json",
             "exec_jsonl": "jobs/exec.jsonl",
@@ -118,7 +117,6 @@ def _patch_paths(tmp_path: Path, monkeypatch, issuesmith_config):
         queue=tmp_path / "queue.jsonl",
         queue_state=tmp_path / "state.json",
         queue_lock=tmp_path / "lock",
-        triage_log=tmp_path / "triage.jsonl",
         seed=tmp_path / "seed.yaml",
         night_state=tmp_path / "night.json",
         exec_jsonl=exec_path,
@@ -228,7 +226,6 @@ def test_parallel_dispatch_respects_limit(tmp_path, monkeypatch, issuesmith_conf
                 client=client,
                 store=store,
                 skip_seed=True,
-                call_llm=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")),
             )
         )
 

@@ -35,7 +35,6 @@ REPO_ROOT = _cfg.root
 DEFAULT_QUEUE_PATH = _cfg.paths.queue
 DEFAULT_STATE_PATH = _cfg.paths.queue_state
 DEFAULT_LOCK_PATH = _cfg.paths.queue_lock
-DEFAULT_TRIAGE_LOG_PATH = _cfg.paths.triage_log
 DEFAULT_SEED_PATH = _cfg.paths.seed
 DEFAULT_NIGHT_STATE_PATH = _cfg.paths.night_state
 
