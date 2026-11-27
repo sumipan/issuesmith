@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import argparse
 import sys
 
+from issuesmith.cli_errors import ContractParser
 from issuesmith.config import ConfigError, get_config
 
 
@@ -77,7 +77,7 @@ def main(step_id: str, argv: list[str] | None = None) -> int:
     args_list = list(argv or [])
 
     if tier_cfg.kind == "design_doc":
-        parser = argparse.ArgumentParser(prog=f"issuesmith tier {step_id}")
+        parser = ContractParser(command=f"tier {step_id}")
         group = parser.add_mutually_exclusive_group(required=True)
         group.add_argument("--issue", type=int, help="GitHub issue number")
         group.add_argument("--body-file", help="Path to issue body text file")
@@ -92,7 +92,7 @@ def main(step_id: str, argv: list[str] | None = None) -> int:
         print(design_doc_tier(body))
         return 0
 
-    parser = argparse.ArgumentParser(prog=f"issuesmith tier {step_id}")
+    parser = ContractParser(command=f"tier {step_id}")
     parser.add_argument("--diff-lines", type=int, required=True)
     parser.add_argument("--unchecked-ac", type=int, required=True)
     parser.add_argument("--gates-pass", default=None)

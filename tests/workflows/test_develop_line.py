@@ -44,6 +44,7 @@ _LINE_DEV_DIR = _REPO_ROOT / "src" / "issuesmith" / "lines" / "develop"
 
 _ALLOWED_ISSMITH_IMPORTS = frozenset(
     {
+        "issuesmith.cli_errors",
         "issuesmith.contract",
         "issuesmith.verbs",
         "issuesmith.gates",
@@ -1826,6 +1827,60 @@ def test_review_branch_check_invalid_refs_not_branch_moved(
     assert result.andon is not None
     assert result.andon.rule_id == "review.branch_check_failed"
     assert result.andon.rule_id != "review.branch_moved"
+
+
+def test_review_dispatch_missing_values_uses_contract(capsys) -> None:
+    """refs #8140 — review dispatch without key=value uses MISSING_ARGUMENT."""
+    from issuesmith.lines.develop import review as develop_review
+
+    assert develop_review.main(["dispatch"]) == 2
+    err = capsys.readouterr().err
+    assert err.splitlines()[0].startswith("error[MISSING_ARGUMENT]:")
+
+
+def test_review_unknown_command_uses_contract(capsys) -> None:
+    """refs #8140 — review rejects unknown subcommands with UNKNOWN_COMMAND."""
+    from issuesmith.lines.develop import review as develop_review
+
+    assert develop_review.main(["unknown"]) == 2
+    err = capsys.readouterr().err
+    assert err.splitlines()[0].startswith("error[UNKNOWN_COMMAND]:")
+
+
+@pytest.mark.parametrize(
+    ("args", "code"),
+    [
+        (["dispatch", "invalid"], "INVALID_VALUE"),
+        (["dispatch", "worktree_path=/tmp/example"], "MISSING_ARGUMENT"),
+        (
+            [
+                "dispatch",
+                "worktree_path=/tmp/example",
+                "issue_number=invalid",
+                "base_branch=main",
+            ],
+            "INVALID_VALUE",
+        ),
+        (
+            [
+                "dispatch",
+                "worktree_path=/tmp/example",
+                "issue_number=8140",
+            ],
+            "MISSING_ARGUMENT",
+        ),
+    ],
+)
+def test_review_invalid_dispatch_context_uses_contract(
+    args: list[str], code: str, capsys
+) -> None:
+    """Review dispatch input errors must not leak Python exceptions."""
+    from issuesmith.lines.develop import review as develop_review
+
+    assert develop_review.main(args) == 2
+    err = capsys.readouterr().err
+    assert err.splitlines()[0].startswith(f"error[{code}]:")
+    assert "Traceback" not in err
 
 
 def test_cli_dispatch_raises_broken_andon_when_commit_fails(

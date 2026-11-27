@@ -11,6 +11,7 @@ import sys
 
 from ghdag.forge import get_forge
 
+from issuesmith.cli_errors import ContractParser
 from issuesmith.gate_rules.design_lint_rules import DesignLintRules
 from issuesmith.gate_rules.migration_plan_rules import MigrationPlanRules
 from issuesmith.gate_rules.milestone_consistency import MilestoneConsistencyRules
@@ -69,9 +70,12 @@ def check_gate(body: str, labels: list[str] | None = None) -> dict:
     }
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> int:
     """CLI: python -m issuesmith gate cp1 <issue_number>"""
-    issue_number = int(sys.argv[1])
+    parser = ContractParser(command="gate design_lint")
+    parser.add_argument("issue_number", type=int)
+    args = parser.parse_args(argv if argv is not None else sys.argv[1:])
+    issue_number = args.issue_number
 
     forge = get_forge()
     data = forge.issue_get(issue_number, fields=["body", "labels"])
@@ -100,6 +104,7 @@ def main() -> None:
                 print(f"CP1 autofix comment failed: {exc}", file=sys.stderr)
 
     print(json.dumps(gate_result))
+    return 0
 
 
 __all__ = ["check_gate", "main"]

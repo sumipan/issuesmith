@@ -1,7 +1,6 @@
 """convert-to-milestone — move an Issue that wrongly entered the develop path back to the milestone path."""
 from __future__ import annotations
 
-import argparse
 import json
 import re
 from datetime import datetime
@@ -10,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 from ghdag.forge import ForgePort, get_forge
 
+from issuesmith.cli_errors import ContractParser
 from issuesmith.config import get_config
 from issuesmith.queue_store import QueueStore
 from issuesmith.recovery import requeue_phase
@@ -189,8 +189,8 @@ def convert_to_milestone(issue: int, *, dry_run: bool = False) -> int:
     return int(requeue_phase(issue, phase="draft", reason="convert-to-milestone"))
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="issuesmith convert-to-milestone")
+def build_parser() -> ContractParser:
+    parser = ContractParser(command="convert-to-milestone")
     parser.add_argument("issue", type=int)
     parser.add_argument("--dry-run", action="store_true")
     return parser

@@ -9,6 +9,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from issuesmith.ac_complete_entry import (
     check_gate,
     get_unchecked_count,
@@ -281,3 +283,14 @@ allow_paths:
         main()
         assert passed["issue_repo"] == "owner-a/repo-a"
         capsys.readouterr()
+
+
+def test_main_missing_argument_uses_contract(capsys) -> None:
+    """refs #8140 — m2-gate without issue number uses MISSING_ARGUMENT."""
+    from issuesmith.ac_complete_entry import main
+
+    with pytest.raises(SystemExit) as exc_info:
+        main([])
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    assert err.splitlines()[0].startswith("error[MISSING_ARGUMENT]:")

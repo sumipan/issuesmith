@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 from contextlib import redirect_stderr
+from pathlib import Path
 
 import pytest
 import yaml
@@ -111,5 +112,46 @@ def test_config_unknown_tier_kind_raises(tmp_path, monkeypatch):
     )
     with pytest.raises(ConfigError, match="kind must be"):
         load_config()
+
+
+def test_main_unknown_argument_uses_contract(tmp_path, monkeypatch, capsys) -> None:
+    """refs #8140 — unknown tier CLI flags use ContractParser stderr contract."""
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "repo": "example/app",
+            "steps": {"p1": {"tier": {"kind": "pr_diff", "light_max_diff_lines": 200}}},
+        },
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        main(
+            "p1",
+            [
+                "--diff-lines",
+                "1",
+                "--unchecked-ac",
+                "0",
+                "--gates-pass",
+                "true",
+                "--unknown",
+            ],
+        )
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    assert err.splitlines()[0].startswith("error[UNKNOWN_ARGUMENT]:")
+
+
+def test_command_entries_use_contract_parser() -> None:
+    """refs #8140 — gate/step entry modules must not construct argparse.ArgumentParser directly."""
+    root = Path(__file__).resolve().parents[1] / "src" / "issuesmith"
+    offenders: list[str] = []
+    for path in sorted(root.rglob("*.py")):
+        if path.name == "cli_errors.py":
+            continue
+        text = path.read_text(encoding="utf-8")
+        if "argparse.ArgumentParser(" in text:
+            offenders.append(str(path.relative_to(root.parent.parent)))
+    assert offenders == []
 
 

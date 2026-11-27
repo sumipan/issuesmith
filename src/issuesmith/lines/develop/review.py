@@ -11,6 +11,7 @@ from pathlib import Path
 
 import yaml
 
+from issuesmith.cli_errors import fail
 from issuesmith.config import StepConfig, get_config
 from issuesmith.contract import Andon, StepContext, StepResult
 from issuesmith.forge import get_forge
@@ -238,18 +239,64 @@ def run(ctx: StepContext, step: StepConfig) -> StepResult:
     return StepResult(status="done", markers=["REVIEW_READY"])
 
 
-def _cli_dispatch() -> int:
-    if len(sys.argv) < 3:
-        print(
-            "usage: python3 -m issuesmith.lines.develop.review dispatch key=value ...",
-            file=sys.stderr,
+_REVIEW_DISPATCH_HINT = (
+    "usage: python3 -m issuesmith.lines.develop.review dispatch key=value ..."
+)
+
+
+def main(argv: list[str] | None = None) -> int:
+    tokens = list(argv if argv is not None else sys.argv[1:])
+    if not tokens:
+        return fail(
+            "MISSING_ARGUMENT",
+            "subcommand required",
+            _REVIEW_DISPATCH_HINT,
         )
-        return 2
-    raw = _parse_context(sys.argv[2:])
+    sub = tokens[0]
+    if sub != "dispatch":
+        return fail(
+            "UNKNOWN_COMMAND",
+            f"unknown subcommand: {sub!r}",
+            _REVIEW_DISPATCH_HINT,
+        )
+    if len(tokens) < 2:
+        return fail(
+            "MISSING_ARGUMENT",
+            "dispatch requires key=value arguments",
+            _REVIEW_DISPATCH_HINT,
+        )
+    try:
+        raw = _parse_context(tokens[1:])
+    except ValueError as exc:
+        return fail("INVALID_VALUE", str(exc), _REVIEW_DISPATCH_HINT)
     worktree = raw.get("worktree_path", "")
     if not worktree:
-        print("worktree_path is required for review dispatch", file=sys.stderr)
-        return 2
+        return fail(
+            "MISSING_ARGUMENT",
+            "worktree_path is required for review dispatch",
+            f"{_REVIEW_DISPATCH_HINT} (include worktree_path=PATH)",
+        )
+    issue_number = raw.get("issue_number", "")
+    if not issue_number:
+        return fail(
+            "MISSING_ARGUMENT",
+            "issue_number is required for review dispatch",
+            f"{_REVIEW_DISPATCH_HINT} (include issue_number=NUMBER)",
+        )
+    try:
+        int(issue_number)
+    except ValueError:
+        return fail(
+            "INVALID_VALUE",
+            f"issue_number must be an integer: {issue_number!r}",
+            f"{_REVIEW_DISPATCH_HINT} (include issue_number=NUMBER)",
+        )
+    if not raw.get("base_branch", ""):
+        return fail(
+            "MISSING_ARGUMENT",
+            "base_branch is required for review dispatch",
+            f"{_REVIEW_DISPATCH_HINT} (include base_branch=BRANCH)",
+        )
     err = _commit_tracked_changes(worktree)
     if err:
         return map_step_result(
@@ -271,9 +318,9 @@ def _cli_dispatch() -> int:
     return 0  # unreachable
 
 
+def _cli_dispatch() -> int:
+    return main(sys.argv[1:])
+
+
 if __name__ == "__main__":
-    if sys.argv[1:2] == ["dispatch"]:
-        raise SystemExit(_cli_dispatch())
-    raise SystemExit(
-        "usage: python3 -m issuesmith.lines.develop.review dispatch key=value ...",
-    )
+    raise SystemExit(main())
