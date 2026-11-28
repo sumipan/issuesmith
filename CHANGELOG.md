@@ -7,6 +7,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.229.1 - 2026-11-28
+
+### Added
+
+- review: require reply-block problems for review failures
+
+### Fixed
+
+- repair: replace CJK review gate messages with English (#8200)
+
 ## 0.229.0 - 2026-11-28
 
 ### Added

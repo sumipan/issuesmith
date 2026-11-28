@@ -19,7 +19,6 @@ from issuesmith.engine import (
 from issuesmith.gates import GateBuildContext, GateBuildError
 from issuesmith.gates.review import (
     ReviewGate,
-    _violations_from_stdout,
     _worktree_diff_lines,
     build_review_gate,
 )
@@ -43,40 +42,6 @@ def test_check_pass_returns_empty(tmp_path: Path) -> None:
         return_value=(0, "ok\nPIPELINE_STATUS: CP2_PASS\n"),
     ):
         assert gate.check("", []) == []
-
-
-def test_check_fail_parses_bullets(tmp_path: Path) -> None:
-    gate = ReviewGate(_review_cfg(), "x", tmp_path, {})
-    stdout = "x\nProblems:\n- a\n- b\nPIPELINE_STATUS: CP2_FAIL\n"
-    with patch("issuesmith.engine.run_guarded_output", return_value=(1, stdout)):
-        vs = gate.check("", [])
-    assert len(vs) == 2
-    assert vs[0].rule_id == "review.x"
-    assert vs[0].message == "a"
-    assert vs[0].auto_fixable is False
-    assert vs[1].message == "b"
-
-
-def test_fail_reply_block_stops_problems_before_fence(tmp_path: Path) -> None:
-    """Refs #7553 AC6 — Problems bullets end at the reply-block fence."""
-    stdout = (
-        "Problems:\n"
-        "- first issue\n"
-        "- second issue\n"
-        "```ghdag\n"
-        "status: failed\n"
-        "code: CP2\n"
-        "```\n"
-    )
-    vs = _violations_from_stdout(stdout, _review_cfg(), "x")
-    assert [v.message for v in vs] == ["first issue", "second issue"]
-    assert "status:" not in " ".join(v.message for v in vs)
-
-
-def test_violations_without_heading_use_snippet() -> None:
-    vs = _violations_from_stdout("short fail", _review_cfg(), "x")
-    assert len(vs) == 1
-    assert vs[0].message == "short fail"
 
 
 def test_check_propagates_retry_signal(tmp_path: Path) -> None:
@@ -229,7 +194,14 @@ def test_check_failure_marker_still_returns_review_violation(
 ) -> None:
     """Refs #7397 AC4 — structured CP2_FAIL output stays review.cp2, not engine_error."""
     _patch_review_template_dir(monkeypatch, tmp_path)
-    stdout = "Problems:\n- bad thing\nPIPELINE_STATUS: CP2_FAIL\n"
+    stdout = (
+        "```ghdag\n"
+        "status: failed\n"
+        "code: CP2_FAIL\n"
+        "problems:\n"
+        "  - bad thing\n"
+        "```\n"
+    )
     monkeypatch.setattr(
         "issuesmith.engine._execute",
         lambda *args, **kwargs: _EngineProcess(
@@ -385,15 +357,6 @@ def test_check_engine_error_empty_stdout(tmp_path: Path) -> None:
     assert vs[0].message == "review failed without output"
 
 
-def test_check_failure_status_line_not_engine_error(tmp_path: Path) -> None:
-    gate = ReviewGate(_review_cfg(), "cp2", tmp_path, {})
-    stdout = "PIPELINE_STATUS: CP2_FAIL\n"
-    with patch("issuesmith.engine.run_guarded_output", return_value=(1, stdout)):
-        vs = gate.check("", [])
-    assert len(vs) == 1
-    assert vs[0].rule_id == "review.cp2"
-
-
 @pytest.mark.parametrize(
     ("diff_lines", "unchecked", "expected_tier"),
     [
@@ -530,10 +493,10 @@ def test_check_invalid_reply_block_returns_engine_error_with_code(
     assert "REPLY_BLOCK_INVALID" in vs[0].message
 
 
-def test_check_failed_reply_without_problems_uses_problems_heading(
+def test_check_failed_reply_without_problems_is_reply_invalid(
     tmp_path: Path,
 ) -> None:
-    """Refs #8166 — empty block problems keep legacy Problems: heading parsing."""
+    """Refs #8200 AC2 — failed block without problems is reply_invalid, not heading bullets."""
     gate = ReviewGate(_review_cfg(), "cp2", tmp_path, {})
     stdout = (
         "Problems:\n"
@@ -546,8 +509,20 @@ def test_check_failed_reply_without_problems_uses_problems_heading(
     with patch("issuesmith.engine.run_guarded_output", return_value=(1, stdout)):
         vs = gate.check("", [])
     assert len(vs) == 1
-    assert vs[0].rule_id == "review.cp2"
-    assert vs[0].message == "legacy finding"
+    assert vs[0].rule_id == "review.cp2.reply_invalid"
+    assert "legacy finding" not in vs[0].message
+
+
+def test_check_heading_bullets_without_reply_block_is_engine_error(
+    tmp_path: Path,
+) -> None:
+    """Refs #8200 AC3 — Problems heading without reply block is engine_error."""
+    gate = ReviewGate(_review_cfg(), "cp2", tmp_path, {})
+    stdout = "Problems:\n- bad thing\nPIPELINE_STATUS: CP2_FAIL\n"
+    with patch("issuesmith.engine.run_guarded_output", return_value=(1, stdout)):
+        vs = gate.check("", [])
+    assert len(vs) == 1
+    assert vs[0].rule_id == "review.cp2.engine_error"
 
 
 def test_check_reply_block_problems_ignore_legacy_heading_bullets(
@@ -589,3 +564,24 @@ def test_check_ok_reply_block_with_problems_returns_reply_block_invalid(
     assert vs[0].rule_id == "review.cp2.engine_error"
     assert "REPLY_BLOCK_INVALID" in vs[0].message
     assert "status: failed" in vs[0].message
+
+
+def test_bundled_review_prompt_fail_example_has_problems() -> None:
+    """Refs #8200 AC5 — bundled review.md fail example is a reply block with problems."""
+    from ghdag.core import reply_block
+
+    import issuesmith.gates.review as review_mod
+
+    review_md = (
+        Path(review_mod.__file__).resolve().parents[1]
+        / "lines/develop/files/workflows/develop/prompts/review.md"
+    )
+    text = review_md.read_text(encoding="utf-8")
+    assert "Problems:" not in text
+    fail_idx = text.find("status: failed")
+    assert fail_idx != -1
+    fence = text.rfind("```ghdag", 0, fail_idx)
+    block = reply_block.parse_reply_block(text[fence:])
+    assert block is not None
+    assert block.status == "failed"
+    assert len(block.problems) >= 1

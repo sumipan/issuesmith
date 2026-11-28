@@ -158,3 +158,15 @@ def test_review_optional_variables_invalid(tmp_path, monkeypatch, bad) -> None:
     _write_config(tmp_path, monkeypatch, _review_payload(optional_variables=bad))
     with pytest.raises(ConfigError, match=r"steps\.cp2\.review\.optional_variables"):
         load_config()
+
+
+def test_review_problems_heading_is_unknown_key(tmp_path, monkeypatch) -> None:
+    """Refs #8200 AC4 — problems_heading is rejected at config load."""
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        _review_payload(problems_heading="Problems:"),
+    )
+    with pytest.raises(ConfigError) as exc_info:
+        load_config()
+    assert exc_info.value.code == "CONFIG_UNKNOWN_KEY"
