@@ -162,8 +162,8 @@ def _violations_from_reply_block(
     if block is None or block.status != "failed":
         return None
     if not block.problems:
-        msg = "review の返事ブロックが status: failed なのに problems が無い"
-        hint = "返事ブロックの problems に問題点を 1 件 1 要素で書く"
+        msg = "review reply block has status: failed but no problems"
+        hint = "add one finding per element in the reply block problems list"
         return [
             Violation(
                 rule_id=f"review.{step_id}.reply_invalid",
