@@ -17,9 +17,12 @@ status: ok
 code: REVIEW_PASS
 ```
 
-On fail, list problems under the `Problems:` heading, then emit:
+On fail, do not use body headings or bullet lists for findings. Emit one top-level reply block with one problem per `problems` item:
 
 ```ghdag
 status: failed
 code: REVIEW
+problems:
+  - <problem 1>
+  - <problem 2>
 ```

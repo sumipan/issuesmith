@@ -485,9 +485,6 @@
               "optional_variables": {
                 "description": "issuesmith.yaml key 'optional_variables'."
               },
-              "problems_heading": {
-                "description": "issuesmith.yaml key 'problems_heading'."
-              },
               "role": {
                 "description": "issuesmith.yaml key 'role'."
               },

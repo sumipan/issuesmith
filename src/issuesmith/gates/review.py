@@ -71,13 +71,9 @@ class ReviewGate:
         )
         if rc == 0:
             return []
-        # Prefer ghdag reply-block problems over legacy Problems: heading (#8166).
         block_violations = _violations_from_reply_block(stdout, self._step_id)
         if block_violations is not None:
             return block_violations
-        # Transitional dual-read: remove heading parsing once host templates switch to problems (after #8165).
-        if _stdout_is_review_result(stdout, self._review_cfg):
-            return _violations_from_stdout(stdout, self._review_cfg, self._step_id)
         return [_engine_error_violation(rc, stdout, self._step_id)]
 
     def _resolve_tier(self, body: str) -> str | None:
@@ -141,7 +137,7 @@ def _worktree_diff_lines(
 def _violations_from_reply_block(
     stdout: str, step_id: str
 ) -> list[Violation] | None:
-    """Map a failed reply block's problems to violations; None to keep legacy parsing."""
+    """Map a failed reply block's problems to violations; None when no failed reply block."""
     from ghdag.core import reply_block
 
     if reply_block.find_reply_block(stdout) is None:
@@ -163,8 +159,21 @@ def _violations_from_reply_block(
                 fix_hint=detail,
             )
         ]
-    if block is None or block.status != "failed" or not block.problems:
+    if block is None or block.status != "failed":
         return None
+    if not block.problems:
+        msg = "review の返事ブロックが status: failed なのに problems が無い"
+        hint = "返事ブロックの problems に問題点を 1 件 1 要素で書く"
+        return [
+            Violation(
+                rule_id=f"review.{step_id}.reply_invalid",
+                severity="fail",
+                message=msg,
+                location=None,
+                auto_fixable=False,
+                fix_hint=hint,
+            )
+        ]
     rule_id = f"review.{step_id}"
     return [
         Violation(
@@ -177,22 +186,6 @@ def _violations_from_reply_block(
         )
         for msg in block.problems
     ]
-
-
-def _stdout_is_review_result(stdout: str, review_cfg: ReviewConfig) -> bool:
-    from issuesmith.engine import extract_status_values
-
-    heading = review_cfg.problems_heading.strip()
-    for line in stdout.splitlines():
-        if line.strip() == heading:
-            return True
-    if review_cfg.failure_status in extract_status_values(stdout):
-        return True
-    failure_marker = f"PIPELINE_STATUS: {review_cfg.failure_status}"
-    for line in stdout.splitlines():
-        if line.strip() == failure_marker:
-            return True
-    return False
 
 
 def _engine_error_violation(rc: int, stdout: str, step_id: str) -> Violation:
@@ -210,53 +203,6 @@ def _engine_error_violation(rc: int, stdout: str, step_id: str) -> Violation:
         auto_fixable=False,
         fix_hint=detail,
     )
-
-
-def _violations_from_stdout(
-    stdout: str,
-    review_cfg: ReviewConfig,
-    step_id: str,
-) -> list[Violation]:
-    heading = review_cfg.problems_heading.strip()
-    lines = stdout.splitlines()
-    heading_idx: int | None = None
-    for i, line in enumerate(lines):
-        if line.strip() == heading:
-            heading_idx = i
-
-    messages: list[str] = []
-    if heading_idx is not None:
-        for line in lines[heading_idx + 1 :]:
-            stripped = line.strip()
-            if not stripped:
-                break
-            if stripped.startswith("PIPELINE_STATUS:"):
-                break
-            if stripped == "```ghdag" or (
-                stripped.startswith("```") and stripped.endswith("ghdag")
-            ):
-                break
-            if line.startswith("- "):
-                messages.append(line[2:])
-            else:
-                break
-
-    if not messages:
-        snippet = stdout[:200] if stdout else "review failed without output"
-        messages = [snippet]
-
-    rule_id = f"review.{step_id}"
-    return [
-        Violation(
-            rule_id=rule_id,
-            severity="fail",
-            message=msg,
-            location=None,
-            auto_fixable=False,
-            fix_hint=msg,
-        )
-        for msg in messages
-    ]
 
 
 def build_review_gate(ctx: GateBuildContext) -> ReviewGate:
